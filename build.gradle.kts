@@ -1,7 +1,7 @@
-import org.jetbrains.intellij.platform.gradle.TestFrameworkType
-
 plugins {
-    id("org.jetbrains.kotlin.jvm") version "2.1.0"
+    // 必须与 IDEA 2026.1 自身的 Kotlin 版本对齐：平台 jar 的 kotlin_module
+    // 元数据是 2.3.0 版本，用 2.1.x 编译会报「incompatible version of Kotlin」。
+    id("org.jetbrains.kotlin.jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.18.1"
 }
 
@@ -9,6 +9,10 @@ group = "com.github.liuyuhua"
 version = "0.1.0"
 
 repositories {
+    // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。
+    // 实测：cache-redirector.jetbrains.com 与 aliyun 可达，maven central 与
+    // download.jetbrains.com 不可达。
+    maven("https://maven.aliyun.com/repository/public")
     mavenCentral()
     intellijPlatform {
         defaultRepositories()
@@ -19,10 +23,19 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        intellijIdeaCommunity("2026.1")
-        // 终端 API 来自捆绑插件，必须显式声明才能编译
+        // 用本机已安装的 IDEA 2026.1（IU-261.25134.95）作为平台依赖。
+        //
+        // 不用 intellijIdea("2026.1") 的原因：它会去 download.jetbrains.com 拉
+        // 完整安装包（macOS 上是 .dmg，1G+），而该主机在本机网络下不可达。
+        // 用 local 既避开下载，也保证编译期看到的就是运行期那份 jar ——
+        // 对我们依赖 Experimental 终端 API 的场景反而更准确。
+        local("/Applications/IntelliJ IDEA.app")
         bundledPlugin("org.jetbrains.plugins.terminal")
-        testFramework(TestFrameworkType.Platform)
+        // 暂不引入 testFramework(TestFrameworkType.Platform)：
+        // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，
+        // 本机网络下该主机 TLS 稳定被重置。它只服务于 BasePlatformTestCase 类的
+        // 平台测试；核心逻辑测试仅依赖 JUnit 4，不受影响。
+        // 网络条件允许时可加回，并恢复 AgentToolWindowRegistrationTest。
     }
 }
 
@@ -31,6 +44,11 @@ kotlin {
 }
 
 intellijPlatform {
+    // 关闭字节码插桩：它需要下载 com.jetbrains.intellij.java:java-compiler-ant-tasks，
+    // 而该仓库在本机网络下不可达。本插件不使用 GUI Designer 的 .form，
+    // 也不依赖平台的 @NotNull 运行时断言插桩，关掉无影响。
+    instrumentCode = false
+
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "261"

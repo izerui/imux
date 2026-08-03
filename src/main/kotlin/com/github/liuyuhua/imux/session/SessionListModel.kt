@@ -1,0 +1,107 @@
+package com.github.liuyuhua.imux.session
+
+import com.github.liuyuhua.imux.model.AgentSession
+import com.github.liuyuhua.imux.model.AgentType
+import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
+
+data class PendingSession(
+    val key: String,
+    val agentType: AgentType,
+    val startedAt: Instant,
+)
+
+sealed interface ListEntry {
+    data class Existing(val session: AgentSession) : ListEntry
+    data class Pending(val pending: PendingSession) : ListEntry
+}
+
+/**
+ * 列表的全部可变状态集中于此：扫描结果、未绑定的新会话临时条目、绑定关系。
+ *
+ * 依赖以函数形式注入（scan / clock），使本类完全脱离文件系统与墙钟，便于测试。
+ *
+ * 绑定规则（消除歧义，见设计文档 6.3）：
+ * 1. 扫描到的会话若 id 未在上轮出现、agentType 相同、且 lastActiveAt >= pending.startedAt，
+ *    则它是该 pending 的候选
+ * 2. 多个 pending 竞争同一会话时，绑定到 startedAt 最晚且不迟于该会话活动时刻的那个
+ * 3. 一个 pending 一旦绑定就不再参与后续绑定
+ * 4. 超过 PENDING_TTL 仍未绑定的 pending 在 refresh 时被清除
+ */
+class SessionListModel(
+    private val scan: () -> List<AgentSession>,
+    private val clock: () -> Instant,
+) {
+
+    private var sessions: List<AgentSession> = emptyList()
+    private val pendings = mutableListOf<PendingSession>()
+    private val bindings = mutableMapOf<String, String>()
+    private var knownIds: Set<String> = emptySet()
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+
+    private var pendingSeq = 0
+
+    fun addListener(listener: () -> Unit) {
+        listeners.add(listener)
+    }
+
+    fun registerPending(agentType: AgentType): PendingSession {
+        val pending = PendingSession(
+            key = "pending-${pendingSeq++}",
+            agentType = agentType,
+            startedAt = clock(),
+        )
+        pendings.add(pending)
+        notifyListeners()
+        return pending
+    }
+
+    fun boundIdFor(key: String): String? = bindings[key]
+
+    fun refresh() {
+        val scanned = scan()
+        bindNewSessions(scanned)
+        expirePendings()
+        sessions = scanned
+        knownIds = scanned.mapTo(mutableSetOf()) { it.id }
+        notifyListeners()
+    }
+
+    fun entries(agentType: AgentType): List<ListEntry> {
+        val existing = sessions
+            .filter { it.agentType == agentType }
+            .map { ListEntry.Existing(it) }
+        // pending 放前面：新建的会话应出现在分组顶部，与「最近活动优先」的排序意图一致
+        val stillPending = pendings
+            .filter { it.agentType == agentType && it.key !in bindings }
+            .map { ListEntry.Pending(it) }
+        return stillPending + existing
+    }
+
+    private fun bindNewSessions(scanned: List<AgentSession>) {
+        val fresh = scanned.filter { it.id !in knownIds }
+        for (session in fresh.sortedBy { it.lastActiveAt }) {
+            val candidate = pendings
+                .filter { it.key !in bindings }
+                .filter { it.agentType == session.agentType }
+                .filter { !it.startedAt.isAfter(session.lastActiveAt) }
+                .maxByOrNull { it.startedAt }
+                ?: continue
+            bindings[candidate.key] = session.id
+        }
+    }
+
+    private fun expirePendings() {
+        val deadline = clock().minus(PENDING_TTL)
+        pendings.removeAll { it.key !in bindings && it.startedAt.isBefore(deadline) }
+    }
+
+    private fun notifyListeners() {
+        listeners.forEach { it() }
+    }
+
+    private companion object {
+        val PENDING_TTL: Duration = Duration.ofMinutes(30)
+    }
+}
