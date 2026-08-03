@@ -8,6 +8,7 @@ import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.github.liuyuhua.imux.watch.SessionStoreWatcher
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -31,6 +32,10 @@ import javax.swing.JPanel
 class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+        timed("构建工具窗口内容", CREATE_WARN_MS) { doCreateContent(project, toolWindow) }
+    }
+
+    private fun doCreateContent(project: Project, toolWindow: ToolWindow) {
         val repository = SessionRepository.forUserHome()
         val projectPath = project.basePath ?: System.getProperty("user.home")
 
@@ -56,12 +61,19 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
         startWatching(toolWindow, projectPath, refresh)
 
-        // 工具窗口重新可见时兜底扫描一次，覆盖轮询可能错过的场景
+        // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
+        //
+        // 必须只在「变为可见」的那一刻触发：ToolWindowManagerListener 监听的是
+        // 全 IDE 所有工具窗口的状态变化，任何窗口开关、拖动、焦点变化都会回调。
+        // 若每次回调都刷新，点一下图标就会连发多轮全量扫描并重建列表。
+        var wasVisible = false
         project.messageBus.connect(toolWindow.disposable).subscribe(
             ToolWindowManagerListener.TOPIC,
             object : ToolWindowManagerListener {
                 override fun stateChanged(manager: ToolWindowManager) {
-                    if (toolWindow.isVisible) refresh()
+                    val visible = toolWindow.isVisible
+                    if (visible && !wasVisible) refresh()
+                    wasVisible = visible
                 }
             },
         )
@@ -91,16 +103,38 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             if (scanning.compareAndSet(false, true)) {
                 ApplicationManager.getApplication().executeOnPooledThread {
                     val scanned = try {
-                        runCatching { repository.scan(projectPath) }.getOrNull()
+                        timed("后台扫描会话库", SCAN_WARN_MS) {
+                            runCatching { repository.scan(projectPath) }.getOrNull()
+                        }
                     } finally {
                         scanning.set(false)
                     }
                     if (scanned != null) {
-                        ApplicationManager.getApplication().invokeLater { model.applyScan(scanned) }
+                        ApplicationManager.getApplication().invokeLater {
+                            timed("应用扫描结果并重建列表", EDT_WARN_MS) { model.applyScan(scanned) }
+                        }
                     }
                 }
             }
         }
+    }
+
+    /** 只在超过阈值时记一条，平时零噪音；用于定位卡顿来自哪一段。 */
+    private inline fun <T> timed(label: String, thresholdMs: Long, block: () -> T): T {
+        val start = System.nanoTime()
+        val result = block()
+        val elapsed = (System.nanoTime() - start) / 1_000_000
+        if (elapsed >= thresholdMs) LOG.warn("[imux] $label 耗时 ${elapsed}ms")
+        return result
+    }
+
+    private companion object {
+        val LOG = logger<AgentToolWindowFactory>()
+
+        /** 阈值刻意定得低，便于定位；正常情况下不会打日志。 */
+        const val CREATE_WARN_MS = 50L
+        const val SCAN_WARN_MS = 150L
+        const val EDT_WARN_MS = 30L
     }
 
     private fun startWatching(

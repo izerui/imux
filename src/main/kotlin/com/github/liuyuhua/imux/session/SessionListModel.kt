@@ -85,12 +85,23 @@ class SessionListModel(
      * 本方法只做内存里的合并与通知，必须在 EDT 调用。
      */
     fun applyScan(scanned: List<AgentSession>) {
+        val pendingsBefore = visiblePendingKeys()
+
         bindNewSessions(scanned)
         expirePendings()
+
+        val changed = scanned != sessions || visiblePendingKeys() != pendingsBefore
+
         sessions = scanned
         knownIds = scanned.mapTo(mutableSetOf()) { it.id }
-        notifyListeners()
+
+        // 无变化就不通知：每次通知都会重建整棵树。工具窗口状态变化等事件
+        // 会频繁触发刷新，无谓重建既费 EDT 又会丢失选中与展开状态。
+        if (changed) notifyListeners()
     }
+
+    private fun visiblePendingKeys(): List<String> =
+        pendings.filter { it.key !in bindings }.map { it.key }
 
     fun entries(agentType: AgentType): List<ListEntry> {
         val existing = sessions

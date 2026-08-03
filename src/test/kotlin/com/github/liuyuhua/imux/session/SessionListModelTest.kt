@@ -160,12 +160,68 @@ class SessionListModelTest {
         assertTrue(model.drainNewBindings().isEmpty())
     }
 
+    /**
+     * 扫描结果没变化时不该通知——每次通知都会重建整棵树。
+     * 工具窗口状态变化等事件会频繁触发刷新，无谓重建是卡顿来源之一。
+     */
     @Test
-    fun `refresh 后通知监听者`() {
+    fun `扫描结果未变化时不重复通知`() {
         val model = model(FakeClock(base))
         var notified = 0
         model.addListener { notified++ }
 
+        scanResult = listOf(session("a", AgentType.CLAUDE, base))
+        model.refresh()
+        assertEquals("首次有变化，应通知", 1, notified)
+
+        model.refresh()
+        model.refresh()
+
+        assertEquals("结果相同，不应再通知", 1, notified)
+    }
+
+    @Test
+    fun `扫描结果变化时恢复通知`() {
+        val model = model(FakeClock(base))
+        var notified = 0
+        model.addListener { notified++ }
+
+        scanResult = listOf(session("a", AgentType.CLAUDE, base))
+        model.refresh()
+        scanResult = listOf(session("a", AgentType.CLAUDE, base), session("b", AgentType.CODEX, base))
+        model.refresh()
+
+        assertEquals(2, notified)
+    }
+
+    @Test
+    fun `有待绑定的 pending 时即使扫描结果不变也要通知`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        scanResult = listOf(session("a", AgentType.CLAUDE, base))
+        model.refresh()
+
+        var notified = 0
+        model.addListener { notified++ }
+        model.registerPending(AgentType.CLAUDE)
+
+        assertEquals("新建 pending 必须立刻反映到界面", 1, notified)
+    }
+
+    /**
+     * 契约是「有变化才通知」而非「每次 refresh 都通知」——
+     * 无谓通知会导致整棵树重建，是卡顿来源。空扫描且无 pending 时不该通知。
+     */
+    @Test
+    fun `refresh 带来变化时通知监听者`() {
+        val model = model(FakeClock(base))
+        var notified = 0
+        model.addListener { notified++ }
+
+        model.refresh()
+        assertEquals("空结果且无 pending，无变化不通知", 0, notified)
+
+        scanResult = listOf(session("新出现", AgentType.CLAUDE, base))
         model.refresh()
 
         assertEquals(1, notified)
