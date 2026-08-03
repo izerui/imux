@@ -162,7 +162,7 @@ private class NewSessionAction(
 ) : AnAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
 
     override fun actionPerformed(event: AnActionEvent) {
-        JBPopupFactory.getInstance()
+        val popup = JBPopupFactory.getInstance()
             .createActionGroupPopup(
                 "选择 Agent",
                 DefaultActionGroup(
@@ -173,7 +173,12 @@ private class NewSessionAction(
                 JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
                 false,
             )
-            .showInBestPositionFor(event.dataContext)
+
+        // 贴着触发它的工具栏按钮弹出。
+        // 不能只用 showInBestPositionFor：工具栏按钮的 dataContext 不携带触发组件，
+        // 平台拿不到锚点就会退回到面板中央偏下的默认位置。
+        val anchor = event.inputEvent?.component
+        if (anchor != null) popup.showUnderneathOf(anchor) else popup.showInBestPositionFor(event.dataContext)
     }
 }
 
