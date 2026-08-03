@@ -6,9 +6,12 @@ import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.intellij.openapi.project.Project
 import com.intellij.ui.treeStructure.Tree
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JComponent
+import javax.swing.KeyStroke
+import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
@@ -64,10 +67,21 @@ class AgentSessionTree(
     init {
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(event: MouseEvent) {
-                if (event.clickCount != 2) return
+                // 单击即触发。只认第一次点击：双击时 mouseClicked 会以 clickCount=1、2
+                // 各触发一次，若不过滤，「显示更多」会一次加两页。
+                if (event.clickCount != 1 || !SwingUtilities.isLeftMouseButton(event)) return
+                // 点在展开箭头或空白处时 getPathForLocation 返回 null，天然不触发
                 handleActivate(tree.getPathForLocation(event.x, event.y) ?: return)
             }
         })
+
+        // 键盘可达：选中后回车等同于单击
+        tree.registerKeyboardAction(
+            { tree.selectionPath?.let { handleActivate(it) } },
+            KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0),
+            JComponent.WHEN_FOCUSED,
+        )
+
         model.addListener { reload() }
     }
 
