@@ -1,0 +1,21 @@
+<idea-plugin>
+    <id>com.github.liuyuhua.imux</id>
+    <name>imux</name>
+    <vendor>liuyuhua</vendor>
+
+    <description><![CDATA[
+      在左侧工具窗口中列出当前项目的 Claude Code 与 Codex 会话，
+      点击会话即在编辑器标签页中打开对应的 CLI 终端。
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="imux"
+            anchor="left"
+            icon="/icons/agent.svg"
+            factoryClass="com.github.liuyuhua.imux.toolwindow.AgentToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
