@@ -37,6 +37,14 @@ class SessionListModel(
     private var sessions: List<AgentSession> = emptyList()
     private val pendings = mutableListOf<PendingSession>()
     private val bindings = mutableMapOf<String, String>()
+
+    /**
+     * 刚发生、尚未被消费的绑定：pendingKey -> 会话真实 id。
+     *
+     * 终端是以 openNew 时的合成 key 记录的，绑定后必须换成会话真实 id，
+     * 否则运行中标识失效、再次点击会重开一个终端。消费方取走后即清空。
+     */
+    private val newBindings = mutableListOf<Pair<String, String>>()
     private var knownIds: Set<String> = emptySet()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
@@ -58,6 +66,13 @@ class SessionListModel(
     }
 
     fun boundIdFor(key: String): String? = bindings[key]
+
+    /** 取走并清空尚未处理的绑定，供终端宿主据此换 key。 */
+    fun drainNewBindings(): List<Pair<String, String>> {
+        val drained = newBindings.toList()
+        newBindings.clear()
+        return drained
+    }
 
     fun refresh() {
         val scanned = scan()
@@ -89,6 +104,7 @@ class SessionListModel(
                 .maxByOrNull { it.startedAt }
                 ?: continue
             bindings[candidate.key] = session.id
+            newBindings.add(candidate.key to session.id)
         }
     }
 

@@ -2,6 +2,7 @@ package com.github.liuyuhua.imux.terminal
 
 import com.github.liuyuhua.imux.model.AgentType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -45,6 +46,30 @@ class TerminalHost(private val project: Project) : Disposable {
     }
 
     fun isRunning(key: String): Boolean = views.containsKey(key)
+
+    /**
+     * 新建的会话在 CLI 落盘后才拿到真实 id，此时要把终端从 openNew 的合成 key
+     * 迁到真实 id 下。不做这一步会有两个后果：运行中标识查不到；再次点击该会话
+     * 会以真实 id 找不到已有终端，从而重开一个。
+     *
+     * 虚拟文件实例必须沿用同一个——它是标签页的身份，换实例会开出新标签页。
+     */
+    fun rebindKey(oldKey: String, newKey: String, newTitle: String) {
+        val view = views.remove(oldKey) ?: return
+        views[newKey] = view
+
+        files.remove(oldKey)?.let { file ->
+            files[newKey] = file
+            renameTab(file, newTitle)
+        }
+    }
+
+    private fun renameTab(file: AgentTerminalVirtualFile, newTitle: String) {
+        if (file.name == newTitle) return
+        runCatching {
+            WriteAction.run<Exception> { file.rename(this, newTitle) }
+        }.onFailure { LOG.warn("重命名标签页失败：${file.name} -> $newTitle", it) }
+    }
 
     private fun open(key: String, command: List<String>, tabTitle: String) {
         installDiagnostics()

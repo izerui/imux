@@ -74,11 +74,31 @@ class AgentSessionTree(
     fun component(): JComponent = tree
 
     fun reload() {
+        applyNewBindings()
         val expanded = expandedGroups()
         root.removeAllChildren()
         AgentType.entries.forEach { addGroup(it) }
         treeModel.reload()
         restoreExpansion(expanded)
+    }
+
+    /**
+     * 把刚发生的绑定告知终端宿主：新建会话的终端原本记在合成 key 下，
+     * 拿到真实 id 后必须迁过去，否则运行中标识失效、再点会重开一个终端。
+     */
+    private fun applyNewBindings() {
+        val bindings = model.drainNewBindings()
+        if (bindings.isEmpty()) return
+
+        val titles = AgentType.entries
+            .flatMap { model.entries(it) }
+            .filterIsInstance<ListEntry.Existing>()
+            .associate { it.session.id to it.session.title }
+
+        val host = TerminalHost.getInstance(project)
+        bindings.forEach { (pendingKey, sessionId) ->
+            host.rebindKey(pendingKey, sessionId, titles[sessionId] ?: "会话 ${sessionId.take(8)}")
+        }
     }
 
     private fun addGroup(agentType: AgentType) {

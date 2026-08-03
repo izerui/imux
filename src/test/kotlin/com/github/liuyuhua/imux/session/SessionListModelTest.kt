@@ -120,6 +120,46 @@ class SessionListModelTest {
         assertTrue(model.entries(AgentType.CLAUDE).isEmpty())
     }
 
+    /**
+     * 绑定发生后，终端仍记在 openNew 时的合成 key 下，与会话真实 id 对不上。
+     * 后果：绑定后的会话不显示运行中标识，再次点击还会重开一个终端。
+     * 所以模型必须把「哪个 pending 绑到了哪个 id」交出去，让终端宿主换 key。
+     */
+    @Test
+    fun `绑定发生时产出待处理的换 key 信息`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.CLAUDE)
+
+        scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
+        model.refresh()
+
+        assertEquals(listOf(pending.key to "真实id"), model.drainNewBindings())
+    }
+
+    @Test
+    fun `换 key 信息取走后不再重复产出`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        model.registerPending(AgentType.CLAUDE)
+
+        scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
+        model.refresh()
+        model.drainNewBindings()
+        model.refresh()
+
+        assertTrue(model.drainNewBindings().isEmpty())
+    }
+
+    @Test
+    fun `没有绑定时换 key 信息为空`() {
+        val model = model(FakeClock(base))
+        scanResult = listOf(session("无人认领", AgentType.CLAUDE, base))
+        model.refresh()
+
+        assertTrue(model.drainNewBindings().isEmpty())
+    }
+
     @Test
     fun `refresh 后通知监听者`() {
         val model = model(FakeClock(base))
