@@ -6,9 +6,7 @@ import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import kotlinx.coroutines.cancel
@@ -30,8 +28,6 @@ class TerminalHost(private val project: Project) : Disposable {
      * 每次新建实例则会不断开出重复标签页。
      */
     private val files = mutableMapOf<String, AgentTerminalVirtualFile>()
-
-    private var diagnosticsInstalled = false
 
     /** 启动一个全新会话（不带 resume），返回内部 key。 */
     fun openNew(agentType: AgentType, tabTitle: String): String {
@@ -72,48 +68,11 @@ class TerminalHost(private val project: Project) : Disposable {
     }
 
     private fun open(key: String, command: List<String>, tabTitle: String) {
-        installDiagnostics()
         val file = files.getOrPut(key) {
             val view = views.getOrPut(key) { createView(command, tabTitle) }
             AgentTerminalVirtualFile(tabTitle, view, key)
         }
-
-        val view = file.terminalView
-        LOG.warn(
-            "[imux诊断] 准备打开 key=$key" +
-                " component=${runCatching { view.component?.javaClass?.simpleName }.getOrElse { "抛错:$it" }}" +
-                " preferredFocusable=${runCatching { view.preferredFocusableComponent?.javaClass?.simpleName }.getOrElse { "抛错:$it" }}" +
-                " sessionState=${runCatching { view.sessionState.value.toString() }.getOrElse { "抛错:$it" }}",
-        )
-
         FileEditorManager.getInstance(project).openFile(file, true)
-
-        LOG.warn("[imux诊断] openFile 返回，当前该文件的编辑器数=" +
-            FileEditorManager.getInstance(project).getEditors(file).size)
-    }
-
-    /**
-     * 临时诊断：定位「标签页打开后立刻关闭」的元凶。
-     * fileClosed 处带上 Throwable 以拿到**关闭方的调用栈**——这是唯一能直接指认元凶的证据。
-     * 问题定位后应整体移除。
-     */
-    private fun installDiagnostics() {
-        if (diagnosticsInstalled) return
-        diagnosticsInstalled = true
-        project.messageBus.connect(this).subscribe(
-            FileEditorManagerListener.FILE_EDITOR_MANAGER,
-            object : FileEditorManagerListener {
-                override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
-                    if (file is AgentTerminalVirtualFile) LOG.warn("[imux诊断] fileOpened ${file.name}")
-                }
-
-                override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
-                    if (file is AgentTerminalVirtualFile) {
-                        LOG.warn("[imux诊断] fileClosed ${file.name}", Throwable("关闭方调用栈"))
-                    }
-                }
-            },
-        )
     }
 
     private fun createView(command: List<String>, tabTitle: String): TerminalView =

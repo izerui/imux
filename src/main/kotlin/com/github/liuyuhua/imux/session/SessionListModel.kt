@@ -74,8 +74,17 @@ class SessionListModel(
         return drained
     }
 
-    fun refresh() {
-        val scanned = scan()
+    /** 同步扫描并应用。扫描是耗时操作，生产代码请走 [applyScan] + 后台线程。 */
+    fun refresh() = applyScan(scan())
+
+    /**
+     * 应用一份已经扫描好的结果。
+     *
+     * 与扫描分离是为了让扫描能在后台线程进行：本机实测 620 个 codex 会话文件，
+     * 一次扫描 60–250ms，放在 EDT 上每 3 秒来一次会有明显卡顿。
+     * 本方法只做内存里的合并与通知，必须在 EDT 调用。
+     */
+    fun applyScan(scanned: List<AgentSession>) {
         bindNewSessions(scanned)
         expirePendings()
         sessions = scanned

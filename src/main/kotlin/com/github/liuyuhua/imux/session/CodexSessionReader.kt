@@ -29,10 +29,18 @@ class CodexSessionReader(private val codexHome: Path) {
         }
     }
 
+    /**
+     * 归属判断只需要第一行。
+     *
+     * codex 的会话库是全局的（本机实测 620 个文件、574MB），而属于某个项目的
+     * 通常只有个位数。因此**先只读第一行判断 cwd**，不匹配立即返回；
+     * 只有匹配的文件才继续读若干行去取标题。
+     *
+     * 早期实现是先把前 50 行全读出来再过滤，等于为 600 多个无关文件各白读 49 行，
+     * 单次 scan 耗时 300–800ms。
+     */
     private fun readOne(file: Path, projectPath: String): AgentSession? = runCatching {
-        // 只扫前若干行找首条用户消息，避免为一个标题读完整个大文件
-        val lines = file.useLines { it.take(MAX_SCAN_LINES).toList() }
-        val meta = lines.firstOrNull() ?: return null
+        val meta = firstLine(file) ?: return null
         if (!meta.contains(META_MARKER)) return null
 
         val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
@@ -42,17 +50,21 @@ class CodexSessionReader(private val codexHome: Path) {
 
         AgentSession(
             id = id,
-            title = firstUserMessage(lines)?.let(::truncate) ?: "会话 ${id.take(8)}",
+            title = firstUserMessage(file)?.let(::truncate) ?: "会话 ${id.take(8)}",
             agentType = AgentType.CODEX,
             lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
         )
     }.onFailure { LOG.warn("跳过无法解析的 Codex 会话文件 $file", it) }.getOrNull()
 
-    private fun firstUserMessage(lines: List<String>): String? = lines
-        .asSequence()
-        .filter { it.contains(USER_ROLE_MARKER) }
-        .mapNotNull { JsonLineScanner.stringValue(it, "text") }
-        .firstOrNull()
+    private fun firstLine(file: Path): String? = file.useLines { it.firstOrNull() }
+
+    /** 只扫前若干行找首条用户消息，避免为一个标题读完整个大文件。 */
+    private fun firstUserMessage(file: Path): String? = file.useLines { lines ->
+        lines.take(MAX_SCAN_LINES)
+            .filter { it.contains(USER_ROLE_MARKER) }
+            .mapNotNull { JsonLineScanner.stringValue(it, "text") }
+            .firstOrNull()
+    }
         ?.replace('\n', ' ')
         ?.replace('\t', ' ')
 
