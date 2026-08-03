@@ -75,6 +75,22 @@ class CodexSessionReaderTest {
         assertTrue(reader().read("/Users/demo/proj").isEmpty())
     }
 
+    /**
+     * 复现线上故障：真实 codex 会话中，一条用户消息的 text 值长达 11860 字符，
+     * 用「交替分组 + 星号」的正则解析会按**被匹配值的长度**递归，直接 StackOverflowError。
+     * 注意决定深度的是值本身而非整行长度——22KB 的 session_meta 行反而不炸。
+     */
+    @Test
+    fun `超长的用户消息不会导致爆栈`() {
+        writeRollout("uuid-huge", "/Users/demo/proj", userMessage("很长的内容".repeat(20_000)))
+
+        val sessions = reader().read("/Users/demo/proj")
+
+        assertEquals(1, sessions.size)
+        assertEquals("uuid-huge", sessions[0].id)
+        assertTrue("标题应被截断", sessions[0].title.endsWith("…"))
+    }
+
     @Test
     fun `跨日期目录的会话都能读到`() {
         writeRollout("uuid-day3", "/Users/demo/proj")

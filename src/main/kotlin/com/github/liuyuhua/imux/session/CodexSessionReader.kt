@@ -35,10 +35,10 @@ class CodexSessionReader(private val codexHome: Path) {
         val meta = lines.firstOrNull() ?: return null
         if (!meta.contains(META_MARKER)) return null
 
-        val cwd = CWD_REGEX.find(meta)?.groupValues?.get(1) ?: return null
+        val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
         if (cwd != projectPath) return null
 
-        val id = ID_REGEX.find(meta)?.groupValues?.get(1) ?: return null
+        val id = JsonLineScanner.stringValue(meta, "id") ?: return null
 
         AgentSession(
             id = id,
@@ -51,10 +51,10 @@ class CodexSessionReader(private val codexHome: Path) {
     private fun firstUserMessage(lines: List<String>): String? = lines
         .asSequence()
         .filter { it.contains(USER_ROLE_MARKER) }
-        .mapNotNull { TEXT_REGEX.find(it)?.groupValues?.get(1) }
+        .mapNotNull { JsonLineScanner.stringValue(it, "text") }
         .firstOrNull()
-        ?.replace("\\n", " ")
-        ?.replace("\\\"", "\"")
+        ?.replace('\n', ' ')
+        ?.replace('\t', ' ')
 
     private fun truncate(text: String): String =
         if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
@@ -67,9 +67,5 @@ class CodexSessionReader(private val codexHome: Path) {
 
         const val META_MARKER = "\"session_meta\""
         const val USER_ROLE_MARKER = "\"role\":\"user\""
-
-        val CWD_REGEX = """"cwd"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
-        val ID_REGEX = """"id"\s*:\s*"([^"]+)"""".toRegex()
-        val TEXT_REGEX = """"text"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
     }
 }

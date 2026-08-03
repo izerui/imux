@@ -92,6 +92,16 @@ class ClaudeSessionReaderTest {
         assertEquals(1, reader().read("/Users/demo/proj").size)
     }
 
+    /** 与 codex 侧同源的缺陷类：被匹配的值过长时正则会递归爆栈。 */
+    @Test
+    fun `超长的标题值不会导致爆栈`() {
+        val huge = "标题".repeat(20_000)
+        File(projectDir(), "ffff-6666.jsonl")
+            .writeText("""{"type":"ai-title","aiTitle":"$huge","sessionId":"ffff-6666"}""")
+
+        assertEquals(huge, reader().read("/Users/demo/proj")[0].title)
+    }
+
     @Test
     fun `标题中的转义引号被还原`() {
         File(projectDir(), "eeee-5555.jsonl")

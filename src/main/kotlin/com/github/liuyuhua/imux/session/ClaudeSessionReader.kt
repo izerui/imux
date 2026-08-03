@@ -46,7 +46,7 @@ class ClaudeSessionReader(private val claudeHome: Path) {
     /**
      * 取最后一条 ai-title 记录。
      *
-     * 用正则逐行扫描而非 JSON 反序列化：会话文件单行可达数 MB（含完整工具输出），
+     * 逐行扫描而非 JSON 反序列化：会话文件单行可达数 MB（含完整工具输出），
      * 只为取一个标题就解析整行不划算，而 ai-title 记录本身结构极简、可靠。
      */
     private fun extractTitle(file: Path): String? {
@@ -54,7 +54,7 @@ class ClaudeSessionReader(private val claudeHome: Path) {
         file.useLines { lines ->
             for (line in lines) {
                 if (!line.contains(TITLE_MARKER)) continue
-                TITLE_REGEX.find(line)?.groupValues?.get(1)?.let { title = unescapeJson(it) }
+                JsonLineScanner.stringValue(line, "aiTitle")?.let { title = it }
             }
         }
         return title
@@ -62,14 +62,8 @@ class ClaudeSessionReader(private val claudeHome: Path) {
 
     private fun fallbackTitle(id: String) = "会话 ${id.take(8)}"
 
-    private fun unescapeJson(raw: String) = raw
-        .replace("\\\"", "\"")
-        .replace("\\n", " ")
-        .replace("\\\\", "\\")
-
     private companion object {
         val LOG = logger<ClaudeSessionReader>()
         const val TITLE_MARKER = "\"ai-title\""
-        val TITLE_REGEX = """"aiTitle"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
     }
 }
