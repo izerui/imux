@@ -17,5 +17,13 @@
             anchor="left"
             icon="/icons/agent.svg"
             factoryClass="com.github.liuyuhua.imux.toolwindow.AgentToolWindowFactory"/>
+
+        <!--
+          必须注册：否则没有任何 provider 接受 AgentTerminalVirtualFile，
+          FileEditorManagerImpl.openFileImpl 会因「该文件无可用编辑器」当场调用
+          closeFile，表现为标签页打开后一闪而过。
+        -->
+        <fileEditorProvider
+            implementation="com.github.liuyuhua.imux.terminal.AgentTerminalFileEditorProvider"/>
     </extensions>
 </idea-plugin>
