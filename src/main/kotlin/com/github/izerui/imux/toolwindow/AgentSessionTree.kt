@@ -39,6 +39,14 @@ internal fun JTree.pathForRowAt(y: Int): TreePath? {
     return path.takeIf { y >= bounds.y && y < bounds.y + bounds.height }
 }
 
+/**
+ * 要让第 [index] 条可见，分页上限至少得是多少。
+ *
+ * 只增不减：用户手动点过「显示更多」把上限撑大了，定位一条靠前的会话不该把它缩回去。
+ */
+internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
+    if (index < current) current else ((index / pageSize) + 1) * pageSize
+
 /** 未读会话的前置标记。 */
 private const val UNREAD_MARK = "● "
 
@@ -228,15 +236,60 @@ class AgentSessionTree(
 
     private fun restoreSelection(sessionId: String?) {
         if (sessionId == null) return
-        groupNodes().forEach { group ->
-            group.children().toList().filterIsInstance<DefaultMutableTreeNode>().forEach { node ->
-                if ((node.userObject as? NodeData.Session)?.id == sessionId) {
-                    tree.selectionPath = TreePath(node.path)
-                    return
+        findNode(sessionId)?.let { tree.selectionPath = TreePath(it.path) }
+    }
+
+    /**
+     * 在列表中选中 [key] 对应的会话，必要时展开分组、加载更多。
+     *
+     * 供「切到某个终端标签页」时反向定位，与点列表打开标签页构成双向联动。
+     * 刻意不抢焦点、不打开工具窗口：切标签页多半是为了回终端里敲字，
+     * 光标被列表偷走就成了打扰；工具窗口没开时静默把选中态备好即可。
+     *
+     * [key] 可能是会话真实 id，也可能是新建会话尚未落盘时的合成 key——
+     * 标签页就是以后者登记的，两种都要能定位。
+     */
+    fun revealSession(key: String) {
+        val located = locate(key) ?: return
+        val (agentType, index) = located
+
+        val raised = limitCovering(index, limits.getValue(agentType), PAGE_SIZE)
+        if (raised != limits.getValue(agentType)) {
+            limits[agentType] = raised
+            reload()
+        }
+
+        val node = findNode(key) ?: return
+        val path = TreePath(node.path)
+        // 分组折叠时 setSelectionPath 不会自己展开，选中会看不见
+        node.parent?.let { tree.expandPath(TreePath((it as DefaultMutableTreeNode).path)) }
+        tree.selectionPath = path
+        tree.scrollPathToVisible(path)
+    }
+
+    /** 找出 [key] 属于哪个分组、在该分组条目里排第几。找不到返回 null。 */
+    private fun locate(key: String): Pair<AgentType, Int>? {
+        AgentType.entries.forEach { agentType ->
+            val index = model.entries(agentType).indexOfFirst { entry ->
+                when (entry) {
+                    is ListEntry.Existing -> entry.session.id == key
+                    is ListEntry.Pending -> entry.pending.key == key
                 }
             }
+            if (index >= 0) return agentType to index
         }
+        return null
     }
+
+    private fun findNode(key: String): DefaultMutableTreeNode? = groupNodes()
+        .flatMap { it.children().toList().filterIsInstance<DefaultMutableTreeNode>() }
+        .firstOrNull { node ->
+            when (val data = node.userObject) {
+                is NodeData.Session -> data.id == key
+                is NodeData.PendingSession -> data.key == key
+                else -> false
+            }
+        }
 
     /**
      * 把刚发生的绑定告知终端宿主：新建会话的终端原本记在合成 key 下，

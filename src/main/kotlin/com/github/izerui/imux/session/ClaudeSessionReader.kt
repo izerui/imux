@@ -52,8 +52,13 @@ class ClaudeSessionReader(private val claudeHome: Path) {
                 ?: firstUserMessage(file)
                 ?: fallbackTitle(id),
             agentType = AgentType.CLAUDE,
-            // 「最后一次说话」比文件 mtime 贴切：resume 会写文件却没有新对话
-            lastActiveAt = historyEntry?.lastPromptAtMillis?.let(java.time.Instant::ofEpochMilli)
+            // 优先用会话文件里最后一条记录自带的时刻——它才是真正的「最后一次说话」。
+            // 不能靠 mtime：resume 会往尾部追加 mode / permission-mode 两条无时间戳的记录，
+            // 文件是变了，对话却没有，会话因此假装成「刚刚」。
+            // history.jsonl 作为次选：它只收录交互式 CLI 里敲的 prompt，
+            // 相当一部分会话（如带 ai-title 的那些）在里面一条记录都没有，兜不住。
+            lastActiveAt = lastTimestampOf(file)
+                ?: historyEntry?.lastPromptAtMillis?.let(java.time.Instant::ofEpochMilli)
                 ?: Files.getLastModifiedTime(file).toInstant(),
             createdAt = creationTimeOf(file),
             filePath = file,

@@ -102,13 +102,16 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             },
         )
 
-        // 从别处切回该会话的标签页时也应消除未读，不能只靠点击列表
+        // 从别处切回该会话的标签页时也应消除未读，不能只靠点击列表；
+        // 同时把列表选中挪过去，与「点列表打开标签页」构成双向联动。
+        // 切到非终端文件时不动列表：那与会话无关，清掉选中反而丢了上下文。
         project.messageBus.connect(toolWindow.disposable).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
                     val file = event.newFile as? AgentTerminalVirtualFile ?: return
                     sessionTree.clearUnread(file.sessionKey)
+                    sessionTree.revealSession(file.sessionKey)
                 }
             },
         )
