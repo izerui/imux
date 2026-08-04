@@ -37,9 +37,10 @@ class ClaudeSessionReader(private val claudeHome: Path) {
         val id = file.fileName.toString().removeSuffix(".jsonl")
         AgentSession(
             id = id,
-            title = extractTitle(file) ?: fallbackTitle(id),
+            title = extractTitle(file) ?: firstUserMessage(file) ?: fallbackTitle(id),
             agentType = AgentType.CLAUDE,
             lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
+            createdAt = creationTimeOf(file),
             filePath = file,
         )
     }.onFailure { LOG.warn("跳过无法解析的 Claude 会话文件 $file", it) }.getOrNull()
@@ -63,8 +64,28 @@ class ClaudeSessionReader(private val claudeHome: Path) {
 
     private fun fallbackTitle(id: String) = "会话 ${id.take(8)}"
 
+    /**
+     * 没有 ai-title 时的回退：取首条真实用户消息。
+     *
+     * 实测并非每个会话都有 ai-title（同一项目下 6 个会话有 3 个没有，且与轮数无关），
+     * 退到 id 短码毫无信息量。codex 侧本就是这么回退的，两边保持一致。
+     *
+     * 跳过工具结果回填，以及 <ide_opened_file> 之类的尖括号包裹的系统注入内容。
+     */
+    private fun firstUserMessage(file: Path): String? = file.useLines { lines ->
+        lines.take(MAX_SCAN_LINES)
+            .filter { it.contains(USER_RECORD) && !it.contains(TOOL_RESULT) }
+            .mapNotNull { JsonLineScanner.stringValue(it, "content") }
+            .map { it.replace('\n', ' ').trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("<") }
+    }?.let { if (it.length <= TITLE_MAX) it else it.take(TITLE_MAX) + "…" }
+
     private companion object {
         val LOG = logger<ClaudeSessionReader>()
         const val TITLE_MARKER = "\"ai-title\""
+        const val USER_RECORD = "\"type\":\"user\""
+        const val TOOL_RESULT = "tool_result"
+        const val MAX_SCAN_LINES = 50
+        const val TITLE_MAX = 60
     }
 }

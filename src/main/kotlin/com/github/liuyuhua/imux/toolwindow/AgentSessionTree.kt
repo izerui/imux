@@ -20,6 +20,8 @@ import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
+import java.time.Instant
+import java.time.ZoneId
 import javax.swing.tree.TreeSelectionModel
 
 private const val PAGE_SIZE = 50
@@ -44,6 +46,8 @@ private sealed interface NodeData {
         val agentType: AgentType,
         val id: String,
         val title: String,
+        /** 已格式化的「多久以前」，渲染时灰色显示在标题右侧。 */
+        val relativeTime: String,
     ) : NodeData {
         override fun toString(): String = title
     }
@@ -90,6 +94,10 @@ class AgentSessionTree(
                     append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                 } else {
                     append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                }
+
+                if (data is NodeData.Session) {
+                    append("  ${data.relativeTime}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
             }
         }
@@ -176,6 +184,11 @@ class AgentSessionTree(
                     agentType,
                     entry.session.id,
                     entry.session.title,
+                    relativeTime = RelativeTime.format(
+                        entry.session.lastActiveAt,
+                        Instant.now(),
+                        ZoneId.systemDefault(),
+                    ),
                 )
 
                 is ListEntry.Pending -> NodeData.PendingSession(agentType, entry.pending.key)

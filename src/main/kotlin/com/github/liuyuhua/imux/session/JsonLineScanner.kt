@@ -82,3 +82,18 @@ internal object JsonLineScanner {
         return null
     }
 }
+
+/**
+ * 读取文件的创建时间。
+ *
+ * macOS 上 creationTime 可靠（实测与会话首条记录的时间戳吻合）。
+ * 某些文件系统不记录创建时间、返回纪元 0，此时退回最后修改时间。
+ */
+internal fun creationTimeOf(file: java.nio.file.Path): java.time.Instant {
+    val attrs = java.nio.file.Files.readAttributes(
+        file,
+        java.nio.file.attribute.BasicFileAttributes::class.java,
+    )
+    val created = attrs.creationTime().toInstant()
+    return if (created.epochSecond <= 0) attrs.lastModifiedTime().toInstant() else created
+}

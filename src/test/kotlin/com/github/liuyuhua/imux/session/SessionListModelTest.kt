@@ -19,7 +19,7 @@ class SessionListModelTest {
     private var scanResult: List<AgentSession> = emptyList()
 
     private fun session(id: String, type: AgentType, at: Instant) =
-        AgentSession(id, "标题-$id", type, at, java.nio.file.Paths.get("/tmp/$id.jsonl"))
+        AgentSession(id, "标题-$id", type, at, at, java.nio.file.Paths.get("/tmp/$id.jsonl"))
 
     private fun model(clock: FakeClock) =
         SessionListModel(scan = { scanResult }, clock = { clock.now })

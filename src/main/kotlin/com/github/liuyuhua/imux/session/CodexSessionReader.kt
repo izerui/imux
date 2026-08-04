@@ -53,6 +53,7 @@ class CodexSessionReader(private val codexHome: Path) {
             title = firstUserMessage(file)?.let(::truncate) ?: "会话 ${id.take(8)}",
             agentType = AgentType.CODEX,
             lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
+            createdAt = creationTimeOf(file),
             filePath = file,
         )
     }.onFailure { LOG.warn("跳过无法解析的 Codex 会话文件 $file", it) }.getOrNull()

@@ -56,12 +56,37 @@ class ClaudeSessionReaderTest {
         assertEquals(AgentType.CLAUDE, sessions[0].agentType)
     }
 
+    /**
+     * 实测并非每个会话都有 ai-title（同项目 6 个会话有 3 个没有，且与轮数无关），
+     * 退到 id 短码毫无信息量，因此改为退到首条用户消息——与 codex 侧一致。
+     */
     @Test
-    fun `没有 ai-title 记录时回退为会话 id 短码`() {
+    fun `没有 ai-title 时回退为首条用户消息`() {
         File(projectDir(), "bbbb-2222.jsonl")
-            .writeText("""{"type":"user","message":{"content":"你好"}}""")
+            .writeText("""{"type":"user","message":{"content":"帮我看下这个报错"}}""")
 
-        assertEquals("会话 bbbb-222", reader().read("/Users/demo/proj")[0].title)
+        assertEquals("帮我看下这个报错", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `回退时跳过工具结果与系统注入内容`() {
+        File(projectDir(), "bbbb-3333.jsonl").writeText(
+            """
+            {"type":"user","message":{"content":"<ide_opened_file>打开了某文件</ide_opened_file>"}}
+            {"type":"user","message":{"content":[{"type":"tool_result","content":"工具输出"}]}}
+            {"type":"user","message":{"content":"这才是我说的话"}}
+            """.trimIndent(),
+        )
+
+        assertEquals("这才是我说的话", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `连用户消息都没有时才退到会话 id 短码`() {
+        File(projectDir(), "bbbb-4444.jsonl")
+            .writeText("""{"type":"system","subtype":"init"}""")
+
+        assertEquals("会话 bbbb-444", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test
