@@ -13,7 +13,7 @@ class AgentTerminalFileEditorProvider : FileEditorProvider, DumbAware {
         file is AgentTerminalVirtualFile
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor =
-        AgentTerminalFileEditor(file as AgentTerminalVirtualFile)
+        AgentTerminalFileEditor(project, file as AgentTerminalVirtualFile)
 
     override fun getEditorTypeId(): String = "imux-terminal"
 

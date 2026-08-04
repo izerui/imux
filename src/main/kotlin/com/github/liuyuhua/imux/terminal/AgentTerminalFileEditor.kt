@@ -1,23 +1,20 @@
 package com.github.liuyuhua.imux.terminal
 
 import com.intellij.openapi.fileEditor.FileEditor
+import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 
 /**
- * 把终端 view 的组件挂到 editor tab 上。
- *
- * 关键：dispose 时**不**取消 view 的 CoroutineScope —— view 归 TerminalHost 所有。
- * 关闭标签页只是取消挂载，进程继续运行，再次点击会话可重新挂回。
- *
- * 这正是不复用 JetBrains 的 TerminalViewFileEditor 的原因：
- * 它的 dispose() 会执行 cancel(terminalView.coroutineScope)，关一次标签页会话即中断。
+ * 把终端 view 的组件挂到 editor tab 上，并在标签页关闭时结束会话。
  */
 class AgentTerminalFileEditor(
+    private val project: Project,
     private val virtualFile: AgentTerminalVirtualFile,
 ) : UserDataHolderBase(), FileEditor {
 
@@ -43,8 +40,10 @@ class AgentTerminalFileEditor(
     override fun removePropertyChangeListener(listener: PropertyChangeListener) = Unit
 
     override fun dispose() {
-        // 刻意留空：view 的 CoroutineScope 由 TerminalHost 负责取消。
-        // 切勿在此调用 cancel(virtualFile.terminalView.coroutineScope)，
-        // 那样会复刻 TerminalViewFileEditor 的行为，关标签页即杀进程。
+        // 拖动标签页、分屏等操作会先销毁再重建编辑器，平台用这个标记区分。
+        // 漏判会导致拖一下标签页就把会话杀了。
+        if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
+
+        TerminalHost.getInstance(project).closeSession(virtualFile.sessionKey)
     }
 }

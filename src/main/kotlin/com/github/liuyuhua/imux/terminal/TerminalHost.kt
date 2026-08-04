@@ -16,8 +16,11 @@ import kotlinx.coroutines.cancel
 /**
  * 拥有所有活着的终端 view，按 key 索引。
  *
- * 所有权规则：view 归本服务所有。关闭 editor tab 不取消它的 CoroutineScope，
- * 因此关标签页不会中断会话；再次打开时把同一个 view 挂回新的 tab。
+ * 所有权规则：view 归本服务所有，但**关闭 editor tab 即结束会话**。
+ *
+ * 早期设计是「关标签页不杀进程」，为的是再点回来终端内容还在。实际用下来
+ * 进程会不断累积——半天攒下六七个存活的 CLI，用户却没有收拾它们的入口。
+ * 因此改为关标签页即终止；要接着聊仍可 resume，只是需要重新加载历史。
  */
 @Service(Service.Level.PROJECT)
 class TerminalHost(private val project: Project) : Disposable {
@@ -45,6 +48,19 @@ class TerminalHost(private val project: Project) : Disposable {
      */
     fun openNew(agentType: AgentType, key: String, tabTitle: String) {
         open(key, newCommand(agentType), tabTitle)
+    }
+
+    /**
+     * 结束会话：终止进程并清理记账。
+     *
+     * 由 [AgentTerminalFileEditor] 在标签页真正关闭时调用。
+     * 「关标签页 = 结束会话」是明确的产品决策：不这么做，进程会不断累积，
+     * 用户半天就能攒下六七个隐形的 CLI 却无从收拾。
+     */
+    fun closeSession(key: String) {
+        turnWatcher.unwatch(key)
+        files.remove(key)
+        views.remove(key)?.coroutineScope?.cancel()
     }
 
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */

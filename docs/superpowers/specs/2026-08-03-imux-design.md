@@ -150,15 +150,19 @@ AgentSession {
 - Project 级服务，按 session id 索引持有活着的 `TerminalView`（Reworked 引擎）
 - 自定义 `FileEditorProvider` + `LightVirtualFile`，FileEditor 只是 view 的**挂载点**
 
-**所有权规则（关键）**：TerminalView 归 `TerminalHost` 所有，**不归 FileEditor 所有**。关闭 editor tab 只取消挂载，进程继续运行；重新点击列表把同一个 view 挂回去。
+**所有权规则（2026-08-04 修订）**：TerminalView 归 `TerminalHost` 所有，**关闭 editor tab 即结束会话**。
 
-这条规则决定了不能复用 JetBrains 的 `TerminalViewFileEditor`——它的 `dispose()` 会 `cancel(terminalView.coroutineScope)`，关一次 tab 会话即中断。我们自建 FileEditor 并让 `dispose()` 留空。
+初版规则是「关标签页不杀进程」，为的是再点回来终端内容还在。实际使用推翻了它：进程不断累积，半天就有 6 个存活的 CLI（实测），而界面上没有任何收拾它们的入口。改为关标签页即终止；要接着聊仍可 resume，只是需要重新加载历史。
+
+实现上仍自建 FileEditor 而非复用 `TerminalViewFileEditor`，因为需要在 `dispose()` 里判断 `FileEditorManagerKeys.CLOSING_TO_REOPEN`——拖动标签页、分屏会先销毁再重建编辑器，漏判会导致拖一下就把会话杀了。
 
 ## 6. 关键流程
 
 ### 6.1 点击已在运行的会话
 
 切换到该 session id 对应的 editor tab。不重开、不重启进程。
+
+若该会话正作为后台 agent 运行（`~/.claude/sessions/` 下的运行态文件中 `kind=bg` 且 `status!=idle`），则不启动 resume，改为提示用户——CLI 会拒绝这种恢复并报 `currently running as a background agent`。
 
 ### 6.2 点击未运行的历史会话
 
