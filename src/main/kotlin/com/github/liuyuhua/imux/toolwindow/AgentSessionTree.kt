@@ -6,6 +6,7 @@ import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.intellij.openapi.project.Project
 import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
 import java.awt.event.KeyEvent
@@ -21,6 +22,13 @@ import javax.swing.tree.TreePath
 import javax.swing.tree.TreeSelectionModel
 
 private const val PAGE_SIZE = 50
+
+/** 未读会话的前置标记。 */
+private const val UNREAD_MARK = "● "
+
+/** 用 IDE 的强调蓝，深浅色主题各给一个值。 */
+private val UNREAD_MARK_ATTRIBUTES =
+    SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, JBColor(0x3592C4, 0x548AF7))
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
@@ -73,12 +81,15 @@ class AgentSessionTree(
                 hasFocus: Boolean,
             ) {
                 val data = (value as? DefaultMutableTreeNode)?.userObject
-                val isUnread = data is NodeData.Session && data.id in unread
-                append(
-                    data?.toString() ?: "",
-                    if (isUnread) SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
-                    else SimpleTextAttributes.REGULAR_ATTRIBUTES,
-                )
+                val text = data?.toString() ?: ""
+
+                if (data is NodeData.Session && data.id in unread) {
+                    // 前置圆点比单纯加粗显眼得多，扫一眼列表就能定位
+                    append(UNREAD_MARK, UNREAD_MARK_ATTRIBUTES)
+                    append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                } else {
+                    append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                }
             }
         }
     }
