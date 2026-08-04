@@ -49,6 +49,10 @@ kotlin {
 }
 
 intellijPlatform {
+    // sqlite-jdbc 会向 JVM 全局 DriverManager 注册驱动，旧插件 ClassLoader
+    // 无法可靠热卸载。开发时明确重启沙箱，避免 prepareSandbox 触发失败的动态重载。
+    autoReload = false
+
     // 关闭字节码插桩：它需要下载 com.jetbrains.intellij.java:java-compiler-ant-tasks，
     // 而该仓库在本机网络下不可达。本插件不使用 GUI Designer 的 .form，
     // 也不依赖平台的 @NotNull 运行时断言插桩，关掉无影响。

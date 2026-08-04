@@ -26,30 +26,23 @@ IntelliJ IDEA 插件：左侧工具窗口列出当前项目的 Claude Code / Cod
 ./gradlew runIde        # 起一个带本插件的 IDE 实例
 ```
 
-### 开发时不要反复重启沙箱
+### 开发时重启沙箱加载改动
 
-改一行代码就 `runIde` 一次是白等启动时间。**沙箱 IDE 起一次就别关**，改完代码重新打包一下，插件会自动重载。用 `dev.sh`，不用记 Gradle 任务名：
+插件包含 `sqlite-jdbc`。该驱动会向 JVM 全局 `DriverManager` 注册实例，使旧插件
+ClassLoader 无法可靠热卸载；IDEA 会提示 `Failed to unload modified plugins: imux`。
+因此构建配置已关闭 `autoReload`，不再支持 `prepareSandbox` 热更新。
+
+用 `dev.sh` 启动沙箱：
 
 ```bash
-# 终端 A：起了就别动，Ctrl+C 会关掉沙箱
 ./dev.sh ide
-
-# 终端 B：每次改完代码跑一次
-./dev.sh reload
 ```
 
-脚本会自己 `cd` 到项目根，在哪个目录调用都行。沙箱 IDE 里可以 `File → Open` 打开任何真实项目，拿真会话干活。
+代码修改后，在运行 `runIde` 的终端按 `Ctrl+C` 停止沙箱，再重新执行
+`./dev.sh ide`。脚本会自己 `cd` 到项目根，在哪个目录调用都可以。
 
-`reload` 底下是 `./gradlew prepareSandbox` 而不是 `buildPlugin`：自动重载监视的是沙箱的 plugins 目录，而 `prepareSandbox` 正是往那儿写文件的任务，`buildPlugin` 还要多打一个 zip。
-
-**为什么能自动重载**——两个条件都满足：
-
-- `intellij-platform-gradle-plugin` 的 `autoReload` **默认就是 `true`**（见 2.18.1 源码 `IntelliJPlatformExtension.autoReload` 的 KDoc）。它给沙箱 IDE 加上 `-Didea.auto.reload.plugins=true`，平台侧由 `DynamicPluginVfsListener` 监听插件目录的文件变化并重载。
-- 本插件是**纯动态插件**：`plugin.xml` 注册的三个扩展点 `toolWindow`、`fileEditorProvider`、`notificationGroup` 在平台里全部声明为 `dynamic="true"`，`TerminalHost` 用的是 `@Service` 轻量服务而非老式 component。任何一条不满足，平台都会要求重启而不是热载。
-
-**注意热重载会杀掉所有正在跑的会话**：`TerminalHost.dispose()` 会 cancel 所有终端的 CoroutineScope，插件一卸载，CLI 进程就都没了。所以别在正式版 IDEA 上装这个插件搞热更新——你真在用的会话会被自己的每一次编译干掉。
-
-> 待验证：`runIde` 长驻期间，同目录并发跑 `prepareSandbox` 是否会卡在 Gradle 的项目锁上。若确实阻塞，改用 IDE 内的 Gradle 面板执行，或等一次 `runIde` 结束再打包。
+沙箱 IDEA 中仍可通过 `File → Open` 打开真实项目进行实机验证。重启会终止沙箱内
+由 imux 启动的 Claude Code / Codex 终端，重启前应确认没有需要保留的运行中会话。
 
 ### 如果你在需要代理的网络环境下
 
