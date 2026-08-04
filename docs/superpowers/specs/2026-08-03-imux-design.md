@@ -33,7 +33,7 @@
 ~/.claude/projects/<cwd 路径将 / 替换为 ->/<session-uuid>.jsonl
 ```
 
-例：`/Users/liuyuhua/github/maas-api` → `~/.claude/projects/-Users-liuyuhua-github-maas-api/`
+例：`/Users/izerui/github/maas-api` → `~/.claude/projects/-Users-izerui-github-maas-api/`
 
 - 目录名是 cwd 的确定性编码，因此「本项目的全部 claude 会话」等价于列出单个目录，无需读取文件内容
 - 文件名即 session UUID

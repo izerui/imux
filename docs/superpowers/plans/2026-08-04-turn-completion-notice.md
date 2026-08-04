@@ -15,14 +15,14 @@
 - **Codex 三个信号都要处理**：`task_started`（进行中）、`task_complete`（完成并提醒）、`turn_aborted`（回到空闲但不提醒）。
 - **只在「进行中 → 空闲」的跃迁时提醒**，避免历史会话全被标满。
 - 解析失败一律降级为「无跃迁」，不抛异常、不影响列表。
-- 根包名 `com.github.liuyuhua.imux`，新代码放 `turn` 子包。
+- 根包名 `com.github.izerui.imux`，新代码放 `turn` 子包。
 
 ---
 
 ## 文件结构
 
 ```
-src/main/kotlin/com/github/liuyuhua/imux/
+src/main/kotlin/com/github/izerui/imux/
   turn/TurnSignalParser.kt     纯函数：新增行 -> 状态跃迁（本功能的核心，全部规则集中于此）
   turn/TurnWatcher.kt          偏移与状态的持有者，增量读文件，产出完成事件
   turn/TurnNotifier.kt         发 IDE 通知
@@ -31,7 +31,7 @@ src/main/kotlin/com/github/liuyuhua/imux/
   toolwindow/AgentSessionTree.kt      未读加粗渲染
   toolwindow/AgentToolWindowFactory.kt 接线
 
-src/test/kotlin/com/github/liuyuhua/imux/
+src/test/kotlin/com/github/izerui/imux/
   turn/TurnSignalParserTest.kt
   turn/TurnWatcherTest.kt
 ```
@@ -43,8 +43,8 @@ src/test/kotlin/com/github/liuyuhua/imux/
 ## Task 1: 信号解析（纯函数）
 
 **Files:**
-- Create: `src/main/kotlin/com/github/liuyuhua/imux/turn/TurnSignalParser.kt`
-- Test: `src/test/kotlin/com/github/liuyuhua/imux/turn/TurnSignalParserTest.kt`
+- Create: `src/main/kotlin/com/github/izerui/imux/turn/TurnSignalParser.kt`
+- Test: `src/test/kotlin/com/github/izerui/imux/turn/TurnSignalParserTest.kt`
 
 **Interfaces:**
 - Consumes: `AgentType`（既有）、`JsonLineScanner`（既有，internal）
@@ -56,12 +56,12 @@ src/test/kotlin/com/github/liuyuhua/imux/
 
 - [ ] **Step 1: 写失败测试**
 
-`src/test/kotlin/com/github/liuyuhua/imux/turn/TurnSignalParserTest.kt`：
+`src/test/kotlin/com/github/izerui/imux/turn/TurnSignalParserTest.kt`：
 
 ```kotlin
-package com.github.liuyuhua.imux.turn
+package com.github.izerui.imux.turn
 
-import com.github.liuyuhua.imux.model.AgentType
+import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -197,13 +197,13 @@ class TurnSignalParserTest {
 
 - [ ] **Step 3: 实现**
 
-`src/main/kotlin/com/github/liuyuhua/imux/turn/TurnSignalParser.kt`：
+`src/main/kotlin/com/github/izerui/imux/turn/TurnSignalParser.kt`：
 
 ```kotlin
-package com.github.liuyuhua.imux.turn
+package com.github.izerui.imux.turn
 
-import com.github.liuyuhua.imux.model.AgentType
-import com.github.liuyuhua.imux.session.JsonLineScanner
+import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.JsonLineScanner
 
 enum class TurnState { WORKING, IDLE }
 
@@ -311,9 +311,9 @@ git add -A && git commit -m "feat: 轮次完成信号解析"
 ## Task 2: 会话带上文件路径
 
 **Files:**
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/model/AgentSession.kt`
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/session/ClaudeSessionReader.kt`
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/session/CodexSessionReader.kt`
+- Modify: `src/main/kotlin/com/github/izerui/imux/model/AgentSession.kt`
+- Modify: `src/main/kotlin/com/github/izerui/imux/session/ClaudeSessionReader.kt`
+- Modify: `src/main/kotlin/com/github/izerui/imux/session/CodexSessionReader.kt`
 - Test: 既有的 `ClaudeSessionReaderTest` / `CodexSessionReaderTest` 增加断言
 
 **Interfaces:**
@@ -359,10 +359,10 @@ git add -A && git commit -m "feat: 轮次完成信号解析"
 
 - [ ] **Step 3: 修改模型**
 
-`src/main/kotlin/com/github/liuyuhua/imux/model/AgentSession.kt`：
+`src/main/kotlin/com/github/izerui/imux/model/AgentSession.kt`：
 
 ```kotlin
-package com.github.liuyuhua.imux.model
+package com.github.izerui.imux.model
 
 import java.nio.file.Path
 import java.time.Instant
@@ -433,8 +433,8 @@ git add -A && git commit -m "feat: 会话模型带上文件路径"
 ## Task 3: 增量监控
 
 **Files:**
-- Create: `src/main/kotlin/com/github/liuyuhua/imux/turn/TurnWatcher.kt`
-- Test: `src/test/kotlin/com/github/liuyuhua/imux/turn/TurnWatcherTest.kt`
+- Create: `src/main/kotlin/com/github/izerui/imux/turn/TurnWatcher.kt`
+- Test: `src/test/kotlin/com/github/izerui/imux/turn/TurnWatcherTest.kt`
 
 **Interfaces:**
 - Consumes: `TurnSignalParser`、`TurnState`、`TurnEvent`、`AgentType`
@@ -445,12 +445,12 @@ git add -A && git commit -m "feat: 会话模型带上文件路径"
 
 - [ ] **Step 1: 写失败测试**
 
-`src/test/kotlin/com/github/liuyuhua/imux/turn/TurnWatcherTest.kt`：
+`src/test/kotlin/com/github/izerui/imux/turn/TurnWatcherTest.kt`：
 
 ```kotlin
-package com.github.liuyuhua.imux.turn
+package com.github.izerui.imux.turn
 
-import com.github.liuyuhua.imux.model.AgentType
+import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -580,12 +580,12 @@ class TurnWatcherTest {
 
 - [ ] **Step 3: 实现**
 
-`src/main/kotlin/com/github/liuyuhua/imux/turn/TurnWatcher.kt`：
+`src/main/kotlin/com/github/izerui/imux/turn/TurnWatcher.kt`：
 
 ```kotlin
-package com.github.liuyuhua.imux.turn
+package com.github.izerui.imux.turn
 
-import com.github.liuyuhua.imux.model.AgentType
+import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
 import java.nio.file.Files
 import java.nio.file.Path
@@ -693,13 +693,13 @@ git add -A && git commit -m "feat: 会话轮次的增量监控"
 ## Task 4: 接线、通知与列表标记
 
 **Files:**
-- Create: `src/main/kotlin/com/github/liuyuhua/imux/turn/TurnNotifier.kt`
+- Create: `src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt`
 - Modify: `src/main/resources/META-INF/plugin.xml`
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/terminal/TerminalHost.kt`
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/terminal/AgentTerminalVirtualFile.kt`（`sessionKey` 改为 `var`）
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/session/SessionListModel.kt`（新增 `sessionOf`）
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/toolwindow/AgentSessionTree.kt`
-- Modify: `src/main/kotlin/com/github/liuyuhua/imux/toolwindow/AgentToolWindowFactory.kt`
+- Modify: `src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt`
+- Modify: `src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalVirtualFile.kt`（`sessionKey` 改为 `var`）
+- Modify: `src/main/kotlin/com/github/izerui/imux/session/SessionListModel.kt`（新增 `sessionOf`）
+- Modify: `src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt`
+- Modify: `src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt`
 
 **Interfaces:**
 - Consumes: `TurnWatcher`（Task 3）
@@ -719,10 +719,10 @@ git add -A && git commit -m "feat: 会话轮次的增量监控"
 
 - [ ] **Step 2: 写通知器**
 
-`src/main/kotlin/com/github/liuyuhua/imux/turn/TurnNotifier.kt`：
+`src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt`：
 
 ```kotlin
-package com.github.liuyuhua.imux.turn
+package com.github.izerui.imux.turn
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -918,7 +918,7 @@ import javax.swing.JTree
 需补导入：
 
 ```kotlin
-import com.github.liuyuhua.imux.terminal.AgentTerminalVirtualFile
+import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 ```

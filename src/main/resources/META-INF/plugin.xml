@@ -1,7 +1,7 @@
 <idea-plugin>
-    <id>com.github.liuyuhua.imux</id>
+    <id>com.github.izerui.imux</id>
     <name>imux</name>
-    <vendor>liuyuhua</vendor>
+    <vendor>izerui</vendor>
 
     <description><![CDATA[
       在左侧工具窗口中列出当前项目的 Claude Code 与 Codex 会话，
@@ -16,7 +16,7 @@
             id="imux"
             anchor="left"
             icon="/icons/agent.svg"
-            factoryClass="com.github.liuyuhua.imux.toolwindow.AgentToolWindowFactory"/>
+            factoryClass="com.github.izerui.imux.toolwindow.AgentToolWindowFactory"/>
 
         <!--
           必须注册：否则没有任何 provider 接受 AgentTerminalVirtualFile，
@@ -24,7 +24,7 @@
           closeFile，表现为标签页打开后一闪而过。
         -->
         <fileEditorProvider
-            implementation="com.github.liuyuhua.imux.terminal.AgentTerminalFileEditorProvider"/>
+            implementation="com.github.izerui.imux.terminal.AgentTerminalFileEditorProvider"/>
 
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
