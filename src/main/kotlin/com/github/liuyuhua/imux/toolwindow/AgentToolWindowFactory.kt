@@ -68,10 +68,18 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         val runtimeIndex = ClaudeRuntimeIndex(Paths.get(System.getProperty("user.home")).resolve(".claude"))
         val statusTracker = RuntimeStatusTracker()
 
-        startWatching(toolWindow, projectPath) {
-            refresh()
-            checkCompletedTurns(project, model, sessionTree, runtimeIndex, statusTracker)
-        }
+        val checkRuntime = { checkCompletedTurns(project, model, sessionTree, runtimeIndex, statusTracker) }
+
+        // 会话被结束（关标签页）时立即刷新，不必等下一轮轮询——
+        // 否则标记要过几秒才消失，手感很迟钝
+        TerminalHost.getInstance(project).addSessionsChangedListener(checkRuntime)
+
+        startWatching(
+            toolWindow = toolWindow,
+            projectPath = projectPath,
+            onChange = refresh,
+            onTick = checkRuntime,
+        )
 
         // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
         //
@@ -204,7 +212,8 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     private fun startWatching(
         toolWindow: ToolWindow,
         projectPath: String,
-        refresh: () -> Unit,
+        onChange: () -> Unit,
+        onTick: () -> Unit,
     ) {
         val home = Paths.get(System.getProperty("user.home"))
         val claudeHome = home.resolve(".claude")
@@ -212,7 +221,8 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             claudeHome = claudeHome,
             codexHome = home.resolve(".codex"),
             claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
-            onChange = refresh,
+            onChange = onChange,
+            onTick = onTick,
         )
         watcher.start()
         Disposer.register(toolWindow.disposable, watcher)

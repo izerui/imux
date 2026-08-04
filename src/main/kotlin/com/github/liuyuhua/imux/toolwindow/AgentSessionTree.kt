@@ -7,12 +7,12 @@ import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.github.liuyuhua.imux.turn.TurnNotifier
 import com.intellij.openapi.project.Project
+import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
 import java.awt.event.KeyEvent
-import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JComponent
 import javax.swing.JTree
@@ -56,6 +56,10 @@ private sealed interface NodeData {
         val title: String,
         /** 已格式化的「多久以前」，渲染时灰色显示在标题右侧。 */
         val relativeTime: String,
+        /** 进程是否活着 */
+        val running: Boolean,
+        /** 是否有新结果待看 */
+        val unread: Boolean,
     ) : NodeData {
         override fun toString(): String = title
     }
@@ -88,10 +92,6 @@ class AgentSessionTree(
     private var runtime: Map<String, ClaudeRuntimeSession> = emptyMap()
 
     fun updateRuntime(snapshot: Map<String, ClaudeRuntimeSession>) {
-        if (snapshot.keys == runtime.keys) {
-            runtime = snapshot
-            return
-        }
         runtime = snapshot
         reload()
     }
@@ -113,16 +113,16 @@ class AgentSessionTree(
                 val data = (value as? DefaultMutableTreeNode)?.userObject
                 val text = data?.toString() ?: ""
 
-                val sessionId = (data as? NodeData.Session)?.id
+                val session = data as? NodeData.Session
 
                 when {
-                    sessionId != null && sessionId in unread -> {
+                    session?.unread == true -> {
                         // 前置圆点比单纯加粗显眼得多，扫一眼列表就能定位
                         append(UNREAD_MARK, UNREAD_MARK_ATTRIBUTES)
                         append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     }
 
-                    sessionId != null && runtime.containsKey(sessionId) -> {
+                    session?.running == true -> {
                         append(RUNNING_MARK, RUNNING_MARK_ATTRIBUTES)
                         append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
@@ -151,15 +151,18 @@ class AgentSessionTree(
     private val limits = mutableMapOf(AgentType.CLAUDE to PAGE_SIZE, AgentType.CODEX to PAGE_SIZE)
 
     init {
-        tree.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(event: MouseEvent) {
-                // 单击即触发。只认第一次点击：双击时 mouseClicked 会以 clickCount=1、2
-                // 各触发一次，若不过滤，「显示更多」会一次加两页。
-                if (event.clickCount != 1 || !SwingUtilities.isLeftMouseButton(event)) return
+        // 用平台的 ClickListener 而非裸的 mouseClicked：
+        // mouseClicked 要求按下与抬起严格同点，手指稍有位移就不触发，
+        // 表现就是「点了没反应，要点好几次」。ClickListener 容忍这点抖动。
+        object : ClickListener() {
+            override fun onClick(event: MouseEvent, clickCount: Int): Boolean {
+                if (clickCount != 1 || !SwingUtilities.isLeftMouseButton(event)) return false
                 // 点在展开箭头或空白处时 getPathForLocation 返回 null，天然不触发
-                handleActivate(tree.getPathForLocation(event.x, event.y) ?: return)
+                val path = tree.getPathForLocation(event.x, event.y) ?: return false
+                handleActivate(path)
+                return true
             }
-        })
+        }.installOn(tree)
 
         // 键盘可达：选中后回车等同于单击
         tree.registerKeyboardAction(
@@ -173,13 +176,49 @@ class AgentSessionTree(
 
     fun component(): JComponent = tree
 
+    /**
+     * 上一次真正渲染出来的内容签名。
+     *
+     * 树每重建一次，按下与抬起之间若插入了重建，点击就会落空——用户感觉「点不动」。
+     * 而扫描每 3 秒一轮、会话文件被写就变，重建其实非常频繁。
+     * 因此只在渲染结果确有变化时才重建。
+     */
+    private var renderedContent: Map<AgentType, List<NodeData>>? = null
+
     fun reload() {
         applyNewBindings()
+
+        // 用数据类的结构相等比对，标题、时间、标记任一变化都算变化，
+        // 拼字符串容易漏字段
+        val content = AgentType.entries.associateWith { nodesFor(it) }
+        if (content == renderedContent) return
+        renderedContent = content
+
         val expanded = expandedGroups()
+        val selected = selectedSessionId()
+
         root.removeAllChildren()
-        AgentType.entries.forEach { addGroup(it) }
+        AgentType.entries.forEach { type -> addGroup(type, content.getValue(type)) }
         treeModel.reload()
+
         restoreExpansion(expanded)
+        restoreSelection(selected)
+    }
+
+    private fun selectedSessionId(): String? =
+        ((tree.selectionPath?.lastPathComponent as? DefaultMutableTreeNode)?.userObject
+            as? NodeData.Session)?.id
+
+    private fun restoreSelection(sessionId: String?) {
+        if (sessionId == null) return
+        groupNodes().forEach { group ->
+            group.children().toList().filterIsInstance<DefaultMutableTreeNode>().forEach { node ->
+                if ((node.userObject as? NodeData.Session)?.id == sessionId) {
+                    tree.selectionPath = TreePath(node.path)
+                    return
+                }
+            }
+        }
     }
 
     /**
@@ -205,15 +244,19 @@ class AgentSessionTree(
         }
     }
 
-    private fun addGroup(agentType: AgentType) {
+    private fun addGroup(agentType: AgentType, nodes: List<NodeData>) {
         val groupNode = DefaultMutableTreeNode(NodeData.Group(agentType))
         root.add(groupNode)
+        nodes.forEach { groupNode.add(DefaultMutableTreeNode(it)) }
+    }
 
+    /** 算出该分组要渲染的节点。与签名计算共用，避免两处逻辑走样。 */
+    private fun nodesFor(agentType: AgentType): List<NodeData> {
         val entries = model.entries(agentType)
         val limit = limits.getValue(agentType)
 
-        entries.take(limit).forEach { entry ->
-            val data = when (entry) {
+        val nodes = entries.take(limit).map { entry ->
+            when (entry) {
                 is ListEntry.Existing -> NodeData.Session(
                     agentType,
                     entry.session.id,
@@ -223,16 +266,15 @@ class AgentSessionTree(
                         Instant.now(),
                         ZoneId.systemDefault(),
                     ),
+                    running = runtime.containsKey(entry.session.id),
+                    unread = entry.session.id in unread,
                 )
 
                 is ListEntry.Pending -> NodeData.PendingSession(agentType, entry.pending.key)
             }
-            groupNode.add(DefaultMutableTreeNode(data))
         }
 
-        if (entries.size > limit) {
-            groupNode.add(DefaultMutableTreeNode(NodeData.ShowMore(agentType)))
-        }
+        return if (entries.size > limit) nodes + NodeData.ShowMore(agentType) else nodes
     }
 
     private fun handleActivate(path: TreePath) {

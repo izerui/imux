@@ -37,6 +37,8 @@ class TerminalHost(private val project: Project) : Disposable {
     /** 轮次监控。只有经本插件打开过的会话才纳入，见设计文档的监控范围决策。 */
     private val turnWatcher = TurnWatcher()
 
+    private val sessionsChangedListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
     /**
      * 启动一个全新会话（不带 resume）。
      *
@@ -61,6 +63,12 @@ class TerminalHost(private val project: Project) : Disposable {
         turnWatcher.unwatch(key)
         files.remove(key)
         views.remove(key)?.coroutineScope?.cancel()
+        sessionsChangedListeners.forEach { runCatching { it() } }
+    }
+
+    /** 会话集合变化（目前是被结束）时回调，供界面立即刷新标记。 */
+    fun addSessionsChangedListener(listener: () -> Unit) {
+        sessionsChangedListeners.add(listener)
     }
 
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */

@@ -26,6 +26,13 @@ class SessionStoreWatcher(
     private val codexHome: Path,
     private val claudeProjectDirName: String,
     private val onChange: () -> Unit,
+    /**
+     * 每轮必触发，与会话文件是否变化无关。
+     *
+     * 运行态（进程存活、忙碌与否）不体现在会话文件里，只能靠定时轮询。
+     * 早先把它挂在 onChange 上，导致关闭标签页后标记要等下一次文件变化才消失。
+     */
+    private val onTick: () -> Unit = {},
     private val today: () -> LocalDate = { LocalDate.now() },
     private val intervalMs: Long = DEFAULT_INTERVAL_MS,
 ) : Disposable {
@@ -44,6 +51,8 @@ class SessionStoreWatcher(
     }
 
     private fun tick() {
+        ApplicationManager.getApplication().invokeLater { runCatching { onTick() } }
+
         val current = runCatching { signature() }.getOrNull() ?: return
         if (lastSignature.getAndSet(current) == current) return
         ApplicationManager.getApplication().invokeLater { onChange() }
