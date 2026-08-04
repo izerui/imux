@@ -109,4 +109,13 @@ class ClaudeSessionReaderTest {
 
         assertEquals("关于 \"引号\" 的讨论", reader().read("/Users/demo/proj")[0].title)
     }
+
+    /** TurnWatcher 需要靠它定位文件做增量读取。 */
+    @Test
+    fun `会话带上自身文件路径`() {
+        val file = File(projectDir(), "aaaa-9999.jsonl")
+        file.writeText("""{"type":"ai-title","aiTitle":"标题","sessionId":"aaaa-9999"}""")
+
+        assertEquals(file.toPath(), reader().read("/Users/demo/proj")[0].filePath)
+    }
 }

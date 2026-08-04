@@ -40,6 +40,7 @@ class ClaudeSessionReader(private val claudeHome: Path) {
             title = extractTitle(file) ?: fallbackTitle(id),
             agentType = AgentType.CLAUDE,
             lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
+            filePath = file,
         )
     }.onFailure { LOG.warn("跳过无法解析的 Claude 会话文件 $file", it) }.getOrNull()
 

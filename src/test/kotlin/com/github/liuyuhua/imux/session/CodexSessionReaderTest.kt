@@ -100,4 +100,13 @@ class CodexSessionReaderTest {
 
         assertEquals(2, reader().read("/Users/demo/proj").size)
     }
+
+    /** TurnWatcher 需要靠它定位文件做增量读取。 */
+    @Test
+    fun `会话带上自身文件路径`() {
+        writeRollout("uuid-path", "/Users/demo/proj")
+
+        val expected = File(tmp.root, "sessions/2026/08/03/rollout-2026-08-03T11-31-27-uuid-path.jsonl")
+        assertEquals(expected.toPath(), reader().read("/Users/demo/proj")[0].filePath)
+    }
 }
