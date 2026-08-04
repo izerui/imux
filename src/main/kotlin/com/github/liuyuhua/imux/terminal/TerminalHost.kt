@@ -9,6 +9,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
+import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import kotlinx.coroutines.cancel
 
 /**
@@ -66,7 +67,12 @@ class TerminalHost(private val project: Project) : Disposable {
     }
 
     fun stateOf(key: String): RunState {
-        if (!views.containsKey(key)) return RunState.NONE
+        val view = views[key] ?: return RunState.NONE
+
+        // 必须看真实会话状态，不能只看「我们建过 view」：CLI 自己退出后
+        // view 仍在表里，若据此报 BACKGROUND 就是谎称后台还有进程在跑。
+        if (view.sessionState.value is TerminalViewSessionState.Terminated) return RunState.NONE
+
         val file = files[key] ?: return RunState.BACKGROUND
         return if (FileEditorManager.getInstance(project).isFileOpen(file)) {
             RunState.TAB_OPEN
@@ -106,11 +112,26 @@ class TerminalHost(private val project: Project) : Disposable {
     }
 
     private fun open(key: String, command: List<String>, tabTitle: String) {
+        discardIfTerminated(key)
         val file = files.getOrPut(key) {
             val view = views.getOrPut(key) { createView(command, tabTitle) }
             AgentTerminalVirtualFile(tabTitle, view, key)
         }
         FileEditorManager.getInstance(project).openFile(file, true)
+    }
+
+    /**
+     * 丢弃已终止的终端，让本次点击重新起一个。
+     *
+     * 否则点击一个 CLI 已退出的会话，只会切到一个死掉的标签页，什么也不会发生。
+     */
+    private fun discardIfTerminated(key: String) {
+        val view = views[key] ?: return
+        if (view.sessionState.value !is TerminalViewSessionState.Terminated) return
+
+        views.remove(key)
+        files.remove(key)?.let { FileEditorManager.getInstance(project).closeFile(it) }
+        view.coroutineScope.cancel()
     }
 
     private fun createView(command: List<String>, tabTitle: String): TerminalView =
