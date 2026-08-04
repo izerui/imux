@@ -3,7 +3,10 @@ package com.github.izerui.imux.model
 import java.nio.file.Path
 import java.time.Instant
 
-enum class AgentType { CLAUDE, CODEX }
+enum class AgentType(val displayName: String) {
+    CLAUDE("Claude Code"),
+    CODEX("Codex"),
+}
 
 data class AgentSession(
     val id: String,

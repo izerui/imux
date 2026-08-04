@@ -41,6 +41,18 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了项目启动活动`() {
+        // 工具窗口的内容是懒加载的：监听若只在 createToolWindowContent 里启动，
+        // 从没展开过 imux 面板的项目就一条轮次完成提醒都收不到，而用户不会察觉。
+        assertTrue(
+            "plugin.xml 未注册 ImuxStartupActivity，" +
+                "未展开过工具窗口的项目将收不到任何会话完成提醒",
+            pluginXml.contains("com.github.izerui.imux.monitor.ImuxStartupActivity"),
+        )
+        assertTrue("注册应使用 postStartupActivity 扩展点", pluginXml.contains("<postStartupActivity"))
+    }
+
+    @Test
     fun `声明了对终端插件的依赖`() {
         assertTrue(
             "终端 API 来自捆绑的 terminal 插件，必须声明依赖",

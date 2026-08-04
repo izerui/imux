@@ -16,7 +16,19 @@ enum class TurnEvent {
     NONE,
 }
 
-data class TurnParseResult(val state: TurnState, val event: TurnEvent)
+data class TurnTransition(
+    val from: TurnState,
+    val to: TurnState,
+    val event: TurnEvent,
+)
+
+data class TurnParseResult(
+    val state: TurnState,
+    val transitions: List<TurnTransition>,
+) {
+    val event: TurnEvent
+        get() = transitions.lastOrNull { it.event != TurnEvent.NONE }?.event ?: TurnEvent.NONE
+}
 
 /**
  * 把会话文件新追加的行解析成轮次状态跃迁。
@@ -28,7 +40,7 @@ object TurnSignalParser {
 
     fun parse(agentType: AgentType, previous: TurnState, lines: List<String>): TurnParseResult {
         var state = previous
-        var event = TurnEvent.NONE
+        val transitions = mutableListOf<TurnTransition>()
 
         for (line in lines) {
             val signal = when (agentType) {
@@ -36,14 +48,18 @@ object TurnSignalParser {
                 AgentType.CODEX -> codexSignal(line)
             } ?: continue
 
-            // 只有「进行中 -> 空闲」才算一次跃迁
-            if (state == TurnState.WORKING && signal.state == TurnState.IDLE) {
-                event = signal.eventOnIdle
+            if (state != signal.state) {
+                val event = if (state == TurnState.WORKING && signal.state == TurnState.IDLE) {
+                    signal.eventOnIdle
+                } else {
+                    TurnEvent.NONE
+                }
+                transitions += TurnTransition(state, signal.state, event)
             }
             state = signal.state
         }
 
-        return TurnParseResult(state, event)
+        return TurnParseResult(state, transitions)
     }
 
     private class Signal(val state: TurnState, val eventOnIdle: TurnEvent)

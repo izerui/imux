@@ -2,11 +2,14 @@ package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.time.Duration
+import java.time.Instant
 
 class TurnWatcherTest {
 
@@ -198,5 +201,161 @@ class TurnWatcherTest {
         file.append("""{"type":"assistant","message":{"stop_reason":"end_turn"}}""")
 
         assertEquals(listOf("s1"), watcher.poll())
+    }
+
+    private class FakeClock(var now: Instant = Instant.parse("2026-08-04T10:00:00Z")) : () -> Instant {
+        override fun invoke(): Instant = now
+        fun advance(seconds: Long) { now = now.plusSeconds(seconds) }
+    }
+
+    @Test
+    fun `记录从开始执行到完成的耗时`() {
+        val file = newFile("dur.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()          // 进入执行态，记下起点
+        clock.advance(42)
+        file.append(done)
+        watcher.poll()          // 完成，结算耗时
+
+        assertEquals(Duration.ofSeconds(42), watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `同一轮内多次轮询不影响起点`() {
+        val file = newFile("dur2.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+        clock.advance(10)
+        watcher.poll()          // 无新内容，不该重置起点
+        clock.advance(10)
+        file.append(done)
+        watcher.poll()
+
+        assertEquals(Duration.ofSeconds(20), watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `没跑完过的会话没有耗时`() {
+        val file = newFile("dur3.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+
+        assertNull(watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `取消监控时一并清掉耗时记录`() {
+        val file = newFile("dur4.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+        clock.advance(5)
+        file.append(done)
+        watcher.poll()
+        watcher.unwatch("s1")
+
+        assertNull(watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `同批开始并完成时清除上一轮耗时`() {
+        val file = newFile("dur5.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+        clock.advance(8)
+        file.append(done)
+        watcher.poll()
+        assertEquals(Duration.ofSeconds(8), watcher.lastDuration("s1"))
+
+        file.append(started)
+        file.append(done)
+        watcher.poll()
+
+        assertNull(watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `同批中止后重新开始会重置耗时起点`() {
+        val file = newFile("dur6.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+        clock.advance(10)
+        file.append(aborted)
+        file.append(started)
+        watcher.poll()
+        clock.advance(5)
+        file.append(done)
+        watcher.poll()
+
+        assertEquals(Duration.ofSeconds(5), watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `同批完成后重新开始会结算旧轮并记录新起点`() {
+        val file = newFile("dur7.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+        clock.advance(10)
+        file.append(done)
+        file.append(started)
+
+        assertEquals(listOf("s1"), watcher.poll())
+        assertEquals(Duration.ofSeconds(10), watcher.lastDuration("s1"))
+
+        clock.advance(5)
+        file.append(done)
+        watcher.poll()
+
+        assertEquals(Duration.ofSeconds(5), watcher.lastDuration("s1"))
+    }
+
+    @Test
+    fun `一次读取里跨越两轮时，新一轮的起点不丢`() {
+        // 轮询间隔 1 秒，而 CLI 完全可能在这 1 秒内跑完一轮又开一轮，
+        // 于是同一批新增行里既有完成信号又有开始信号。只看首尾状态就会漏掉新起点。
+        val file = newFile("multi.jsonl")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        file.append(started)
+        watcher.poll()
+        clock.advance(10)
+
+        file.append(done)       // 第一轮完成
+        file.append(started)    // 紧接着第二轮开始
+        watcher.poll()
+
+        clock.advance(30)
+        file.append(done)       // 第二轮完成
+        watcher.poll()
+
+        assertEquals(Duration.ofSeconds(30), watcher.lastDuration("s1"))
     }
 }

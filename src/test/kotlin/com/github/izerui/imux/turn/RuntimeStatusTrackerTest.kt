@@ -2,8 +2,11 @@ package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Duration
+import java.time.Instant
 
 class RuntimeStatusTrackerTest {
 
@@ -79,5 +82,44 @@ class RuntimeStatusTrackerTest {
         tracker.completedSince(snapshot("s1" to "busy"))
 
         assertEquals(listOf("s1"), tracker.completedSince(snapshot("s1" to null)))
+    }
+
+    /** 从可控时钟推进，验证耗时按 busy 起点计算。 */
+    private class FakeClock(var now: Instant = Instant.parse("2026-08-04T10:00:00Z")) : () -> Instant {
+        override fun invoke(): Instant = now
+        fun advance(seconds: Long) { now = now.plusSeconds(seconds) }
+    }
+
+    @Test
+    fun `首次见到就在忙的会话不报耗时`() {
+        // 插件启动前它已经在跑了，起点无从得知。宁可不显示，也不要报一个错的数。
+        val clock = FakeClock()
+        val tracker = RuntimeStatusTracker(clock)
+
+        // 第一次观察就是 busy
+        tracker.completedSince(snapshot("s1" to "busy"))
+        clock.advance(10)
+        tracker.completedSince(snapshot("s1" to "idle"))
+
+        assertNull(tracker.lastDuration("s1"))
+    }
+
+    @Test
+    fun `先见到空闲再转忙碌，起点才算数`() {
+        val clock = FakeClock()
+        val tracker = RuntimeStatusTracker(clock)
+
+        tracker.completedSince(snapshot("s1" to "idle"))
+        clock.advance(5)
+        tracker.completedSince(snapshot("s1" to "busy"))
+        clock.advance(20)
+        tracker.completedSince(snapshot("s1" to "idle"))
+
+        assertEquals(Duration.ofSeconds(20), tracker.lastDuration("s1"))
+    }
+
+    @Test
+    fun `没跑过的会话没有耗时`() {
+        assertNull(RuntimeStatusTracker().lastDuration("never"))
     }
 }

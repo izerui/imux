@@ -1,45 +1,37 @@
 package com.github.izerui.imux.toolwindow
 
 import com.github.izerui.imux.model.AgentType
-import com.github.izerui.imux.session.ClaudeRuntimeIndex
-import com.github.izerui.imux.session.ClaudeSessionReader
+import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.SessionListModel
-import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
-import com.github.izerui.imux.turn.RunningSessions
-import com.github.izerui.imux.turn.RuntimeStatusTracker
-import com.github.izerui.imux.turn.TurnNotifier
-import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.fileEditor.FileEditorManagerEvent
-import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.ui.content.ContentFactory
-import java.awt.AWTEvent
 import java.awt.BorderLayout
-import java.awt.Toolkit
-import java.awt.event.AWTEventListener
-import java.nio.file.Paths
-import java.time.Instant
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JPanel
 
+/**
+ * 只负责界面。
+ *
+ * 扫描、轮询、提醒、未读记账都在 [SessionMonitor] 里，由项目启动活动拉起——
+ * 工具窗口的内容是懒加载的，把那些逻辑放在这里，从没展开过面板的项目就一片死寂。
+ * 这里只是它的一个订阅者，随时可以被创建或销毁。
+ */
 class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -47,49 +39,29 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     private fun doCreateContent(project: Project, toolWindow: ToolWindow) {
-        val repository = SessionRepository.forUserHome()
-        val projectPath = project.basePath ?: System.getProperty("user.home")
+        val monitor = SessionMonitor.getInstance(project)
+        // 幂等。正常情况下启动活动已经跑过，这里只是兜底——
+        // 万一启动活动因故没执行，至少打开面板还能把监听拉起来。
+        monitor.start()
 
-        val model = SessionListModel(
-            scan = { repository.scan(projectPath) },
-            clock = { Instant.now() },
-        )
-        val sessionTree = AgentSessionTree(project, model)
+        val sessionTree = AgentSessionTree(project, monitor)
 
         val panel = JPanel(BorderLayout()).apply {
             add(JBScrollPane(sessionTree.component()), BorderLayout.CENTER)
         }
 
-        val refresh = backgroundRefresh(repository, projectPath, model)
-
         val actions = DefaultActionGroup(
-            NewSessionAction(project, model, refresh),
-            RefreshAction(refresh),
+            NewSessionAction(project, monitor),
+            RefreshAction(monitor),
         )
         val toolbar = ActionManager.getInstance().createActionToolbar("imuxToolWindow", actions, true)
         toolbar.targetComponent = panel
         panel.add(toolbar.component, BorderLayout.NORTH)
 
-        val runtimeIndex = ClaudeRuntimeIndex(Paths.get(System.getProperty("user.home")).resolve(".claude"))
-        val statusTracker = RuntimeStatusTracker()
-
-        val checkRuntime = {
-            checkCompletedTurns(project, projectPath, model, sessionTree, runtimeIndex, statusTracker)
-        }
-
         // 标签页开或关时立即重绘，不必等下一轮轮询——否则标记要过几秒才亮/才灭，手感很迟钝。
         // 这里只重绘不读运行态文件：绿色标记的依据是标签页开没开，那是内存里的账，
         // 而运行态文件是 CLI 异步落盘的，读它既慢又晚。
         TerminalHost.getInstance(project).addSessionsChangedListener { sessionTree.reload() }
-
-        startWatching(
-            toolWindow = toolWindow,
-            projectPath = projectPath,
-            onChange = refresh,
-            onTick = checkRuntime,
-            // 一个标签页都没开时没人看运行中标记，退回慢节奏
-            fastTickWanted = { TerminalHost.getInstance(project).openTabKeys().isNotEmpty() },
-        )
 
         // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
         //
@@ -102,150 +74,29 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             object : ToolWindowManagerListener {
                 override fun stateChanged(manager: ToolWindowManager) {
                     val visible = toolWindow.isVisible
-                    if (visible && !wasVisible) refresh()
+                    if (visible && !wasVisible) monitor.refresh()
                     wasVisible = visible
                 }
             },
         )
 
-        // 从别处切回该会话的标签页时也应消除未读，不能只靠点击列表；
-        // 同时把列表选中挪过去，与「点列表打开标签页」构成双向联动。
+        // 切到某个终端标签页时，把列表选中挪过去，与「点列表打开标签页」构成双向联动。
+        // 消除未读不在这里做——那与界面无关，由 SessionMonitor 独立监听。
         // 切到非终端文件时不动列表：那与会话无关，清掉选中反而丢了上下文。
         project.messageBus.connect(toolWindow.disposable).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
                     val file = event.newFile as? AgentTerminalVirtualFile ?: return
-                    sessionTree.clearUnread(file.sessionKey)
                     sessionTree.revealSession(file.sessionKey)
                 }
             },
         )
 
-        clearUnreadOnTerminalUse(project, toolWindow, sessionTree)
-
-        refresh()
+        sessionTree.reload()
 
         val content = ContentFactory.getInstance().createContent(panel, null, false)
         toolWindow.contentManager.addContent(content)
-    }
-
-    /**
-     * 人在终端里点一下或敲一下，就把该会话的未读标记消掉。
-     *
-     * 正被查看的会话跑完也会打标记，但「tab 是选中的」不等于人在看——可能已经离开了。
-     * 所以标记不由选中态消除，而由真正的交互消除。
-     *
-     * 为什么用全局 AWT 监听而不给终端组件挂 listener：Swing 的鼠标事件只投递给最深的
-     * 那个组件，不会像 DOM 那样往上冒泡，挂在终端容器上收不到里面的点击；
-     * 而终端内部的组件结构是平台的实现细节，不该由本插件去遍历安装。
-     *
-     * 没有未读时立刻返回——绝大多数时间这个监听器是零成本的。
-     * 它只读事件的来源组件，从不读键值。
-     */
-    private fun clearUnreadOnTerminalUse(
-        project: Project,
-        toolWindow: ToolWindow,
-        sessionTree: AgentSessionTree,
-    ) {
-        val listener = AWTEventListener { event ->
-            if (!sessionTree.hasUnread()) return@AWTEventListener
-
-            val editor = FileEditorManager.getInstance(project).selectedEditor ?: return@AWTEventListener
-            val file = editor.file as? AgentTerminalVirtualFile ?: return@AWTEventListener
-            if (!isViewingInteraction(event, editor.component)) return@AWTEventListener
-
-            sessionTree.clearUnread(file.sessionKey)
-        }
-
-        val toolkit = Toolkit.getDefaultToolkit()
-        toolkit.addAWTEventListener(listener, AWTEvent.MOUSE_EVENT_MASK or AWTEvent.KEY_EVENT_MASK)
-        Disposer.register(toolWindow.disposable) { toolkit.removeAWTEventListener(listener) }
-    }
-
-    /**
-     * 刷新运行状态，并检查有无刚完成的会话轮次——后者标记未读并弹通知。
-     *
-     * 正被查看的不提醒——你已经在看了，再弹是打扰。
-     *
-     * **本方法必须在后台线程调用**：它要读运行态目录、逐个 ProcessHandle 查进程存活，
-     * 还要读各会话文件新追加的字节。放在 EDT 上，1 秒一轮就是周期性卡顿。
-     */
-    private fun checkCompletedTurns(
-        project: Project,
-        projectPath: String,
-        model: SessionListModel,
-        sessionTree: AgentSessionTree,
-        runtimeIndex: ClaudeRuntimeIndex,
-        statusTracker: RuntimeStatusTracker,
-    ) {
-        val host = TerminalHost.getInstance(project)
-
-        // 运行态是 CLI 自己写的一手状态，优先用它；会话文件推断作为补充，
-        // 覆盖那些没有运行态文件的情形（例如 codex）。
-        // 按项目过滤：运行态目录是全机器共享的，不过滤就会为别的项目的会话弹提醒
-        val runtime = runtimeIndex.load(projectPath)
-        val watcher = host.turnWatcher()
-        // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
-        val completed = (statusTracker.completedSince(runtime) + watcher.poll()).distinct()
-        val running = RunningSessions.of(runtime, watcher.workingIds(AgentType.CODEX))
-
-        ApplicationManager.getApplication().invokeLater { sessionTree.updateStatus(runtime, running) }
-
-        if (completed.isEmpty()) return
-
-        ApplicationManager.getApplication().invokeLater {
-            completed.forEach { sessionId ->
-                // 正被查看的会话同样要标记与提醒：tab 选中不等于人在屏幕前，
-                // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
-                // 标记由「人真的动了这个终端」来消除，见 clearUnreadOnTerminalUse。
-                val session = model.sessionOf(sessionId)
-                val title = session?.title ?: "会话 ${sessionId.take(8)}"
-                sessionTree.markUnread(sessionId)
-
-                TurnNotifier.notifyCompleted(project, sessionId, title) {
-                    model.sessionOf(sessionId)?.let {
-                        host.openResume(it.agentType, it.id, it.title)
-                    }
-                    sessionTree.clearUnread(sessionId)
-                }
-            }
-        }
-    }
-
-    /**
-     * 返回一个「后台扫描 + EDT 应用」的刷新函数。
-     *
-     * 扫描必须离开 EDT：本机实测 620 个 codex 会话文件，一次扫描 60–250ms，
-     * 而刷新由 3 秒轮询、工具窗口状态变化等多处触发，放在 EDT 上就是周期性卡顿。
-     *
-     * 用 in-flight 标志避免扫描堆积：若上一次尚未结束，本次直接跳过——
-     * 反正结果会被下一轮覆盖，排队只会加剧拥堵。
-     */
-    private fun backgroundRefresh(
-        repository: SessionRepository,
-        projectPath: String,
-        model: SessionListModel,
-    ): () -> Unit {
-        val scanning = AtomicBoolean(false)
-        return {
-            if (scanning.compareAndSet(false, true)) {
-                ApplicationManager.getApplication().executeOnPooledThread {
-                    val scanned = try {
-                        timed("后台扫描会话库", SCAN_WARN_MS) {
-                            runCatching { repository.scan(projectPath) }.getOrNull()
-                        }
-                    } finally {
-                        scanning.set(false)
-                    }
-                    if (scanned != null) {
-                        ApplicationManager.getApplication().invokeLater {
-                            timed("应用扫描结果并重建列表", EDT_WARN_MS) { model.applyScan(scanned) }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /** 只在超过阈值时记一条，平时零噪音；用于定位卡顿来自哪一段。 */
@@ -262,36 +113,12 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
         /** 阈值刻意定得低，便于定位；正常情况下不会打日志。 */
         const val CREATE_WARN_MS = 50L
-        const val SCAN_WARN_MS = 150L
-        const val EDT_WARN_MS = 30L
-    }
-
-    private fun startWatching(
-        toolWindow: ToolWindow,
-        projectPath: String,
-        onChange: () -> Unit,
-        onTick: () -> Unit,
-        fastTickWanted: () -> Boolean,
-    ) {
-        val home = Paths.get(System.getProperty("user.home"))
-        val claudeHome = home.resolve(".claude")
-        val watcher = SessionStoreWatcher(
-            claudeHome = claudeHome,
-            codexHome = home.resolve(".codex"),
-            claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
-            onChange = onChange,
-            onTick = onTick,
-            fastTickWanted = fastTickWanted,
-        )
-        watcher.start()
-        Disposer.register(toolWindow.disposable, watcher)
     }
 }
 
 private class NewSessionAction(
     private val project: Project,
-    private val model: SessionListModel,
-    private val refresh: () -> Unit,
+    private val monitor: SessionMonitor,
 ) : AnAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
 
     override fun actionPerformed(event: AnActionEvent) {
@@ -299,8 +126,8 @@ private class NewSessionAction(
             .createActionGroupPopup(
                 "选择 Agent",
                 DefaultActionGroup(
-                    CreateAction(project, model, refresh, AgentType.CLAUDE, "Claude Code"),
-                    CreateAction(project, model, refresh, AgentType.CODEX, "Codex"),
+                    CreateAction(project, monitor, AgentType.CLAUDE, "Claude Code"),
+                    CreateAction(project, monitor, AgentType.CODEX, "Codex"),
                 ),
                 event.dataContext,
                 JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
@@ -317,25 +144,25 @@ private class NewSessionAction(
 
 private class CreateAction(
     private val project: Project,
-    private val model: SessionListModel,
-    private val refresh: () -> Unit,
+    private val monitor: SessionMonitor,
     private val agentType: AgentType,
     label: String,
 ) : AnAction(label) {
 
     override fun actionPerformed(event: AnActionEvent) {
+        val model: SessionListModel = monitor.model
         // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
         val pending = model.registerPending(agentType)
         // 终端必须以 pending.key 记录：会话落盘后要靠这个 key 把终端迁到真实 id 下
         TerminalHost.getInstance(project).openNew(agentType, pending.key, "新会话")
-        refresh()
+        monitor.refresh()
     }
 }
 
-private class RefreshAction(private val refresh: () -> Unit) :
+private class RefreshAction(private val monitor: SessionMonitor) :
     AnAction("刷新", "重新扫描会话库", AllIcons.Actions.Refresh) {
 
     override fun actionPerformed(event: AnActionEvent) {
-        refresh()
+        monitor.refresh()
     }
 }

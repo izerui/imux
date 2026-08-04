@@ -1,7 +1,7 @@
 package com.github.izerui.imux.toolwindow
 
 import com.github.izerui.imux.model.AgentType
-import com.github.izerui.imux.session.ClaudeRuntimeSession
+import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.terminal.TerminalHost
@@ -18,6 +18,8 @@ import javax.swing.JComponent
 import javax.swing.JTree
 import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
+import javax.swing.event.TreeExpansionEvent
+import javax.swing.event.TreeExpansionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
@@ -64,10 +66,7 @@ private val RUNNING_MARK_ATTRIBUTES =
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
     data class Group(val agentType: AgentType) : NodeData {
-        override fun toString(): String = when (agentType) {
-            AgentType.CLAUDE -> "Claude Code"
-            AgentType.CODEX -> "Codex"
-        }
+        override fun toString(): String = agentType.displayName
     }
 
     data class Session(
@@ -93,33 +92,22 @@ private sealed interface NodeData {
     }
 }
 
+/**
+ * 会话列表的界面。
+ *
+ * 状态一概不自己存：未读、运行态、扫描结果都在 [SessionMonitor] 里——
+ * 监听在项目打开时就跑了，而这棵树要等用户展开工具窗口才存在，
+ * 两者生命周期不同，状态放在界面里必然对不上。
+ */
 class AgentSessionTree(
     private val project: Project,
-    private val model: SessionListModel,
+    private val monitor: SessionMonitor,
 ) {
+
+    private val model: SessionListModel get() = monitor.model
 
     private val root = DefaultMutableTreeNode("root")
     private val treeModel = DefaultTreeModel(root)
-    /** 轮次刚完成、用户还没回来看的会话 id。 */
-    private val unread = mutableSetOf<String>()
-
-    /**
-     * 当前活着的 Claude 进程，按会话 id 索引。由外部每轮轮询后灌入。
-     *
-     * 只服务于 resume 前的忙碌预检——那里要看 kind 与 status 两个字段。
-     * 渲染不看这份快照，看已经合成好的 [runningIds]：codex 没有运行态文件，
-     * 它的执行中状态来自会话文件，两者必须先合并再渲染。
-     */
-    private var runtime: Map<String, ClaudeRuntimeSession> = emptyMap()
-
-    /** 此刻正在执行的会话 id，见 [com.github.izerui.imux.turn.RunningSessions]。 */
-    private var runningIds: Set<String> = emptySet()
-
-    fun updateStatus(snapshot: Map<String, ClaudeRuntimeSession>, running: Set<String>) {
-        runtime = snapshot
-        runningIds = running
-        reload()
-    }
 
     private val tree = Tree(treeModel).apply {
         isRootVisible = false
@@ -163,21 +151,14 @@ class AgentSessionTree(
         }
     }
 
-    fun markUnread(sessionId: String) {
-        if (unread.add(sessionId)) reload()
-    }
-
-    /** 有没有未读。供全局事件监听器提前退出——没有标记时它不该做任何事。 */
-    fun hasUnread(): Boolean = unread.isNotEmpty()
-
-    fun clearUnread(sessionId: String) {
-        // 用户已经看到该会话，挂着的提醒气泡也该一并撤掉
-        TurnNotifier.dismiss(sessionId)
-        if (unread.remove(sessionId)) reload()
-    }
-
     /** 每个分组当前展示的条数上限，点「显示更多」后递增。 */
     private val limits = mutableMapOf(AgentType.CLAUDE to PAGE_SIZE, AgentType.CODEX to PAGE_SIZE)
+
+    /** 用户主动折叠过的分组。其余一律展开，见 [restoreExpansion]。 */
+    private val collapsedByUser = mutableSetOf<AgentType>()
+
+    /** 正在由 [restoreExpansion] 程序化调整展开状态，此间的事件不算用户操作。 */
+    private var restoringExpansion = false
 
     init {
         // 用平台的 ClickListener 而非裸的 mouseClicked：
@@ -199,8 +180,24 @@ class AgentSessionTree(
             JComponent.WHEN_FOCUSED,
         )
 
-        model.addListener { reload() }
+        // 记下用户自己的折叠意图，重建树时照办
+        tree.addTreeExpansionListener(object : TreeExpansionListener {
+            override fun treeExpanded(event: TreeExpansionEvent) {
+                if (restoringExpansion) return
+                groupOf(event.path)?.let { collapsedByUser.remove(it) }
+            }
+
+            override fun treeCollapsed(event: TreeExpansionEvent) {
+                if (restoringExpansion) return
+                groupOf(event.path)?.let { collapsedByUser.add(it) }
+            }
+        })
+
+        monitor.addListener { reload() }
     }
+
+    private fun groupOf(path: TreePath): AgentType? =
+        ((path.lastPathComponent as? DefaultMutableTreeNode)?.userObject as? NodeData.Group)?.agentType
 
     fun component(): JComponent = tree
 
@@ -222,14 +219,13 @@ class AgentSessionTree(
         if (content == renderedContent) return
         renderedContent = content
 
-        val expanded = expandedGroups()
         val selected = selectedSessionId()
 
         root.removeAllChildren()
         AgentType.entries.forEach { type -> addGroup(type, content.getValue(type)) }
         treeModel.reload()
 
-        restoreExpansion(expanded)
+        restoreExpansion()
         restoreSelection(selected)
     }
 
@@ -344,8 +340,8 @@ class AgentSessionTree(
                     // claude 进程在运行态文件里可见，但不该出现在列表标记上。
                     // 交集在此实时求，而非由外部预先算好——否则关标签页后标记
                     // 要等下一轮才消失。
-                    running = entry.session.id in runningIds && entry.session.id in openTabs,
-                    unread = entry.session.id in unread,
+                    running = entry.session.id in monitor.runningIds && entry.session.id in openTabs,
+                    unread = monitor.isUnread(entry.session.id),
                 )
 
                 is ListEntry.Pending -> NodeData.PendingSession(agentType, entry.pending.key)
@@ -362,7 +358,7 @@ class AgentSessionTree(
                 // 预检：正在后台跑的会话不能 resume，CLI 会拒绝并报
                 // 「currently running as a background agent」。提前拦住并说明原因，
                 // 比让用户在终端里撞一脸报错好。
-                val running = runtime[data.id]
+                val running = monitor.runtime[data.id]
                 if (running != null && running.isBackground && running.isBusy) {
                     TurnNotifier.notifyBusy(project, data.title)
                     return
@@ -373,7 +369,7 @@ class AgentSessionTree(
                 model.sessionOf(data.id)?.let {
                     host.startWatchingTurn(data.id, data.agentType, it.filePath)
                 }
-                clearUnread(data.id)
+                monitor.clearUnread(data.id)
             }
 
             is NodeData.PendingSession -> {
@@ -397,14 +393,36 @@ class AgentSessionTree(
     private fun groupNodes(): List<DefaultMutableTreeNode> =
         root.children().toList().filterIsInstance<DefaultMutableTreeNode>()
 
-    private fun expandedGroups(): Set<AgentType> = groupNodes()
-        .filter { tree.isExpanded(TreePath(it.path)) }
-        .mapNotNull { (it.userObject as? NodeData.Group)?.agentType }
-        .toSet()
+    /**
+     * 分组默认展开，除非用户自己折叠过。
+     *
+     * 不能改成「记住上次展开了哪些」：树每次重建后节点都是折叠的，而空分组在 Swing 里
+     * 根本无法展开（[JTree.isExpanded] 对无子节点的节点恒为 false）。于是首屏数据还没
+     * 扫出来时两个分组都是空的、都记为「未展开」，等数据到了就全折叠着——正是你看到的样子。
+     * 反过来记「用户折叠过谁」就没有这个问题：默认全展开，空分组展开也无妨。
+     */
+    private fun restoreExpansion() {
+        withoutExpansionTracking {
+            groupNodes().forEach { node ->
+                val agentType = (node.userObject as? NodeData.Group)?.agentType ?: return@forEach
+                val path = TreePath(node.path)
+                if (agentType in collapsedByUser) tree.collapsePath(path) else tree.expandPath(path)
+            }
+        }
+    }
 
-    private fun restoreExpansion(expanded: Set<AgentType>) {
-        groupNodes()
-            .filter { (it.userObject as? NodeData.Group)?.agentType in expanded }
-            .forEach { tree.expandPath(TreePath(it.path)) }
+    /**
+     * 程序化展开/折叠期间暂停记账。
+     *
+     * [tree] 的展开事件不区分来源，[restoreExpansion] 自己触发的回调会被当成用户操作，
+     * 把刚恢复的状态又记一遍，用户的选择就此走样。
+     */
+    private inline fun withoutExpansionTracking(block: () -> Unit) {
+        restoringExpansion = true
+        try {
+            block()
+        } finally {
+            restoringExpansion = false
+        }
     }
 }

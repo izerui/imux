@@ -1,5 +1,6 @@
 package com.github.izerui.imux.turn
 
+import com.github.izerui.imux.model.AgentType
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -7,6 +8,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.SystemNotifications
+import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
 /** 会话轮次完成时弹出的 IDE 通知，点击可直接跳到该会话。 */
@@ -22,10 +24,24 @@ object TurnNotifier {
      */
     private val active = ConcurrentHashMap<String, Notification>()
 
-    fun notifyCompleted(project: Project, sessionId: String, title: String, onOpen: () -> Unit) {
+    fun notifyCompleted(
+        project: Project,
+        sessionId: String,
+        title: String,
+        agentType: AgentType?,
+        duration: Duration?,
+        onOpen: () -> Unit,
+    ) {
+        val subtitle = completionSubtitle(project.name, agentType, duration)
+
+        // 上行放「项目 · Agent · 耗时」，下行放会话标题。
+        //
+        // 反过来看似更直觉，实际不好用：会话标题长短悬殊（上限 60 字符），
+        // 长的会把加粗的标题行撑满甚至截断，而元信息长度稳定、正好一行。
+        // 标题挪到下面反倒能完整读到，元信息也就顺势替它扛住了截断。
         val notification = NotificationGroupManager.getInstance()
             .getNotificationGroup(GROUP_ID)
-            .createNotification("会话已完成", title, NotificationType.INFORMATION)
+            .createNotification(subtitle, title, NotificationType.INFORMATION)
 
         // createSimpleExpiring 会在点击后自动让通知过期。
         // 普通的 AnAction 不会——点了之后气泡仍然挂着。
@@ -41,7 +57,7 @@ object TurnNotifier {
         active[sessionId] = notification
         notification.notify(project)
 
-        notifyOutsideIde(project, title)
+        notifyOutsideIde(project, title, subtitle)
     }
 
     /**
@@ -63,10 +79,10 @@ object TurnNotifier {
      *
      * 通知后端不可用时（例如未授权、非 macOS 且无 libnotify），平台实现内部静默跳过。
      */
-    private fun notifyOutsideIde(project: Project, title: String) {
+    private fun notifyOutsideIde(project: Project, title: String, subtitle: String) {
         val frame = WindowManager.getInstance().getFrame(project)
         if (frame?.isActive == true) return
-        SystemNotifications.getInstance().notify(GROUP_ID, "会话已完成", title)
+        SystemNotifications.getInstance().notify(GROUP_ID, subtitle, title)
     }
 
     /**
