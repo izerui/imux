@@ -167,6 +167,9 @@ class AgentSessionTree(
         if (unread.add(sessionId)) reload()
     }
 
+    /** 有没有未读。供全局事件监听器提前退出——没有标记时它不该做任何事。 */
+    fun hasUnread(): Boolean = unread.isNotEmpty()
+
     fun clearUnread(sessionId: String) {
         // 用户已经看到该会话，挂着的提醒气泡也该一并撤掉
         TurnNotifier.dismiss(sessionId)

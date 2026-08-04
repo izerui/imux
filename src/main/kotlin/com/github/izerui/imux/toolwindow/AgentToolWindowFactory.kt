@@ -29,8 +29,12 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.ui.content.ContentFactory
+import java.awt.AWTEvent
 import java.awt.BorderLayout
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
 import java.nio.file.Paths
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
@@ -116,10 +120,45 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             },
         )
 
+        clearUnreadOnTerminalUse(project, toolWindow, sessionTree)
+
         refresh()
 
         val content = ContentFactory.getInstance().createContent(panel, null, false)
         toolWindow.contentManager.addContent(content)
+    }
+
+    /**
+     * 人在终端里点一下或敲一下，就把该会话的未读标记消掉。
+     *
+     * 正被查看的会话跑完也会打标记，但「tab 是选中的」不等于人在看——可能已经离开了。
+     * 所以标记不由选中态消除，而由真正的交互消除。
+     *
+     * 为什么用全局 AWT 监听而不给终端组件挂 listener：Swing 的鼠标事件只投递给最深的
+     * 那个组件，不会像 DOM 那样往上冒泡，挂在终端容器上收不到里面的点击；
+     * 而终端内部的组件结构是平台的实现细节，不该由本插件去遍历安装。
+     *
+     * 没有未读时立刻返回——绝大多数时间这个监听器是零成本的。
+     * 它只读事件的来源组件，从不读键值。
+     */
+    private fun clearUnreadOnTerminalUse(
+        project: Project,
+        toolWindow: ToolWindow,
+        sessionTree: AgentSessionTree,
+    ) {
+        val listener = AWTEventListener { event ->
+            if (!sessionTree.hasUnread()) return@AWTEventListener
+
+            val editor = FileEditorManager.getInstance(project).selectedEditor ?: return@AWTEventListener
+            val file = editor.file as? AgentTerminalVirtualFile ?: return@AWTEventListener
+            if (!isViewingInteraction(event, editor.component)) return@AWTEventListener
+
+            sessionTree.clearUnread(file.sessionKey)
+        }
+
+        val toolkit = Toolkit.getDefaultToolkit()
+        toolkit.addAWTEventListener(listener, AWTEvent.MOUSE_EVENT_MASK or AWTEvent.KEY_EVENT_MASK)
+        Disposer.register(toolWindow.disposable) { toolkit.removeAWTEventListener(listener) }
     }
 
     /**
@@ -153,8 +192,9 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
         ApplicationManager.getApplication().invokeLater {
             completed.forEach { sessionId ->
-                if (host.isTabSelected(sessionId)) return@forEach
-
+                // 正被查看的会话同样要标记与提醒：tab 选中不等于人在屏幕前，
+                // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
+                // 标记由「人真的动了这个终端」来消除，见 clearUnreadOnTerminalUse。
                 val session = model.sessionOf(sessionId)
                 val title = session?.title ?: "会话 ${sessionId.take(8)}"
                 sessionTree.markUnread(sessionId)

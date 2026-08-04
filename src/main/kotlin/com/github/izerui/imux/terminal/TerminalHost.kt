@@ -95,12 +95,6 @@ class TerminalHost(private val project: Project) : Disposable {
         turnWatcher.watch(sessionId, agentType, file)
     }
 
-    /** 该会话的标签页是否正被选中。用于抑制「你正看着」时的提醒。 */
-    fun isTabSelected(sessionId: String): Boolean {
-        val file = files[sessionId] ?: return false
-        return FileEditorManager.getInstance(project).selectedEditor?.file == file
-    }
-
     /**
      * 新建的会话在 CLI 落盘后才拿到真实 id，此时要把终端从 openNew 的合成 key
      * 迁到真实 id 下。不做这一步会有两个后果：运行中标识查不到；再次点击该会话
