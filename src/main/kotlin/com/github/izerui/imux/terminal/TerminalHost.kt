@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
@@ -12,6 +13,8 @@ import com.intellij.terminal.frontend.view.TerminalView
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * 拥有所有活着的终端 view，按 key 索引。
@@ -132,11 +135,37 @@ class TerminalHost(private val project: Project) : Disposable {
         discardIfTerminated(key)
         val file = files.getOrPut(key) {
             val view = views.getOrPut(key) { createView(command, tabTitle) }
-            AgentTerminalVirtualFile(tabTitle, view, key)
+            AgentTerminalVirtualFile(tabTitle, view, key).also(::closeTabWhenTerminated)
         }
         FileEditorManager.getInstance(project).openFile(file, true)
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedListeners.forEach { runCatching { it() } }
+    }
+
+    /**
+     * CLI 进程一结束就关掉它的标签页。
+     *
+     * 这里跑的是 claude / codex 本身，底下**没有 shell 兜着**。进程没了，标签页就成了
+     * 一个不含任何进程的空壳：敲什么都没反应，也没有提示符接管，看起来就是卡死——
+     * 而唯一的出路（回列表再点一次该会话，由 [discardIfTerminated] 重开）没人猜得到。
+     * 与既有的「关标签页 = 结束会话」正好对称。
+     *
+     * 认 [AgentTerminalVirtualFile] 实例而不认 key：新建会话落盘后 [rebindKey] 会换 key，
+     * 拿旧 key 到那时已经查不到东西；而虚拟文件实例是标签页的身份，全程不变。
+     *
+     * 关标签页会触发 [AgentTerminalFileEditor.dispose]，进而走到 [closeSession] 完成记账清理。
+     *
+     * 已知代价：CLI 启动即失败时（例如 claude 不在 PATH）标签页会一闪而过，来不及看报错。
+     */
+    private fun closeTabWhenTerminated(file: AgentTerminalVirtualFile) {
+        val view = file.terminalView
+        view.coroutineScope.launch {
+            view.sessionState.first { it is TerminalViewSessionState.Terminated }
+            // 不能在这里直接关：本协程属于 view 的 scope，而关标签页会取消这个 scope
+            ApplicationManager.getApplication().invokeLater {
+                FileEditorManager.getInstance(project).closeFile(file)
+            }
+        }
     }
 
     /**
@@ -159,8 +188,13 @@ class TerminalHost(private val project: Project) : Disposable {
             .workingDirectory(projectPath())
             .shellCommand(command)
             .tabName(tabTitle)
-            .shouldAddToToolWindow(false)     // 由本服务安置，不进工具窗口
-            .closeOnProcessTermination(false) // 进程结束后保留 UI 供回看
+            .shouldAddToToolWindow(false) // 由本服务安置，不进工具窗口
+            // 这个开关**对本插件不生效**，留着只为表明意图：它的两条消费路径
+            // （工具窗口的 TerminalToolWindowTabImpl、编辑器的 TerminalViewVirtualFile）
+            // 我们一条都没走——前者被上面的 shouldAddToToolWindow(false) 关掉，
+            // 后者是平台自己的虚拟文件，而我们用的是 AgentTerminalVirtualFile。
+            // 真正关标签页的是 [closeTabWhenTerminated]。
+            .closeOnProcessTermination(true)
             .createTab()
             .view
 
