@@ -18,14 +18,19 @@ import kotlin.io.path.useLines
  */
 class CodexSessionReader(private val codexHome: Path) {
 
+    private val threadIndex = CodexThreadIndex(codexHome)
+
     fun read(projectPath: String): List<AgentSession> {
         val root = codexHome.resolve("sessions")
         if (!Files.isDirectory(root)) return emptyList()
 
+        // rollout 文件里没有标题字段，权威标题在 codex 自己的 sqlite 里
+        val titles = threadIndex.load()
+
         return Files.walk(root).use { stream ->
             stream.toList()
                 .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".jsonl") }
-                .mapNotNull { readOne(it, projectPath) }
+                .mapNotNull { readOne(it, projectPath, titles) }
         }
     }
 
@@ -39,7 +44,11 @@ class CodexSessionReader(private val codexHome: Path) {
      * 早期实现是先把前 50 行全读出来再过滤，等于为 600 多个无关文件各白读 49 行，
      * 单次 scan 耗时 300–800ms。
      */
-    private fun readOne(file: Path, projectPath: String): AgentSession? = runCatching {
+    private fun readOne(
+        file: Path,
+        projectPath: String,
+        titles: Map<String, String>,
+    ): AgentSession? = runCatching {
         val meta = firstLine(file) ?: return null
         if (!meta.contains(META_MARKER)) return null
 
@@ -50,7 +59,10 @@ class CodexSessionReader(private val codexHome: Path) {
 
         AgentSession(
             id = id,
-            title = firstUserMessage(file)?.let(::truncate) ?: "会话 ${id.take(8)}",
+            // 回退链：sqlite 里的标题 -> 首条用户消息 -> id 短码
+            title = titles[id]?.let(::truncate)
+                ?: firstUserMessage(file)?.let(::truncate)
+                ?: "会话 ${id.take(8)}",
             agentType = AgentType.CODEX,
             lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
             createdAt = creationTimeOf(file),

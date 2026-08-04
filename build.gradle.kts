@@ -20,6 +20,11 @@ repositories {
 }
 
 dependencies {
+    // 读取 Codex 的 ~/.codex/state_5.sqlite 取会话标题。
+    // 该库自带各平台原生库，体积较大，但 IDEA 未捆绑任何标准 JDBC 驱动，
+    // 且 codex 的权威标题只存在于这个 sqlite 里（rollout 文件里没有）。
+    implementation("org.xerial:sqlite-jdbc:3.49.1.0")
+
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
