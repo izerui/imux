@@ -17,6 +17,8 @@ import kotlin.io.path.useLines
  */
 class ClaudeSessionReader(private val claudeHome: Path) {
 
+    private val historyIndex = ClaudeHistoryIndex(claudeHome)
+
     fun projectDirName(projectPath: String): String =
         buildString(projectPath.length) {
             for (ch in projectPath) append(if (ch == '/' || ch == '.') '-' else ch)
@@ -26,20 +28,33 @@ class ClaudeSessionReader(private val claudeHome: Path) {
         val dir = claudeHome.resolve("projects").resolve(projectDirName(projectPath))
         if (!Files.isDirectory(dir)) return emptyList()
 
+        // history.jsonl 是 Claude 自己维护的 prompt 索引，一次读入按会话 id 查表。
+        // 并非每个会话都有 ai-title 记录，缺的那些标题就在这里。
+        val history = historyIndex.load(projectPath)
+
         return Files.list(dir).use { stream ->
             stream.toList()
                 .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".jsonl") }
-                .mapNotNull { readOne(it) }
+                .mapNotNull { readOne(it, history) }
         }
     }
 
-    private fun readOne(file: Path): AgentSession? = runCatching {
+    private fun readOne(file: Path, history: Map<String, ClaudeHistoryEntry>): AgentSession? = runCatching {
         val id = file.fileName.toString().removeSuffix(".jsonl")
+        val historyEntry = history[id]
+
         AgentSession(
             id = id,
-            title = extractTitle(file) ?: firstUserMessage(file) ?: fallbackTitle(id),
+            // 回退链：CLI 生成的标题 -> history.jsonl 里的首条 prompt
+            //         -> 文件里的首条用户消息 -> id 短码
+            title = extractTitle(file)
+                ?: historyEntry?.display?.let(::truncate)
+                ?: firstUserMessage(file)
+                ?: fallbackTitle(id),
             agentType = AgentType.CLAUDE,
-            lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
+            // 「最后一次说话」比文件 mtime 贴切：resume 会写文件却没有新对话
+            lastActiveAt = historyEntry?.lastPromptAtMillis?.let(java.time.Instant::ofEpochMilli)
+                ?: Files.getLastModifiedTime(file).toInstant(),
             createdAt = creationTimeOf(file),
             filePath = file,
         )
@@ -78,7 +93,11 @@ class ClaudeSessionReader(private val claudeHome: Path) {
             .mapNotNull { JsonLineScanner.stringValue(it, "content") }
             .map { it.replace('\n', ' ').trim() }
             .firstOrNull { it.isNotEmpty() && !it.startsWith("<") }
-    }?.let { if (it.length <= TITLE_MAX) it else it.take(TITLE_MAX) + "…" }
+    }?.let(::truncate)
+
+    private fun truncate(text: String): String =
+        if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
+
 
     private companion object {
         val LOG = logger<ClaudeSessionReader>()
