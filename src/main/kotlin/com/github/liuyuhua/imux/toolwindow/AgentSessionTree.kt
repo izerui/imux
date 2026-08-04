@@ -6,6 +6,7 @@ import com.github.liuyuhua.imux.session.ListEntry
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.github.liuyuhua.imux.turn.TurnNotifier
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
@@ -156,9 +157,17 @@ class AgentSessionTree(
         // 表现就是「点了没反应，要点好几次」。ClickListener 容忍这点抖动。
         object : ClickListener() {
             override fun onClick(event: MouseEvent, clickCount: Int): Boolean {
+                val path = tree.getPathForLocation(event.x, event.y)
+                val node = (path?.lastPathComponent as? DefaultMutableTreeNode)?.userObject
+                LOG.warn(
+                    "[imux诊断] onClick clickCount=$clickCount 左键=${SwingUtilities.isLeftMouseButton(event)}" +
+                        " 坐标=(${event.x},${event.y}) 命中=${node?.javaClass?.simpleName ?: "无"}" +
+                        " 树有焦点=${tree.hasFocus()}",
+                )
+
                 if (clickCount != 1 || !SwingUtilities.isLeftMouseButton(event)) return false
                 // 点在展开箭头或空白处时 getPathForLocation 返回 null，天然不触发
-                val path = tree.getPathForLocation(event.x, event.y) ?: return false
+                if (path == null) return false
                 handleActivate(path)
                 return true
             }
@@ -184,6 +193,10 @@ class AgentSessionTree(
      * 因此只在渲染结果确有变化时才重建。
      */
     private var renderedContent: Map<AgentType, List<NodeData>>? = null
+
+    private companion object {
+        val LOG = logger<AgentSessionTree>()
+    }
 
     fun reload() {
         applyNewBindings()
@@ -279,12 +292,14 @@ class AgentSessionTree(
 
     private fun handleActivate(path: TreePath) {
         val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
+        LOG.warn("[imux诊断] handleActivate 节点=${node.userObject}")
         when (val data = node.userObject) {
             is NodeData.Session -> {
                 // 预检：正在后台跑的会话不能 resume，CLI 会拒绝并报
                 // 「currently running as a background agent」。提前拦住并说明原因，
                 // 比让用户在终端里撞一脸报错好。
                 val running = runtime[data.id]
+                LOG.warn("[imux诊断] 打开会话 ${data.id.take(8)} 运行态=${running?.let { "${it.kind}/${it.status}" } ?: "无"}")
                 if (running != null && running.isBackground && running.isBusy) {
                     TurnNotifier.notifyBusy(project, data.title)
                     return
