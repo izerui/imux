@@ -1,7 +1,6 @@
 package com.github.liuyuhua.imux.watch
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.nio.file.Files
 import java.nio.file.Path
@@ -27,18 +26,30 @@ class SessionStoreWatcher(
     private val claudeProjectDirName: String,
     private val onChange: () -> Unit,
     /**
-     * 每轮必触发，与会话文件是否变化无关。
+     * 刷新运行状态，与会话文件是否变化无关。
      *
-     * 运行态（进程存活、忙碌与否）不体现在会话文件里，只能靠定时轮询。
+     * 运行态（进程存活、忙碌与否）不体现在会话文件的指纹里，只能靠定时轮询。
      * 早先把它挂在 onChange 上，导致关闭标签页后标记要等下一次文件变化才消失。
+     *
+     * 触发节奏见 [fastTickWanted]。在调度线程上执行，可放心做 IO。
      */
     private val onTick: () -> Unit = {},
+    /**
+     * 是否需要密集轮询。为真时每轮都跑 [onTick]，否则只在慢周期跑。
+     *
+     * 由「有没有开着的标签页」决定：运行中标记只服务于自己正在用的会话，
+     * 一个都没开时没人看标记，1 秒一轮纯属白耗电。
+     */
+    private val fastTickWanted: () -> Boolean = { false },
     private val today: () -> LocalDate = { LocalDate.now() },
     private val intervalMs: Long = DEFAULT_INTERVAL_MS,
+    /** 每多少个基础节拍做一次会话库全量比对。 */
+    private val slowEveryTicks: Int = DEFAULT_SLOW_EVERY_TICKS,
 ) : Disposable {
 
     private val lastSignature = AtomicReference<String?>(null)
     private var future: Future<*>? = null
+    private var ticks = 0L
 
     fun start() {
         lastSignature.set(signature())
@@ -50,12 +61,28 @@ class SessionStoreWatcher(
         )
     }
 
+    /**
+     * 基础节拍 1 秒，但两件事的节奏不同：
+     *
+     * - **运行状态**（[onTick]）要跟手，有标签页开着时每拍都跑
+     * - **会话库全量比对**（[signature] + [onChange]）成本高得多——本机 620 个 codex
+     *   会话文件，一次扫描 60–250ms——维持 3 秒一次即可，新会话晚两秒出现在列表里无所谓
+     *
+     * 两个回调都直接在本调度线程上跑，不再 invokeLater：它们要做文件 IO，
+     * 挪到 EDT 上就是周期性卡顿。切回 EDT 由回调自己在需要时负责。
+     */
     private fun tick() {
-        ApplicationManager.getApplication().invokeLater { runCatching { onTick() } }
+        ticks++
+        val slowTurn = ticks % slowEveryTicks == 0L
 
+        if (slowTurn || runCatching { fastTickWanted() }.getOrDefault(false)) {
+            runCatching { onTick() }
+        }
+
+        if (!slowTurn) return
         val current = runCatching { signature() }.getOrNull() ?: return
         if (lastSignature.getAndSet(current) == current) return
-        ApplicationManager.getApplication().invokeLater { onChange() }
+        onChange()
     }
 
     /** 被监听目录的廉价指纹：文件名 + 大小 + 修改时间。任一变化即视为会话库有更新。 */
@@ -93,6 +120,10 @@ class SessionStoreWatcher(
     }
 
     companion object {
-        const val DEFAULT_INTERVAL_MS = 3000L
+        /** 基础节拍。运行状态的刷新粒度，也是标记出现的最大延迟。 */
+        const val DEFAULT_INTERVAL_MS = 1000L
+
+        /** 3 拍一次会话库全量比对，即维持原先的 3 秒节奏。 */
+        const val DEFAULT_SLOW_EVERY_TICKS = 3
     }
 }

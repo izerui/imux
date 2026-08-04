@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.logger
 import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 监控若干会话文件的轮次状态，产出「刚完成、需要提醒」的会话。
@@ -21,10 +22,16 @@ class TurnWatcher {
         val agentType: AgentType,
         val file: Path,
         var offset: Long,
-        var state: TurnState,
+        /** 后台轮询线程写，EDT 渲染时读，故必须 volatile。 */
+        @Volatile var state: TurnState,
     )
 
-    private val entries = LinkedHashMap<String, Entry>()
+    /**
+     * 并发容器：[watch] / [unwatch] 由 EDT 调用（用户点击），而 [poll] 与
+     * [workingIds] 由后台轮询线程调用。普通 HashMap 会在两者撞上时抛
+     * ConcurrentModificationException。
+     */
+    private val entries = ConcurrentHashMap<String, Entry>()
 
     fun watch(sessionId: String, agentType: AgentType, file: Path) {
         if (entries.containsKey(sessionId)) return
@@ -39,6 +46,16 @@ class TurnWatcher {
     fun unwatch(sessionId: String) {
         entries.remove(sessionId)
     }
+
+    /**
+     * 指定 agent 中当前处于「执行中」的会话 id。
+     *
+     * 状态由 [poll] 推进，本方法只读。因此调用顺序有意义：要拿最新的，先 poll 再读。
+     */
+    fun workingIds(agentType: AgentType): Set<String> = entries
+        .filterValues { it.agentType == agentType && it.state == TurnState.WORKING }
+        .keys
+        .toSet()
 
     /** 返回本轮刚完成、需要提醒的 sessionId。 */
     fun poll(): List<String> {

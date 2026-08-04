@@ -7,6 +7,7 @@ import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.session.SessionRepository
 import com.github.liuyuhua.imux.terminal.AgentTerminalVirtualFile
 import com.github.liuyuhua.imux.terminal.TerminalHost
+import com.github.liuyuhua.imux.turn.RunningSessions
 import com.github.liuyuhua.imux.turn.RuntimeStatusTracker
 import com.github.liuyuhua.imux.turn.TurnNotifier
 import com.github.liuyuhua.imux.watch.SessionStoreWatcher
@@ -70,15 +71,18 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
         val checkRuntime = { checkCompletedTurns(project, model, sessionTree, runtimeIndex, statusTracker) }
 
-        // 会话被结束（关标签页）时立即刷新，不必等下一轮轮询——
-        // 否则标记要过几秒才消失，手感很迟钝
-        TerminalHost.getInstance(project).addSessionsChangedListener(checkRuntime)
+        // 标签页开或关时立即重绘，不必等下一轮轮询——否则标记要过几秒才亮/才灭，手感很迟钝。
+        // 这里只重绘不读运行态文件：绿色标记的依据是标签页开没开，那是内存里的账，
+        // 而运行态文件是 CLI 异步落盘的，读它既慢又晚。
+        TerminalHost.getInstance(project).addSessionsChangedListener { sessionTree.reload() }
 
         startWatching(
             toolWindow = toolWindow,
             projectPath = projectPath,
             onChange = refresh,
             onTick = checkRuntime,
+            // 一个标签页都没开时没人看运行中标记，退回慢节奏
+            fastTickWanted = { TerminalHost.getInstance(project).openTabKeys().isNotEmpty() },
         )
 
         // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
@@ -116,9 +120,12 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     /**
-     * 检查有无刚完成的会话轮次，标记未读并弹通知。
+     * 刷新运行状态，并检查有无刚完成的会话轮次——后者标记未读并弹通知。
      *
      * 正被查看的不提醒——你已经在看了，再弹是打扰。
+     *
+     * **本方法必须在后台线程调用**：它要读运行态目录、逐个 ProcessHandle 查进程存活，
+     * 还要读各会话文件新追加的字节。放在 EDT 上，1 秒一轮就是周期性卡顿。
      */
     private fun checkCompletedTurns(
         project: Project,
@@ -132,9 +139,12 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         // 运行态是 CLI 自己写的一手状态，优先用它；会话文件推断作为补充，
         // 覆盖那些没有运行态文件的情形（例如 codex）。
         val runtime = runtimeIndex.load()
-        val completed = (statusTracker.completedSince(runtime) + host.turnWatcher().poll()).distinct()
+        val watcher = host.turnWatcher()
+        // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
+        val completed = (statusTracker.completedSince(runtime) + watcher.poll()).distinct()
+        val running = RunningSessions.of(runtime, watcher.workingIds(AgentType.CODEX))
 
-        ApplicationManager.getApplication().invokeLater { sessionTree.updateRuntime(runtime) }
+        ApplicationManager.getApplication().invokeLater { sessionTree.updateStatus(runtime, running) }
 
         if (completed.isEmpty()) return
 
@@ -214,6 +224,7 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         projectPath: String,
         onChange: () -> Unit,
         onTick: () -> Unit,
+        fastTickWanted: () -> Boolean,
     ) {
         val home = Paths.get(System.getProperty("user.home"))
         val claudeHome = home.resolve(".claude")
@@ -223,6 +234,7 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
             onChange = onChange,
             onTick = onTick,
+            fastTickWanted = fastTickWanted,
         )
         watcher.start()
         Disposer.register(toolWindow.disposable, watcher)

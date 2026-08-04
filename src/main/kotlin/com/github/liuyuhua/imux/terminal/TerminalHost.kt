@@ -31,8 +31,11 @@ class TerminalHost(private val project: Project) : Disposable {
      * 每个 key 对应的虚拟文件实例必须缓存并复用。
      * FileEditorManager 以 VirtualFile 实例为标签页身份：传同一个实例是「切到该标签页」，
      * 每次新建实例则会不断开出重复标签页。
+     *
+     * 必须是并发容器：写在 EDT（开关标签页），但 [openTabKeys] 会被后台轮询线程读，
+     * 遍历时撞上写就会抛 ConcurrentModificationException。
      */
-    private val files = mutableMapOf<String, AgentTerminalVirtualFile>()
+    private val files = java.util.concurrent.ConcurrentHashMap<String, AgentTerminalVirtualFile>()
 
     /** 轮次监控。只有经本插件打开过的会话才纳入，见设计文档的监控范围决策。 */
     private val turnWatcher = TurnWatcher()
@@ -66,10 +69,19 @@ class TerminalHost(private val project: Project) : Disposable {
         sessionsChangedListeners.forEach { runCatching { it() } }
     }
 
-    /** 会话集合变化（目前是被结束）时回调，供界面立即刷新标记。 */
+    /** 标签页集合变化（打开或结束）时回调，供界面立即刷新标记。 */
     fun addSessionsChangedListener(listener: () -> Unit) {
         sessionsChangedListeners.add(listener)
     }
+
+    /**
+     * 当前开着标签页的会话 key。
+     *
+     * 这是「已打开」标记的唯一依据。不要改用 CLI 运行态文件去推断：那是进程状态，
+     * 由 CLI 自己异步落盘，点击后要等它写出来再等下一轮轮询才能读到，标记会明显滞后；
+     * 而标签页开没开是本服务自己的账，点击那一刻就是确定的。
+     */
+    fun openTabKeys(): Set<String> = files.keys.toSet()
 
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */
     fun openResume(agentType: AgentType, sessionId: String, tabTitle: String) {
@@ -129,6 +141,8 @@ class TerminalHost(private val project: Project) : Disposable {
             AgentTerminalVirtualFile(tabTitle, view, key)
         }
         FileEditorManager.getInstance(project).openFile(file, true)
+        // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
+        sessionsChangedListeners.forEach { runCatching { it() } }
     }
 
     /**

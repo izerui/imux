@@ -31,14 +31,14 @@ private const val PAGE_SIZE = 50
 /** 未读会话的前置标记。 */
 private const val UNREAD_MARK = "● "
 
-/** 运行中会话的前置标记，与「有新结果待看」的蓝点区分开。 */
+/** 正在执行的会话的前置标记，与「有新结果待看」的蓝点区分开。 */
 private const val RUNNING_MARK = "▶ "
 
 /** 用 IDE 的强调蓝，深浅色主题各给一个值。 */
 private val UNREAD_MARK_ATTRIBUTES =
     SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, JBColor(0x3592C4, 0x548AF7))
 
-/** 运行中用绿色，与未读的蓝色区分。 */
+/** 执行中用绿色，与未读的蓝色区分。 */
 private val RUNNING_MARK_ATTRIBUTES =
     SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0x369650, 0x57965C))
 
@@ -57,7 +57,7 @@ private sealed interface NodeData {
         val title: String,
         /** 已格式化的「多久以前」，渲染时灰色显示在标题右侧。 */
         val relativeTime: String,
-        /** 进程是否活着 */
+        /** CLI 是否正在执行这一轮 */
         val running: Boolean,
         /** 是否有新结果待看 */
         val unread: Boolean,
@@ -87,13 +87,18 @@ class AgentSessionTree(
     /**
      * 当前活着的 Claude 进程，按会话 id 索引。由外部每轮轮询后灌入。
      *
-     * 这来自 CLI 自己写的运行态文件，而非我们对终端的记账——后者感知不到
-     * IDE 之外启动的会话，也分不出后台 agent。
+     * 只服务于 resume 前的忙碌预检——那里要看 kind 与 status 两个字段。
+     * 渲染不看这份快照，看已经合成好的 [runningIds]：codex 没有运行态文件，
+     * 它的执行中状态来自会话文件，两者必须先合并再渲染。
      */
     private var runtime: Map<String, ClaudeRuntimeSession> = emptyMap()
 
-    fun updateRuntime(snapshot: Map<String, ClaudeRuntimeSession>) {
+    /** 此刻正在执行的会话 id，见 [com.github.liuyuhua.imux.turn.RunningSessions]。 */
+    private var runningIds: Set<String> = emptySet()
+
+    fun updateStatus(snapshot: Map<String, ClaudeRuntimeSession>, running: Set<String>) {
         runtime = snapshot
+        runningIds = running
         reload()
     }
 
@@ -116,16 +121,17 @@ class AgentSessionTree(
 
                 val session = data as? NodeData.Session
 
+                // 正在跑优先于未读：此刻的处境比「上一轮跑完了」更要紧
                 when {
+                    session?.running == true -> {
+                        append(RUNNING_MARK, RUNNING_MARK_ATTRIBUTES)
+                        append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    }
+
                     session?.unread == true -> {
                         // 前置圆点比单纯加粗显眼得多，扫一眼列表就能定位
                         append(UNREAD_MARK, UNREAD_MARK_ATTRIBUTES)
                         append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                    }
-
-                    session?.running == true -> {
-                        append(RUNNING_MARK, RUNNING_MARK_ATTRIBUTES)
-                        append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
 
                     else -> append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
@@ -267,6 +273,7 @@ class AgentSessionTree(
     private fun nodesFor(agentType: AgentType): List<NodeData> {
         val entries = model.entries(agentType)
         val limit = limits.getValue(agentType)
+        val openTabs = TerminalHost.getInstance(project).openTabKeys()
 
         val nodes = entries.take(limit).map { entry ->
             when (entry) {
@@ -279,7 +286,11 @@ class AgentSessionTree(
                         Instant.now(),
                         ZoneId.systemDefault(),
                     ),
-                    running = runtime.containsKey(entry.session.id),
+                    // 与标签页取交集：只关心自己正在用的会话。IDE 之外启动的
+                    // claude 进程在运行态文件里可见，但不该出现在列表标记上。
+                    // 交集在此实时求，而非由外部预先算好——否则关标签页后标记
+                    // 要等下一轮才消失。
+                    running = entry.session.id in runningIds && entry.session.id in openTabs,
                     unread = entry.session.id in unread,
                 )
 
