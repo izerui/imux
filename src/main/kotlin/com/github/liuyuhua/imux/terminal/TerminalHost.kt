@@ -29,11 +29,17 @@ class TerminalHost(private val project: Project) : Disposable {
      */
     private val files = mutableMapOf<String, AgentTerminalVirtualFile>()
 
-    /** 启动一个全新会话（不带 resume），返回内部 key。 */
-    fun openNew(agentType: AgentType, tabTitle: String): String {
-        val key = "new-${agentType.name}-${System.nanoTime()}"
+    /**
+     * 启动一个全新会话（不带 resume）。
+     *
+     * [key] 必须由调用方给出，且必须与 SessionListModel 的 pending key 一致——
+     * 会话落盘后 [rebindKey] 要靠它把终端迁到真实会话 id 下。
+     * 若两边各生成各的 key，迁移会静默失败，之后点击该会话就会重开一个
+     * `--resume` 终端，与仍在运行的原终端抢同一个会话，CLI 会报
+     * 「currently running as a background agent」。
+     */
+    fun openNew(agentType: AgentType, key: String, tabTitle: String) {
         open(key, newCommand(agentType), tabTitle)
-        return key
     }
 
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */
@@ -77,7 +83,13 @@ class TerminalHost(private val project: Project) : Disposable {
      * 虚拟文件实例必须沿用同一个——它是标签页的身份，换实例会开出新标签页。
      */
     fun rebindKey(oldKey: String, newKey: String, newTitle: String) {
-        val view = views.remove(oldKey) ?: return
+        val view = views.remove(oldKey)
+        if (view == null) {
+            // 不要静默返回：迁移失败意味着之后点击该会话会重开一个 --resume 终端，
+            // 与仍在运行的原终端抢同一个会话。曾因两边 key 不一致而静默失败过。
+            LOG.warn("换 key 失败：找不到 key=$oldKey 的终端，目标 $newKey。已有 key=${views.keys}")
+            return
+        }
         views[newKey] = view
 
         files.remove(oldKey)?.let { file ->

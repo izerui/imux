@@ -211,8 +211,9 @@ private class CreateAction(
 
     override fun actionPerformed(event: AnActionEvent) {
         // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
-        model.registerPending(agentType)
-        TerminalHost.getInstance(project).openNew(agentType, "新会话")
+        val pending = model.registerPending(agentType)
+        // 终端必须以 pending.key 记录：会话落盘后要靠这个 key 把终端迁到真实 id 下
+        TerminalHost.getInstance(project).openNew(agentType, pending.key, "新会话")
         refresh()
     }
 }
