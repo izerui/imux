@@ -4,14 +4,11 @@ import com.github.liuyuhua.imux.model.AgentType
 import com.github.liuyuhua.imux.session.ClaudeSessionReader
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.session.SessionRepository
-import com.github.liuyuhua.imux.terminal.AgentTerminalVirtualFile
 import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.github.liuyuhua.imux.watch.SessionStoreWatcher
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.fileEditor.FileEditorManager
-import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -20,7 +17,6 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ToolWindowManager
@@ -78,21 +74,6 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
                     val visible = toolWindow.isVisible
                     if (visible && !wasVisible) refresh()
                     wasVisible = visible
-                }
-            },
-        )
-
-        // 标签页开关会改变圆点状态，而它不经过会话库扫描，必须单独订阅。
-        // 缺了这条，关掉标签页后列表上的标记不会变。
-        project.messageBus.connect(toolWindow.disposable).subscribe(
-            FileEditorManagerListener.FILE_EDITOR_MANAGER,
-            object : FileEditorManagerListener {
-                override fun fileOpened(source: FileEditorManager, file: VirtualFile) {
-                    if (file is AgentTerminalVirtualFile) sessionTree.reload()
-                }
-
-                override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
-                    if (file is AgentTerminalVirtualFile) sessionTree.reload()
                 }
             },
         )

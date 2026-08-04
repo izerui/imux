@@ -32,14 +32,8 @@ private sealed interface NodeData {
         val agentType: AgentType,
         val id: String,
         val title: String,
-        /** 仅反映本 IDE 启动的终端；外部终端里跑的会话无从得知，见设计文档 8.1。 */
-        val state: TerminalHost.RunState,
     ) : NodeData {
-        override fun toString(): String = when (state) {
-            TerminalHost.RunState.TAB_OPEN -> "● $title"
-            TerminalHost.RunState.BACKGROUND -> "○ $title"
-            TerminalHost.RunState.NONE -> title
-        }
+        override fun toString(): String = title
     }
 
     data class PendingSession(val agentType: AgentType, val key: String) : NodeData {
@@ -131,7 +125,6 @@ class AgentSessionTree(
                     agentType,
                     entry.session.id,
                     entry.session.title,
-                    state = TerminalHost.getInstance(project).stateOf(entry.session.id),
                 )
 
                 is ListEntry.Pending -> NodeData.PendingSession(agentType, entry.pending.key)
@@ -149,8 +142,6 @@ class AgentSessionTree(
         when (val data = node.userObject) {
             is NodeData.Session -> {
                 TerminalHost.getInstance(project).openResume(data.agentType, data.id, data.title)
-                // 打开终端不会触发扫描，需显式重绘以让「运行中」标识立即生效
-                reload()
             }
 
             is NodeData.PendingSession -> {
@@ -158,7 +149,6 @@ class AgentSessionTree(
                 if (boundId != null) {
                     TerminalHost.getInstance(project)
                         .openResume(data.agentType, boundId, "会话 ${boundId.take(8)}")
-                    reload()
                 }
                 // 未绑定时无操作：终端已在新建时打开，双击无额外语义
             }

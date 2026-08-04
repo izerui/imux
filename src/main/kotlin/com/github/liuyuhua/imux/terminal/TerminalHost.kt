@@ -49,39 +49,6 @@ class TerminalHost(private val project: Project) : Disposable {
     }
 
     /**
-     * 会话终端的三态。
-     *
-     * 之所以要区分后两者：关闭标签页刻意不销毁终端（见类注释的所有权规则），
-     * 进程仍在后台运行。若只用「开/关」两态表示，这些进程就从界面上消失了，
-     * 用户会不知不觉积累一堆隐形的 CLI。
-     */
-    enum class RunState {
-        /** 标签页开着 */
-        TAB_OPEN,
-
-        /** 标签页已关，但进程仍在后台运行 */
-        BACKGROUND,
-
-        /** 未运行 */
-        NONE,
-    }
-
-    fun stateOf(key: String): RunState {
-        val view = views[key] ?: return RunState.NONE
-
-        // 必须看真实会话状态，不能只看「我们建过 view」：CLI 自己退出后
-        // view 仍在表里，若据此报 BACKGROUND 就是谎称后台还有进程在跑。
-        if (view.sessionState.value is TerminalViewSessionState.Terminated) return RunState.NONE
-
-        val file = files[key] ?: return RunState.BACKGROUND
-        return if (FileEditorManager.getInstance(project).isFileOpen(file)) {
-            RunState.TAB_OPEN
-        } else {
-            RunState.BACKGROUND
-        }
-    }
-
-    /**
      * 新建的会话在 CLI 落盘后才拿到真实 id，此时要把终端从 openNew 的合成 key
      * 迁到真实 id 下。不做这一步会有两个后果：运行中标识查不到；再次点击该会话
      * 会以真实 id 找不到已有终端，从而重开一个。
