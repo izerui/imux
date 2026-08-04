@@ -33,6 +33,37 @@ class ClaudeRuntimeIndexTest {
     }
 
     @Test
+    fun `按项目目录过滤，别的项目的进程不算数`() {
+        // 本机常年同时跑着好几个项目的 claude。不过滤的话，这个项目的 IDE 窗口
+        // 会为别的项目的会话弹通知，而那些会话根本不在本项目列表里，
+        // 连标题都取不到，只能显示一串 id。
+        writeSession(1001, "mine", cwd = "/Users/demo/proj")
+        writeSession(1002, "other", cwd = "/Users/demo/another")
+
+        val loaded = index().load("/Users/demo/proj")
+
+        assertEquals(setOf("mine"), loaded.keys)
+    }
+
+    @Test
+    fun `不传项目目录时返回全部`() {
+        writeSession(1001, "mine", cwd = "/Users/demo/proj")
+        writeSession(1002, "other", cwd = "/Users/demo/another")
+
+        assertEquals(setOf("mine", "other"), index().load().keys)
+    }
+
+    @Test
+    fun `缺少 cwd 的运行态文件在过滤时被排除`() {
+        // 判不出归属就不该认领：宁可漏一条提醒，也不要在无关项目里弹
+        val dir = File(tmp.root, "sessions").apply { mkdirs() }
+        File(dir, "1003.json").writeText("""{"pid":"1003","sessionId":"nocwd","kind":"interactive"}""")
+
+        assertTrue(index().load("/Users/demo/proj").isEmpty())
+        assertEquals(setOf("nocwd"), index().load().keys)
+    }
+
+    @Test
     fun `读出会话的运行态`() {
         writeSession(1001, "s1", kind = "bg", status = "busy")
 

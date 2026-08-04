@@ -46,7 +46,16 @@ class ClaudeRuntimeIndex(
     private val isProcessAlive: (Long) -> Boolean = ::defaultIsProcessAlive,
 ) {
 
-    fun load(): Map<String, ClaudeRuntimeSession> {
+    /**
+     * @param projectPath 只保留 cwd 等于它的进程；传 null 则不过滤。
+     *
+     * 必须按项目过滤：这个目录是全机器共享的，本机实测常年同时跑着五六个不同项目的
+     * claude。不过滤的话，每个 IDE 窗口都会为所有项目的会话弹提醒，而那些会话不在
+     * 本项目的列表里，连标题都查不到，只能显示一串会话 id。
+     *
+     * cwd 缺失的一律排除：判不出归属就不该认领。
+     */
+    fun load(projectPath: String? = null): Map<String, ClaudeRuntimeSession> {
         val dir = claudeHome.resolve("sessions")
         if (!Files.isDirectory(dir)) return emptyMap()
 
@@ -55,6 +64,7 @@ class ClaudeRuntimeIndex(
                 stream.toList()
                     .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".json") }
                     .mapNotNull { readOne(it) }
+                    .filter { projectPath == null || it.cwd == projectPath }
                     .filter { isProcessAlive(it.pid) }
                     .associateBy { it.sessionId }
             }

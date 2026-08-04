@@ -73,7 +73,9 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         val runtimeIndex = ClaudeRuntimeIndex(Paths.get(System.getProperty("user.home")).resolve(".claude"))
         val statusTracker = RuntimeStatusTracker()
 
-        val checkRuntime = { checkCompletedTurns(project, model, sessionTree, runtimeIndex, statusTracker) }
+        val checkRuntime = {
+            checkCompletedTurns(project, projectPath, model, sessionTree, runtimeIndex, statusTracker)
+        }
 
         // 标签页开或关时立即重绘，不必等下一轮轮询——否则标记要过几秒才亮/才灭，手感很迟钝。
         // 这里只重绘不读运行态文件：绿色标记的依据是标签页开没开，那是内存里的账，
@@ -171,6 +173,7 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
      */
     private fun checkCompletedTurns(
         project: Project,
+        projectPath: String,
         model: SessionListModel,
         sessionTree: AgentSessionTree,
         runtimeIndex: ClaudeRuntimeIndex,
@@ -180,7 +183,8 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
         // 运行态是 CLI 自己写的一手状态，优先用它；会话文件推断作为补充，
         // 覆盖那些没有运行态文件的情形（例如 codex）。
-        val runtime = runtimeIndex.load()
+        // 按项目过滤：运行态目录是全机器共享的，不过滤就会为别的项目的会话弹提醒
+        val runtime = runtimeIndex.load(projectPath)
         val watcher = host.turnWatcher()
         // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
         val completed = (statusTracker.completedSince(runtime) + watcher.poll()).distinct()
