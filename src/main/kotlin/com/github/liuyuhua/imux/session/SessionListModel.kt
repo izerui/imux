@@ -103,6 +103,8 @@ class SessionListModel(
     private fun visiblePendingKeys(): List<String> =
         pendings.filter { it.key !in bindings }.map { it.key }
 
+    fun sessionOf(id: String): AgentSession? = sessions.firstOrNull { it.id == id }
+
     fun entries(agentType: AgentType): List<ListEntry> {
         val existing = sessions
             .filter { it.agentType == agentType }

@@ -19,7 +19,7 @@ import com.intellij.testFramework.LightVirtualFile
 class AgentTerminalVirtualFile(
     name: String,
     val terminalView: TerminalView,
-    val sessionKey: String,
+    var sessionKey: String,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
 
     override fun getFileType(): FileType = AgentTerminalFileType

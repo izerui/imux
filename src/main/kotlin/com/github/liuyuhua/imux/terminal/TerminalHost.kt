@@ -9,6 +9,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
+import com.github.liuyuhua.imux.turn.TurnWatcher
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import kotlinx.coroutines.cancel
 
@@ -30,6 +31,9 @@ class TerminalHost(private val project: Project) : Disposable {
      */
     private val files = mutableMapOf<String, AgentTerminalVirtualFile>()
 
+    /** 轮次监控。只有经本插件打开过的会话才纳入，见设计文档的监控范围决策。 */
+    private val turnWatcher = TurnWatcher()
+
     /**
      * 启动一个全新会话（不带 resume）。
      *
@@ -48,6 +52,19 @@ class TerminalHost(private val project: Project) : Disposable {
         open(sessionId, resumeCommand(agentType, sessionId), tabTitle)
     }
 
+    fun turnWatcher(): TurnWatcher = turnWatcher
+
+    /** 把会话纳入轮次监控。文件路径来自扫描结果（AgentSession.filePath）。 */
+    fun startWatchingTurn(sessionId: String, agentType: AgentType, file: java.nio.file.Path) {
+        turnWatcher.watch(sessionId, agentType, file)
+    }
+
+    /** 该会话的标签页是否正被选中。用于抑制「你正看着」时的提醒。 */
+    fun isTabSelected(sessionId: String): Boolean {
+        val file = files[sessionId] ?: return false
+        return FileEditorManager.getInstance(project).selectedEditor?.file == file
+    }
+
     /**
      * 新建的会话在 CLI 落盘后才拿到真实 id，此时要把终端从 openNew 的合成 key
      * 迁到真实 id 下。不做这一步会有两个后果：运行中标识查不到；再次点击该会话
@@ -64,9 +81,12 @@ class TerminalHost(private val project: Project) : Disposable {
             return
         }
         views[newKey] = view
+        turnWatcher.unwatch(oldKey)
 
         files.remove(oldKey)?.let { file ->
             files[newKey] = file
+            // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉
+            file.sessionKey = newKey
             renameTab(file, newTitle)
         }
     }

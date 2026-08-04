@@ -25,5 +25,8 @@
         -->
         <fileEditorProvider
             implementation="com.github.liuyuhua.imux.terminal.AgentTerminalFileEditorProvider"/>
+
+        <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
+        <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
     </extensions>
 </idea-plugin>

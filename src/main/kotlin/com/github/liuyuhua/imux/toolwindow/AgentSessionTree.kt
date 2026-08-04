@@ -5,11 +5,14 @@ import com.github.liuyuhua.imux.session.ListEntry
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
 import com.intellij.openapi.project.Project
+import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.JComponent
+import javax.swing.JTree
 import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 import javax.swing.tree.DefaultMutableTreeNode
@@ -52,10 +55,40 @@ class AgentSessionTree(
 
     private val root = DefaultMutableTreeNode("root")
     private val treeModel = DefaultTreeModel(root)
+    /** 轮次刚完成、用户还没回来看的会话 id。 */
+    private val unread = mutableSetOf<String>()
+
     private val tree = Tree(treeModel).apply {
         isRootVisible = false
         showsRootHandles = true
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+        cellRenderer = object : ColoredTreeCellRenderer() {
+            override fun customizeCellRenderer(
+                tree: JTree,
+                value: Any?,
+                selected: Boolean,
+                expanded: Boolean,
+                leaf: Boolean,
+                row: Int,
+                hasFocus: Boolean,
+            ) {
+                val data = (value as? DefaultMutableTreeNode)?.userObject
+                val isUnread = data is NodeData.Session && data.id in unread
+                append(
+                    data?.toString() ?: "",
+                    if (isUnread) SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+                    else SimpleTextAttributes.REGULAR_ATTRIBUTES,
+                )
+            }
+        }
+    }
+
+    fun markUnread(sessionId: String) {
+        if (unread.add(sessionId)) reload()
+    }
+
+    fun clearUnread(sessionId: String) {
+        if (unread.remove(sessionId)) reload()
     }
 
     /** 每个分组当前展示的条数上限，点「显示更多」后递增。 */
@@ -109,6 +142,10 @@ class AgentSessionTree(
         val host = TerminalHost.getInstance(project)
         bindings.forEach { (pendingKey, sessionId) ->
             host.rebindKey(pendingKey, sessionId, titles[sessionId] ?: "会话 ${sessionId.take(8)}")
+            // 新建的会话直到落盘才有文件路径，绑定这一刻才能纳入监控
+            model.sessionOf(sessionId)?.let {
+                host.startWatchingTurn(sessionId, it.agentType, it.filePath)
+            }
         }
     }
 
@@ -141,7 +178,12 @@ class AgentSessionTree(
         val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
         when (val data = node.userObject) {
             is NodeData.Session -> {
-                TerminalHost.getInstance(project).openResume(data.agentType, data.id, data.title)
+                val host = TerminalHost.getInstance(project)
+                host.openResume(data.agentType, data.id, data.title)
+                model.sessionOf(data.id)?.let {
+                    host.startWatchingTurn(data.id, data.agentType, it.filePath)
+                }
+                clearUnread(data.id)
             }
 
             is NodeData.PendingSession -> {

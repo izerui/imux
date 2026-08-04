@@ -4,11 +4,15 @@ import com.github.liuyuhua.imux.model.AgentType
 import com.github.liuyuhua.imux.session.ClaudeSessionReader
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.session.SessionRepository
+import com.github.liuyuhua.imux.terminal.AgentTerminalVirtualFile
 import com.github.liuyuhua.imux.terminal.TerminalHost
+import com.github.liuyuhua.imux.turn.TurnNotifier
 import com.github.liuyuhua.imux.watch.SessionStoreWatcher
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -59,7 +63,10 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         toolbar.targetComponent = panel
         panel.add(toolbar.component, BorderLayout.NORTH)
 
-        startWatching(toolWindow, projectPath, refresh)
+        startWatching(toolWindow, projectPath) {
+            refresh()
+            checkCompletedTurns(project, model, sessionTree)
+        }
 
         // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
         //
@@ -78,10 +85,53 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             },
         )
 
+        // 从别处切回该会话的标签页时也应消除未读，不能只靠点击列表
+        project.messageBus.connect(toolWindow.disposable).subscribe(
+            FileEditorManagerListener.FILE_EDITOR_MANAGER,
+            object : FileEditorManagerListener {
+                override fun selectionChanged(event: FileEditorManagerEvent) {
+                    val file = event.newFile as? AgentTerminalVirtualFile ?: return
+                    sessionTree.clearUnread(file.sessionKey)
+                }
+            },
+        )
+
         refresh()
 
         val content = ContentFactory.getInstance().createContent(panel, null, false)
         toolWindow.contentManager.addContent(content)
+    }
+
+    /**
+     * 检查有无刚完成的会话轮次，标记未读并弹通知。
+     *
+     * 正被查看的不提醒——你已经在看了，再弹是打扰。
+     */
+    private fun checkCompletedTurns(
+        project: Project,
+        model: SessionListModel,
+        sessionTree: AgentSessionTree,
+    ) {
+        val host = TerminalHost.getInstance(project)
+        val completed = host.turnWatcher().poll()
+        if (completed.isEmpty()) return
+
+        ApplicationManager.getApplication().invokeLater {
+            completed.forEach { sessionId ->
+                if (host.isTabSelected(sessionId)) return@forEach
+
+                val session = model.sessionOf(sessionId)
+                val title = session?.title ?: "会话 ${sessionId.take(8)}"
+                sessionTree.markUnread(sessionId)
+
+                TurnNotifier.notifyCompleted(project, title) {
+                    model.sessionOf(sessionId)?.let {
+                        host.openResume(it.agentType, it.id, it.title)
+                    }
+                    sessionTree.clearUnread(sessionId)
+                }
+            }
+        }
     }
 
     /**
