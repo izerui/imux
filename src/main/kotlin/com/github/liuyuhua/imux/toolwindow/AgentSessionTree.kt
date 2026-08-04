@@ -1,6 +1,7 @@
 package com.github.liuyuhua.imux.toolwindow
 
 import com.github.liuyuhua.imux.model.AgentType
+import com.github.liuyuhua.imux.session.ClaudeRuntimeSession
 import com.github.liuyuhua.imux.session.ListEntry
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
@@ -29,9 +30,16 @@ private const val PAGE_SIZE = 50
 /** 未读会话的前置标记。 */
 private const val UNREAD_MARK = "● "
 
+/** 运行中会话的前置标记，与「有新结果待看」的蓝点区分开。 */
+private const val RUNNING_MARK = "▶ "
+
 /** 用 IDE 的强调蓝，深浅色主题各给一个值。 */
 private val UNREAD_MARK_ATTRIBUTES =
     SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, JBColor(0x3592C4, 0x548AF7))
+
+/** 运行中用绿色，与未读的蓝色区分。 */
+private val RUNNING_MARK_ATTRIBUTES =
+    SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0x369650, 0x57965C))
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
@@ -71,6 +79,23 @@ class AgentSessionTree(
     /** 轮次刚完成、用户还没回来看的会话 id。 */
     private val unread = mutableSetOf<String>()
 
+    /**
+     * 当前活着的 Claude 进程，按会话 id 索引。由外部每轮轮询后灌入。
+     *
+     * 这来自 CLI 自己写的运行态文件，而非我们对终端的记账——后者感知不到
+     * IDE 之外启动的会话，也分不出后台 agent。
+     */
+    private var runtime: Map<String, ClaudeRuntimeSession> = emptyMap()
+
+    fun updateRuntime(snapshot: Map<String, ClaudeRuntimeSession>) {
+        if (snapshot.keys == runtime.keys) {
+            runtime = snapshot
+            return
+        }
+        runtime = snapshot
+        reload()
+    }
+
     private val tree = Tree(treeModel).apply {
         isRootVisible = false
         showsRootHandles = true
@@ -88,12 +113,21 @@ class AgentSessionTree(
                 val data = (value as? DefaultMutableTreeNode)?.userObject
                 val text = data?.toString() ?: ""
 
-                if (data is NodeData.Session && data.id in unread) {
-                    // 前置圆点比单纯加粗显眼得多，扫一眼列表就能定位
-                    append(UNREAD_MARK, UNREAD_MARK_ATTRIBUTES)
-                    append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                } else {
-                    append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                val sessionId = (data as? NodeData.Session)?.id
+
+                when {
+                    sessionId != null && sessionId in unread -> {
+                        // 前置圆点比单纯加粗显眼得多，扫一眼列表就能定位
+                        append(UNREAD_MARK, UNREAD_MARK_ATTRIBUTES)
+                        append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                    }
+
+                    sessionId != null && runtime.containsKey(sessionId) -> {
+                        append(RUNNING_MARK, RUNNING_MARK_ATTRIBUTES)
+                        append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                    }
+
+                    else -> append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                 }
 
                 if (data is NodeData.Session) {
@@ -205,6 +239,15 @@ class AgentSessionTree(
         val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
         when (val data = node.userObject) {
             is NodeData.Session -> {
+                // 预检：正在后台跑的会话不能 resume，CLI 会拒绝并报
+                // 「currently running as a background agent」。提前拦住并说明原因，
+                // 比让用户在终端里撞一脸报错好。
+                val running = runtime[data.id]
+                if (running != null && running.isBackground && running.isBusy) {
+                    TurnNotifier.notifyBusy(project, data.title)
+                    return
+                }
+
                 val host = TerminalHost.getInstance(project)
                 host.openResume(data.agentType, data.id, data.title)
                 model.sessionOf(data.id)?.let {

@@ -40,6 +40,23 @@ object TurnNotifier {
         notification.notify(project)
     }
 
+    /**
+     * 该会话正作为后台 agent 运行，无法恢复。
+     *
+     * 提前提示，避免用户在终端里撞上 CLI 的
+     * 「currently running as a background agent」报错。
+     */
+    fun notifyBusy(project: Project, title: String) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(GROUP_ID)
+            .createNotification(
+                "会话正在后台运行",
+                "「$title」正作为后台 agent 执行任务，等它空闲后再打开。",
+                NotificationType.WARNING,
+            )
+            .notify(project)
+    }
+
     /** 用户已经通过别的途径看到该会话，撤掉对应通知。 */
     fun dismiss(sessionId: String) {
         active.remove(sessionId)?.expire()

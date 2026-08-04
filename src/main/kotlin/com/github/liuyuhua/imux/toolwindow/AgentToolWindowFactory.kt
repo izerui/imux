@@ -1,11 +1,13 @@
 package com.github.liuyuhua.imux.toolwindow
 
 import com.github.liuyuhua.imux.model.AgentType
+import com.github.liuyuhua.imux.session.ClaudeRuntimeIndex
 import com.github.liuyuhua.imux.session.ClaudeSessionReader
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.session.SessionRepository
 import com.github.liuyuhua.imux.terminal.AgentTerminalVirtualFile
 import com.github.liuyuhua.imux.terminal.TerminalHost
+import com.github.liuyuhua.imux.turn.RuntimeStatusTracker
 import com.github.liuyuhua.imux.turn.TurnNotifier
 import com.github.liuyuhua.imux.watch.SessionStoreWatcher
 import com.intellij.icons.AllIcons
@@ -63,9 +65,12 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         toolbar.targetComponent = panel
         panel.add(toolbar.component, BorderLayout.NORTH)
 
+        val runtimeIndex = ClaudeRuntimeIndex(Paths.get(System.getProperty("user.home")).resolve(".claude"))
+        val statusTracker = RuntimeStatusTracker()
+
         startWatching(toolWindow, projectPath) {
             refresh()
-            checkCompletedTurns(project, model, sessionTree)
+            checkCompletedTurns(project, model, sessionTree, runtimeIndex, statusTracker)
         }
 
         // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
@@ -111,9 +116,18 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         project: Project,
         model: SessionListModel,
         sessionTree: AgentSessionTree,
+        runtimeIndex: ClaudeRuntimeIndex,
+        statusTracker: RuntimeStatusTracker,
     ) {
         val host = TerminalHost.getInstance(project)
-        val completed = host.turnWatcher().poll()
+
+        // 运行态是 CLI 自己写的一手状态，优先用它；会话文件推断作为补充，
+        // 覆盖那些没有运行态文件的情形（例如 codex）。
+        val runtime = runtimeIndex.load()
+        val completed = (statusTracker.completedSince(runtime) + host.turnWatcher().poll()).distinct()
+
+        ApplicationManager.getApplication().invokeLater { sessionTree.updateRuntime(runtime) }
+
         if (completed.isEmpty()) return
 
         ApplicationManager.getApplication().invokeLater {
