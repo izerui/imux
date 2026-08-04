@@ -201,16 +201,11 @@ class TerminalHost(private val project: Project) : Disposable {
     private fun projectPath(): String =
         project.basePath ?: System.getProperty("user.home")
 
-    private fun newCommand(agentType: AgentType): List<String> = when (agentType) {
-        AgentType.CLAUDE -> listOf("claude")
-        AgentType.CODEX -> listOf("codex")
-    }
+    private fun newCommand(agentType: AgentType): List<String> =
+        launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = null)
 
     private fun resumeCommand(agentType: AgentType, sessionId: String): List<String> =
-        when (agentType) {
-            AgentType.CLAUDE -> listOf("claude", "--resume", sessionId)
-            AgentType.CODEX -> listOf("codex", "resume", sessionId)
-        }
+        launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = sessionId)
 
     /**
      * 项目关闭时终结所有会话。这是唯一该杀进程的地方。
