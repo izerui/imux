@@ -4,6 +4,7 @@ import com.github.liuyuhua.imux.model.AgentType
 import com.github.liuyuhua.imux.session.ListEntry
 import com.github.liuyuhua.imux.session.SessionListModel
 import com.github.liuyuhua.imux.terminal.TerminalHost
+import com.github.liuyuhua.imux.turn.TurnNotifier
 import com.intellij.openapi.project.Project
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.JBColor
@@ -99,6 +100,8 @@ class AgentSessionTree(
     }
 
     fun clearUnread(sessionId: String) {
+        // 用户已经看到该会话，挂着的提醒气泡也该一并撤掉
+        TurnNotifier.dismiss(sessionId)
         if (unread.remove(sessionId)) reload()
     }
 

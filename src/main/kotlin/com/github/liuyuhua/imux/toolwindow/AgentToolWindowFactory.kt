@@ -124,7 +124,7 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
                 val title = session?.title ?: "会话 ${sessionId.take(8)}"
                 sessionTree.markUnread(sessionId)
 
-                TurnNotifier.notifyCompleted(project, title) {
+                TurnNotifier.notifyCompleted(project, sessionId, title) {
                     model.sessionOf(sessionId)?.let {
                         host.openResume(it.agentType, it.id, it.title)
                     }
