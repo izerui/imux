@@ -99,4 +99,43 @@ class ClaudeHistoryIndexTest {
 
         assertEquals("有内容的", index().load("/Users/demo/proj")["s1"]?.display)
     }
+
+    /**
+     * 真实文件里 timestamp 两种形式并存：`"timestamp":123` 与 `"timestamp":"123"`。
+     * 早先只认字符串形式，数字形式的记录被整条丢弃，索引直接空掉。
+     */
+    @Test
+    fun `数字形式的时间戳同样能解析`() {
+        File(tmp.root, "history.jsonl").writeText(
+            """{"display":"数字时间戳","pastedContents":{},"timestamp":1785211438000,"project":"/Users/demo/proj","sessionId":"s1"}""",
+        )
+
+        val entry = index().load("/Users/demo/proj")["s1"]
+        assertEquals("数字时间戳", entry?.display)
+        assertEquals(1785211438000L, entry?.lastPromptAtMillis)
+    }
+
+    @Test
+    fun `两种时间戳形式混排时排序正确`() {
+        File(tmp.root, "history.jsonl").writeText(
+            listOf(
+                """{"display":"晚的","timestamp":3000,"project":"/Users/demo/proj","sessionId":"s1"}""",
+                """{"display":"早的","timestamp":"1000","project":"/Users/demo/proj","sessionId":"s1"}""",
+            ).joinToString("\n"),
+        )
+
+        val entry = index().load("/Users/demo/proj")["s1"]
+        assertEquals("早的", entry?.display)
+        assertEquals(3000L, entry?.lastPromptAtMillis)
+    }
+
+    /** 时间戳缺失或无法解析时，不该把整条记录连同标题一起丢掉。 */
+    @Test
+    fun `时间戳无法解析时仍保留标题`() {
+        File(tmp.root, "history.jsonl").writeText(
+            """{"display":"仍然可用","timestamp":"不是数字","project":"/Users/demo/proj","sessionId":"s1"}""",
+        )
+
+        assertEquals("仍然可用", index().load("/Users/demo/proj")["s1"]?.display)
+    }
 }
