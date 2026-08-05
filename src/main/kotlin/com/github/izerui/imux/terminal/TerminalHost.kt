@@ -164,7 +164,7 @@ class TerminalHost(private val project: Project) : Disposable {
         discardIfTerminated(key)
         val file = files.getOrPut(key) {
             val view = views.getOrPut(key) { createView(agentType, command, tabTitle) }
-            AgentTerminalVirtualFile(tabTitle, view, key).also(::closeTabWhenTerminated)
+            AgentTerminalVirtualFile(tabTitle, view, key, agentType).also(::closeTabWhenTerminated)
         }
         FileEditorManager.getInstance(project).openFile(file, true)
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。

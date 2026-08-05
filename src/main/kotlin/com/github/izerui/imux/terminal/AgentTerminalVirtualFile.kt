@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.fileTypes.ex.FakeFileType
 import com.intellij.openapi.vfs.VirtualFile
@@ -32,6 +33,7 @@ class AgentTerminalVirtualFile(
     name: String,
     val terminalView: TerminalView,
     var sessionKey: String,
+    val agentType: AgentType,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
 
     var tabTitle: String = name

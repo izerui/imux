@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -74,6 +75,7 @@ class AgentTerminalFileEditor(
     private var scrollToolbarComponent: JComponent? = null
     private var scrollButtonVisible = false
     private var observedEditor: Editor? = null
+    private var imeCompositionSupport: CodexImeCompositionSupport? = null
     private val visibleAreaListener = VisibleAreaListener { refreshScrollButton() }
     private val editorMouseListener = object : EditorMouseListener {
         override fun mousePressed(event: EditorMouseEvent) {
@@ -189,11 +191,21 @@ class AgentTerminalFileEditor(
         val host = TerminalHost.getInstance(project)
         val editor = host.currentTerminalEditor(virtualFile.terminalView)
         if (editor !== observedEditor) {
-            observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
-            observedEditor?.removeEditorMouseListener(editorMouseListener)
+            if (observedEditor?.isDisposed == false) {
+                observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
+                observedEditor?.removeEditorMouseListener(editorMouseListener)
+            }
+            imeCompositionSupport?.dispose()
+            imeCompositionSupport = null
             observedEditor = editor
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
-            editor?.addEditorMouseListener(editorMouseListener, this)
+            editor?.addEditorMouseListener(editorMouseListener)
+            if (editor != null && virtualFile.agentType == AgentType.CODEX) {
+                imeCompositionSupport = CodexImeCompositionSupport(
+                    editor,
+                    virtualFile.terminalView,
+                )
+            }
         }
 
         scrollButtonVisible = editor != null && !host.isScrolledToBottom(editor)
@@ -231,8 +243,12 @@ class AgentTerminalFileEditor(
         activeModelJob = null
         keyEventsJob?.cancel()
         keyEventsJob = null
-        observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
-        observedEditor?.removeEditorMouseListener(editorMouseListener)
+        if (observedEditor?.isDisposed == false) {
+            observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
+            observedEditor?.removeEditorMouseListener(editorMouseListener)
+        }
+        imeCompositionSupport?.dispose()
+        imeCompositionSupport = null
         observedEditor = null
         scrollToolbar = null
         scrollToolbarComponent = null

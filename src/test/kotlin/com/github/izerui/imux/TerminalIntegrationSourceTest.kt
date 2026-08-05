@@ -90,6 +90,18 @@ class TerminalIntegrationSourceTest {
             ),
         )
         assertTrue(
+            "项目关闭时 terminal Editor 可能已先释放，摘 Editor listener 前必须检查生命周期",
+            fileEditor.contains("if (observedEditor?.isDisposed == false)"),
+        )
+        assertTrue(
+            "Editor 会动态切换，鼠标监听必须由 observedEditor 绑定逻辑显式管理",
+            fileEditor.contains("editor?.addEditorMouseListener(editorMouseListener)"),
+        )
+        assertFalse(
+            "不能同时绑定 parent Disposable 又手工移除，否则 FileEditor dispose 时会重复摘监听器",
+            fileEditor.contains("addEditorMouseListener(editorMouseListener, this)"),
+        )
+        assertTrue(
             "alternate buffer 切换后必须重新绑定当前 Editor",
             fileEditor.contains(
                 "virtualFile.terminalView.outputModels.active.collect",
@@ -156,6 +168,72 @@ class TerminalIntegrationSourceTest {
             fileEditor.lines().any {
                 it.trimStart().startsWith("private val") && it.contains("preferredFocusableComponent")
             },
+        )
+    }
+
+    @Test
+    fun `Codex 输入法组合文本不能进入终端 Editor 布局`() {
+        val virtualFile = File(
+            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalVirtualFile.kt",
+        ).readText()
+        val fileEditor = File(
+            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+        ).readText()
+        val compositionSupportFile = File(
+            "src/main/kotlin/com/github/izerui/imux/terminal/CodexImeCompositionSupport.kt",
+        ).takeIf(File::exists) ?: File(
+            "src/main/kotlin/com/github/izerui/imux/terminal/CodexImeInlayStabilizer.kt",
+        )
+        val compositionSupport = compositionSupportFile.readText()
+
+        assertTrue(
+            "虚拟文件必须保留 agent 类型，才能把平台 IME 规避严格限定在 Codex",
+            virtualFile.contains("val agentType: AgentType"),
+        )
+        assertTrue(
+            "Codex 当前 terminal Editor 必须安装非布局型输入法组合文本支持",
+            fileEditor.contains("virtualFile.agentType == AgentType.CODEX") &&
+                fileEditor.contains("CodexImeCompositionSupport(") &&
+                fileEditor.contains("virtualFile.terminalView"),
+        )
+        assertTrue(
+            "alternate buffer 更换 Editor 时必须销毁旧组合文本支持并绑定新 Editor",
+            fileEditor.contains("imeCompositionSupport?.dispose()") &&
+                fileEditor.contains("observedEditor = editor"),
+        )
+        assertTrue(
+            "EditorComponentImpl 会先让 terminal 内部 listener 消费事件，必须在 AWT 分发前观察",
+            compositionSupport.contains("Toolkit.getDefaultToolkit().addAWTEventListener(") &&
+                compositionSupport.contains("AWTEvent.INPUT_METHOD_EVENT_MASK"),
+        )
+        assertTrue(
+            "原始输入法事件必须在平台创建 inline inlay 前消费掉",
+            compositionSupport.contains("event.consume()"),
+        )
+        assertTrue(
+            "已提交文字必须继续通过公开 TerminalView API 发给 Codex",
+            compositionSupport.contains("terminalView.sendText(committedText)"),
+        )
+        assertTrue(
+            "未提交组合文本必须使用不参与 Editor 布局的 Swing 覆盖层",
+            compositionSupport.contains("contentComponent.add(compositionLabel)") &&
+                compositionSupport.contains("compositionLabel.setBounds("),
+        )
+        assertFalse(
+            "inline inlay 必然参与 soft-wrap 计算，不能再用于 Codex 组合文本",
+            compositionSupport.contains("InlayModel") ||
+                compositionSupport.contains("addInlineElement(") ||
+                compositionSupport.contains("disableSoftWrapping"),
+        )
+        assertFalse(
+            "关闭整个 Editor soft wrap 会破坏 Codex 输入框背景和终端网格样式",
+            compositionSupport.contains("setUseSoftWraps") ||
+                compositionSupport.contains("isUseSoftWraps"),
+        )
+        assertFalse(
+            "只允许使用公开 Terminal API，不能反射或改 terminal 内部实现",
+            compositionSupport.contains("java.lang.reflect") ||
+                compositionSupport.contains("setInputMethodSupport("),
         )
     }
 
