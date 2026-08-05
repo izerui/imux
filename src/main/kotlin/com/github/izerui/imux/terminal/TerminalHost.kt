@@ -182,21 +182,25 @@ class TerminalHost(private val project: Project) : Disposable {
         view.coroutineScope.cancel()
     }
 
-    private fun createView(command: List<String>, tabTitle: String): TerminalView =
-        TerminalToolWindowTabsManager.getInstance(project)
+    /**
+     * 创建一个只属于编辑器的终端。
+     *
+     * IDEA 2026.2 的 [TerminalToolWindowTabsManager.detachTab] 会把 backend tab 标记为 detached：
+     * 它继续承载当前进程，但不会作为 Terminal 工具窗口标签持久化，也不会在下次启动时恢复。
+     * `shouldAddToToolWindow(false)` 让整个过程不触碰底部工具窗口，detach 也不会产生闪烁。
+     */
+    private fun createView(command: List<String>, tabTitle: String): TerminalView {
+        val manager = TerminalToolWindowTabsManager.getInstance(project)
+        val tab = manager
             .createTabBuilder()
             .workingDirectory(projectPath())
             .shellCommand(command)
             .tabName(tabTitle)
             .shouldAddToToolWindow(false) // 由本服务安置，不进工具窗口
-            // 这个开关**对本插件不生效**，留着只为表明意图：它的两条消费路径
-            // （工具窗口的 TerminalToolWindowTabImpl、编辑器的 TerminalViewVirtualFile）
-            // 我们一条都没走——前者被上面的 shouldAddToToolWindow(false) 关掉，
-            // 后者是平台自己的虚拟文件，而我们用的是 AgentTerminalVirtualFile。
-            // 真正关标签页的是 [closeTabWhenTerminated]。
-            .closeOnProcessTermination(true)
             .createTab()
-            .view
+
+        return manager.detachTab(tab)
+    }
 
     private fun projectPath(): String =
         project.basePath ?: System.getProperty("user.home")

@@ -1,5 +1,5 @@
 plugins {
-    // 必须与 IDEA 2026.1 自身的 Kotlin 版本对齐：平台 jar 的 kotlin_module
+    // 必须与 IDEA 2026.2 自身的 Kotlin 版本对齐：平台 jar 的 kotlin_module
     // 元数据是 2.3.0 版本，用 2.1.x 编译会报「incompatible version of Kotlin」。
     id("org.jetbrains.kotlin.jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.18.1"
@@ -28,9 +28,9 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        // 用本机已安装的 IDEA 2026.1（IU-261.25134.95）作为平台依赖。
+        // 用本机已安装的 IDEA 2026.2（IU-262.8665.337）作为平台依赖。
         //
-        // 不用 intellijIdea("2026.1") 的原因：它会去 download.jetbrains.com 拉
+        // 不用 intellijIdea("2026.2") 的原因：它会去 download.jetbrains.com 拉
         // 完整安装包（macOS 上是 .dmg，1G+），而该主机在本机网络下不可达。
         // 用 local 既避开下载，也保证编译期看到的就是运行期那份 jar ——
         // 对我们依赖 Experimental 终端 API 的场景反而更准确。
@@ -60,7 +60,7 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "261"
+            sinceBuild = "262"
             // 刻意不设 untilBuild：见 docs/superpowers/plans 中的决策记录。
             // 代价是终端 API 漂移时会在运行时抛 NoSuchMethodError 而非安装期拒绝。
             untilBuild = provider { null }

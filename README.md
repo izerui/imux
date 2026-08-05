@@ -11,10 +11,10 @@ IntelliJ IDEA 插件：左侧工具窗口列出当前项目的 Claude Code / Cod
 
 | 项 | 版本 | 说明 |
 |---|---|---|
-| IntelliJ IDEA | 2026.1+ | 实测构建号 IU-261.25134.95；插件 `sinceBuild=261`，不设 `untilBuild` |
+| IntelliJ IDEA | 2026.2+ | 实测构建号 IU-262.8665.337；插件 `sinceBuild=262`，不设 `untilBuild` |
 | JDK | 21 | `jvmToolchain(21)` |
 | Gradle | 9.6.1 | 由 wrapper 提供。IntelliJ Platform Gradle Plugin 2.18.1 **要求 Gradle 9+** |
-| Kotlin | 2.3.21 | **必须匹配平台自身的 Kotlin 版本**：IDEA 2026.1 的 jar 元数据是 2.3.0，用 2.1.x 编译会报 `incompatible version of Kotlin` |
+| Kotlin | 2.3.21 | **必须匹配平台自身的 Kotlin 版本**：IDEA 2026.2 的 jar 元数据是 2.3.0，用 2.1.x 编译会报 `incompatible version of Kotlin` |
 
 平台依赖用 `local("/Applications/IntelliJ IDEA.app")`，即**直接使用本机安装的 IDEA**，不从网络下载。若你的 IDEA 装在别处，改 `build.gradle.kts` 里这一行。
 
@@ -79,6 +79,6 @@ systemProp.http.proxyPort=7890
 
 - IDEA 的 Reworked 终端能否正常渲染并交互 Claude Code / Codex。这是整个插件的承重假设，验证步骤见实现计划的 Task 0
 - 关闭标签页后进程是否存活（所有权规则的核心）
-- `shouldAddToToolWindow(false)` 的实际行为，以及 `TerminalView` 的 CoroutineScope 由谁最终释放
+- detached terminal 关闭后，`TerminalView` 的 CoroutineScope 与 backend 会话是否同步释放
 
 跑 `./gradlew runIde` 后按实现计划里 Task 0 / Task 6 Step 7 / Task 7 Step 5 的清单逐项核对。
