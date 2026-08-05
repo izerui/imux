@@ -32,14 +32,14 @@ IntelliJ IDEA 插件：左侧工具窗口列出当前项目的 Claude Code / Cod
 ClassLoader 无法可靠热卸载；IDEA 会提示 `Failed to unload modified plugins: imux`。
 因此构建配置已关闭 `autoReload`，不再支持 `prepareSandbox` 热更新。
 
-用 `dev.sh` 启动沙箱：
+用原始 Gradle 命令启动沙箱：
 
 ```bash
-./dev.sh ide
+./gradlew runIde
 ```
 
 代码修改后，在运行 `runIde` 的终端按 `Ctrl+C` 停止沙箱，再重新执行
-`./dev.sh ide`。脚本会自己 `cd` 到项目根，在哪个目录调用都可以。
+`./gradlew runIde`。
 
 沙箱 IDEA 中仍可通过 `File → Open` 打开真实项目进行实机验证。重启会终止沙箱内
 由 imux 启动的 Claude Code / Codex 终端，重启前应确认没有需要保留的运行中会话。
