@@ -1,9 +1,12 @@
 package com.github.izerui.imux
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.awt.image.BufferedImage
 import java.io.File
+import javax.imageio.ImageIO
 
 /**
  * 守住「只画了一份图标，忘了深色主题那份」这个坑。
@@ -26,6 +29,12 @@ class IconResourceTest {
         return file.readText()
     }
 
+    private fun rasterIcon(name: String): BufferedImage {
+        val file = File("src/main/resources/icons/$name")
+        assertTrue("缺少图标资源：${file.absolutePath}", file.exists())
+        return ImageIO.read(file)
+    }
+
     @Test
     fun `工具窗口图标提供了深色主题变体`() {
         val light = icon("agent.svg")
@@ -43,5 +52,40 @@ class IconResourceTest {
         val dark = icon("agent_dark.svg")
 
         assertEquals(light.replace(lightColor, "COLOR"), dark.replace(darkColor, "COLOR"))
+    }
+
+    @Test
+    fun `Agent 标签图标提供标准与高分辨率资源`() {
+        listOf("codex.png", "codex_dark.png", "claude.png").forEach { name ->
+            val image = rasterIcon(name)
+            assertEquals("$name 宽度错误", 16, image.width)
+            assertEquals("$name 高度错误", 16, image.height)
+        }
+        listOf("codex@2x.png", "codex@2x_dark.png", "claude@2x.png").forEach { name ->
+            val image = rasterIcon(name)
+            assertEquals("$name 宽度错误", 32, image.width)
+            assertEquals("$name 高度错误", 32, image.height)
+        }
+    }
+
+    @Test
+    fun `Codex 图标透明且按主题切换线条颜色`() {
+        val light = rasterIcon("codex.png")
+        val dark = rasterIcon("codex_dark.png")
+
+        assertEquals("Codex 图标四角必须透明", 0, light.getRGB(0, 0).ushr(24))
+        assertEquals("深色 Codex 图标四角必须透明", 0, dark.getRGB(0, 0).ushr(24))
+        assertNotEquals(
+            "浅色与深色 Codex 图标不能完全相同",
+            light.getRGB(8, 2),
+            dark.getRGB(8, 2),
+        )
+    }
+
+    @Test
+    fun `Claude 图标保留透明圆角`() {
+        val image = rasterIcon("claude.png")
+
+        assertEquals("Claude 图标四角必须透明", 0, image.getRGB(0, 0).ushr(24))
     }
 }
