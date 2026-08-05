@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
 import com.intellij.testFramework.LightVirtualFile
 import org.junit.Assert.assertEquals
@@ -11,8 +12,8 @@ class AgentTerminalFileIconProviderTest {
 
     @Test
     fun `Claude 与 Codex 使用不同的 16 像素图标`() {
-        val claude = AgentTerminalIcons.forAgent(AgentType.CLAUDE)
-        val codex = AgentTerminalIcons.forAgent(AgentType.CODEX)
+        val claude = AgentIcons.forAgent(AgentType.CLAUDE)
+        val codex = AgentIcons.forAgent(AgentType.CODEX)
 
         assertNotSame(claude, codex)
         assertEquals(16, claude.iconWidth)
