@@ -12,7 +12,7 @@
 - 会话行只保留原有状态图标：
   - 运行中使用平台 `AnimatedIcon.Default.INSTANCE` 加载动画。
   - 未读继续使用 `AllIcons.General.Modified`。
-  - 已在编辑器标签页中打开时使用 `AllIcons.Actions.Checked`。
+  - 已在编辑器标签页中打开时使用 `AllIcons.General.ProjectTab`。
 - 状态优先级为：运行中 > 未读 > 已打开 > 普通。
 - 普通会话、等待首条消息的新会话和“显示更多”节点使用平台 `EmptyIcon.ICON_16` 占位，使所有子节点标题对齐。
 
