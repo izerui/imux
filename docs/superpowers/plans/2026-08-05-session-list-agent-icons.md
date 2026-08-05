@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Show Claude/OpenAI brand icons in the conversation tree without replacing or shrinking the existing running and unread markers.
+**Goal:** Show Claude/OpenAI brand icons on conversation-group headings while session rows keep only IntelliJ's existing running and unread markers.
 
-**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Compose each session row with IntelliJ Platform 262's native `RowIcon`, reserving one 16×16 slot for the brand and one for the unchanged status icon.
+**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows continue to use `AllIcons.Nodes.RunnableMark` and `AllIcons.General.Modified` directly, with no brand icon or placeholder.
 
-**Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `RowIcon`/`EmptyIcon`/`AllIcons`, JUnit 4.
+**Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AllIcons`, JUnit 4.
 
 ---
 
@@ -15,8 +15,8 @@
 - Create `src/main/kotlin/com/github/izerui/imux/icons/AgentIcons.kt`: shared Claude/Codex icon holder.
 - Modify `src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProvider.kt`: consume the shared holder.
 - Modify `src/test/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProviderTest.kt`: verify the shared holder.
-- Modify `src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt`: compose brand and status icons in the renderer.
-- Create `src/test/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTreeIconTest.kt`: verify the two icon slots and idle placeholder.
+- Modify `src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt`: show brand icons on groups and official status icons on sessions.
+- Create `src/test/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTreeIconTest.kt`: verify official status precedence and the no-icon idle state.
 
 ### Task 1: Extract a shared Agent icon holder
 
@@ -107,48 +107,45 @@ git add \
 git commit -m "refactor: 共享 Agent 品牌图标"
 ```
 
-### Task 2: Compose brand and status icons in session rows
+### Task 2: Keep brand icons on groups and official status icons on sessions
 
 **Files:**
 - Modify: `src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt`
 - Create: `src/test/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTreeIconTest.kt`
 
-- [ ] **Step 1: Write failing tests for the two icon slots**
+- [ ] **Step 1: Write failing tests for session status icons**
 
 Create `AgentSessionTreeIconTest.kt`:
 
 ```kotlin
 package com.github.izerui.imux.toolwindow
 
-import com.github.izerui.imux.icons.AgentIcons
-import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
-import com.intellij.util.ui.EmptyIcon
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentSessionTreeIconTest {
 
     @Test
-    fun `运行中会话同时保留品牌与状态图标`() {
-        val icon = sessionRowIcon(AgentType.CLAUDE, AllIcons.Nodes.RunnableMark)
+    fun `运行中会话只显示原有运行标记`() {
+        val icon = sessionStatusIcon(running = true, unread = true)
 
-        assertEquals(2, icon.iconCount)
-        assertSame(AgentIcons.forAgent(AgentType.CLAUDE), icon.getIcon(0))
-        assertSame(AllIcons.Nodes.RunnableMark, icon.getIcon(1))
+        assertSame(AllIcons.Nodes.RunnableMark, icon)
     }
 
     @Test
-    fun `普通会话为空状态预留固定图标槽位`() {
-        val icon = sessionRowIcon(AgentType.CODEX, null)
+    fun `未读会话只显示原有未读标记`() {
+        val icon = sessionStatusIcon(running = false, unread = true)
 
-        assertEquals(2, icon.iconCount)
-        assertSame(AgentIcons.forAgent(AgentType.CODEX), icon.getIcon(0))
-        assertTrue(icon.getIcon(1) is EmptyIcon)
-        assertEquals(32, icon.iconWidth)
-        assertEquals(16, icon.iconHeight)
+        assertSame(AllIcons.General.Modified, icon)
+    }
+
+    @Test
+    fun `普通会话不显示图标`() {
+        val icon = sessionStatusIcon(running = false, unread = false)
+
+        assertNull(icon)
     }
 }
 ```
@@ -161,41 +158,37 @@ Run:
 ./gradlew test --tests com.github.izerui.imux.toolwindow.AgentSessionTreeIconTest
 ```
 
-Expected: compilation fails because `sessionRowIcon` does not exist.
+Expected: compilation fails because `sessionStatusIcon` does not exist.
 
-- [ ] **Step 3: Add the native icon composition helper**
+- [ ] **Step 3: Add the official status-icon selector**
 
 Add imports to `AgentSessionTree.kt`:
 
 ```kotlin
 import com.github.izerui.imux.icons.AgentIcons
-import com.intellij.ui.RowIcon
-import com.intellij.util.ui.EmptyIcon
 import javax.swing.Icon
 ```
 
 Add this top-level helper next to the existing tree helpers:
 
 ```kotlin
-internal fun sessionRowIcon(agentType: AgentType, statusIcon: Icon?): RowIcon =
-    RowIcon(AgentIcons.forAgent(agentType), statusIcon ?: EmptyIcon.ICON_16)
+internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
+    running -> AllIcons.Nodes.RunnableMark
+    unread -> AllIcons.General.Modified
+    else -> null
+}
 ```
 
-- [ ] **Step 4: Update the renderer without changing status precedence**
+- [ ] **Step 4: Show brands only on groups**
 
 Replace the renderer's icon/text status block with:
 
 ```kotlin
-val statusIcon = when {
-    session?.running == true -> AllIcons.Nodes.RunnableMark
-    session?.unread == true -> AllIcons.General.Modified
-    else -> null
-}
+val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread) }
 
 icon = when (data) {
     is NodeData.Group -> AgentIcons.forAgent(data.agentType)
-    is NodeData.Session -> sessionRowIcon(data.agentType, statusIcon)
-    is NodeData.PendingSession -> sessionRowIcon(data.agentType, null)
+    is NodeData.Session -> statusIcon
     else -> null
 }
 
@@ -206,7 +199,7 @@ when {
 }
 ```
 
-This keeps running ahead of unread exactly as before and preserves the original platform status icon instances.
+This keeps running ahead of unread exactly as before, preserves the original platform status icon instances, and leaves ordinary/pending/show-more session rows without an icon.
 
 - [ ] **Step 5: Run targeted tree and platform-alignment tests**
 

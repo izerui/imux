@@ -16,10 +16,8 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
-import com.intellij.ui.RowIcon
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
-import com.intellij.util.ui.EmptyIcon
 import java.awt.event.MouseEvent
 import javax.swing.Icon
 import javax.swing.JComponent
@@ -55,8 +53,11 @@ internal fun JTree.pathForRowAt(y: Int): TreePath? {
 internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
     if (index < current) current else ((index / pageSize) + 1) * pageSize
 
-internal fun sessionRowIcon(agentType: AgentType, statusIcon: Icon?): RowIcon =
-    RowIcon(AgentIcons.forAgent(agentType), statusIcon ?: EmptyIcon.ICON_16)
+internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
+    running -> AllIcons.Nodes.RunnableMark
+    unread -> AllIcons.General.Modified
+    else -> null
+}
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
@@ -125,16 +126,11 @@ class AgentSessionTree(
                 val session = data as? NodeData.Session
 
                 // 正在跑优先于未读：此刻的处境比「上一轮跑完了」更要紧
-                val statusIcon = when {
-                    session?.running == true -> AllIcons.Nodes.RunnableMark
-                    session?.unread == true -> AllIcons.General.Modified
-                    else -> null
-                }
+                val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread) }
 
                 icon = when (data) {
                     is NodeData.Group -> AgentIcons.forAgent(data.agentType)
-                    is NodeData.Session -> sessionRowIcon(data.agentType, statusIcon)
-                    is NodeData.PendingSession -> sessionRowIcon(data.agentType, null)
+                    is NodeData.Session -> statusIcon
                     else -> null
                 }
 
