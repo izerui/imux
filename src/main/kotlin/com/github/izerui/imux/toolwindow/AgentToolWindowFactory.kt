@@ -6,25 +6,24 @@ import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.content.ContentFactory
-import java.awt.BorderLayout
-import javax.swing.JPanel
 
 /**
  * 只负责界面。
@@ -45,69 +44,60 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         // 万一启动活动因故没执行，至少打开面板还能把监听拉起来。
         monitor.start()
 
-        val sessionTree = AgentSessionTree(project, monitor)
-
-        val panel = JPanel(BorderLayout()).apply {
-            add(JBScrollPane(sessionTree.component()), BorderLayout.CENTER)
+        val contentDisposable = Disposer.newDisposable("imux tool window content")
+        val sessionTree = AgentSessionTree(project, monitor, contentDisposable)
+        val panel = SimpleToolWindowPanel(true, true).apply {
+            setContent(JBScrollPane(sessionTree.component()))
         }
 
-        val actions = DefaultActionGroup(
-            NewSessionAction(project, monitor),
-            RefreshAction(monitor),
+        toolWindow.setTitleActions(
+            listOf(
+                NewSessionAction(),
+                RefreshAction(),
+            ),
         )
-        val toolbar = ActionManager.getInstance().createActionToolbar("imuxToolWindow", actions, true)
-        toolbar.targetComponent = panel
-        panel.add(toolbar.component, BorderLayout.NORTH)
 
-        // 标签页开或关时立即重绘，不必等下一轮轮询——否则标记要过几秒才亮/才灭，手感很迟钝。
-        // 这里只重绘不读运行态文件：绿色标记的依据是标签页开没开，那是内存里的账，
-        // 而运行态文件是 CLI 异步落盘的，读它既慢又晚。
-        TerminalHost.getInstance(project).addSessionsChangedListener { sessionTree.reload() }
+        // 标签页开或关时立即重绘，不必等下一轮轮询。
+        TerminalHost.getInstance(project).addSessionsChangedListener(contentDisposable) {
+            sessionTree.reload()
+        }
 
-        // 工具窗口由隐藏变为可见时兜底扫描一次，覆盖轮询可能错过的场景。
-        //
-        // 必须只在「变为可见」的那一刻触发：ToolWindowManagerListener 监听的是
-        // 全 IDE 所有工具窗口的状态变化，任何窗口开关、拖动、焦点变化都会回调。
-        // 若每次回调都刷新，点一下图标就会连发多轮全量扫描并重建列表。
-        var wasVisible = false
-        project.messageBus.connect(toolWindow.disposable).subscribe(
+        // 工具窗口真正显示时兜底扫描一次。
+        project.messageBus.connect(contentDisposable).subscribe(
             ToolWindowManagerListener.TOPIC,
             object : ToolWindowManagerListener {
-                override fun stateChanged(manager: ToolWindowManager) {
-                    val visible = toolWindow.isVisible
-                    if (visible && !wasVisible) monitor.refresh()
-                    wasVisible = visible
+                override fun toolWindowShown(shownToolWindow: ToolWindow) {
+                    if (shownToolWindow === toolWindow) monitor.refresh()
                 }
             },
         )
 
-        // 切到某个终端标签页时，把列表选中挪过去，与「点列表打开标签页」构成双向联动。
-        // 消除未读不在这里做——那与界面无关，由 SessionMonitor 独立监听。
-        // 切到非终端文件时不动列表：那与会话无关，清掉选中反而丢了上下文。
-        project.messageBus.connect(toolWindow.disposable).subscribe(
+        // 切到终端标签页时同步列表选中态，并在平台焦点投递稳定后聚焦终端。
+        project.messageBus.connect(contentDisposable).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
                     val file = event.newFile as? AgentTerminalVirtualFile ?: return
                     sessionTree.revealSession(file.sessionKey)
-                    focusTerminal(file)
+                    focusTerminal(event, file)
                 }
 
-                /**
-                 * 把焦点送进终端的编辑器组件，输入法候选窗才会跟着光标走
-                 * （原因见 AgentTerminalFileEditor 的 focusForwarder 注释）。
-                 *
-                 * 与上面「不抢焦点」那条注释并不矛盾：那说的是别让**会话列表**偷走焦点，
-                 * 而这里送的目标正是用户切过去要敲字的终端本身。
-                 *
-                 * 必须 invokeLater：selectionChanged 触发时平台自己的焦点投递还没跑完，
-                 * 此刻抢先 request 会被随后的平台投递覆盖掉。
-                 */
-                private fun focusTerminal(file: AgentTerminalVirtualFile) {
-                    ApplicationManager.getApplication().invokeLater {
-                        if (project.isDisposed) return@invokeLater
-                        val target = file.terminalView.preferredFocusableComponent
-                        if (target.isShowing) target.requestFocusInWindow()
+                private fun focusTerminal(
+                    event: FileEditorManagerEvent,
+                    file: AgentTerminalVirtualFile,
+                ) {
+                    val activatedEditor = event.newEditor ?: return
+                    val focusManager = IdeFocusManager.getInstance(project)
+                    if (
+                        project.isDisposed ||
+                        event.manager.selectedEditor !== activatedEditor
+                    ) {
+                        return
+                    }
+
+                    val target = file.terminalView.preferredFocusableComponent
+                    if (target.isShowing) {
+                        focusManager.requestFocusInProject(target, project)
                     }
                 }
             },
@@ -116,6 +106,8 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         sessionTree.reload()
 
         val content = ContentFactory.getInstance().createContent(panel, null, false)
+        content.setPreferredFocusableComponent(sessionTree.component())
+        content.setDisposer(contentDisposable)
         toolWindow.contentManager.addContent(content)
     }
 
@@ -136,40 +128,44 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 }
 
-private class NewSessionAction(
-    private val project: Project,
-    private val monitor: SessionMonitor,
-) : AnAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
+private class NewSessionAction :
+    DumbAwareAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(event: AnActionEvent) {
+        event.project ?: return
         val popup = JBPopupFactory.getInstance()
             .createActionGroupPopup(
                 "选择 Agent",
                 DefaultActionGroup(
-                    CreateAction(project, monitor, AgentType.CLAUDE, "Claude Code"),
-                    CreateAction(project, monitor, AgentType.CODEX, "Codex"),
+                    CreateAction(AgentType.CLAUDE, "Claude Code"),
+                    CreateAction(AgentType.CODEX, "Codex"),
                 ),
                 event.dataContext,
                 JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
                 false,
             )
 
-        // 贴着触发它的工具栏按钮弹出。
-        // 不能只用 showInBestPositionFor：工具栏按钮的 dataContext 不携带触发组件，
-        // 平台拿不到锚点就会退回到面板中央偏下的默认位置。
         val anchor = event.inputEvent?.component
-        if (anchor != null) popup.showUnderneathOf(anchor) else popup.showInBestPositionFor(event.dataContext)
+        if (anchor != null) {
+            popup.showUnderneathOf(anchor)
+        } else {
+            popup.showInBestPositionFor(event.dataContext)
+        }
     }
 }
 
 private class CreateAction(
-    private val project: Project,
-    private val monitor: SessionMonitor,
     private val agentType: AgentType,
     label: String,
-) : AnAction(label) {
+) : DumbAwareAction(label) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(event: AnActionEvent) {
+        val project = event.project ?: return
+        val monitor = SessionMonitor.getInstance(project)
         val model: SessionListModel = monitor.model
         // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
         val pending = model.registerPending(agentType)
@@ -179,10 +175,12 @@ private class CreateAction(
     }
 }
 
-private class RefreshAction(private val monitor: SessionMonitor) :
-    AnAction("刷新", "重新扫描会话库", AllIcons.Actions.Refresh) {
+private class RefreshAction :
+    DumbAwareAction("刷新", "重新扫描会话库", AllIcons.Actions.Refresh) {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(event: AnActionEvent) {
-        monitor.refresh()
+        event.project?.let { SessionMonitor.getInstance(it).refresh() }
     }
 }

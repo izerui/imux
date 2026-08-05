@@ -4,6 +4,7 @@
     <vendor>izerui</vendor>
 
     <description><![CDATA[
+      imux keeps Claude Code and Codex sessions available inside IntelliJ IDEA editor tabs.
       在左侧工具窗口中列出当前项目的 Claude Code 与 Codex 会话，
       点击会话即在编辑器标签页中打开对应的 CLI 终端。
     ]]></description>
@@ -25,6 +26,9 @@
         -->
         <fileEditorProvider
             implementation="com.github.izerui.imux.terminal.AgentTerminalFileEditorProvider"/>
+
+        <editorTabTitleProvider
+            implementation="com.github.izerui.imux.terminal.AgentTerminalTabTitleProvider"/>
 
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>

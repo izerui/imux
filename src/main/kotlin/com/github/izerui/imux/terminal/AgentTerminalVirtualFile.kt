@@ -34,6 +34,8 @@ class AgentTerminalVirtualFile(
     var sessionKey: String,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
 
+    var tabTitle: String = name
+
     override fun getFileType(): FileType = AgentTerminalFileType
 
     override fun isWritable(): Boolean = false

@@ -1,6 +1,7 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.ide.nls.NlsMessages
 import java.time.Duration
 
 /**
@@ -29,14 +30,6 @@ internal fun completionSubtitle(
  * 负值按 0 处理：时钟回拨等极端情况下不该显示成「-3 秒」。
  */
 internal fun formatDuration(duration: Duration): String {
-    val total = duration.seconds.coerceAtLeast(0)
-    val hours = total / 3600
-    val minutes = (total % 3600) / 60
-    val seconds = total % 60
-
-    return when {
-        hours > 0 -> "$hours 小时 $minutes 分"
-        minutes > 0 -> "$minutes 分 $seconds 秒"
-        else -> "$seconds 秒"
-    }
+    val millis = duration.toMillis().coerceAtLeast(0)
+    return NlsMessages.formatDuration(millis)
 }

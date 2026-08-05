@@ -4,7 +4,6 @@ import com.github.izerui.imux.model.AgentType
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.editor.Editor
@@ -14,10 +13,16 @@ import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
+import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.jetbrains.plugins.terminal.block.util.TerminalDataContextUtils
+import java.util.EventListener
+
+fun interface TerminalSessionsListener : EventListener {
+    fun sessionsChanged()
+}
 
 /**
  * 拥有所有活着的终端 view，按 key 索引。
@@ -46,7 +51,7 @@ class TerminalHost(private val project: Project) : Disposable {
     /** 轮次监控。只有经本插件打开过的会话才纳入，见设计文档的监控范围决策。 */
     private val turnWatcher = TurnWatcher()
 
-    private val sessionsChangedListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+    private val sessionsChangedDispatcher = EventDispatcher.create(TerminalSessionsListener::class.java)
 
     /**
      * 启动一个全新会话（不带 resume）。
@@ -72,12 +77,15 @@ class TerminalHost(private val project: Project) : Disposable {
         turnWatcher.unwatch(key)
         files.remove(key)
         views.remove(key)?.coroutineScope?.cancel()
-        sessionsChangedListeners.forEach { runCatching { it() } }
+        sessionsChangedDispatcher.multicaster.sessionsChanged()
     }
 
     /** 标签页集合变化（打开或结束）时回调，供界面立即刷新标记。 */
-    fun addSessionsChangedListener(listener: () -> Unit) {
-        sessionsChangedListeners.add(listener)
+    fun addSessionsChangedListener(
+        parentDisposable: Disposable,
+        listener: TerminalSessionsListener,
+    ) {
+        sessionsChangedDispatcher.addListener(listener, parentDisposable)
     }
 
     /**
@@ -137,15 +145,14 @@ class TerminalHost(private val project: Project) : Disposable {
             files[newKey] = file
             // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉
             file.sessionKey = newKey
-            renameTab(file, newTitle)
+            updateTabTitle(file, newTitle)
         }
     }
 
-    private fun renameTab(file: AgentTerminalVirtualFile, newTitle: String) {
-        if (file.name == newTitle) return
-        runCatching {
-            WriteAction.run<Exception> { file.rename(this, newTitle) }
-        }.onFailure { LOG.warn("重命名标签页失败：${file.name} -> $newTitle", it) }
+    private fun updateTabTitle(file: AgentTerminalVirtualFile, newTitle: String) {
+        if (file.tabTitle == newTitle) return
+        file.tabTitle = newTitle
+        FileEditorManager.getInstance(project).updateFilePresentation(file)
     }
 
     private fun open(key: String, command: List<String>, tabTitle: String) {
@@ -156,7 +163,7 @@ class TerminalHost(private val project: Project) : Disposable {
         }
         FileEditorManager.getInstance(project).openFile(file, true)
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
-        sessionsChangedListeners.forEach { runCatching { it() } }
+        sessionsChangedDispatcher.multicaster.sessionsChanged()
     }
 
     internal fun scrollToBottom(view: TerminalView) {
@@ -230,7 +237,8 @@ class TerminalHost(private val project: Project) : Disposable {
      *
      * IDEA 2026.2 的 [TerminalToolWindowTabsManager.detachTab] 会把 backend tab 标记为 detached：
      * 它继续承载当前进程，但不会作为 Terminal 工具窗口标签持久化，也不会在下次启动时恢复。
-     * `shouldAddToToolWindow(false)` 让整个过程不触碰底部工具窗口，detach 也不会产生闪烁。
+     * 公开 API 会先创建普通 tab，再立即 detach；关闭焦点请求可避免激活底部工具窗口，
+     * 禁用延迟启动则保证 detached view 无需等待工具窗口显示就能启动进程。
      */
     private fun createView(command: List<String>, tabTitle: String): TerminalView {
         val manager = TerminalToolWindowTabsManager.getInstance(project)
@@ -239,7 +247,8 @@ class TerminalHost(private val project: Project) : Disposable {
             .workingDirectory(projectPath())
             .shellCommand(command)
             .tabName(tabTitle)
-            .shouldAddToToolWindow(false) // 由本服务安置，不进工具窗口
+            .requestFocus(false)
+            .deferSessionStartUntilUiShown(false)
             .createTab()
 
         return manager.detachTab(tab)

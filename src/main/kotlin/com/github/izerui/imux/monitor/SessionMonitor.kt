@@ -8,27 +8,30 @@ import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
-import com.github.izerui.imux.toolwindow.isViewingInteraction
 import com.github.izerui.imux.turn.RunningSessions
 import com.github.izerui.imux.turn.RuntimeStatusTracker
 import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
-import java.awt.AWTEvent
-import java.awt.Toolkit
-import java.awt.event.AWTEventListener
+import com.intellij.util.EventDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.file.Paths
 import java.time.Instant
-import java.util.concurrent.CopyOnWriteArrayList
+import java.util.EventListener
 import java.util.concurrent.atomic.AtomicBoolean
+
+fun interface SessionMonitorListener : EventListener {
+    fun stateChanged()
+}
 
 /**
  * 原子地执行一次初始化；初始化抛异常时释放占位，允许后续重试。
@@ -58,7 +61,10 @@ internal inline fun AtomicBoolean.runOnceResetOnFailure(block: () -> Unit): Bool
  * 界面可有可无，提醒不能少。
  */
 @Service(Service.Level.PROJECT)
-class SessionMonitor(private val project: Project) : Disposable {
+class SessionMonitor(
+    private val project: Project,
+    private val coroutineScope: CoroutineScope,
+) : Disposable {
 
     private val projectPath = project.basePath ?: System.getProperty("user.home")
     private val repository = SessionRepository.forUserHome()
@@ -90,9 +96,10 @@ class SessionMonitor(private val project: Project) : Disposable {
     var runningIds: Set<String> = emptySet()
         private set
 
-    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+    private val listenerDispatcher = EventDispatcher.create(SessionMonitorListener::class.java)
     private val started = AtomicBoolean(false)
     private val scanning = AtomicBoolean(false)
+    private val checkingCompletedTurns = AtomicBoolean(false)
 
     init {
         // 扫描结果、新建 pending、pending 绑定真实 id 都由 model 产出。
@@ -101,8 +108,11 @@ class SessionMonitor(private val project: Project) : Disposable {
     }
 
     /** 状态有变化时回调，供界面重绘。在 EDT 调用。 */
-    fun addListener(listener: () -> Unit) {
-        listeners.add(listener)
+    fun addListener(
+        parentDisposable: Disposable,
+        listener: SessionMonitorListener,
+    ) {
+        listenerDispatcher.addListener(listener, parentDisposable)
     }
 
     fun hasUnread(): Boolean = unread.isNotEmpty()
@@ -123,7 +133,6 @@ class SessionMonitor(private val project: Project) : Disposable {
     fun start() {
         if (!started.runOnceResetOnFailure(::startWatching)) return
         clearUnreadOnTabSwitch()
-        clearUnreadOnTerminalUse()
         refresh()
     }
 
@@ -139,14 +148,14 @@ class SessionMonitor(private val project: Project) : Disposable {
     fun refresh() {
         if (!scanning.compareAndSet(false, true)) return
 
-        ApplicationManager.getApplication().executeOnPooledThread {
+        coroutineScope.launch(Dispatchers.IO) {
             val scanned = try {
                 runCatching { repository.scan(projectPath) }.getOrNull()
             } finally {
                 scanning.set(false)
             }
-            if (scanned != null) {
-                ApplicationManager.getApplication().invokeLater { model.applyScan(scanned) }
+            if (scanned != null && !project.isDisposed) {
+                withContext(Dispatchers.EDT) { model.applyScan(scanned) }
             }
         }
     }
@@ -154,42 +163,56 @@ class SessionMonitor(private val project: Project) : Disposable {
     /**
      * 刷新运行状态，并检查有无刚完成的会话轮次——后者标记未读并弹通知。
      *
-     * **必须在后台线程调用**：要读运行态目录、逐个 ProcessHandle 查进程存活，
-     * 还要读各会话文件新追加的字节。放在 EDT 上，1 秒一轮就是周期性卡顿。
+     * 文件与进程状态读取统一调度到服务作用域的 IO dispatcher；结果在 EDT 应用。
      */
     private fun checkCompletedTurns() {
-        val host = TerminalHost.getInstance(project)
+        if (!checkingCompletedTurns.compareAndSet(false, true)) return
 
-        // 按项目过滤：运行态目录是全机器共享的，本机实测常年同时跑着五六个项目的
-        // claude。不过滤就会为别的项目的会话弹提醒，而那些会话不在本项目列表里，
-        // 连标题都查不到，只能显示一串会话 id。
-        val snapshot = runtimeIndex.load(projectPath)
-        val watcher = host.turnWatcher()
-        // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
-        val completed = (statusTracker.completedSince(snapshot) + watcher.poll()).distinct()
-        val running = RunningSessions.of(snapshot, watcher.workingIds(AgentType.CODEX))
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val host = TerminalHost.getInstance(project)
 
-        ApplicationManager.getApplication().invokeLater {
-            runtime = snapshot
-            runningIds = running
-            notifyListeners()
+                // 按项目过滤：运行态目录是全机器共享的，本机实测常年同时跑着五六个项目的
+                // claude。不过滤就会为别的项目的会话弹提醒，而那些会话不在本项目列表里，
+                // 连标题都查不到，只能显示一串会话 id。
+                val snapshot = runtimeIndex.load(projectPath)
+                val watcher = host.turnWatcher()
+                // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
+                val completed = (statusTracker.completedSince(snapshot) + watcher.poll()).distinct()
+                val running = RunningSessions.of(snapshot, watcher.workingIds(AgentType.CODEX))
 
-            completed.forEach { sessionId ->
-                // 正被查看的会话同样要标记与提醒：tab 选中不等于人在屏幕前，
-                // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
-                // 标记由「人真的动了这个终端」来消除，见 clearUnreadOnTerminalUse。
-                val session = model.sessionOf(sessionId)
-                val title = session?.title ?: "会话 ${sessionId.take(8)}"
-                // 两个来源各记各的：claude 走运行态跃迁，codex 走会话文件信号
-                val duration = statusTracker.lastDuration(sessionId) ?: watcher.lastDuration(sessionId)
-                markUnread(sessionId)
+                withContext(Dispatchers.EDT) {
+                    runtime = snapshot
+                    runningIds = running
+                    notifyListeners()
 
-                TurnNotifier.notifyCompleted(project, sessionId, title, session?.agentType, duration) {
-                    model.sessionOf(sessionId)?.let {
-                        host.openResumeAtBottom(it.agentType, it.id, it.title)
+                    completed.forEach { sessionId ->
+                        // 正被查看的会话同样要标记与提醒：tab 选中不等于人在屏幕前，
+                        // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
+                        // 标记由终端官方输入事件在用户真正交互时消除。
+                        val session = model.sessionOf(sessionId)
+                        val title = session?.title ?: "会话 ${sessionId.take(8)}"
+                        // 两个来源各记各的：claude 走运行态跃迁，codex 走会话文件信号
+                        val duration =
+                            statusTracker.lastDuration(sessionId) ?: watcher.lastDuration(sessionId)
+                        markUnread(sessionId)
+
+                        TurnNotifier.notifyCompleted(
+                            project,
+                            sessionId,
+                            title,
+                            session?.agentType,
+                            duration,
+                        ) {
+                            model.sessionOf(sessionId)?.let {
+                                host.openResumeAtBottom(it.agentType, it.id, it.title)
+                            }
+                            clearUnread(sessionId)
+                        }
                     }
-                    clearUnread(sessionId)
                 }
+            } finally {
+                checkingCompletedTurns.set(false)
             }
         }
     }
@@ -223,44 +246,13 @@ class SessionMonitor(private val project: Project) : Disposable {
         )
     }
 
-    /**
-     * 人在终端里点一下或敲一下，就把该会话的未读标记消掉。
-     *
-     * 正被查看的会话跑完也会打标记，但「tab 是选中的」不等于人在看——可能已经离开了。
-     * 所以标记不由选中态消除，而由真正的交互消除。
-     *
-     * 为什么用全局 AWT 监听而不给终端组件挂 listener：Swing 的鼠标事件只投递给最深的
-     * 那个组件，不会像 DOM 那样往上冒泡，挂在终端容器上收不到里面的点击；
-     * 而终端内部的组件结构是平台的实现细节，不该由本插件去遍历安装。
-     *
-     * 没有未读时立刻返回——绝大多数时间这个监听器是零成本的。
-     * 它只读事件的来源组件，从不读键值。
-     */
-    private fun clearUnreadOnTerminalUse() {
-        val listener = AWTEventListener { event ->
-            if (!hasUnread()) return@AWTEventListener
-
-            val editor = FileEditorManager.getInstance(project).selectedEditor ?: return@AWTEventListener
-            val file = editor.file as? AgentTerminalVirtualFile ?: return@AWTEventListener
-            if (!isViewingInteraction(event, editor.component)) return@AWTEventListener
-
-            clearUnread(file.sessionKey)
-        }
-
-        val toolkit = Toolkit.getDefaultToolkit()
-        toolkit.addAWTEventListener(listener, AWTEvent.MOUSE_EVENT_MASK or AWTEvent.KEY_EVENT_MASK)
-        Disposer.register(this) { toolkit.removeAWTEventListener(listener) }
-    }
-
     private fun notifyListeners() {
-        listeners.forEach { runCatching { it() }.onFailure { e -> LOG.warn("[imux] 通知监听器失败", e) } }
+        listenerDispatcher.multicaster.stateChanged()
     }
 
     override fun dispose() = Unit
 
     companion object {
-        private val LOG = logger<SessionMonitor>()
-
         fun getInstance(project: Project): SessionMonitor = project.getService(SessionMonitor::class.java)
     }
 }

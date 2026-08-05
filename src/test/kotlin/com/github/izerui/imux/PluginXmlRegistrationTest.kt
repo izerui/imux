@@ -32,6 +32,18 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了终端标签标题提供器`() {
+        assertTrue(
+            "动态标签标题必须由 EditorTabTitleProvider 提供，不能重命名只读虚拟文件",
+            pluginXml.contains("com.github.izerui.imux.terminal.AgentTerminalTabTitleProvider"),
+        )
+        assertTrue(
+            "注册应使用 editorTabTitleProvider 扩展点",
+            pluginXml.contains("<editorTabTitleProvider"),
+        )
+    }
+
+    @Test
     fun `注册了左侧工具窗口`() {
         assertTrue(
             "plugin.xml 未注册 AgentToolWindowFactory",
@@ -57,6 +69,20 @@ class PluginXmlRegistrationTest {
         assertTrue(
             "终端 API 来自捆绑的 terminal 插件，必须声明依赖",
             pluginXml.contains("<depends>org.jetbrains.plugins.terminal</depends>"),
+        )
+    }
+
+    @Test
+    fun `插件描述符合官方结构校验规则`() {
+        val description = Regex(
+            """<description><!\[CDATA\[(.*?)]\]></description>""",
+            RegexOption.DOT_MATCHES_ALL,
+        ).find(pluginXml)?.groupValues?.get(1)?.trim().orEmpty()
+
+        assertTrue("插件描述必须至少包含 40 个字符", description.length >= 40)
+        assertTrue(
+            "插件描述必须以拉丁字符开头",
+            description.firstOrNull()?.let { it in 'A'..'Z' || it in 'a'..'z' } == true,
         )
     }
 }

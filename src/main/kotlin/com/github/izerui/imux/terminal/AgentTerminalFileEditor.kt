@@ -3,26 +3,32 @@ package com.github.izerui.imux.terminal
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
-import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
-import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.Dimension
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
@@ -58,7 +64,7 @@ class AgentTerminalFileEditor(
             // 存成字段就会在切 buffer 后把焦点投到已经不显示的旧 editor 上。
             val target = virtualFile.terminalView.preferredFocusableComponent
             if (target !== event.component && target.isShowing) {
-                target.requestFocusInWindow()
+                IdeFocusManager.getInstance(project).requestFocusInProject(target, project)
             }
         }
     }
@@ -66,22 +72,37 @@ class AgentTerminalFileEditor(
     /** 已挂上转发器的面板。用它保证只挂一次，也用于 [dispose] 时摘除。 */
     private var focusHost: JComponent? = null
 
+    private var scrollToolbar: ActionToolbar? = null
     private var scrollToolbarComponent: JComponent? = null
+    private var scrollButtonVisible = false
     private var observedEditor: Editor? = null
     private val visibleAreaListener = VisibleAreaListener { refreshScrollButton() }
+    private val editorMouseListener = object : EditorMouseListener {
+        override fun mousePressed(event: EditorMouseEvent) {
+            clearUnread()
+        }
+    }
     private var activeModelJob: Job? = null
+    private var keyEventsJob: Job? = null
     private var disposed = false
 
     private val scrollToBottomAction =
-        object : AnAction(
+        object : DumbAwareAction(
             "滚动到底部",
             "滚动到终端最新输出",
             AllIcons.General.ArrowDown,
-        ), DumbAware {
+        ) {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun update(event: AnActionEvent) {
+                event.presentation.isEnabledAndVisible = scrollButtonVisible
+            }
+
             override fun actionPerformed(event: AnActionEvent) {
                 val host = TerminalHost.getInstance(project)
                 host.scrollToBottom(virtualFile.terminalView)
-                scrollToolbarComponent?.isVisible = false
+                scrollButtonVisible = false
+                scrollToolbar?.updateActionsAsync()
             }
         }
 
@@ -106,12 +127,11 @@ class AgentTerminalFileEditor(
             targetComponent = terminal
             setMiniMode(true)
         }
-        val toolbarComponent = toolbar.component.apply {
-            isOpaque = false
-            isVisible = false
-        }
+        scrollToolbar = toolbar
+        val toolbarComponent = toolbar.component.apply { isOpaque = false }
         scrollToolbarComponent = toolbarComponent
         startScrollTracking()
+        startInputTracking()
 
         return object : JBLayeredPane() {
             init {
@@ -151,6 +171,16 @@ class AgentTerminalFileEditor(
         }
     }
 
+    private fun startInputTracking() {
+        keyEventsJob = virtualFile.terminalView.coroutineScope.launch {
+            virtualFile.terminalView.keyEventsFlow.collect {
+                withContext(Dispatchers.EDT) {
+                    if (!disposed && !project.isDisposed) clearUnread()
+                }
+            }
+        }
+    }
+
     private fun scheduleScrollButtonRefresh() {
         ApplicationManager.getApplication().invokeLater {
             if (!disposed && !project.isDisposed) refreshScrollButton()
@@ -162,12 +192,19 @@ class AgentTerminalFileEditor(
         val editor = host.currentTerminalEditor(virtualFile.terminalView)
         if (editor !== observedEditor) {
             observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
+            observedEditor?.removeEditorMouseListener(editorMouseListener)
             observedEditor = editor
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
+            editor?.addEditorMouseListener(editorMouseListener, this)
         }
 
-        val toolbarComponent = scrollToolbarComponent ?: return
-        toolbarComponent.isVisible = editor != null && !host.isScrolledToBottom(editor)
+        scrollButtonVisible = editor != null && !host.isScrolledToBottom(editor)
+        scrollToolbar?.updateActionsAsync()
+    }
+
+    private fun clearUnread() {
+        com.github.izerui.imux.monitor.SessionMonitor.getInstance(project)
+            .clearUnread(virtualFile.sessionKey)
     }
 
     /** 只在标签页首次打开时被平台咨询，之后的焦点由 [focusForwarder] 兜住。 */
@@ -194,8 +231,12 @@ class AgentTerminalFileEditor(
         disposed = true
         activeModelJob?.cancel()
         activeModelJob = null
+        keyEventsJob?.cancel()
+        keyEventsJob = null
         observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
+        observedEditor?.removeEditorMouseListener(editorMouseListener)
         observedEditor = null
+        scrollToolbar = null
         scrollToolbarComponent = null
 
         // 摘监听器必须在下面的早退之前：拖动标签页会销毁本实例再建一个新的，

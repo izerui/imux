@@ -2,6 +2,11 @@ package com.github.izerui.imux.monitor
 
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -13,13 +18,17 @@ class SessionMonitorTest {
 
     @Test
     fun `model 变化会透传给 monitor 监听器`() {
-        val monitor = SessionMonitor(testProject())
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val monitor = SessionMonitor(testProject(), scope)
+        val parentDisposable = Disposer.newDisposable()
         var notified = 0
-        monitor.addListener { notified++ }
+        monitor.addListener(parentDisposable) { notified++ }
 
         monitor.model.registerPending(AgentType.CLAUDE)
 
         assertEquals(1, notified)
+        Disposer.dispose(parentDisposable)
+        scope.cancel()
     }
 
     @Test

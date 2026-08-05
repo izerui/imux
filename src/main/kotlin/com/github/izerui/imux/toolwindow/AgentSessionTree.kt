@@ -6,17 +6,20 @@ import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.TurnNotifier
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CommonShortcuts
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
-import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
-import java.awt.event.KeyEvent
 import java.awt.event.MouseEvent
 import javax.swing.JComponent
 import javax.swing.JTree
-import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 import javax.swing.event.TreeExpansionEvent
 import javax.swing.event.TreeExpansionListener
@@ -24,7 +27,6 @@ import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
 import java.time.Instant
-import java.time.ZoneId
 import javax.swing.tree.TreeSelectionModel
 
 private const val PAGE_SIZE = 50
@@ -48,20 +50,6 @@ internal fun JTree.pathForRowAt(y: Int): TreePath? {
  */
 internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
     if (index < current) current else ((index / pageSize) + 1) * pageSize
-
-/** 未读会话的前置标记。 */
-private const val UNREAD_MARK = "● "
-
-/** 正在执行的会话的前置标记，与「有新结果待看」的蓝点区分开。 */
-private const val RUNNING_MARK = "▶ "
-
-/** 用 IDE 的强调蓝，深浅色主题各给一个值。 */
-private val UNREAD_MARK_ATTRIBUTES =
-    SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, JBColor(0x3592C4, 0x548AF7))
-
-/** 执行中用绿色，与未读的蓝色区分。 */
-private val RUNNING_MARK_ATTRIBUTES =
-    SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor(0x369650, 0x57965C))
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
@@ -102,6 +90,7 @@ private sealed interface NodeData {
 class AgentSessionTree(
     private val project: Project,
     private val monitor: SessionMonitor,
+    parentDisposable: Disposable,
 ) {
 
     private val model: SessionListModel get() = monitor.model
@@ -131,13 +120,12 @@ class AgentSessionTree(
                 // 正在跑优先于未读：此刻的处境比「上一轮跑完了」更要紧
                 when {
                     session?.running == true -> {
-                        append(RUNNING_MARK, RUNNING_MARK_ATTRIBUTES)
+                        icon = AllIcons.Nodes.RunnableMark
                         append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
                     }
 
                     session?.unread == true -> {
-                        // 前置圆点比单纯加粗显眼得多，扫一眼列表就能定位
-                        append(UNREAD_MARK, UNREAD_MARK_ATTRIBUTES)
+                        icon = AllIcons.General.Modified
                         append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
                     }
 
@@ -174,11 +162,13 @@ class AgentSessionTree(
         }.installOn(tree)
 
         // 键盘可达：选中后回车等同于单击
-        tree.registerKeyboardAction(
-            { tree.selectionPath?.let { handleActivate(it) } },
-            KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0),
-            JComponent.WHEN_FOCUSED,
-        )
+        object : DumbAwareAction() {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun actionPerformed(event: AnActionEvent) {
+                tree.selectionPath?.let { handleActivate(it) }
+            }
+        }.registerCustomShortcutSet(CommonShortcuts.ENTER, tree, parentDisposable)
 
         // 记下用户自己的折叠意图，重建树时照办
         tree.addTreeExpansionListener(object : TreeExpansionListener {
@@ -193,7 +183,7 @@ class AgentSessionTree(
             }
         })
 
-        monitor.addListener { reload() }
+        monitor.addListener(parentDisposable) { reload() }
     }
 
     private fun groupOf(path: TreePath): AgentType? =
@@ -334,7 +324,6 @@ class AgentSessionTree(
                     relativeTime = RelativeTime.format(
                         entry.session.lastActiveAt,
                         Instant.now(),
-                        ZoneId.systemDefault(),
                     ),
                     // 与标签页取交集：只关心自己正在用的会话。IDE 之外启动的
                     // claude 进程在运行态文件里可见，但不该出现在列表标记上。

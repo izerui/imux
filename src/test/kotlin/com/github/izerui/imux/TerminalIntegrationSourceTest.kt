@@ -16,12 +16,20 @@ class TerminalIntegrationSourceTest {
 
         assertTrue("插件最低版本必须是 IDEA 2026.2 / build 262", buildFile.contains("""sinceBuild = "262""""))
         assertTrue(
+            "IDEA 2026.2 平台要求使用 Java 25 工具链",
+            buildFile.contains("jvmToolchain(25)"),
+        )
+        assertTrue(
             "隐藏终端创建后必须通过 detachTab 脱离工具窗口，避免被 backend 持久化恢复",
             terminalHost.contains("manager.detachTab(tab)"),
         )
         assertFalse(
             "不能直接取 createTab().view，否则 backend 会把会话当作可恢复终端标签",
             terminalHost.contains(".createTab()\n            .view"),
+        )
+        assertFalse(
+            "不能调用 262 标记为 Internal 的 shouldAddToToolWindow",
+            terminalHost.contains("shouldAddToToolWindow("),
         )
     }
 
@@ -84,10 +92,8 @@ class TerminalIntegrationSourceTest {
             ),
         )
         assertTrue(
-            "滚动事件必须直接更新 toolbar 可见性，不能依赖 Action Toolbar 的 update 时机",
-            fileEditor.contains(
-                "toolbarComponent.isVisible = editor != null && !host.isScrolledToBottom(editor)",
-            ),
+            "滚动事件必须刷新 Action Presentation，由 Action System 决定按钮显隐",
+            fileEditor.contains("scrollToolbar?.updateActionsAsync()"),
         )
         assertTrue(
             "按钮必须以浮层形式放进终端 editor，不能挤占终端内容尺寸",
@@ -134,8 +140,8 @@ class TerminalIntegrationSourceTest {
         ).readText()
 
         assertTrue(
-            "面板拿到焦点后必须转发给 preferredFocusableComponent，否则输入法候选窗定位在左上角",
-            fileEditor.contains("target.requestFocusInWindow()"),
+            "面板拿到焦点后必须通过 IDE 焦点管理器转发，否则输入法候选窗定位在左上角",
+            fileEditor.contains("requestFocusInProject(target, project)"),
         )
         assertTrue(
             "转发目标必须在 focusGained 里当场取，才能跟上 alternate buffer 切换后的新 editor",
@@ -146,6 +152,21 @@ class TerminalIntegrationSourceTest {
             fileEditor.lines().any {
                 it.trimStart().startsWith("private val") && it.contains("preferredFocusableComponent")
             },
+        )
+    }
+
+    @Test
+    fun `延迟转发焦点前必须确认终端仍是当前 editor`() {
+        val toolWindowFactory = File(
+            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+        ).readText()
+
+        assertTrue(
+            "invokeLater 执行前必须用本次 selectionChanged 的 editor 重新校验活动选择",
+            toolWindowFactory.contains("val activatedEditor = event.newEditor ?: return") &&
+                toolWindowFactory.contains(
+                    "event.manager.selectedEditor !== activatedEditor",
+                ),
         )
     }
 }
