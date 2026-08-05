@@ -34,6 +34,15 @@ class AgentCommandTest {
     }
 
     @Test
+    fun `claude 使用原生终端光标供输入法定位`() {
+        assertEquals(
+            mapOf("CLAUDE_CODE_NATIVE_CURSOR" to "1"),
+            launchEnvironment(AgentType.CLAUDE),
+        )
+        assertTrue(launchEnvironment(AgentType.CODEX).isEmpty())
+    }
+
+    @Test
     fun `会话 id 里的单引号被转义`() {
         // id 正常是 UUID，但它来自文件名，不该假定内容安全——
         // 拼进 shell 命令行的东西一律当作不可信

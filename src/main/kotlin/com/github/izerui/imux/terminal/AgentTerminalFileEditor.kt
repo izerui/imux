@@ -48,14 +48,12 @@ class AgentTerminalFileEditor(
      * 把落到面板上的焦点转交给真正的编辑器组件。
      *
      * 输入法候选窗的位置由 AWT 向**焦点所有者**问 `getInputMethodRequests()` 得到。
-     * 全平台只有 EditorComponentImpl 会返回跟随 caret 的实现（内部换算成屏幕坐标），
-     * 而 TerminalView.component 是外层的 TerminalPanel，它返回 null——
-     * AWT 拿不到位置就退回窗口原点，表现就是候选窗永远钉在左上角。
+     * 终端的 EditorComponentImpl 上装有平台自己的输入法支持，外层 TerminalPanel 没有，
+     * 因此 FileEditor 获得焦点时仍要把焦点交给当前 terminal editor。
      *
-     * 为什么 codex 没事而 claude 有事：codex 的 TUI 跑在 alternate screen buffer 里，
-     * 平台切 buffer 时会把焦点移到另一个 editor 上，顺手把焦点“修好”了；
-     * claude 的 TUI 始终在主 buffer 重绘，从不触发这次转移，焦点就一直停在面板上。
-     * 底部终端工具窗口有自己的焦点管理兜着，只有我们这套 FileEditor 承载会暴露。
+     * Claude 曾经出现的候选窗钉在旧输出处并不是焦点问题，而是 IDEA 262 在真实光标
+     * 隐藏时不更新 cursorOffset；该问题由启动时启用 Claude native cursor 模式解决，
+     * 见 AgentCommand.kt。
      */
     private val focusForwarder = object : FocusAdapter() {
         override fun focusGained(event: FocusEvent) {

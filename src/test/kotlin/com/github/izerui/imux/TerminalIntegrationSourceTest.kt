@@ -31,6 +31,10 @@ class TerminalIntegrationSourceTest {
             "不能调用 262 标记为 Internal 的 shouldAddToToolWindow",
             terminalHost.contains("shouldAddToToolWindow("),
         )
+        assertTrue(
+            "Claude 的原生光标环境变量必须传入终端进程，不能只停留在命令构造层",
+            terminalHost.contains(".envVariables(launchEnvironment(agentType))"),
+        )
     }
 
     @Test

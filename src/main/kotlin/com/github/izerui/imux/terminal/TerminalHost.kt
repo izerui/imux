@@ -63,7 +63,7 @@ class TerminalHost(private val project: Project) : Disposable {
      * 「currently running as a background agent」。
      */
     fun openNew(agentType: AgentType, key: String, tabTitle: String) {
-        open(key, newCommand(agentType), tabTitle)
+        open(key, agentType, newCommand(agentType), tabTitle)
     }
 
     /**
@@ -99,7 +99,7 @@ class TerminalHost(private val project: Project) : Disposable {
 
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */
     fun openResume(agentType: AgentType, sessionId: String, tabTitle: String) {
-        open(sessionId, resumeCommand(agentType, sessionId), tabTitle)
+        open(sessionId, agentType, resumeCommand(agentType, sessionId), tabTitle)
     }
 
     /**
@@ -155,10 +155,15 @@ class TerminalHost(private val project: Project) : Disposable {
         FileEditorManager.getInstance(project).updateFilePresentation(file)
     }
 
-    private fun open(key: String, command: List<String>, tabTitle: String) {
+    private fun open(
+        key: String,
+        agentType: AgentType,
+        command: List<String>,
+        tabTitle: String,
+    ) {
         discardIfTerminated(key)
         val file = files.getOrPut(key) {
-            val view = views.getOrPut(key) { createView(command, tabTitle) }
+            val view = views.getOrPut(key) { createView(agentType, command, tabTitle) }
             AgentTerminalVirtualFile(tabTitle, view, key).also(::closeTabWhenTerminated)
         }
         FileEditorManager.getInstance(project).openFile(file, true)
@@ -240,12 +245,17 @@ class TerminalHost(private val project: Project) : Disposable {
      * 公开 API 会先创建普通 tab，再立即 detach；关闭焦点请求可避免激活底部工具窗口，
      * 禁用延迟启动则保证 detached view 无需等待工具窗口显示就能启动进程。
      */
-    private fun createView(command: List<String>, tabTitle: String): TerminalView {
+    private fun createView(
+        agentType: AgentType,
+        command: List<String>,
+        tabTitle: String,
+    ): TerminalView {
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab = manager
             .createTabBuilder()
             .workingDirectory(projectPath())
             .shellCommand(command)
+            .envVariables(launchEnvironment(agentType))
             .tabName(tabTitle)
             .requestFocus(false)
             .deferSessionStartUntilUiShown(false)

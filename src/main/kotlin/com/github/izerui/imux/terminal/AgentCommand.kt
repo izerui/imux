@@ -30,6 +30,23 @@ internal fun launchCommand(shell: String, agentType: AgentType, resumeId: String
     return listOf(shell, "-l", "-i", "-c", script)
 }
 
+/**
+ * 传给 CLI 进程的终端环境。
+ *
+ * Claude 默认隐藏真实终端光标并自行绘制一个反色光标。IDEA 262 reworked terminal 的
+ * cursor tracker 在光标隐藏期间不会发布位置变化，导致 output model 的 cursorOffset
+ * 停在 Claude 启动时的 grid home，IME 候选窗也跟着定位到旧输出处。
+ *
+ * Claude 自带的 native cursor 模式保留完整 TUI，但会持续维护可被终端追踪的真实光标。
+ * Codex 本来就显式维护真实光标，不需要这个 Claude 专用变量。
+ */
+internal fun launchEnvironment(agentType: AgentType): Map<String, String> =
+    if (agentType == AgentType.CLAUDE) {
+        mapOf("CLAUDE_CODE_NATIVE_CURSOR" to "1")
+    } else {
+        emptyMap()
+    }
+
 /** 用户的登录 shell；取不到时退回 zsh（macOS 自 Catalina 起的默认）。 */
 internal fun resolveShell(shellEnv: String?): String =
     shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
