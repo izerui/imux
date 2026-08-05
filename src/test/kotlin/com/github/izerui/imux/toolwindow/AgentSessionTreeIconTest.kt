@@ -1,7 +1,7 @@
 package com.github.izerui.imux.toolwindow
 
 import com.intellij.icons.AllIcons
-import org.junit.Assert.assertNull
+import com.intellij.util.ui.EmptyIcon
 import org.junit.Assert.assertSame
 import org.junit.Test
 
@@ -22,9 +22,9 @@ class AgentSessionTreeIconTest {
     }
 
     @Test
-    fun `普通会话不显示图标`() {
+    fun `普通会话使用空图标固定标题起始位置`() {
         val icon = sessionStatusIcon(running = false, unread = false)
 
-        assertNull(icon)
+        assertSame(EmptyIcon.ICON_16, icon)
     }
 }

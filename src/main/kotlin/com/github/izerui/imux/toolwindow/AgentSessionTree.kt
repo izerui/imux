@@ -18,6 +18,7 @@ import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.util.ui.EmptyIcon
 import java.awt.event.MouseEvent
 import javax.swing.Icon
 import javax.swing.JComponent
@@ -56,7 +57,7 @@ internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
 internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
     running -> AllIcons.Nodes.RunnableMark
     unread -> AllIcons.General.Modified
-    else -> null
+    else -> EmptyIcon.ICON_16
 }
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
@@ -131,6 +132,7 @@ class AgentSessionTree(
                 icon = when (data) {
                     is NodeData.Group -> AgentIcons.forAgent(data.agentType)
                     is NodeData.Session -> statusIcon
+                    is NodeData.PendingSession, is NodeData.ShowMore -> EmptyIcon.ICON_16
                     else -> null
                 }
 

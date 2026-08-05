@@ -4,9 +4,9 @@
 
 **Goal:** Show Claude/OpenAI brand icons on conversation-group headings while session rows keep only IntelliJ's existing running and unread markers.
 
-**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows continue to use `AllIcons.Nodes.RunnableMark` and `AllIcons.General.Modified` directly, with no brand icon or placeholder.
+**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AllIcons.Nodes.RunnableMark` and `AllIcons.General.Modified` directly, or `EmptyIcon.ICON_16` when no status is present so every child title stays aligned.
 
-**Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AllIcons`, JUnit 4.
+**Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AllIcons`/`EmptyIcon`, JUnit 4.
 
 ---
 
@@ -16,7 +16,7 @@
 - Modify `src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProvider.kt`: consume the shared holder.
 - Modify `src/test/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProviderTest.kt`: verify the shared holder.
 - Modify `src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt`: show brand icons on groups and official status icons on sessions.
-- Create `src/test/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTreeIconTest.kt`: verify official status precedence and the no-icon idle state.
+- Create `src/test/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTreeIconTest.kt`: verify official status precedence and the fixed idle placeholder.
 
 ### Task 1: Extract a shared Agent icon holder
 
@@ -121,7 +121,7 @@ Create `AgentSessionTreeIconTest.kt`:
 package com.github.izerui.imux.toolwindow
 
 import com.intellij.icons.AllIcons
-import org.junit.Assert.assertNull
+import com.intellij.util.ui.EmptyIcon
 import org.junit.Assert.assertSame
 import org.junit.Test
 
@@ -142,10 +142,10 @@ class AgentSessionTreeIconTest {
     }
 
     @Test
-    fun `普通会话不显示图标`() {
+    fun `普通会话使用空图标固定标题起始位置`() {
         val icon = sessionStatusIcon(running = false, unread = false)
 
-        assertNull(icon)
+        assertSame(EmptyIcon.ICON_16, icon)
     }
 }
 ```
@@ -175,7 +175,7 @@ Add this top-level helper next to the existing tree helpers:
 internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
     running -> AllIcons.Nodes.RunnableMark
     unread -> AllIcons.General.Modified
-    else -> null
+    else -> EmptyIcon.ICON_16
 }
 ```
 
@@ -189,6 +189,7 @@ val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread) }
 icon = when (data) {
     is NodeData.Group -> AgentIcons.forAgent(data.agentType)
     is NodeData.Session -> statusIcon
+    is NodeData.PendingSession, is NodeData.ShowMore -> EmptyIcon.ICON_16
     else -> null
 }
 
@@ -199,7 +200,7 @@ when {
 }
 ```
 
-This keeps running ahead of unread exactly as before, preserves the original platform status icon instances, and leaves ordinary/pending/show-more session rows without an icon.
+This keeps running ahead of unread exactly as before, preserves the original platform status icon instances, and gives ordinary/pending/show-more rows the same official empty slot so all child titles align.
 
 - [ ] **Step 5: Run targeted tree and platform-alignment tests**
 
