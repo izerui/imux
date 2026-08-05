@@ -4,7 +4,7 @@
 
 **Goal:** Show Claude/OpenAI brand icons on conversation-group headings while session rows keep only IntelliJ's existing running and unread markers.
 
-**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AnimatedIcon.Default.INSTANCE` while running, `AllIcons.General.Modified` when unread, or `EmptyIcon.ICON_16` when idle. Enable the platform renderer-animation client property so the loader repaints automatically.
+**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AnimatedIcon.Default.INSTANCE` while running, `AllIcons.General.Modified` when unread, `AllIcons.Actions.Checked` when already open in a tab, or `EmptyIcon.ICON_16` otherwise. Enable the platform renderer-animation client property so the loader repaints automatically.
 
 **Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AnimatedIcon`/`AllIcons`/`EmptyIcon`, JUnit 4.
 
@@ -132,21 +132,28 @@ class AgentSessionTreeIconTest {
 
     @Test
     fun `运行中会话显示平台默认加载动画`() {
-        val icon = sessionStatusIcon(running = true, unread = true)
+        val icon = sessionStatusIcon(running = true, unread = true, opened = true)
 
         assertSame(AnimatedIcon.Default.INSTANCE, icon)
     }
 
     @Test
     fun `未读会话只显示原有未读标记`() {
-        val icon = sessionStatusIcon(running = false, unread = true)
+        val icon = sessionStatusIcon(running = false, unread = true, opened = true)
 
         assertSame(AllIcons.General.Modified, icon)
     }
 
     @Test
+    fun `已打开会话在没有更高优先级状态时显示勾选标记`() {
+        val icon = sessionStatusIcon(running = false, unread = false, opened = true)
+
+        assertSame(AllIcons.Actions.Checked, icon)
+    }
+
+    @Test
     fun `普通会话使用空图标固定标题起始位置`() {
-        val icon = sessionStatusIcon(running = false, unread = false)
+        val icon = sessionStatusIcon(running = false, unread = false, opened = false)
 
         assertSame(EmptyIcon.ICON_16, icon)
     }
@@ -188,9 +195,10 @@ import javax.swing.Icon
 Add this top-level helper next to the existing tree helpers:
 
 ```kotlin
-internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
+internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolean): Icon? = when {
     running -> AnimatedIcon.Default.INSTANCE
     unread -> AllIcons.General.Modified
+    opened -> AllIcons.Actions.Checked
     else -> EmptyIcon.ICON_16
 }
 
@@ -204,7 +212,7 @@ internal fun enableRendererAnimation(component: JComponent) {
 Replace the renderer's icon/text status block with:
 
 ```kotlin
-val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread) }
+val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread, it.opened) }
 
 enableRendererAnimation(tree)
 

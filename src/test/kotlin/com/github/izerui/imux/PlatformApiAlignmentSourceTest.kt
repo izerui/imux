@@ -52,6 +52,22 @@ class PlatformApiAlignmentSourceTest {
     }
 
     @Test
+    fun `已打开标记覆盖已有与待绑定会话`() {
+        val tree = source(
+            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+        )
+
+        assertTrue(tree.contains("data class PendingSession("))
+        assertTrue(tree.contains("opened = entry.pending.key in openTabs"))
+        assertTrue(
+            Regex(
+                """is NodeData\.PendingSession ->\s+""" +
+                    """sessionStatusIcon\(running = false, unread = false, opened = data\.opened\)""",
+            ).containsMatchIn(tree),
+        )
+    }
+
+    @Test
     fun `界面监听器绑定父级 Disposable`() {
         val terminalHost = source(
             "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",

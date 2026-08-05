@@ -55,9 +55,10 @@ internal fun JTree.pathForRowAt(y: Int): TreePath? {
 internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
     if (index < current) current else ((index / pageSize) + 1) * pageSize
 
-internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
+internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolean): Icon? = when {
     running -> AnimatedIcon.Default.INSTANCE
     unread -> AllIcons.General.Modified
+    opened -> AllIcons.Actions.Checked
     else -> EmptyIcon.ICON_16
 }
 
@@ -81,11 +82,17 @@ private sealed interface NodeData {
         val running: Boolean,
         /** 是否有新结果待看 */
         val unread: Boolean,
+        /** 是否已在编辑器标签页中打开 */
+        val opened: Boolean,
     ) : NodeData {
         override fun toString(): String = title
     }
 
-    data class PendingSession(val agentType: AgentType, val key: String) : NodeData {
+    data class PendingSession(
+        val agentType: AgentType,
+        val key: String,
+        val opened: Boolean,
+    ) : NodeData {
         override fun toString(): String = "新会话（等待首条消息）"
     }
 
@@ -132,13 +139,17 @@ class AgentSessionTree(
 
                 val session = data as? NodeData.Session
 
-                // 正在跑优先于未读：此刻的处境比「上一轮跑完了」更要紧
-                val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread) }
+                // 优先级：正在跑 > 未读 > 已打开 > 普通
+                val statusIcon =
+                    session?.let { sessionStatusIcon(it.running, it.unread, it.opened) }
 
                 icon = when (data) {
                     is NodeData.Group -> AgentIcons.forAgent(data.agentType)
                     is NodeData.Session -> statusIcon
-                    is NodeData.PendingSession, is NodeData.ShowMore -> EmptyIcon.ICON_16
+                    is NodeData.PendingSession ->
+                        sessionStatusIcon(running = false, unread = false, opened = data.opened)
+
+                    is NodeData.ShowMore -> EmptyIcon.ICON_16
                     else -> null
                 }
 
@@ -352,9 +363,14 @@ class AgentSessionTree(
                     // 要等下一轮才消失。
                     running = entry.session.id in monitor.runningIds && entry.session.id in openTabs,
                     unread = monitor.isUnread(entry.session.id),
+                    opened = entry.session.id in openTabs,
                 )
 
-                is ListEntry.Pending -> NodeData.PendingSession(agentType, entry.pending.key)
+                is ListEntry.Pending -> NodeData.PendingSession(
+                    agentType,
+                    entry.pending.key,
+                    opened = entry.pending.key in openTabs,
+                )
             }
         }
 

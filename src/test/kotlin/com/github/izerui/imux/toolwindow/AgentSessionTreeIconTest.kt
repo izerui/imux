@@ -12,21 +12,28 @@ class AgentSessionTreeIconTest {
 
     @Test
     fun `运行中会话显示平台默认加载动画`() {
-        val icon = sessionStatusIcon(running = true, unread = true)
+        val icon = sessionStatusIcon(running = true, unread = true, opened = true)
 
         assertSame(AnimatedIcon.Default.INSTANCE, icon)
     }
 
     @Test
     fun `未读会话只显示原有未读标记`() {
-        val icon = sessionStatusIcon(running = false, unread = true)
+        val icon = sessionStatusIcon(running = false, unread = true, opened = true)
 
         assertSame(AllIcons.General.Modified, icon)
     }
 
     @Test
+    fun `已打开会话在没有更高优先级状态时显示勾选标记`() {
+        val icon = sessionStatusIcon(running = false, unread = false, opened = true)
+
+        assertSame(AllIcons.Actions.Checked, icon)
+    }
+
+    @Test
     fun `普通会话使用空图标固定标题起始位置`() {
-        val icon = sessionStatusIcon(running = false, unread = false)
+        val icon = sessionStatusIcon(running = false, unread = false, opened = false)
 
         assertSame(EmptyIcon.ICON_16, icon)
     }
