@@ -326,4 +326,3 @@ git diff HEAD~2 --stat
 ```
 
 Expected: no whitespace errors; only the intended icon resources, provider, registration, and tests are included. Preserve the pre-existing untracked `src/main/kotlin/com/github/.DS_Store`.
-
