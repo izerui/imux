@@ -186,7 +186,7 @@ class SessionMonitor(private val project: Project) : Disposable {
 
                 TurnNotifier.notifyCompleted(project, sessionId, title, session?.agentType, duration) {
                     model.sessionOf(sessionId)?.let {
-                        host.openResume(it.agentType, it.id, it.title)
+                        host.openResumeAtBottom(it.agentType, it.id, it.title)
                     }
                     clearUnread(sessionId)
                 }

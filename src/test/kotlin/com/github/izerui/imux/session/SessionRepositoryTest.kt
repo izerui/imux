@@ -7,6 +7,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.time.Instant
 
 class SessionRepositoryTest {
 
@@ -28,6 +29,16 @@ class SessionRepositoryTest {
             writeText("""{"type":"ai-title","aiTitle":"C-$name","sessionId":"$name"}""")
             setLastModified(lastModified)
         }
+    }
+
+    private fun claudeSessionWithActivity(name: String, activityAt: Instant) {
+        val dir = File(tmp.root, "claude/projects/-Users-demo-proj").apply { mkdirs() }
+        File(dir, "$name.jsonl").writeText(
+            """
+            {"type":"user","timestamp":"$activityAt","message":{"content":"消息-$name"}}
+            {"type":"ai-title","aiTitle":"C-$name","sessionId":"$name"}
+            """.trimIndent(),
+        )
     }
 
     private fun codexSession(uuid: String, lastModified: Long) {
@@ -58,6 +69,17 @@ class SessionRepositoryTest {
         val ids = repository().scan("/Users/demo/proj").map { it.id }
 
         assertEquals(listOf("new", "mid", "old"), ids)
+    }
+
+    @Test
+    fun `较早创建但刚活动的会话排在较晚创建的旧会话之前`() {
+        claudeSessionWithActivity("active-now", Instant.parse("2026-08-05T02:00:00Z"))
+        Thread.sleep(1_100)
+        claudeSessionWithActivity("inactive", Instant.parse("2026-08-04T02:00:00Z"))
+
+        val ids = repository().scan("/Users/demo/proj").map { it.id }
+
+        assertEquals(listOf("active-now", "inactive"), ids)
     }
 
     @Test

@@ -1,11 +1,13 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
@@ -15,6 +17,7 @@ import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.jetbrains.plugins.terminal.block.util.TerminalDataContextUtils
 
 /**
  * 拥有所有活着的终端 view，按 key 索引。
@@ -91,6 +94,20 @@ class TerminalHost(private val project: Project) : Disposable {
         open(sessionId, resumeCommand(agentType, sessionId), tabTitle)
     }
 
+    /**
+     * 从完成通知打开会话，并显示最新输出。
+     *
+     * 普通列表点击仍保留原滚动位置；通知表达的是「查看刚完成的结果」，
+     * 因此选中标签页后要明确滚到底部。
+     */
+    fun openResumeAtBottom(agentType: AgentType, sessionId: String, tabTitle: String) {
+        openResume(agentType, sessionId, tabTitle)
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed) return@invokeLater
+            views[sessionId]?.let(::scrollToBottom)
+        }
+    }
+
     fun turnWatcher(): TurnWatcher = turnWatcher
 
     /** 把会话纳入轮次监控。文件路径来自扫描结果（AgentSession.filePath）。 */
@@ -140,6 +157,32 @@ class TerminalHost(private val project: Project) : Disposable {
         FileEditorManager.getInstance(project).openFile(file, true)
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedListeners.forEach { runCatching { it() } }
+    }
+
+    internal fun scrollToBottom(view: TerminalView) {
+        val editor = currentTerminalEditor(view) ?: return
+        val scrolling = editor.scrollingModel
+
+        scrolling.disableAnimation()
+        try {
+            scrolling.scrollVertically(Int.MAX_VALUE)
+        } finally {
+            scrolling.enableAnimation()
+        }
+    }
+
+    internal fun isScrolledToBottom(editor: Editor): Boolean {
+        val visible = editor.scrollingModel.visibleArea
+        return isViewportAtBottom(
+            visibleTop = visible.y,
+            visibleHeight = visible.height,
+            contentHeight = editor.contentComponent.height,
+        )
+    }
+
+    internal fun currentTerminalEditor(view: TerminalView): Editor? {
+        val dataContext = DataManager.getInstance().getDataContext(view.component)
+        return with(TerminalDataContextUtils) { dataContext.terminalEditor }
     }
 
     /**
@@ -228,3 +271,10 @@ class TerminalHost(private val project: Project) : Disposable {
         fun getInstance(project: Project): TerminalHost = project.getService(TerminalHost::class.java)
     }
 }
+
+internal fun isViewportAtBottom(
+    visibleTop: Int,
+    visibleHeight: Int,
+    contentHeight: Int,
+): Boolean =
+    visibleTop.toLong() + visibleHeight >= contentHeight.toLong() - 1L

@@ -14,13 +14,10 @@ class SessionRepository(
     private val codexReader: CodexSessionReader,
 ) {
 
-    /**
-     * 按**创建时间**倒序，不用最后活动时间：resume 会写文件、抬高 mtime，
-     * 导致「点一下会话它就窜到顶部」，列表位置记不住。
-     */
+    /** 按界面展示的最后活动时间倒序，保证列表顺序与「多久以前」一致。 */
     fun scan(projectPath: String): List<AgentSession> =
         (claudeReader.read(projectPath) + codexReader.read(projectPath))
-            .sortedByDescending { it.createdAt }
+            .sortedByDescending { it.lastActiveAt }
 
     companion object {
         fun forUserHome(): SessionRepository {

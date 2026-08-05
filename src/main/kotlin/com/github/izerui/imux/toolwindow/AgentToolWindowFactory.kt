@@ -10,6 +10,7 @@ import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -89,6 +90,25 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
                 override fun selectionChanged(event: FileEditorManagerEvent) {
                     val file = event.newFile as? AgentTerminalVirtualFile ?: return
                     sessionTree.revealSession(file.sessionKey)
+                    focusTerminal(file)
+                }
+
+                /**
+                 * 把焦点送进终端的编辑器组件，输入法候选窗才会跟着光标走
+                 * （原因见 AgentTerminalFileEditor 的 focusForwarder 注释）。
+                 *
+                 * 与上面「不抢焦点」那条注释并不矛盾：那说的是别让**会话列表**偷走焦点，
+                 * 而这里送的目标正是用户切过去要敲字的终端本身。
+                 *
+                 * 必须 invokeLater：selectionChanged 触发时平台自己的焦点投递还没跑完，
+                 * 此刻抢先 request 会被随后的平台投递覆盖掉。
+                 */
+                private fun focusTerminal(file: AgentTerminalVirtualFile) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed) return@invokeLater
+                        val target = file.terminalView.preferredFocusableComponent
+                        if (target.isShowing) target.requestFocusInWindow()
+                    }
                 }
             },
         )
