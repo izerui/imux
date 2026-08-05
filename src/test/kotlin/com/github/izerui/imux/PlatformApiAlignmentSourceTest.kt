@@ -28,6 +28,29 @@ class PlatformApiAlignmentSourceTest {
     }
 
     @Test
+    fun `运行态与未读变化通过官方文件呈现刷新标签图标`() {
+        val provider = source(
+            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProvider.kt",
+        )
+        val monitor = source(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        )
+
+        assertTrue(provider.contains("SessionMonitor.getInstance(project)"))
+        assertTrue(provider.contains("AnimatedIcon.Default.INSTANCE"))
+        assertTrue(provider.contains("AllIcons.General.Modified"))
+        assertTrue(provider.contains("RowIcon(statusIcon, AgentIcons.forAgent(agentType))"))
+        assertTrue(monitor.contains("val runningChanged = runningIds != running"))
+        assertTrue(monitor.contains("if (runningChanged) updateOpenTabIcons()"))
+        assertTrue(monitor.contains("updateFilePresentation(file)"))
+        assertTrue(
+            Regex("""updateOpenTabIcons\(setOf\(sessionId\)\)""")
+                .findAll(monitor)
+                .count() >= 2,
+        )
+    }
+
+    @Test
     fun `界面监听器绑定父级 Disposable`() {
         val terminalHost = source(
             "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",

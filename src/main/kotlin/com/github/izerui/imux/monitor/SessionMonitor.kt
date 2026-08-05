@@ -15,6 +15,7 @@ import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
@@ -27,6 +28,7 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Paths
 import java.time.Instant
 import java.util.EventListener
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 fun interface SessionMonitorListener : EventListener {
@@ -80,7 +82,7 @@ class SessionMonitor(
     private val statusTracker = RuntimeStatusTracker()
 
     /** 轮次刚完成、用户还没回来看的会话 id。 */
-    private val unread = mutableSetOf<String>()
+    private val unread = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * 当前活着的 Claude 进程，按会话 id 索引。
@@ -93,6 +95,7 @@ class SessionMonitor(
         private set
 
     /** 此刻正在执行的会话 id，见 [RunningSessions]。 */
+    @Volatile
     var runningIds: Set<String> = emptySet()
         private set
 
@@ -120,13 +123,19 @@ class SessionMonitor(
     fun isUnread(sessionId: String): Boolean = sessionId in unread
 
     fun markUnread(sessionId: String) {
-        if (unread.add(sessionId)) notifyListeners()
+        if (unread.add(sessionId)) {
+            updateOpenTabIcons(setOf(sessionId))
+            notifyListeners()
+        }
     }
 
     fun clearUnread(sessionId: String) {
         // 用户已经看到该会话，挂着的提醒气泡也该一并撤掉
         TurnNotifier.dismiss(sessionId)
-        if (unread.remove(sessionId)) notifyListeners()
+        if (unread.remove(sessionId)) {
+            updateOpenTabIcons(setOf(sessionId))
+            notifyListeners()
+        }
     }
 
     /** 启动监听。幂等——工具窗口与启动活动都可能调到。 */
@@ -182,8 +191,10 @@ class SessionMonitor(
                 val running = RunningSessions.of(snapshot, watcher.workingIds(AgentType.CODEX))
 
                 withContext(Dispatchers.EDT) {
+                    val runningChanged = runningIds != running
                     runtime = snapshot
                     runningIds = running
+                    if (runningChanged) updateOpenTabIcons()
                     notifyListeners()
 
                     completed.forEach { sessionId ->
@@ -248,6 +259,15 @@ class SessionMonitor(
 
     private fun notifyListeners() {
         listenerDispatcher.multicaster.stateChanged()
+    }
+
+    /** 运行态或未读状态变化后，让平台重新向 FileIconProvider 查询标签图标。 */
+    private fun updateOpenTabIcons(sessionIds: Set<String>? = null) {
+        val manager = FileEditorManager.getInstance(project)
+        manager.openFiles
+            .filterIsInstance<AgentTerminalVirtualFile>()
+            .filter { sessionIds == null || it.sessionKey in sessionIds }
+            .forEach { file -> manager.updateFilePresentation(file) }
     }
 
     override fun dispose() = Unit

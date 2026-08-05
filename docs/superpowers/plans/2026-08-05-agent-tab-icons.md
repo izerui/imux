@@ -326,3 +326,13 @@ git diff HEAD~2 --stat
 ```
 
 Expected: no whitespace errors; only the intended icon resources, provider, registration, and tests are included. Preserve the pre-existing untracked `src/main/kotlin/com/github/.DS_Store`.
+
+### Follow-up: Add busy and unread status before the brand icon
+
+The final tab icon uses two fixed 16×16 slots:
+
+```text
+[AnimatedIcon.Default / AllIcons.General.Modified / EmptyIcon.ICON_16] [Agent brand]
+```
+
+`AgentTerminalFileIconProvider` reads `SessionMonitor.runningIds` and `isUnread(sessionKey)` and returns a `RowIcon`, with busy taking precedence over unread. `SessionMonitor` calls `FileEditorManager.updateFilePresentation()` when running or unread state changes so open tabs refresh without custom tab components or additional polling.
