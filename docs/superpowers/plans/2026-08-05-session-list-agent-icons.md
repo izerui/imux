@@ -4,9 +4,9 @@
 
 **Goal:** Show Claude/OpenAI brand icons on conversation-group headings while session rows keep only IntelliJ's existing running and unread markers.
 
-**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AllIcons.Nodes.RunnableMark` and `AllIcons.General.Modified` directly, or `EmptyIcon.ICON_16` when no status is present so every child title stays aligned.
+**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AnimatedIcon.Default.INSTANCE` while running, `AllIcons.General.Modified` when unread, or `EmptyIcon.ICON_16` when idle. Enable the platform renderer-animation client property so the loader repaints automatically.
 
-**Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AllIcons`/`EmptyIcon`, JUnit 4.
+**Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AnimatedIcon`/`AllIcons`/`EmptyIcon`, JUnit 4.
 
 ---
 
@@ -121,17 +121,20 @@ Create `AgentSessionTreeIconTest.kt`:
 package com.github.izerui.imux.toolwindow
 
 import com.intellij.icons.AllIcons
+import com.intellij.ui.AnimatedIcon
 import com.intellij.util.ui.EmptyIcon
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
+import javax.swing.JTree
 
 class AgentSessionTreeIconTest {
 
     @Test
-    fun `运行中会话只显示原有运行标记`() {
+    fun `运行中会话显示平台默认加载动画`() {
         val icon = sessionStatusIcon(running = true, unread = true)
 
-        assertSame(AllIcons.Nodes.RunnableMark, icon)
+        assertSame(AnimatedIcon.Default.INSTANCE, icon)
     }
 
     @Test
@@ -146,6 +149,18 @@ class AgentSessionTreeIconTest {
         val icon = sessionStatusIcon(running = false, unread = false)
 
         assertSame(EmptyIcon.ICON_16, icon)
+    }
+
+    @Test
+    fun `树渲染器允许加载动画自动刷新`() {
+        val tree = JTree()
+
+        enableRendererAnimation(tree)
+
+        assertEquals(
+            true,
+            tree.getClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED),
+        )
     }
 }
 ```
@@ -166,6 +181,7 @@ Add imports to `AgentSessionTree.kt`:
 
 ```kotlin
 import com.github.izerui.imux.icons.AgentIcons
+import com.intellij.ui.AnimatedIcon
 import javax.swing.Icon
 ```
 
@@ -173,9 +189,13 @@ Add this top-level helper next to the existing tree helpers:
 
 ```kotlin
 internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
-    running -> AllIcons.Nodes.RunnableMark
+    running -> AnimatedIcon.Default.INSTANCE
     unread -> AllIcons.General.Modified
     else -> EmptyIcon.ICON_16
+}
+
+internal fun enableRendererAnimation(component: JComponent) {
+    component.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
 }
 ```
 
@@ -185,6 +205,8 @@ Replace the renderer's icon/text status block with:
 
 ```kotlin
 val statusIcon = session?.let { sessionStatusIcon(it.running, it.unread) }
+
+enableRendererAnimation(tree)
 
 icon = when (data) {
     is NodeData.Group -> AgentIcons.forAgent(data.agentType)
@@ -200,7 +222,7 @@ when {
 }
 ```
 
-This keeps running ahead of unread exactly as before, preserves the original platform status icon instances, and gives ordinary/pending/show-more rows the same official empty slot so all child titles align.
+This keeps running ahead of unread exactly as before, uses the platform loader animation with renderer repaint support, and gives ordinary/pending/show-more rows the same official empty slot so all child titles align.
 
 - [ ] **Step 5: Run targeted tree and platform-alignment tests**
 

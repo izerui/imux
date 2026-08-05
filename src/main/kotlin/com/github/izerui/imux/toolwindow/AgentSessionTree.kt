@@ -16,6 +16,7 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.EmptyIcon
@@ -55,9 +56,13 @@ internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
     if (index < current) current else ((index / pageSize) + 1) * pageSize
 
 internal fun sessionStatusIcon(running: Boolean, unread: Boolean): Icon? = when {
-    running -> AllIcons.Nodes.RunnableMark
+    running -> AnimatedIcon.Default.INSTANCE
     unread -> AllIcons.General.Modified
     else -> EmptyIcon.ICON_16
+}
+
+internal fun enableRendererAnimation(component: JComponent) {
+    component.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
 }
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
@@ -111,6 +116,7 @@ class AgentSessionTree(
         isRootVisible = false
         showsRootHandles = true
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+        enableRendererAnimation(this)
         cellRenderer = object : ColoredTreeCellRenderer() {
             override fun customizeCellRenderer(
                 tree: JTree,

@@ -10,19 +10,20 @@
 - Codex 分组使用 OpenAI 品牌图标。
 - 具体会话行不显示品牌图标，避免品牌图标和文字之间因状态槽位产生过大间距。
 - 会话行只保留原有状态图标：
-  - 运行中继续使用 `AllIcons.Nodes.RunnableMark`。
+  - 运行中使用平台 `AnimatedIcon.Default.INSTANCE` 加载动画。
   - 未读继续使用 `AllIcons.General.Modified`。
 - 普通会话、等待首条消息的新会话和“显示更多”节点使用平台 `EmptyIcon.ICON_16` 占位，使所有子节点标题对齐。
 
 ## 平台集成
 
-分组标题直接使用共享品牌图标；会话行继续直接使用 IntelliJ Platform 262 的原有状态图标。无状态时使用平台空图标占位，不组合、缩放或覆盖状态标记。
+分组标题直接使用共享品牌图标；会话行使用 IntelliJ Platform 262 的官方加载动画、未读图标和空图标。树组件设置 `AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED`，让渲染器中的加载动画按平台机制自动刷新。
 
 将现有标签页图标加载逻辑抽取为共享 `AgentIcons`，由 `FileIconProvider` 和会话树共同使用，确保同一 Agent 在不同界面使用同一资源。
 
 ## 验证
 
 - 测试共享图标映射仍分别返回 16×16 Claude/Codex 图标。
-- 测试运行中、未读和普通会话分别返回原有平台状态图标或 `EmptyIcon.ICON_16`。
-- 保留现有源码约束测试，确认运行中和未读继续使用平台图标。
+- 测试运行中、未读和普通会话分别返回 `AnimatedIcon.Default.INSTANCE`、原有未读图标或 `EmptyIcon.ICON_16`。
+- 测试树渲染器启用了平台动画刷新属性。
+- 保留源码约束测试，确认状态展示继续使用平台图标。
 - 运行完整测试、插件构建和结构校验。
