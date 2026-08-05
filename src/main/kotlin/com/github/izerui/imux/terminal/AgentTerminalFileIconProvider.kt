@@ -9,7 +9,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.RowIcon
-import com.intellij.util.ui.EmptyIcon
 import javax.swing.Icon
 
 class AgentTerminalFileIconProvider : FileIconProvider {
@@ -26,11 +25,12 @@ class AgentTerminalFileIconProvider : FileIconProvider {
     }
 }
 
-internal fun terminalTabIcon(agentType: AgentType, running: Boolean, unread: Boolean): RowIcon {
+internal fun terminalTabIcon(agentType: AgentType, running: Boolean, unread: Boolean): Icon {
+    val brandIcon = AgentIcons.forAgent(agentType)
     val statusIcon: Icon = when {
         running -> AnimatedIcon.Default.INSTANCE
         unread -> AllIcons.General.Modified
-        else -> EmptyIcon.ICON_16
+        else -> return brandIcon
     }
-    return RowIcon(statusIcon, AgentIcons.forAgent(agentType))
+    return RowIcon(statusIcon, brandIcon)
 }

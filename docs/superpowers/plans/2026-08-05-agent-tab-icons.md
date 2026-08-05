@@ -329,10 +329,10 @@ Expected: no whitespace errors; only the intended icon resources, provider, regi
 
 ### Follow-up: Add busy and unread status before the brand icon
 
-The final tab icon uses two fixed 16×16 slots:
+Busy and unread tabs use two 16×16 slots:
 
 ```text
-[AnimatedIcon.Default / AllIcons.General.Modified / EmptyIcon.ICON_16] [Agent brand]
+[AnimatedIcon.Default / AllIcons.General.Modified] [Agent brand]
 ```
 
-`AgentTerminalFileIconProvider` reads `SessionMonitor.runningIds` and `isUnread(sessionKey)` and returns a `RowIcon`, with busy taking precedence over unread. `SessionMonitor` calls `FileEditorManager.updateFilePresentation()` when running or unread state changes so open tabs refresh without custom tab components or additional polling.
+Idle tabs return only the Agent brand icon and do not reserve an empty status slot. `AgentTerminalFileIconProvider` reads `SessionMonitor.runningIds` and `isUnread(sessionKey)` and returns a `RowIcon` only when a status is present, with busy taking precedence over unread. `SessionMonitor` calls `FileEditorManager.updateFilePresentation()` when running or unread state changes so open tabs refresh without custom tab components or additional polling.
