@@ -32,4 +32,16 @@ class DevScriptTest {
         assertFalse("不再提供数字快捷选择", script.contains("1|2|3"))
         assertFalse("macOS Bash 3.2 不支持小数 read timeout", script.contains("-t 0.1"))
     }
+
+    @Test
+    fun `测试不再作为独立菜单选项`() {
+        val script = File("dev.sh").readText()
+
+        assertFalse("不应提供独立测试菜单项", script.contains("\"运行测试\""))
+        assertFalse("不应保留独立测试 action", script.contains("\"test\" \"package\""))
+        assertFalse("不应保留独立测试分支", script.contains("\n  test)\n"))
+        assertTrue("打包插件仍应先运行测试", script.contains("./gradlew test buildPlugin"))
+        assertTrue("三个菜单项应上移七行重绘", script.contains("printf '\\033[7A'"))
+        assertFalse("不应保留四个菜单项的上移行数", script.contains("printf '\\033[8A'"))
+    }
 }

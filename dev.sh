@@ -29,17 +29,15 @@ trap 'exit 130' INT TERM
 choose_interactive_action() {
   local -a labels=(
     "启动沙箱 IDEA"
-    "运行测试"
     "打包插件"
     "退出"
   )
   local -a commands=(
     "./gradlew runIde"
-    "./gradlew test"
     "./gradlew test buildPlugin"
     ""
   )
-  local -a actions=("ide" "test" "package" "exit")
+  local -a actions=("ide" "package" "exit")
   local selected=0
   local rendered=0
   local key
@@ -51,7 +49,7 @@ choose_interactive_action() {
 
   while true; do
     if [[ "$rendered" -eq 1 ]]; then
-      printf '\033[8A'
+      printf '\033[7A'
     fi
 
     printf '\033[2K\r请选择要执行的操作：\n'
@@ -126,11 +124,6 @@ case "$action" in
     echo "▶ 起沙箱 IDE。代码改动后请 Ctrl+C 停止，再重新运行 ./dev.sh。"
     print_command ./gradlew runIde
     exec ./gradlew runIde
-    ;;
-
-  test)
-    print_command ./gradlew test
-    exec ./gradlew test
     ;;
 
   package)
