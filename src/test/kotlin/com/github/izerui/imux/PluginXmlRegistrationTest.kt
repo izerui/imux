@@ -44,6 +44,15 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了终端标签图标提供器`() {
+        assertTrue(
+            "plugin.xml 未注册 AgentTerminalFileIconProvider，终端标签页不会显示 Agent 图标",
+            pluginXml.contains("com.github.izerui.imux.terminal.AgentTerminalFileIconProvider"),
+        )
+        assertTrue("注册应使用 fileIconProvider 扩展点", pluginXml.contains("<fileIconProvider"))
+    }
+
+    @Test
     fun `注册了左侧工具窗口`() {
         assertTrue(
             "plugin.xml 未注册 AgentToolWindowFactory",

@@ -30,6 +30,9 @@
         <editorTabTitleProvider
             implementation="com.github.izerui.imux.terminal.AgentTerminalTabTitleProvider"/>
 
+        <fileIconProvider
+            implementation="com.github.izerui.imux.terminal.AgentTerminalFileIconProvider"/>
+
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
 
