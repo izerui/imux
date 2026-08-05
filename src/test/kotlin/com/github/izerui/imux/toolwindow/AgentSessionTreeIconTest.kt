@@ -25,10 +25,10 @@ class AgentSessionTreeIconTest {
     }
 
     @Test
-    fun `已打开会话在没有更高优先级状态时显示标签图标`() {
+    fun `已打开会话在没有更高优先级状态时显示灰色圆点`() {
         val icon = sessionStatusIcon(running = false, unread = false, opened = true)
 
-        assertSame(AllIcons.General.ProjectTab, icon)
+        assertSame(AllIcons.Ide.GrayDot, icon)
     }
 
     @Test

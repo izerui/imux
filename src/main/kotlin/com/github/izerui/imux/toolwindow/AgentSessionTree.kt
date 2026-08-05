@@ -58,7 +58,7 @@ internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
 internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolean): Icon? = when {
     running -> AnimatedIcon.Default.INSTANCE
     unread -> AllIcons.General.Modified
-    opened -> AllIcons.General.ProjectTab
+    opened -> AllIcons.Ide.GrayDot
     else -> EmptyIcon.ICON_16
 }
 

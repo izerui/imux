@@ -4,7 +4,7 @@
 
 **Goal:** Show Claude/OpenAI brand icons on conversation-group headings while session rows keep only IntelliJ's existing running and unread markers.
 
-**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AnimatedIcon.Default.INSTANCE` while running, `AllIcons.General.Modified` when unread, `AllIcons.General.ProjectTab` when already open in a tab, or `EmptyIcon.ICON_16` otherwise. Enable the platform renderer-animation client property so the loader repaints automatically.
+**Architecture:** Move Agent icon loading into a shared `AgentIcons` holder used by both editor tabs and the tool-window tree. Group headings use the shared brand icon; session rows use `AnimatedIcon.Default.INSTANCE` while running, `AllIcons.General.Modified` when unread, the subtle `AllIcons.Ide.GrayDot` when already open in a tab, or `EmptyIcon.ICON_16` otherwise. Enable the platform renderer-animation client property so the loader repaints automatically.
 
 **Tech Stack:** Kotlin 2.3, IntelliJ Platform 262 `AnimatedIcon`/`AllIcons`/`EmptyIcon`, JUnit 4.
 
@@ -145,10 +145,10 @@ class AgentSessionTreeIconTest {
     }
 
     @Test
-    fun `已打开会话在没有更高优先级状态时显示标签图标`() {
+    fun `已打开会话在没有更高优先级状态时显示灰色圆点`() {
         val icon = sessionStatusIcon(running = false, unread = false, opened = true)
 
-        assertSame(AllIcons.General.ProjectTab, icon)
+        assertSame(AllIcons.Ide.GrayDot, icon)
     }
 
     @Test
@@ -198,7 +198,7 @@ Add this top-level helper next to the existing tree helpers:
 internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolean): Icon? = when {
     running -> AnimatedIcon.Default.INSTANCE
     unread -> AllIcons.General.Modified
-    opened -> AllIcons.General.ProjectTab
+    opened -> AllIcons.Ide.GrayDot
     else -> EmptyIcon.ICON_16
 }
 
