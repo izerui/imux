@@ -29,7 +29,26 @@ internal fun lastTimestampOf(
     file: Path,
     initialTailBytes: Long = DEFAULT_TAIL_BYTES,
     maxTailBytes: Long = MAX_TAIL_BYTES,
-): Instant? {
+): Instant? = scanTail(file, initialTailBytes, maxTailBytes) { lines ->
+    lines.asReversed().firstNotNullOfOrNull(::timestampOf)
+}
+
+/**
+ * 从文件尾部取若干完整行交给 [extract]，它返回 null 就把窗口翻倍重来。
+ *
+ * 会话文件可达数 MB 而要找的东西几乎总在末尾，整文件扫描的代价不值得付；
+ * 但窗口多大才够又无法预先知道——codex 单条 function_call_output 就可能有几百 KB。
+ * 翻倍重试把「常见情况读得少」和「极端情况仍能找到」两头都占上，
+ * 代价只在极少数文件上付出。
+ *
+ * 到了文件头或触到 [maxTailBytes] 仍无结果，就认定这个文件里没有要找的东西。
+ */
+internal fun <T> scanTail(
+    file: Path,
+    initialTailBytes: Long = DEFAULT_TAIL_BYTES,
+    maxTailBytes: Long = MAX_TAIL_BYTES,
+    extract: (List<String>) -> T?,
+): T? {
     val size = runCatching { java.nio.file.Files.size(file) }.getOrElse { return null }
     var window = initialTailBytes
 
@@ -41,9 +60,7 @@ internal fun lastTimestampOf(
         // 残行里可能留着完整的 `"timestamp":"…"` 片段，用它就会张冠李戴
         val lines = text.split('\n').let { if (from > 0L) it.drop(1) else it }
 
-        lines.asReversed().forEach { line ->
-            timestampOf(line)?.let { return it }
-        }
+        extract(lines)?.let { return it }
 
         if (from == 0L || window >= maxTailBytes) return null
         window *= 2

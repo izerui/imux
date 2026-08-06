@@ -358,4 +358,89 @@ class TurnWatcherTest {
 
         assertEquals(Duration.ofSeconds(30), watcher.lastDuration("s1"))
     }
+
+    // ---- 开始监控时的初始状态 ----
+    //
+    // 偏移设到文件末尾意味着之前的 task_started 再也读不到。若初始状态硬编码为
+    // 空闲，点开一个正在跑的会话就不会亮标记，新建会话的第一轮更是必然不亮——
+    // 绑定发生在 CLI 已经开跑之后。因此必须回溯尾部推断出「此刻」的状态。
+
+    @Test
+    fun `点开一个正在跑的会话，立刻算执行中`() {
+        val file = newFile("running.jsonl", "$started\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        assertEquals(setOf("s1"), watcher.workingIds(AgentType.CODEX))
+    }
+
+    @Test
+    fun `点开一个已经跑完的会话，算空闲`() {
+        val file = newFile("finished.jsonl", "$started\n$done\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        assertTrue(watcher.workingIds(AgentType.CODEX).isEmpty())
+    }
+
+    @Test
+    fun `中断收尾的会话算空闲`() {
+        val file = newFile("aborted.jsonl", "$started\n$aborted\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        assertTrue(watcher.workingIds(AgentType.CODEX).isEmpty())
+    }
+
+    @Test
+    fun `claude 会话同样按尾部推断`() {
+        val toolUse = """{"type":"assistant","message":{"stop_reason":"tool_use"}}"""
+        val file = newFile("claude.jsonl", "$toolUse\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("s1", AgentType.CLAUDE, file.toPath())
+
+        assertEquals(setOf("s1"), watcher.workingIds(AgentType.CLAUDE))
+    }
+
+    /** 起点在观察窗口之外，报一个从 watch 时刻算起的耗时是错的，宁可不报。 */
+    @Test
+    fun `开始就在执行中的会话完成时提醒但不报耗时`() {
+        val file = newFile("noduration.jsonl", "$started\n")
+        val clock = FakeClock()
+        val watcher = TurnWatcher(clock)
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        clock.advance(5)
+        file.append(done)
+
+        assertEquals(listOf("s1"), watcher.poll())
+        assertNull(watcher.lastDuration("s1"))
+    }
+
+    /** 历史内容不该触发提醒这条底线，不能因为增加了推断而破掉。 */
+    @Test
+    fun `推断初始状态不会把历史内容变成提醒`() {
+        val file = newFile("history.jsonl", "$started\n$done\n$started\n$done\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        assertTrue(watcher.poll().isEmpty())
+    }
+
+    /** codex 单条 function_call_output 可达数百 KB，信号很容易被挤出初始窗口。 */
+    @Test
+    fun `信号被大量内容挤出初始窗口时仍能推断出执行中`() {
+        val padding = """{"type":"response_item","payload":{"output":"${"x".repeat(200_000)}"}}"""
+        val file = newFile("huge.jsonl", "$started\n$padding\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        assertEquals(setOf("s1"), watcher.workingIds(AgentType.CODEX))
+    }
 }

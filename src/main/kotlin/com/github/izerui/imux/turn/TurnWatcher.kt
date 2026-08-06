@@ -1,6 +1,7 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.scanTail
 import com.intellij.openapi.diagnostic.logger
 import java.nio.ByteBuffer
 import java.nio.file.Files
@@ -16,7 +17,10 @@ import java.util.concurrent.ConcurrentHashMap
  * claude 的单行可达数 MB，全量重读不可接受。
  *
  * 开始监控时偏移直接设到文件末尾——只关心「开始监控之后」的跃迁，
- * 历史内容不参与判定。这也是插件启动后历史会话不会被误标的原因。
+ * 历史内容不参与**提醒**判定。这也是插件启动后历史会话不会被误标的原因。
+ *
+ * 但初始**状态**要回溯尾部推断出来，见 [initialStateOf]：一个已经在跑的会话
+ * 必须一打开就是执行中，否则标记要等到下一轮才亮。
  */
 class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
 
@@ -46,9 +50,28 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
             agentType = agentType,
             file = file,
             offset = currentSize(file),
-            state = TurnState.IDLE,
+            // workingSince 保持 null：起点在观察窗口之外，报一个从此刻算起的耗时是错的
+            state = initialStateOf(agentType, file),
         )
     }
+
+    /**
+     * 开始监控时该会话「此刻」处于什么状态——回溯文件尾部推断，而不是一律当作空闲。
+     *
+     * 偏移设在文件末尾意味着此前那条 `task_started` 再也读不到。若初始状态硬编码为
+     * 空闲，点开一个正在跑的会话就不会亮标记；新建会话更是必然不亮，因为绑定发生在
+     * CLI 已经开跑之后，第一轮的开始信号早就写进去了。
+     *
+     * 只推断状态，不产出事件：历史内容仍然不该触发任何提醒。
+     *
+     * 窗口里一个信号都没有时返回 null，交由 [scanTail] 把窗口翻倍重来；
+     * 到了文件头仍找不到，说明这个文件里就没有轮次信号，按空闲处理。
+     */
+    private fun initialStateOf(agentType: AgentType, file: Path): TurnState =
+        scanTail(file) { lines ->
+            val result = TurnSignalParser.parse(agentType, TurnState.IDLE, lines)
+            if (result.transitions.isEmpty()) null else result.state
+        } ?: TurnState.IDLE
 
     fun unwatch(sessionId: String) {
         entries.remove(sessionId)
