@@ -385,7 +385,7 @@ class AgentSessionTree(
                 // 「currently running as a background agent」。提前拦住并说明原因，
                 // 比让用户在终端里撞一脸报错好。
                 val running = monitor.runtime[data.id]
-                if (running != null && running.isBackground && running.isBusy) {
+                if (running != null && running.isBackground && running.isOccupied) {
                     TurnNotifier.notifyBusy(project, data.title)
                     return
                 }

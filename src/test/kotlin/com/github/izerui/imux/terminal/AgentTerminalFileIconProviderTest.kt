@@ -2,14 +2,13 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
+import com.intellij.icons.AllIcons
 import com.intellij.ui.AnimatedIcon
-import com.intellij.ui.RowIcon
 import com.intellij.testFramework.LightVirtualFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentTerminalFileIconProviderTest {
@@ -34,24 +33,34 @@ class AgentTerminalFileIconProviderTest {
         assertNull(icon)
     }
 
+    /**
+     * 状态图标**取代**品牌图标，而不是并排挂在它左边。
+     *
+     * 并排的话，标签页会在忙碌时变宽、闲下来又缩回去，标题跟着左右跳。
+     * 而状态本就是短暂的，品牌图标一直都在，谁该让位很清楚。
+     */
     @Test
-    fun `忙碌和未读显示状态，空闲时只显示品牌图标`() {
-        val running =
-            terminalTabIcon(AgentType.CLAUDE, running = true, unread = true) as RowIcon
-        val unread =
-            terminalTabIcon(AgentType.CLAUDE, running = false, unread = true) as RowIcon
+    fun `忙碌与未读时状态图标取代品牌图标`() {
+        val brand = AgentIcons.forAgent(AgentType.CLAUDE)
+        val running = terminalTabIcon(AgentType.CLAUDE, running = true, unread = true)
+        val unread = terminalTabIcon(AgentType.CLAUDE, running = false, unread = true)
         val idle = terminalTabIcon(AgentType.CLAUDE, running = false, unread = false)
 
-        assertEquals(2, running.iconCount)
-        assertSame(AnimatedIcon.Default.INSTANCE, running.getIcon(0))
-        assertSame(AgentIcons.forAgent(AgentType.CLAUDE), running.getIcon(1))
+        // 忙碌优先于未读：还在跑就还没有「读完」这回事
+        assertSame(AnimatedIcon.Default.INSTANCE, running)
+        assertSame(AllIcons.General.Modified, unread)
+        assertSame(brand, idle)
+    }
 
-        assertEquals(2, unread.iconCount)
-        assertSame(com.intellij.icons.AllIcons.General.Modified, unread.getIcon(0))
-        assertSame(AgentIcons.forAgent(AgentType.CLAUDE), unread.getIcon(1))
+    /** 三态同宽，标签页标题才不会随状态左右跳。 */
+    @Test
+    fun `三种状态的图标宽度一致`() {
+        val widths = listOf(
+            terminalTabIcon(AgentType.CLAUDE, running = true, unread = false),
+            terminalTabIcon(AgentType.CLAUDE, running = false, unread = true),
+            terminalTabIcon(AgentType.CLAUDE, running = false, unread = false),
+        ).map { it.iconWidth }
 
-        assertSame(AgentIcons.forAgent(AgentType.CLAUDE), idle)
-        assertEquals(running.iconWidth, unread.iconWidth)
-        assertTrue(running.iconWidth > idle.iconWidth)
+        assertEquals(listOf(16, 16, 16), widths)
     }
 }

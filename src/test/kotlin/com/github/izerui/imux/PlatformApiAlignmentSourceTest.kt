@@ -39,8 +39,9 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(provider.contains("SessionMonitor.getInstance(project)"))
         assertTrue(provider.contains("AnimatedIcon.Default.INSTANCE"))
         assertTrue(provider.contains("AllIcons.General.Modified"))
-        assertTrue(provider.contains("else -> return brandIcon"))
-        assertTrue(provider.contains("RowIcon(statusIcon, brandIcon)"))
+        // 状态图标取代品牌图标，不并排——并排会让标签页随状态变宽变窄
+        assertTrue(provider.contains("else -> AgentIcons.forAgent(agentType)"))
+        assertFalse(provider.contains("RowIcon"))
         assertTrue(monitor.contains("val runningChanged = runningIds != running"))
         assertTrue(monitor.contains("if (runningChanged) updateOpenTabIcons()"))
         assertTrue(monitor.contains("updateFilePresentation(file)"))

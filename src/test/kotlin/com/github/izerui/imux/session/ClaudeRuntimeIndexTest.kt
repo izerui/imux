@@ -91,6 +91,34 @@ class ClaudeRuntimeIndexTest {
         assertFalse(entry.isBusy)
     }
 
+    /**
+     * `shell` 是 CLI 的第三种状态：本轮回答已经打完，只剩它派生的后台 shell 还在跑。
+     * 本机实测的序列是 `busy` -> `shell` -> `idle`。对用户来说这一轮已经完了，
+     * 标签页不该继续转菊花——尤其在状态图标会顶掉品牌图标之后，那意味着
+     * 品牌图标要一直等到后台任务结束才回来。
+     */
+    @Test
+    fun `只剩后台 shell 时不算忙碌`() {
+        writeSession(1001, "s1", status = "shell")
+
+        assertFalse(index().load()["s1"]!!.isBusy)
+    }
+
+    /** 但会话仍被这个进程占着，resume 预检要按占用处理。 */
+    @Test
+    fun `只剩后台 shell 时仍算被占用`() {
+        writeSession(1001, "s1", kind = "bg", status = "shell")
+
+        assertTrue(index().load()["s1"]!!.isOccupied)
+    }
+
+    @Test
+    fun `空闲会话不算被占用`() {
+        writeSession(1001, "s1", kind = "bg", status = "idle")
+
+        assertFalse(index().load()["s1"]!!.isOccupied)
+    }
+
     @Test
     fun `交互式会话不算后台`() {
         writeSession(1001, "s1", kind = "interactive", status = "idle")

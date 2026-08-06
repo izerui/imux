@@ -10,7 +10,8 @@ import java.nio.file.Path
  * 一个正在运行的 Claude 进程所对应的会话。
  *
  * @param kind `interactive` 或 `bg`（后台 agent）
- * @param status `idle` 表示等待用户输入，其余（如 `busy`）表示正在干活
+ * @param status 本机实测有三种：`busy` 正在干活、`shell` 回答已打完但派生的后台 shell
+ *   还在跑、`idle` 等待用户输入
  */
 data class ClaudeRuntimeSession(
     val sessionId: String,
@@ -21,8 +22,21 @@ data class ClaudeRuntimeSession(
 ) {
     val isBackground: Boolean get() = kind == "bg"
 
-    /** 正在干活。resume 一个忙碌的后台会话会被 CLI 拒绝。 */
-    val isBusy: Boolean get() = status != null && status != "idle"
+    /**
+     * 这一轮还在跑。据此显示运行中标记、判定轮次完成。
+     *
+     * `shell` 不算：那时回答早打完了，只剩后台 shell 在收尾。实测状态序列是
+     * `busy` -> `shell` -> `idle`，若把 `shell` 也算忙碌，用户眼里就是
+     * 「明明执行完了还一直转菊花」，且品牌图标要等到后台任务结束才回来。
+     */
+    val isBusy: Boolean get() = status != null && status != "idle" && status != SHELL
+
+    /** 会话被这个进程占着。resume 一个未空闲的后台会话会被 CLI 拒绝。 */
+    val isOccupied: Boolean get() = status != null && status != "idle"
+
+    private companion object {
+        const val SHELL = "shell"
+    }
 }
 
 /**
