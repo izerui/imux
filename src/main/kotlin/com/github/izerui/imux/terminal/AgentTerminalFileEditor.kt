@@ -263,5 +263,7 @@ class AgentTerminalFileEditor(
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
 
         TerminalHost.getInstance(project).closeSession(virtualFile.sessionKey)
+        com.github.izerui.imux.monitor.SessionMonitor.getInstance(project)
+            .cancelPendingSession(virtualFile.sessionKey)
     }
 }

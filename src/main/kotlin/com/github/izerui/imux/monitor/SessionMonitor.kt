@@ -179,6 +179,10 @@ class SessionMonitor(
         }
     }
 
+    fun cancelPendingSession(key: String) {
+        model.cancelPending(key)
+    }
+
     /** 启动监听。幂等——工具窗口与启动活动都可能调到。 */
     fun start() {
         if (!started.runOnceResetOnFailure(::startWatching)) return

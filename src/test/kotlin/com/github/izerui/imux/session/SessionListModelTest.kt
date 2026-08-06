@@ -152,6 +152,23 @@ class SessionListModelTest {
     }
 
     @Test
+    fun `真实会话 id 调用取消时返回 false 且保留会话`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+
+        scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
+        model.refresh()
+
+        val removed = model.cancelPending("真实id")
+
+        assertFalse(removed)
+        assertEquals(
+            listOf("真实id"),
+            model.entries(AgentType.CLAUDE).map { (it as ListEntry.Existing).session.id },
+        )
+    }
+
+    @Test
     fun `取消不存在的 key 返回 false 且无副作用`() {
         val model = model(FakeClock(base))
         model.registerPending(AgentType.CLAUDE)
