@@ -3,6 +3,7 @@ package com.github.izerui.imux.session
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -118,6 +119,61 @@ class SessionListModelTest {
         model.refresh()
 
         assertTrue(model.entries(AgentType.CLAUDE).isEmpty())
+    }
+
+    @Test
+    fun `取消未绑定 pending 会移除条目并返回 true`() {
+        val model = model(FakeClock(base))
+        val pending = model.registerPending(AgentType.CLAUDE)
+
+        val removed = model.cancelPending(pending.key)
+
+        assertTrue(removed)
+        assertTrue(model.entries(AgentType.CLAUDE).isEmpty())
+        assertNull(model.boundIdFor(pending.key))
+    }
+
+    @Test
+    fun `取消已绑定 pending 不影响真实会话并返回 false`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.CLAUDE)
+
+        scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
+        model.refresh()
+
+        val removed = model.cancelPending(pending.key)
+
+        assertFalse(removed)
+        assertEquals(
+            listOf("真实id"),
+            model.entries(AgentType.CLAUDE).map { (it as ListEntry.Existing).session.id },
+        )
+    }
+
+    @Test
+    fun `取消不存在的 key 返回 false 且无副作用`() {
+        val model = model(FakeClock(base))
+        model.registerPending(AgentType.CLAUDE)
+
+        val removed = model.cancelPending("missing")
+
+        assertFalse(removed)
+        assertEquals(1, model.entries(AgentType.CLAUDE).size)
+    }
+
+    @Test
+    fun `仅成功取消 pending 时通知监听者`() {
+        val model = model(FakeClock(base))
+        val pending = model.registerPending(AgentType.CLAUDE)
+        var notified = 0
+        model.addListener { notified++ }
+
+        assertTrue(model.cancelPending(pending.key))
+        assertEquals(1, notified)
+
+        assertFalse(model.cancelPending(pending.key))
+        assertEquals(1, notified)
     }
 
     /**

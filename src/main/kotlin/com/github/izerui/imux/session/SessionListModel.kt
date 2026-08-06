@@ -67,6 +67,13 @@ class SessionListModel(
 
     fun boundIdFor(key: String): String? = bindings[key]
 
+    fun cancelPending(key: String): Boolean {
+        if (key in bindings) return false
+        val removed = pendings.removeIf { it.key == key }
+        if (removed) notifyListeners()
+        return removed
+    }
+
     /** 取走并清空尚未处理的绑定，供终端宿主据此换 key。 */
     fun drainNewBindings(): List<Pair<String, String>> {
         val drained = newBindings.toList()
