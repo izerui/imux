@@ -1,9 +1,10 @@
 package com.github.izerui.imux.session
 
 import com.intellij.openapi.diagnostic.logger
+import org.sqlite.SQLiteConfig
+import org.sqlite.SQLiteDataSource
 import java.nio.file.Files
 import java.nio.file.Path
-import java.sql.DriverManager
 
 /**
  * 读取 `~/.codex/state_5.sqlite` 的 `threads` 表，取会话标题。
@@ -14,6 +15,17 @@ import java.sql.DriverManager
  *
  * 这是 Codex 的私有实现细节，表结构变更会导致标题失效。因此任何异常都降级为
  * 空表，让上层回退到首条用户消息，绝不影响会话列表本身。
+ *
+ * **不要改回 [java.sql.DriverManager]**：插件的 jar 不在系统 classpath 上，而
+ * DriverManager 靠 ServiceLoader 发现驱动时用的是系统类加载器，于是 sqlite-jdbc
+ * 明明打进了包，运行时照样报「No suitable driver found」。实测正式 IDE 日志里刷了
+ * 上百条，标题从来没读出来过，全都回退成了首条用户消息——而 codex 的首条消息是
+ * 注入的 AGENTS.md，所有会话看起来一模一样。
+ *
+ * 直接实例化 [SQLiteDataSource] 绕开那套全局注册表，顺带也不再往 JVM 全局
+ * DriverManager 里塞驱动，插件卸载时少一处拖住旧 ClassLoader 的引用。
+ *
+ * 这个差异单测复现不了：Gradle 的测试 JVM 里 DriverManager 一切正常。
  */
 class CodexThreadIndex(private val codexHome: Path) {
 
@@ -25,7 +37,7 @@ class CodexThreadIndex(private val codexHome: Path) {
         return runCatching {
             val titles = HashMap<String, String>()
             // 只读打开：codex 可能正在写这个库，我们绝不能干扰它
-            DriverManager.getConnection("jdbc:sqlite:file:${file.toAbsolutePath()}?mode=ro").use { conn ->
+            readOnlyDataSource(file).connection.use { conn ->
                 conn.createStatement().use { statement ->
                     statement.executeQuery("SELECT id, title FROM threads").use { rows ->
                         while (rows.next()) {
@@ -42,6 +54,10 @@ class CodexThreadIndex(private val codexHome: Path) {
             emptyMap()
         }
     }
+
+    private fun readOnlyDataSource(file: Path): SQLiteDataSource =
+        SQLiteDataSource(SQLiteConfig().apply { setReadOnly(true) })
+            .apply { url = "jdbc:sqlite:${file.toAbsolutePath()}" }
 
     private companion object {
         val LOG = logger<CodexThreadIndex>()

@@ -27,6 +27,29 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(pluginXml.contains("<editorTabTitleProvider"))
     }
 
+    /**
+     * 插件的 jar 不在系统 classpath 上，[java.sql.DriverManager] 靠 ServiceLoader
+     * 发现驱动时用的却是系统类加载器，于是 `sqlite-jdbc` 明明打进了包也会报
+     * 「No suitable driver found」——实测正式 IDE 日志里刷了上百条，
+     * codex 的标题库从来没读成功过，标题一直回退到首条用户消息。
+     *
+     * 这个差异单测复现不了：Gradle 的测试 JVM 里 DriverManager 一切正常。
+     * 只能在源码层面把它钉死。
+     */
+    @Test
+    fun `读 sqlite 不走 DriverManager`() {
+        val index = source(
+            "src/main/kotlin/com/github/izerui/imux/session/CodexThreadIndex.kt",
+        )
+
+        // 只禁实际调用；注释里那段「不要改回 DriverManager」的原因说明要留着
+        assertFalse(
+            "插件类加载器下 DriverManager 找不到驱动",
+            index.contains("DriverManager.getConnection"),
+        )
+        assertTrue(index.contains("SQLiteDataSource"))
+    }
+
     @Test
     fun `运行态与未读变化通过官方文件呈现刷新标签图标`() {
         val provider = source(

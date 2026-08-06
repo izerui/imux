@@ -110,6 +110,21 @@ class SessionMonitor(
         model.addListener(::notifyListeners)
     }
 
+    /**
+     * 标签页标题跟随会话标题变化。
+     *
+     * 标题只在绑定那一刻写一次是不够的：那时 CLI 往往还没起好标题，只能先用首条
+     * 用户消息，而它常常是注入的系统内容。CLI 事后生成的真标题会随扫描进入 model，
+     * 这里把它推给标签页。
+     *
+     * 放在 monitor 而非界面里：标签页开着但工具窗口没展开是常态，
+     * 把它挂在树的重绘上，标题就会在那种情况下停更。
+     */
+    private fun syncOpenTabTitles() {
+        if (project.isDisposed) return
+        TerminalHost.getInstance(project).syncTabTitles { key -> model.sessionOf(key)?.title }
+    }
+
     /** 状态有变化时回调，供界面重绘。在 EDT 调用。 */
     fun addListener(
         parentDisposable: Disposable,
@@ -142,6 +157,8 @@ class SessionMonitor(
     fun start() {
         if (!started.runOnceResetOnFailure(::startWatching)) return
         clearUnreadOnTabSwitch()
+        // 接在 start 而非构造函数里：这是运行时行为，需要 TerminalHost 服务已经可用
+        model.addListener(::syncOpenTabTitles)
         refresh()
     }
 

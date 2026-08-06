@@ -149,6 +149,21 @@ class TerminalHost(private val project: Project) : Disposable {
         }
     }
 
+    /**
+     * 让已打开的标签页标题跟上最新的会话标题。
+     *
+     * 由 [com.github.izerui.imux.monitor.SessionMonitor] 在扫描结果变化时调用，
+     * 不放在界面里：标签页开着而工具窗口没展开是常态，标题不该因此停更。
+     *
+     * 必须在 EDT 调用。
+     */
+    fun syncTabTitles(latestTitleOf: (String) -> String?) {
+        val current = files.mapValues { (_, file) -> file.tabTitle }
+        staleTabTitles(current, latestTitleOf).forEach { (key, title) ->
+            files[key]?.let { updateTabTitle(it, title) }
+        }
+    }
+
     private fun updateTabTitle(file: AgentTerminalVirtualFile, newTitle: String) {
         if (file.tabTitle == newTitle) return
         file.tabTitle = newTitle
@@ -290,6 +305,24 @@ class TerminalHost(private val project: Project) : Disposable {
         fun getInstance(project: Project): TerminalHost = project.getService(TerminalHost::class.java)
     }
 }
+
+/**
+ * 已打开的标签页里，标题落后于最新扫描结果的那些。
+ *
+ * 标题不是一次就位的：新建会话绑定的那一刻 CLI 往往还没起好标题，只能先用首条用户
+ * 消息，而那常常是注入的系统内容（`# AGENTS.md instructions for …`）。等 CLI 事后
+ * 生成了真正的标题，列表会随扫描更新，标签页也该跟上。
+ *
+ * 两种情况保持原样：查不到会话（新建会话尚未绑定，标签页还记在合成 key 下），
+ * 以及新标题为空——那还不如留着旧的。
+ */
+internal fun staleTabTitles(
+    current: Map<String, String>,
+    latestTitleOf: (String) -> String?,
+): Map<String, String> = current.mapNotNull { (key, title) ->
+    val latest = latestTitleOf(key)
+    if (latest.isNullOrEmpty() || latest == title) null else key to latest
+}.toMap()
 
 internal fun isViewportAtBottom(
     visibleTop: Int,
