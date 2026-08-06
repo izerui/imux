@@ -111,6 +111,32 @@ class SessionMonitor(
     }
 
     /**
+     * 把刚发生的绑定告知终端宿主：新建会话的终端原本记在合成 key 下，
+     * 拿到真实 id 后必须迁过去。
+     *
+     * 不做的话终端会一直挂在 pending key 下：运行中标识查不到，再点该会话又会以
+     * 真实 id 重开一个 `--resume` 终端，与仍在运行的原终端抢同一个会话，
+     * CLI 报「currently running as a background agent」。
+     *
+     * [SessionListModel.drainNewBindings] 是破坏性读取，取走即清空，所以只能有一个
+     * 消费者，且这个消费者必须一直活着。原先它挂在会话树的重绘里，而树是工具窗口
+     * 懒加载出来、可被销毁的东西——树没接住，这笔迁移就永远丢了。
+     */
+    private fun applyNewBindings() {
+        if (project.isDisposed) return
+        val bindings = model.drainNewBindings()
+        if (bindings.isEmpty()) return
+
+        val host = TerminalHost.getInstance(project)
+        bindings.forEach { (pendingKey, sessionId) ->
+            val session = model.sessionOf(sessionId)
+            host.rebindKey(pendingKey, sessionId, session?.title ?: "会话 ${sessionId.take(8)}")
+            // 新建的会话直到落盘才有文件路径，绑定这一刻才能纳入监控
+            session?.let { host.startWatchingTurn(sessionId, it.agentType, it.filePath) }
+        }
+    }
+
+    /**
      * 标签页标题跟随会话标题变化。
      *
      * 标题只在绑定那一刻写一次是不够的：那时 CLI 往往还没起好标题，只能先用首条
@@ -157,8 +183,12 @@ class SessionMonitor(
     fun start() {
         if (!started.runOnceResetOnFailure(::startWatching)) return
         clearUnreadOnTabSwitch()
-        // 接在 start 而非构造函数里：这是运行时行为，需要 TerminalHost 服务已经可用
-        model.addListener(::syncOpenTabTitles)
+        // 接在 start 而非构造函数里：这两件都是运行时行为，需要 TerminalHost 服务已经可用。
+        // 顺序有意义：先把 key 迁到真实 id，标题同步才查得到对应的会话。
+        model.addListener {
+            applyNewBindings()
+            syncOpenTabTitles()
+        }
         refresh()
     }
 

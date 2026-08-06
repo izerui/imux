@@ -50,6 +50,30 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(index.contains("SQLiteDataSource"))
     }
 
+    /**
+     * pending key 换成真实会话 id 是核心状态迁移，不能挂在界面的重绘上。
+     *
+     * `drainNewBindings()` 是破坏性读取，取走即清空。原先它的唯一消费点在
+     * `AgentSessionTree.reload()` 里，于是这笔迁移发生与否取决于「那棵 Swing 树
+     * 有没有重绘」——而树是工具窗口懒加载出来、可被销毁的东西。它一旦没接住，
+     * 终端就永远停留在 pending key 下：再点该会话会重开一个 --resume 终端，
+     * 与仍在运行的原终端抢同一个会话。
+     */
+    @Test
+    fun `绑定迁移由 monitor 消费而不是界面`() {
+        val monitor = source(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        )
+        val tree = source(
+            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+        )
+
+        assertTrue(monitor.contains("drainNewBindings()"))
+        assertTrue(monitor.contains("rebindKey("))
+        assertFalse("界面不该消费绑定", tree.contains("drainNewBindings"))
+        assertFalse("界面不该负责换 key", tree.contains("rebindKey"))
+    }
+
     @Test
     fun `运行态与未读变化通过官方文件呈现刷新标签图标`() {
         val provider = source(

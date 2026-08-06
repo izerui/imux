@@ -101,6 +101,41 @@ class CodexSessionReaderTest {
         assertEquals(2, reader().read("/Users/demo/proj").size)
     }
 
+    // ---- 最后活动时刻 ----
+    //
+    // 与 claude 侧对齐：优先用记录自带的时刻，而不是文件 mtime。
+    // mtime 反映的是「文件何时被写」，任何不含对话的追加、乃至外部工具 touch
+    // 都会把它推到当下。而这个值不只用于列表排序——新建会话的绑定判据
+    // （lastActiveAt >= pending.startedAt）也依赖它，错了会导致绑定静默失败。
+
+    @Test
+    fun `最后活动时刻取记录自带的时间戳而非 mtime`() {
+        writeRollout(
+            "uuid-ts",
+            "/Users/demo/proj",
+            """{"timestamp":"2026-08-03T12:00:00.000Z","type":"event_msg","payload":{"type":"task_complete"}}""",
+        )
+
+        // 文件是刚刚写的，mtime 就是此刻；取到 2026 那个值才说明用的是文件内时间戳
+        assertEquals(
+            java.time.Instant.parse("2026-08-03T12:00:00.000Z"),
+            reader().read("/Users/demo/proj")[0].lastActiveAt,
+        )
+    }
+
+    @Test
+    fun `文件里没有时间戳时回退到 mtime`() {
+        val dir = File(tmp.root, "sessions/2026/08/03").apply { mkdirs() }
+        val file = File(dir, "rollout-2026-08-03T11-31-27-uuid-nots.jsonl").apply {
+            writeText("""{"type":"session_meta","payload":{"id":"uuid-nots","cwd":"/Users/demo/proj"}}""")
+        }
+
+        assertEquals(
+            file.lastModified(),
+            reader().read("/Users/demo/proj")[0].lastActiveAt.toEpochMilli(),
+        )
+    }
+
     /** TurnWatcher 需要靠它定位文件做增量读取。 */
     @Test
     fun `会话带上自身文件路径`() {

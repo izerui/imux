@@ -64,7 +64,11 @@ class CodexSessionReader(private val codexHome: Path) {
                 ?: firstUserMessage(file)?.let(::truncate)
                 ?: "会话 ${id.take(8)}",
             agentType = AgentType.CODEX,
-            lastActiveAt = Files.getLastModifiedTime(file).toInstant(),
+            // 优先用记录自带的时刻，与 claude 侧同一口径。mtime 反映的是「文件何时被写」，
+            // 任何不含对话的追加、乃至外部工具 touch 都会把它推到当下。
+            // 这个值不只用于列表排序——新建会话的绑定判据
+            // （lastActiveAt >= pending.startedAt）也依赖它，错了会让绑定静默失败。
+            lastActiveAt = lastTimestampOf(file) ?: Files.getLastModifiedTime(file).toInstant(),
             createdAt = creationTimeOf(file),
             filePath = file,
         )

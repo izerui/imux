@@ -233,7 +233,8 @@ class AgentSessionTree(
     private var renderedContent: Map<AgentType, List<NodeData>>? = null
 
     fun reload() {
-        applyNewBindings()
+        // 绑定迁移不在这里做：那是核心状态迁移，挂在界面重绘上会随树一起失效。
+        // 见 SessionMonitor.applyNewBindings。
 
         // 用数据类的结构相等比对，标题、时间、标记任一变化都算变化，
         // 拼字符串容易漏字段
@@ -311,29 +312,6 @@ class AgentSessionTree(
                 else -> false
             }
         }
-
-    /**
-     * 把刚发生的绑定告知终端宿主：新建会话的终端原本记在合成 key 下，
-     * 拿到真实 id 后必须迁过去，否则运行中标识失效、再点会重开一个终端。
-     */
-    private fun applyNewBindings() {
-        val bindings = model.drainNewBindings()
-        if (bindings.isEmpty()) return
-
-        val titles = AgentType.entries
-            .flatMap { model.entries(it) }
-            .filterIsInstance<ListEntry.Existing>()
-            .associate { it.session.id to it.session.title }
-
-        val host = TerminalHost.getInstance(project)
-        bindings.forEach { (pendingKey, sessionId) ->
-            host.rebindKey(pendingKey, sessionId, titles[sessionId] ?: "会话 ${sessionId.take(8)}")
-            // 新建的会话直到落盘才有文件路径，绑定这一刻才能纳入监控
-            model.sessionOf(sessionId)?.let {
-                host.startWatchingTurn(sessionId, it.agentType, it.filePath)
-            }
-        }
-    }
 
     private fun addGroup(agentType: AgentType, nodes: List<NodeData>) {
         val groupNode = DefaultMutableTreeNode(NodeData.Group(agentType))
