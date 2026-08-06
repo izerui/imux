@@ -121,6 +121,10 @@ class TerminalIntegrationSourceTest {
                 "val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)",
             ),
         )
+        assertFalse(
+            "自定义 editor 外壳不能覆写 preferredSize，否则调整标签宽度后内容区会像被旧尺寸锁住，无法随容器自适应",
+            fileEditor.contains("override fun getPreferredSize(): Dimension = terminal.preferredSize"),
+        )
     }
 
     @Test

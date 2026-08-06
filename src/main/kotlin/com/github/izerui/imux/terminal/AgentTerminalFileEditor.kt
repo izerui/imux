@@ -30,7 +30,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.awt.Dimension
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.beans.PropertyChangeListener
@@ -141,8 +140,6 @@ class AgentTerminalFileEditor(
                 add(toolbarComponent)
                 setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)
             }
-
-            override fun getPreferredSize(): Dimension = terminal.preferredSize
 
             override fun addNotify() {
                 super.addNotify()
