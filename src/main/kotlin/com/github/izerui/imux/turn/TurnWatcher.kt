@@ -11,10 +11,20 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 监控若干会话文件的轮次状态，产出「刚完成、需要提醒」的会话。
+ * 监控 **codex** 会话文件的轮次状态，产出「刚完成、需要提醒」的会话。
+ *
+ * **只服务 codex**：claude 有 CLI 亲自写的运行态文件（`~/.claude/sessions/<pid>.json`），
+ * 那是一手状态，由 [RuntimeStatusTracker] 判定完成即可。两边都监控会让同一轮完成被
+ * 报两次——实测两个信号相隔约 0.1 秒，而轮询 1 秒一拍，约 10% 的概率跨拍，此时
+ * [com.github.izerui.imux.monitor.SessionMonitor] 的 `distinct()` 只能同拍去重，
+ * 兜不住，于是弹出两个通知气泡（[TurnNotifier] 覆盖 active 时也不 expire 旧的）。
+ *
+ * codex 没有等价的运行态文件，只能从会话文件的 `task_started` / `task_complete` 推断，
+ * 因此这里保留。[TurnSignalParser] 的 claude 分支不再被生产链路调用，但作为纯函数保留：
+ * 它是按 8535 条真实记录调出来的，将来 claude 若不再写运行态文件可以直接启用。
  *
  * 增量读取：每个会话记住已读到的字节偏移，每轮只读新追加的部分。
- * claude 的单行可达数 MB，全量重读不可接受。
+ * 会话文件的单行可达数 MB，全量重读不可接受。
  *
  * 开始监控时偏移直接设到文件末尾——只关心「开始监控之后」的跃迁，
  * 历史内容不参与**提醒**判定。这也是插件启动后历史会话不会被误标的原因。
@@ -44,7 +54,11 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
      */
     private val entries = ConcurrentHashMap<String, Entry>()
 
+    /**
+     * 纳入监控。**claude 会话一律拒绝**——它由运行态文件判定，见本类 KDoc。
+     */
     fun watch(sessionId: String, agentType: AgentType, file: Path) {
+        if (agentType == AgentType.CLAUDE) return
         if (entries.containsKey(sessionId)) return
         entries[sessionId] = Entry(
             agentType = agentType,

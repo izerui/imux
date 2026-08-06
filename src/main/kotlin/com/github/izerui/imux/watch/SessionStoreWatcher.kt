@@ -71,7 +71,8 @@ class SessionStoreWatcher(
      * 两个回调都直接在本调度线程上跑，不再 invokeLater：它们要做文件 IO，
      * 挪到 EDT 上就是周期性卡顿。切回 EDT 由回调自己在需要时负责。
      */
-    private fun tick() {
+    @org.jetbrains.annotations.VisibleForTesting
+    internal fun tick() {
         ticks++
         val slowTurn = ticks % slowEveryTicks == 0L
 

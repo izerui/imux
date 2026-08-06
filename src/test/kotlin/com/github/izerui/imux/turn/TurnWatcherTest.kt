@@ -191,17 +191,9 @@ class TurnWatcherTest {
         assertEquals(setOf("codex"), watcher.workingIds(AgentType.CODEX))
     }
 
-    @Test
-    fun `claude 会话同样可监控`() {
-        val file = newFile("i.jsonl")
-        val watcher = TurnWatcher()
-        watcher.watch("s1", AgentType.CLAUDE, file.toPath())
-
-        file.append("""{"type":"user","message":{"content":[]}}""")
-        file.append("""{"type":"assistant","message":{"stop_reason":"end_turn"}}""")
-
-        assertEquals(listOf("s1"), watcher.poll())
-    }
+    // 原先这里有一条「claude 会话同样可监控」，断言 claude 的完成也由本类报告。
+    // 那正是双通知的来源，已被上面「claude 会话的完成信号不产生提醒」取代。
+    // 解析 claude 信号的能力本身仍由 TurnSignalParserTest 覆盖。
 
     private class FakeClock(var now: Instant = Instant.parse("2026-08-04T10:00:00Z")) : () -> Instant {
         override fun invoke(): Instant = now
@@ -395,15 +387,48 @@ class TurnWatcherTest {
         assertTrue(watcher.workingIds(AgentType.CODEX).isEmpty())
     }
 
+    // ---- claude 不由本类监控 ----
+    //
+    // claude 有 CLI 亲自写的运行态文件，那是一手状态。两边都监控会让同一轮完成被报
+    // 两次：实测两个信号相隔约 0.1 秒，而轮询 1 秒一拍，约 10% 的概率跨拍，
+    // 此时 SessionMonitor 的 distinct 兜不住，于是弹出两个通知气泡。
+
+    private val claudeToolUse = """{"type":"assistant","message":{"stop_reason":"tool_use"}}"""
+    private val claudeDone = """{"type":"assistant","message":{"stop_reason":"end_turn"}}"""
+
     @Test
-    fun `claude 会话同样按尾部推断`() {
-        val toolUse = """{"type":"assistant","message":{"stop_reason":"tool_use"}}"""
-        val file = newFile("claude.jsonl", "$toolUse\n")
+    fun `claude 会话不纳入监控`() {
+        val file = newFile("claude.jsonl", "$claudeToolUse\n")
         val watcher = TurnWatcher()
 
         watcher.watch("s1", AgentType.CLAUDE, file.toPath())
 
-        assertEquals(setOf("s1"), watcher.workingIds(AgentType.CLAUDE))
+        assertTrue(watcher.workingIds(AgentType.CLAUDE).isEmpty())
+    }
+
+    @Test
+    fun `claude 会话的完成信号不产生提醒`() {
+        val file = newFile("claude2.jsonl", "$claudeToolUse\n")
+        val watcher = TurnWatcher()
+        watcher.watch("s1", AgentType.CLAUDE, file.toPath())
+
+        file.append(claudeDone)
+
+        assertTrue("claude 的完成由运行态文件判定，不该在这里再报一次", watcher.poll().isEmpty())
+    }
+
+    @Test
+    fun `拒绝 claude 不影响同时监控的 codex 会话`() {
+        val claudeFile = newFile("mixed-claude.jsonl", "$claudeToolUse\n")
+        val codexFile = newFile("mixed-codex.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("claude1", AgentType.CLAUDE, claudeFile.toPath())
+        watcher.watch("codex1", AgentType.CODEX, codexFile.toPath())
+
+        codexFile.append(started)
+        codexFile.append(done)
+
+        assertEquals(listOf("codex1"), watcher.poll())
     }
 
     /** 起点在观察窗口之外，报一个从 watch 时刻算起的耗时是错的，宁可不报。 */
