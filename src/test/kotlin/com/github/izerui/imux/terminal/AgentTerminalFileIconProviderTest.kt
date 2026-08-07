@@ -33,34 +33,63 @@ class AgentTerminalFileIconProviderTest {
         assertNull(icon)
     }
 
+    @Test
+    fun `空闲时就是品牌图标本身`() {
+        assertSame(
+            AgentIcons.forAgent(AgentType.CLAUDE),
+            terminalTabIcon(AgentType.CLAUDE, running = false, unread = false),
+        )
+    }
+
     /**
-     * 状态图标**取代**品牌图标，而不是并排挂在它左边。
+     * 状态修饰品牌图标，而不是取代它。
      *
-     * 并排的话，标签页会在忙碌时变宽、闲下来又缩回去，标题跟着左右跳。
-     * 而状态本就是短暂的，品牌图标一直都在，谁该让位很清楚。
+     * 取代的话，标签页一忙碌就只剩一个转圈，认不出这是 Claude 还是 Codex 的会话，
+     * 也认不出它和旁边的普通编辑器标签有什么区别。
      */
     @Test
-    fun `忙碌与未读时状态图标取代品牌图标`() {
-        val brand = AgentIcons.forAgent(AgentType.CLAUDE)
-        val running = terminalTabIcon(AgentType.CLAUDE, running = true, unread = true)
+    fun `忙碌与未读时仍能区分是哪个 agent`() {
+        assertNotSame(
+            terminalTabIcon(AgentType.CLAUDE, running = true, unread = false),
+            terminalTabIcon(AgentType.CODEX, running = true, unread = false),
+        )
+        assertNotSame(
+            terminalTabIcon(AgentType.CLAUDE, running = false, unread = true),
+            terminalTabIcon(AgentType.CODEX, running = false, unread = true),
+        )
+    }
+
+    /** 三种状态各有各的样子，否则等于没标记。 */
+    @Test
+    fun `同一 agent 的三种状态互不相同`() {
+        val running = terminalTabIcon(AgentType.CLAUDE, running = true, unread = false)
         val unread = terminalTabIcon(AgentType.CLAUDE, running = false, unread = true)
         val idle = terminalTabIcon(AgentType.CLAUDE, running = false, unread = false)
 
-        // 忙碌优先于未读：还在跑就还没有「读完」这回事
-        assertSame(AnimatedIcon.Default.INSTANCE, running)
-        assertSame(AllIcons.General.Modified, unread)
-        assertSame(brand, idle)
+        assertNotSame(running, unread)
+        assertNotSame(running, idle)
+        assertNotSame(unread, idle)
+    }
+
+    /** 忙碌优先于未读：还在跑就还没有「读完」这回事。 */
+    @Test
+    fun `忙碌优先于未读`() {
+        assertSame(
+            terminalTabIcon(AgentType.CLAUDE, running = true, unread = false),
+            terminalTabIcon(AgentType.CLAUDE, running = true, unread = true),
+        )
     }
 
     /** 三态同宽，标签页标题才不会随状态左右跳。 */
     @Test
-    fun `三种状态的图标宽度一致`() {
-        val widths = listOf(
+    fun `三种状态的图标宽高一致`() {
+        val icons = listOf(
             terminalTabIcon(AgentType.CLAUDE, running = true, unread = false),
             terminalTabIcon(AgentType.CLAUDE, running = false, unread = true),
             terminalTabIcon(AgentType.CLAUDE, running = false, unread = false),
-        ).map { it.iconWidth }
+        )
 
-        assertEquals(listOf(16, 16, 16), widths)
+        assertEquals(listOf(16, 16, 16), icons.map { it.iconWidth })
+        assertEquals(listOf(16, 16, 16), icons.map { it.iconHeight })
     }
 }

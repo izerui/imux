@@ -3,11 +3,9 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
-import com.intellij.icons.AllIcons
 import com.intellij.ide.FileIconProvider
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.AnimatedIcon
 import javax.swing.Icon
 
 class AgentTerminalFileIconProvider : FileIconProvider {
@@ -25,15 +23,15 @@ class AgentTerminalFileIconProvider : FileIconProvider {
 }
 
 /**
- * 状态图标**取代**品牌图标，而不是并排挂在它左边。
+ * 状态**修饰**品牌图标，而不是取代它：忙碌时品牌图标原地旋转，未读时左上角挂标记。
  *
- * 并排的话标签页会在忙碌时变宽、闲下来又缩回去，标题跟着左右跳。而这三种状态本就
- * 互斥且短暂：在跑就是在跑，跑完没看就是有新东西，看过了才轮到品牌图标。
+ * 取代的话标签页一忙起来就只剩一个转圈，既认不出是 Claude 还是 Codex 的会话，
+ * 也认不出它和旁边普通编辑器标签的区别。三种状态尺寸一致，标题不会随状态左右跳。
  *
  * 忙碌优先于未读——还在跑，就谈不上「读完了」。
  */
 internal fun terminalTabIcon(agentType: AgentType, running: Boolean, unread: Boolean): Icon = when {
-    running -> AnimatedIcon.Default.INSTANCE
-    unread -> AllIcons.General.Modified
+    running -> AgentIcons.busy(agentType)
+    unread -> AgentIcons.unread(agentType)
     else -> AgentIcons.forAgent(agentType)
 }

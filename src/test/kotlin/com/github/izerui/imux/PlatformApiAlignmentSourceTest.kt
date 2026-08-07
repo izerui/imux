@@ -83,12 +83,20 @@ class PlatformApiAlignmentSourceTest {
             "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
         )
 
+        val icons = source("src/main/kotlin/com/github/izerui/imux/icons/AgentIcons.kt")
+
         assertTrue(provider.contains("SessionMonitor.getInstance(project)"))
-        assertTrue(provider.contains("AnimatedIcon.Default.INSTANCE"))
-        assertTrue(provider.contains("AllIcons.General.Modified"))
-        // 状态图标取代品牌图标，不并排——并排会让标签页随状态变宽变窄
+        // 状态修饰品牌图标，三种状态都由 AgentIcons 给出，尺寸一致
+        assertTrue(provider.contains("running -> AgentIcons.busy(agentType)"))
+        assertTrue(provider.contains("unread -> AgentIcons.unread(agentType)"))
         assertTrue(provider.contains("else -> AgentIcons.forAgent(agentType)"))
+        // 动画与角标都用平台 API，不自己造帧调度或手绘角标
+        assertTrue(icons.contains("AnimatedIcon("))
+        assertTrue(icons.contains("BadgeIcon("))
+        assertTrue(icons.contains("IconLoader.getTransparentIcon("))
+        // 不并排：并排会让标签页随状态变宽变窄，标题跟着左右跳
         assertFalse(provider.contains("RowIcon"))
+        assertFalse(icons.contains("RowIcon"))
         assertTrue(monitor.contains("val runningChanged = runningIds != running"))
         assertTrue(monitor.contains("if (runningChanged) updateOpenTabIcons()"))
         assertTrue(monitor.contains("updateFilePresentation(file)"))
