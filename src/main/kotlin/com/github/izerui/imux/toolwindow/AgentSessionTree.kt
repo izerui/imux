@@ -35,7 +35,8 @@ import javax.swing.tree.TreePath
 import java.time.Instant
 import javax.swing.tree.TreeSelectionModel
 
-private const val PAGE_SIZE = 50
+/** 每个分组首屏显示的条数，也是点一次「显示更多」的增量。 */
+private const val PAGE_SIZE = 10
 
 /**
  * 返回 y 坐标所在的整行，而不是只命中文字与图标的区域。
