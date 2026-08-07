@@ -22,6 +22,7 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.render.RenderingHelper
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.EmptyIcon
+import com.intellij.util.ui.JBUI
 import java.awt.event.MouseEvent
 import javax.swing.Icon
 import javax.swing.JComponent
@@ -37,6 +38,15 @@ import javax.swing.tree.TreeSelectionModel
 
 /** 每个分组首屏显示的条数，也是点一次「显示更多」的增量。 */
 private const val PAGE_SIZE = 10
+
+/**
+ * 会话行的高度（未缩放），取自平台 Islands 主题的 `Tree.rowHeight`：16px 图标上下各留 4px。
+ *
+ * 不留给主题决定：平台默认主题给 24，而第三方主题往往不写 `ui.Tree`，只能吃 Darcula
+ * 的更小基线，同一份代码在两台 IDE 上会挤成不同模样。行距是这个面板的产品要求
+ * ——会话标题是整句话，挤在一起就读不动了——所以在这里钉死。
+ */
+private const val ROW_HEIGHT = 24
 
 /**
  * 返回 y 坐标所在的整行，而不是只命中文字与图标的区域。
@@ -242,6 +252,7 @@ class AgentSessionTree(
         isRootVisible = false
         showsRootHandles = true
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+        rowHeight = JBUI.scale(ROW_HEIGHT)
         enableRendererAnimation(this)
         // 让渲染器缩到可视宽度，标题超出的部分交给 [EllipsizingCellRenderer] 收成省略号，
         // 而不是把树撑宽、逼用户左右拖着看——工具窗口本就窄，会话标题动辄一整句话。

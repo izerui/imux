@@ -239,6 +239,26 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(factory.contains("ToggleSingleClickAction()"))
     }
 
+    /**
+     * 会话树的行高原先完全交给主题：`Tree` 不设 rowHeight，平台就去读当前 LaF 的
+     * `Tree.rowHeight`。Islands（2026.2 默认主题）给的是 24，而不少第三方主题
+     * ——例如 GitHub Dark Dimmed——的 `ui.Tree` 是空的，只能吃 Darcula 基线，
+     * 于是同一份代码在开发沙箱里间距舒展、在装了主题的正式 IDE 里挤成一团。
+     *
+     * 行高是这个面板的产品要求（16px 图标上下各留 4px），不该随主题漂移，
+     * 所以按 Islands 的 24 钉死。这条差异只在装了第三方主题的 IDE 里显形，
+     * 单测起不了 LaF，只能在源码层面守住。
+     */
+    @Test
+    fun `会话树行高固定不随主题漂移`() {
+        val tree = source(
+            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+        )
+
+        assertTrue(tree.contains("private const val ROW_HEIGHT = 24"))
+        assertTrue(tree.contains("rowHeight = JBUI.scale(ROW_HEIGHT)"))
+    }
+
     @Test
     fun `相对时间与耗时使用平台本地化格式化工具`() {
         val relativeTime = source(
