@@ -1,6 +1,5 @@
 package com.github.izerui.imux.toolwindow
 
-import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.SessionListModel
@@ -52,9 +51,11 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             setContent(JBScrollPane(sessionTree.component()))
         }
 
-        // 每个 agent 一个按钮，一次点击直达。由枚举驱动：新增 agent 时这里不用改。
         toolWindow.setTitleActions(
-            AgentType.entries.map { CreateAction(it) } + RefreshAction(),
+            listOf(
+                NewSessionAction(),
+                RefreshAction(),
+            ),
         )
 
         // 挂在工具窗口自带的 ⋮ 齿轮菜单上，套一层 Behavior 与 IDEA 项目视图同构。
@@ -139,16 +140,19 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 }
 
-private class CreateAction(private val agentType: AgentType) : DumbAwareAction(
-    "新建 ${agentType.displayName} 会话",
-    "新建一个 ${agentType.displayName} 会话",
-    AgentIcons.forNewSession(agentType),
-) {
+private class NewSessionAction :
+    DumbAwareAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(event: AnActionEvent) {
         val project = event.project ?: return
+        NewSessionPopup.show(event.inputEvent?.component, event.dataContext) { agentType ->
+            createSession(project, agentType)
+        }
+    }
+
+    private fun createSession(project: Project, agentType: AgentType) {
         val monitor = SessionMonitor.getInstance(project)
         val model: SessionListModel = monitor.model
         // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
