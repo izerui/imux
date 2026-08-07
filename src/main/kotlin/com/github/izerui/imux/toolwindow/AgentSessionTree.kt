@@ -62,6 +62,16 @@ internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolea
     else -> EmptyIcon.ICON_16
 }
 
+/**
+ * 这次点击是否应该打开会话。
+ *
+ * 双击时 Swing 会先后派发 clickCount 为 1 和 2 的两次事件，所以两种模式都只认
+ * 其中一次：单击模式认第一次，双击模式认第二次。双击模式下被放过的第一次
+ * 仍会走 JTree 默认逻辑选中该行，正是想要的效果。
+ */
+internal fun shouldActivate(singleClickMode: Boolean, clickCount: Int): Boolean =
+    clickCount == if (singleClickMode) 1 else 2
+
 internal fun enableRendererAnimation(component: JComponent) {
     component.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
 }
