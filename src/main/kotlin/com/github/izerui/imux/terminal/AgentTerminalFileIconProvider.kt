@@ -23,15 +23,12 @@ class AgentTerminalFileIconProvider : FileIconProvider {
 }
 
 /**
- * 状态**修饰**品牌图标，而不是取代它：忙碌时品牌图标原地旋转，未读时左上角挂标记。
+ * 状态**修饰**品牌图标，而不是取代它：忙碌时品牌图标明暗呼吸，未读时左边一格亮起标记。
  *
  * 取代的话标签页一忙起来就只剩一个转圈，既认不出是 Claude 还是 Codex 的会话，
- * 也认不出它和旁边普通编辑器标签的区别。三种状态尺寸一致，标题不会随状态左右跳。
+ * 也认不出它和旁边普通编辑器标签的区别。四种组合的图标一样宽，标题不随状态左右跳。
  *
- * 忙碌优先于未读——还在跑，就谈不上「读完了」。
+ * 忙碌与未读可以同时成立：跑起来之前留下的新结果还没看，两个标记就都该在。
  */
-internal fun terminalTabIcon(agentType: AgentType, running: Boolean, unread: Boolean): Icon = when {
-    running -> AgentIcons.busy(agentType)
-    unread -> AgentIcons.unread(agentType)
-    else -> AgentIcons.forAgent(agentType)
-}
+internal fun terminalTabIcon(agentType: AgentType, running: Boolean, unread: Boolean): Icon =
+    AgentIcons.forTab(agentType, running, unread)
