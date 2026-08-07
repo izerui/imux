@@ -82,3 +82,17 @@ systemProp.http.proxyPort=7890
 - detached terminal 关闭后，`TerminalView` 的 CoroutineScope 与 backend 会话是否同步释放
 
 跑 `./gradlew runIde` 后按实现计划里 Task 0 / Task 6 Step 7 / Task 7 Step 5 的清单逐项核对。
+
+## 许可证
+
+本项目基于 [Apache License 2.0](LICENSE) 发布。
+
+```
+Copyright 2026 izerui
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
