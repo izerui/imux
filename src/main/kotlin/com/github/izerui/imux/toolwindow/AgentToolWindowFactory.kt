@@ -1,5 +1,6 @@
 package com.github.izerui.imux.toolwindow
 
+import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.SessionListModel
@@ -18,7 +19,6 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.DumbAwareToggleAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.ToolWindow
@@ -52,15 +52,21 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             setContent(JBScrollPane(sessionTree.component()))
         }
 
+        // 每个 agent 一个按钮，一次点击直达。由枚举驱动：新增 agent 时这里不用改。
         toolWindow.setTitleActions(
-            listOf(
-                NewSessionAction(),
-                RefreshAction(),
-            ),
+            AgentType.entries.map { CreateAction(it) } + RefreshAction(),
         )
 
-        // 挂在工具窗口自带的 ⋮ 齿轮菜单上，与 IDEA 项目视图的 Behavior 菜单同一位置
-        toolWindow.setAdditionalGearActions(DefaultActionGroup(ToggleSingleClickAction()))
+        // 挂在工具窗口自带的 ⋮ 齿轮菜单上，套一层 Behavior 与 IDEA 项目视图同构。
+        // 这个菜单里并排着平台自带的 Move to / Resize / Remove from Sidebar 等英文项，
+        // 中文项夹在其中最扎眼，所以此处文案跟着容器走，用英文。
+        toolWindow.setAdditionalGearActions(
+            DefaultActionGroup(
+                DefaultActionGroup("Behavior", true).apply {
+                    add(ToggleSingleClickAction())
+                },
+            ),
+        )
 
         // 标签页开或关时立即重绘，不必等下一轮轮询。
         TerminalHost.getInstance(project).addSessionsChangedListener(contentDisposable) {
@@ -133,38 +139,11 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 }
 
-private class NewSessionAction :
-    DumbAwareAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
-
-    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
-
-    override fun actionPerformed(event: AnActionEvent) {
-        event.project ?: return
-        val popup = JBPopupFactory.getInstance()
-            .createActionGroupPopup(
-                "选择 Agent",
-                DefaultActionGroup(
-                    CreateAction(AgentType.CLAUDE, "Claude Code"),
-                    CreateAction(AgentType.CODEX, "Codex"),
-                ),
-                event.dataContext,
-                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
-                false,
-            )
-
-        val anchor = event.inputEvent?.component
-        if (anchor != null) {
-            popup.showUnderneathOf(anchor)
-        } else {
-            popup.showInBestPositionFor(event.dataContext)
-        }
-    }
-}
-
-private class CreateAction(
-    private val agentType: AgentType,
-    label: String,
-) : DumbAwareAction(label) {
+private class CreateAction(private val agentType: AgentType) : DumbAwareAction(
+    "新建 ${agentType.displayName} 会话",
+    "新建一个 ${agentType.displayName} 会话",
+    AgentIcons.forNewSession(agentType),
+) {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
@@ -191,7 +170,7 @@ private class RefreshAction :
 }
 
 private class ToggleSingleClickAction :
-    DumbAwareToggleAction("单击打开会话", "勾选后单击即打开会话，否则需要双击", null) {
+    DumbAwareToggleAction("Open Sessions with Single Click") {
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
