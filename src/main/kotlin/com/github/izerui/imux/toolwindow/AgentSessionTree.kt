@@ -19,6 +19,7 @@ import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.render.RenderingHelper
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.EmptyIcon
 import java.awt.event.MouseEvent
@@ -113,6 +114,112 @@ private sealed interface NodeData {
 }
 
 /**
+ * 在 [title] 中二分出宽度不超过 [budget] 的最长前缀，返回它加省略号的结果。
+ *
+ * [width] 是「量一段文本有多宽」，由调用方绑定字体。放在类外是为了能直接测。
+ */
+internal fun ellipsize(title: String, budget: Int, width: (String) -> Int): String {
+    val ellipsis = "…"
+    if (budget <= width(ellipsis)) return ellipsis
+    val room = budget - width(ellipsis)
+
+    var low = 0
+    var high = title.length
+    while (low < high) {
+        val mid = (low + high + 1) / 2
+        if (width(title.substring(0, mid)) <= room) low = mid else high = mid - 1
+    }
+    // 别把代理对劈成两半：emoji 的半个码元画出来是个方框。
+    if (low > 0 && Character.isHighSurrogate(title[low - 1])) low--
+    return title.take(low) + ellipsis
+}
+
+/**
+ * 标题画不下时收成省略号的树渲染器。
+ *
+ * 平台自己不做这件事：[SimpleColoredComponent] 画不下就任由内容被裁掉，
+ * 靠鼠标悬停弹出的浮层补全（见 RenderingHelper.isExpandableHintShown）。
+ * 所以截断只能自己来。
+ *
+ * 截断放在绘制期而不是 [customizeCellRenderer]：那时组件还没被摆放，
+ * 拿不到真实宽度；到了绘制期 [getWidth] 就是 DefaultTreeUI 按可视区算好的宽度，
+ * 面板一拖宽就自动多显示一截，不需要重建树。
+ *
+ * 绘制期改文本片段是安全的——[ColoredTreeCellRenderer] 把 revalidate/repaint
+ * 都改成了空实现，不会引起重绘循环。
+ */
+private class EllipsizingCellRenderer : ColoredTreeCellRenderer() {
+
+    private var title: String = ""
+    private var titleAttributes: SimpleTextAttributes = SimpleTextAttributes.REGULAR_ATTRIBUTES
+
+    /** 跟在标题后的灰色「多久以前」，没有时为 null。它比标题短，优先保住。 */
+    private var suffix: String? = null
+
+    /** clear() 会把图标一起清掉，重排片段时要拿它复位。 */
+    private var nodeIcon: Icon? = null
+
+    override fun customizeCellRenderer(
+        tree: JTree,
+        value: Any?,
+        selected: Boolean,
+        expanded: Boolean,
+        leaf: Boolean,
+        row: Int,
+        hasFocus: Boolean,
+    ) {
+        val data = (value as? DefaultMutableTreeNode)?.userObject
+        val session = data as? NodeData.Session
+
+        nodeIcon = when (data) {
+            is NodeData.Group -> AgentIcons.forAgent(data.agentType)
+            // 优先级：正在跑 > 未读 > 已打开 > 普通
+            is NodeData.Session -> sessionStatusIcon(session!!.running, session.unread, session.opened)
+            is NodeData.PendingSession ->
+                sessionStatusIcon(running = false, unread = false, opened = data.opened)
+
+            is NodeData.ShowMore -> EmptyIcon.ICON_16
+            else -> null
+        }
+        title = data?.toString() ?: ""
+        titleAttributes =
+            if (session?.unread == true) SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+            else SimpleTextAttributes.REGULAR_ATTRIBUTES
+        suffix = session?.let { "  ${it.relativeTime}" }
+
+        // 先按完整标题铺一遍：行高与首选宽度都由此得出，绘制时再按实际宽度收。
+        layoutFragments(title)
+    }
+
+    override fun paintComponent(g: java.awt.Graphics) {
+        layoutFragments(fittedTitle())
+        super.paintComponent(g)
+    }
+
+    private fun layoutFragments(shownTitle: String) {
+        clear()
+        icon = nodeIcon
+        append(shownTitle, titleAttributes)
+        suffix?.let { append(it, SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+    }
+
+    /** 按当前组件宽度算出标题能显示多少，放得下就原样返回。 */
+    private fun fittedTitle(): String {
+        // 未读标题是粗体，粗体更宽，用它自己的字体量才不会算少。
+        val titleFont = font.deriveFont(titleAttributes.fontStyle)
+        val titleWidth: (String) -> Int = { getFontMetrics(titleFont).stringWidth(it) }
+
+        val insets = insets
+        val iconRoom = nodeIcon?.let { it.iconWidth + iconTextGap } ?: 0
+        val suffixWidth = suffix?.let { getFontMetrics(font).stringWidth(it) } ?: 0
+        val budget = width - insets.left - insets.right - ipad.left - ipad.right - iconRoom - suffixWidth
+
+        if (budget <= 0) return title
+        return if (titleWidth(title) <= budget) title else ellipsize(title, budget, titleWidth)
+    }
+}
+
+/**
  * 会话列表的界面。
  *
  * 状态一概不自己存：未读、运行态、扫描结果都在 [SessionMonitor] 里——
@@ -135,51 +242,10 @@ class AgentSessionTree(
         showsRootHandles = true
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
         enableRendererAnimation(this)
-        cellRenderer = object : ColoredTreeCellRenderer() {
-            override fun customizeCellRenderer(
-                tree: JTree,
-                value: Any?,
-                selected: Boolean,
-                expanded: Boolean,
-                leaf: Boolean,
-                row: Int,
-                hasFocus: Boolean,
-            ) {
-                val data = (value as? DefaultMutableTreeNode)?.userObject
-                val text = data?.toString() ?: ""
-
-                val session = data as? NodeData.Session
-
-                // 优先级：正在跑 > 未读 > 已打开 > 普通
-                val statusIcon =
-                    session?.let { sessionStatusIcon(it.running, it.unread, it.opened) }
-
-                icon = when (data) {
-                    is NodeData.Group -> AgentIcons.forAgent(data.agentType)
-                    is NodeData.Session -> statusIcon
-                    is NodeData.PendingSession ->
-                        sessionStatusIcon(running = false, unread = false, opened = data.opened)
-
-                    is NodeData.ShowMore -> EmptyIcon.ICON_16
-                    else -> null
-                }
-
-                when {
-                    session?.running == true ->
-                        append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-
-                    session?.unread == true ->
-                        append(text, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-
-                    else ->
-                        append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-                }
-
-                if (data is NodeData.Session) {
-                    append("  ${data.relativeTime}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                }
-            }
-        }
+        // 让渲染器缩到可视宽度，标题超出的部分交给 [EllipsizingCellRenderer] 收成省略号，
+        // 而不是把树撑宽、逼用户左右拖着看——工具窗口本就窄，会话标题动辄一整句话。
+        putClientProperty(RenderingHelper.SHRINK_LONG_RENDERER, true)
+        cellRenderer = EllipsizingCellRenderer()
     }
 
     /** 每个分组当前展示的条数上限，点「显示更多」后递增。 */

@@ -53,6 +53,8 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         val contentDisposable = Disposer.newDisposable("imux tool window content")
         val sessionTree = AgentSessionTree(project, monitor, contentDisposable)
         val panel = SimpleToolWindowPanel(true, true).apply {
+            // 保留水平滚动条：标题默认收成省略号，但省略号看不出被吃掉的是什么，
+            // 往右拖能把整条标题读完——渲染器按当前可视宽度截断，拖到哪就显示到哪。
             setContent(JBScrollPane(sessionTree.component()))
         }
 
