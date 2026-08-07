@@ -3,10 +3,40 @@
     <name>imux</name>
     <vendor>izerui</vendor>
 
+    <!--
+      两条硬约束，改文案前先看：
+      1. Marketplace 只渲染有限的 HTML 子集（p / ul / li / b / em / code / a / br），
+         不解析 Markdown——别写 ** 或 - 列表。
+      2. 描述必须以拉丁字符开头，所以首行是不带标签的英文摘要；
+         若把它挪进 <p> 或删掉，PluginXmlRegistrationTest 会失败。
+    -->
     <description><![CDATA[
-      imux keeps Claude Code and Codex sessions available inside IntelliJ IDEA editor tabs.
-      在左侧工具窗口中列出当前项目的 Claude Code 与 Codex 会话，
-      双击会话即在编辑器标签页中打开对应的 CLI 终端（可在工具窗口 ⋮ → Behavior 改为单击）。
+      imux manages your Claude Code and Codex sessions inside IntelliJ IDEA editor tabs.
+
+      <p>在 IntelliJ IDEA 里管理你的 Claude Code 与 Codex 会话。会话开在<b>编辑器标签页</b>里，
+      和代码文件并排——可以分屏，可以拖到另一个窗口，不再挤在底部那个终端面板。</p>
+
+      <p>左侧 <b>AI Agents</b> 面板列出当前项目的所有会话，按最近活动排序。点一下就用
+      <code>claude --resume</code> / <code>codex resume</code> 续上之前的对话，
+      不用记会话 id，也不用回终端翻历史。</p>
+
+      <p>一轮对话跑完会弹提醒，告诉你是哪个 Agent、耗时多久、会话标题是什么，点一下直接跳到最新输出。
+      IDE 窗口不在前台时还会补发系统通知——切出去干别的活，不会漏掉。</p>
+
+      <p><b>imux 不托管你的会话</b>，它只是 Claude Code 和 Codex 各自会话库的一个视图：
+      只读取，不写入，不存储任何自己的数据。删掉插件，你的会话记录一条不少。</p>
+
+      <p><b>主要功能</b></p>
+      <ul>
+        <li>会话以编辑器标签页形式运行，支持分屏与多窗口</li>
+        <li>按项目自动过滤，只显示属于当前项目的会话</li>
+        <li>运行中 / 未读 / 已打开三种状态一眼可辨</li>
+        <li>轮次完成气泡提醒 + 后台系统通知</li>
+        <li>关闭标签页前确认，防止误杀正在运行的进程</li>
+      </ul>
+
+      <p><b>前置条件</b>：IntelliJ IDEA 2026.2+，且 <code>claude</code> / <code>codex</code>
+      已在你的终端里可用（装一个也能用）。</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -14,10 +44,10 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow
-            id="imux"
-            anchor="left"
-            icon="/icons/agent.svg"
-            factoryClass="com.github.izerui.imux.toolwindow.AgentToolWindowFactory"/>
+                id="imux"
+                anchor="left"
+                icon="/icons/agent.svg"
+                factoryClass="com.github.izerui.imux.toolwindow.AgentToolWindowFactory"/>
 
         <!--
           必须注册：否则没有任何 provider 接受 AgentTerminalVirtualFile，
@@ -25,13 +55,22 @@
           closeFile，表现为标签页打开后一闪而过。
         -->
         <fileEditorProvider
-            implementation="com.github.izerui.imux.terminal.AgentTerminalFileEditorProvider"/>
+                implementation="com.github.izerui.imux.terminal.AgentTerminalFileEditorProvider"/>
+
+        <!--
+          关标签页即结束会话，误点一次进程就没了。VirtualFilePreCloseCheck 是平台上
+          唯一能否决关闭的通道（FileEditorManagerListener.Before 返回 void，拦不住），
+          覆盖标签页 x 按钮、Close All 等走 closeFileWithChecks 的入口。
+          Cmd+W 不走这条路，另由下方覆盖的 CloseContent action 兜住。
+        -->
+        <virtualFilePreCloseCheck
+                implementation="com.github.izerui.imux.terminal.AgentSessionCloseCheck"/>
 
         <editorTabTitleProvider
-            implementation="com.github.izerui.imux.terminal.AgentTerminalTabTitleProvider"/>
+                implementation="com.github.izerui.imux.terminal.AgentTerminalTabTitleProvider"/>
 
         <fileIconProvider
-            implementation="com.github.izerui.imux.terminal.AgentTerminalFileIconProvider"/>
+                implementation="com.github.izerui.imux.terminal.AgentTerminalFileIconProvider"/>
 
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
@@ -41,6 +80,19 @@
           里启动，从没展开过 imux 面板的项目就一条提醒都收不到，而用户不会察觉。
         -->
         <postStartupActivity
-            implementation="com.github.izerui.imux.monitor.ImuxStartupActivity"/>
+                implementation="com.github.izerui.imux.monitor.ImuxStartupActivity"/>
     </extensions>
+
+    <actions>
+        <!--
+          macOS 的 Cmd+W 绑的是 CloseContent 而不是 CloseEditor，它经 CloseAction
+          走到 EditorTabs，那里调的是**不带 checks** 的 closeFile——
+          virtualFilePreCloseCheck 根本不会被问到，Cmd+W 会直接杀掉会话。
+          覆盖它补上确认；非会话上下文一律原样交给平台实现。
+        -->
+        <action
+                id="CloseContent"
+                class="com.github.izerui.imux.terminal.SessionAwareCloseAction"
+                overrides="true"/>
+    </actions>
 </idea-plugin>
