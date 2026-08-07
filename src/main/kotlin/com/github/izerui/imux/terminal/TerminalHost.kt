@@ -103,11 +103,16 @@ class TerminalHost(private val project: Project) : Disposable {
      * 「关标签页 = 结束会话」是明确的产品决策：不这么做，进程会不断累积，
      * 用户半天就能攒下六七个隐形的 CLI 却无从收拾。
      */
-    fun closeSession(key: String) {
-        turnWatcher.unwatch(key)
-        files.remove(key)
-        views.remove(key)?.coroutineScope?.cancel()
-        sessionsChangedDispatcher.multicaster.sessionsChanged()
+    fun closeSession(file: AgentTerminalVirtualFile) {
+        val key = file.sessionKey
+        // key 会在会话迁移时变化，也可能被另一个终端重新占用。只有账上仍然是这个
+        // VirtualFile，才允许清掉 key 对应的 view 与 watcher；否则只结束自身的 view。
+        if (files.remove(key, file)) {
+            turnWatcher.unwatch(key)
+            if (views[key] === file.terminalView) views.remove(key)
+            sessionsChangedDispatcher.multicaster.sessionsChanged()
+        }
+        file.terminalView.coroutineScope.cancel()
     }
 
     /** 标签页集合变化（打开或结束）时回调，供界面立即刷新标记。 */
@@ -160,27 +165,64 @@ class TerminalHost(private val project: Project) : Disposable {
      *
      * 虚拟文件实例必须沿用同一个——它是标签页的身份，换实例会开出新标签页。
      */
-    fun rebindKey(oldKey: String, newKey: String, newTitle: String) {
-        val view = views.remove(oldKey)
-        if (view == null) {
+    fun rebindKey(oldKey: String, newKey: String, newTitle: String): Boolean {
+        if (oldKey == newKey) return true
+
+        val view = views[oldKey]
+        val file = files[oldKey]
+        if (view == null || file == null) {
             // 不要静默返回：迁移失败意味着之后点击该会话会重开一个 --resume 终端，
             // 与仍在运行的原终端抢同一个会话。曾因两边 key 不一致而静默失败过。
-            LOG.warn("换 key 失败：找不到 key=$oldKey 的终端，目标 $newKey。已有 key=${views.keys}")
-            return
+            LOG.warn(
+                "换 key 失败：找不到 key=$oldKey 的完整终端，目标 $newKey。" +
+                    "view keys=${views.keys}, file keys=${files.keys}",
+            )
+            return false
         }
+
+        // 探测期间用户可能已经点击了新会话，开出一个注定会 resume 冲突的重复终端。
+        // 先按实例摘掉并关闭它，再把真正持有该会话的原终端迁过来。
+        val activateMigrated =
+            discardDuplicateTarget(newKey, sourceFile = file, sourceView = view)
+
+        views.remove(oldKey)
+        files.remove(oldKey)
         views[newKey] = view
+        files[newKey] = file
         turnWatcher.unwatch(oldKey)
 
-        files.remove(oldKey)?.let { file ->
-            files[newKey] = file
-            // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉
-            file.sessionKey = newKey
-            updateTabTitle(file, newTitle)
-        }
+        // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉
+        file.sessionKey = newKey
+        updateTabTitle(file, newTitle)
+        if (activateMigrated) FileEditorManager.getInstance(project).openFile(file, true)
 
         // 界面得知道 key 变了，否则列表的选中态会一直停在旧会话上——
         // `/clear`、`/new` 不产生标签页切换事件，selectionChanged 那条通路不会响。
         keyMigratedDispatcher.multicaster.sessionKeyMigrated(oldKey, newKey)
+        return true
+    }
+
+    private fun discardDuplicateTarget(
+        key: String,
+        sourceFile: AgentTerminalVirtualFile,
+        sourceView: TerminalView,
+    ): Boolean {
+        val duplicateFile = files.remove(key)
+        val duplicateView = views.remove(key)
+        if (duplicateFile == null && duplicateView == null) return false
+
+        val fileEditorManager = FileEditorManager.getInstance(project)
+        val wasSelected = duplicateFile != null &&
+            fileEditorManager.selectedFiles.any { it === duplicateFile }
+        turnWatcher.unwatch(key)
+        if (duplicateFile != null && duplicateFile !== sourceFile) {
+            fileEditorManager.closeFile(duplicateFile)
+            duplicateFile.terminalView.coroutineScope.cancel()
+        }
+        if (duplicateView != null && duplicateView !== sourceView) {
+            duplicateView.coroutineScope.cancel()
+        }
+        return wasSelected
     }
 
     /** 终端换 key 时回调，供界面把选中态一并迁走。在 EDT 调用。 */

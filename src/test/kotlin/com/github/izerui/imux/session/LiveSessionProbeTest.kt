@@ -169,4 +169,81 @@ class LiveSessionProbeTest {
 
         assertTrue(drift.isEmpty())
     }
+
+    @Test
+    fun `同一终端探测出多个不同会话时一个都不认领`() {
+        // claude 的后台 agent 会继承父进程的环境变量，于是带着同一个 IMUX_TAB
+        // 却报出自己那个独立的会话 id。真要迁就可能迁到后台 agent 的会话上，
+        // 而且顺序不确定。分不清就别动——这是最后一道防线，
+        // 上游还会用 interactivePids 把 bg 进程挡掉。
+        val drift = driftOf(
+            openTabs = mapOf("tab-1" to "旧id"),
+            live = listOf(LiveTab("tab-1", "交互会话"), LiveTab("tab-1", "后台agent会话")),
+        )
+
+        assertTrue(drift.isEmpty())
+    }
+
+    @Test
+    fun `同一终端重复报出同一个会话仍然认领`() {
+        // 重复不等于矛盾
+        val drift = driftOf(
+            openTabs = mapOf("tab-1" to "旧id"),
+            live = listOf(LiveTab("tab-1", "新id"), LiveTab("tab-1", "新id")),
+        )
+
+        assertEquals(listOf(KeyDrift("tab-1", from = "旧id", to = "新id")), drift)
+    }
+
+    // ---- 只认交互式进程 ----
+
+    private fun runtime(pid: Long, kind: String) =
+        ClaudeRuntimeSession("会话$pid", pid, kind, "idle", "/tmp")
+
+    @Test
+    fun `后台 agent 的进程不参与探测`() {
+        val pids = interactivePids(
+            listOf(runtime(1L, "interactive"), runtime(2L, "bg")),
+        )
+
+        assertEquals(listOf(1L), pids)
+    }
+
+    @Test
+    fun `kind 缺失的进程按交互式对待`() {
+        // 老版本 CLI 可能不写这个字段，漏掉真正的终端比多认一个更糟
+        assertEquals(listOf(1L), interactivePids(listOf(runtime(1L, kind = "null").copy(kind = null))))
+    }
+
+    // ---- 应用前复核 ----
+
+    @Test
+    fun `标签页还在且仍记着旧 id 时结果可用`() {
+        val drifts = listOf(KeyDrift("tab-1", from = "旧id", to = "新id"))
+
+        assertEquals(drifts, stillApplicable(drifts, currentTabs = mapOf("tab-1" to "旧id")))
+    }
+
+    @Test
+    fun `探测期间标签页被关掉则结果作废`() {
+        val drifts = listOf(KeyDrift("tab-1", from = "旧id", to = "新id"))
+
+        assertTrue(stillApplicable(drifts, currentTabs = emptyMap()).isEmpty())
+    }
+
+    @Test
+    fun `探测期间同一会话被重新打开成新标签页则结果作废`() {
+        // 关掉原标签页又双击了旧会话：新终端的 sessionKey 一样，但 tabId 是新的，
+        // 拿旧结果去迁它就是张冠李戴
+        val drifts = listOf(KeyDrift("tab-1", from = "旧id", to = "新id"))
+
+        assertTrue(stillApplicable(drifts, currentTabs = mapOf("tab-2" to "旧id")).isEmpty())
+    }
+
+    @Test
+    fun `探测期间该终端已经自行迁走则结果作废`() {
+        val drifts = listOf(KeyDrift("tab-1", from = "旧id", to = "新id"))
+
+        assertTrue(stillApplicable(drifts, currentTabs = mapOf("tab-1" to "别的id")).isEmpty())
+    }
 }

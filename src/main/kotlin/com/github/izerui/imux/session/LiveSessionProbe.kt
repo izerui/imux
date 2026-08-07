@@ -97,14 +97,45 @@ internal fun threadIdOfRollout(path: String): String? {
  *
  * 两侧都取交集：探测不到的终端保持现状（CLI 可能还没起来），
  * 不属于任何已开标签页的探测结果丢弃（刚关掉的标签页进程可能还没退干净）。
+ *
+ * 同一个 tabId 报出多个**不同**会话时一条都不产出。claude 的后台 agent 会继承父进程
+ * 的环境变量，于是带着同一个 IMUX_TAB 却报出它自己那个独立的会话 id；真去迁就可能
+ * 迁到后台 agent 的会话上，且结果取决于遍历顺序。分不清就别动。
+ * （上游还会用 [interactivePids] 把 bg 进程挡在外面，这里是最后一道防线。）
  */
 internal fun driftOf(
     openTabs: Map<String, String>,
     live: List<LiveTab>,
-): List<KeyDrift> = live.mapNotNull { (tabId, sessionId) ->
-    val current = openTabs[tabId] ?: return@mapNotNull null
-    if (current == sessionId) null else KeyDrift(tabId, from = current, to = sessionId)
-}
+): List<KeyDrift> = live.groupBy { it.tabId }
+    .mapNotNull { (tabId, tabs) ->
+        val sessionId = tabs.map { it.sessionId }.distinct().singleOrNull() ?: return@mapNotNull null
+        val current = openTabs[tabId] ?: return@mapNotNull null
+        if (current == sessionId) null else KeyDrift(tabId, from = current, to = sessionId)
+    }
+
+/**
+ * 可用于探测的 claude 进程：只要交互式终端，不要后台 agent。
+ *
+ * 后台 agent（`kind=bg`）是 claude 主进程派生的，**会继承 IMUX_TAB**——实测 claude
+ * 的子进程确实能读到 imux 注入的变量。但它有自己独立的会话 id，认领它就会把终端
+ * 迁到一个用户根本没在看的会话上。
+ *
+ * `kind` 缺失时按交互式对待：漏掉一个真正的终端，比多认一个的代价大。
+ */
+internal fun interactivePids(runtime: Collection<ClaudeRuntimeSession>): List<Long> =
+    runtime.filterNot { it.isBackground }.map { it.pid }
+
+/**
+ * 探测是异步的，结果落地前世界可能已经变了。只保留仍然成立的那些：
+ * 标签页还在（tabId 仍存在），且它仍然记着我们探测时看到的那个旧 id。
+ *
+ * 少了这道复核，「探测期间用户关掉标签页又双击了旧会话」就会出事：
+ * 新终端的 sessionKey 与旧的一样，但它是另一个终端，把它迁走是张冠李戴。
+ */
+internal fun stillApplicable(
+    drifts: List<KeyDrift>,
+    currentTabs: Map<String, String>,
+): List<KeyDrift> = drifts.filter { currentTabs[it.tabId] == it.from }
 
 private fun fileNameOf(path: String): String = path.substringAfterLast('/')
 

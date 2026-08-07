@@ -79,6 +79,97 @@ class SessionKeyMigrationTest {
     }
 
     @Test
+    fun `换 key 时必须关闭重复目标并继续迁移`() {
+        val host = File("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt").readText()
+
+        assertTrue(
+            "异步探测跑着的时候用户可能自己打开了新会话。直接覆盖会把那个终端从账上抹掉" +
+                "却不关闭：进程继续跑，标签页还开着，之后针对该 key 的关闭动作会作用到错的终端上",
+            host.contains("discardDuplicateTarget(newKey,"),
+        )
+        assertTrue(
+            "目标已打开时不能仅仅放弃迁移，否则用户点击的新标签页会因 resume 冲突立即退出，" +
+                "旧终端也会永久留在旧 key 上",
+            host.contains("private fun discardDuplicateTarget("),
+        )
+        assertTrue(
+            "如果重复目标正是用户刚点击的标签页，关闭它以后必须激活迁移后的源终端，" +
+                "否则界面会退回之前的代码编辑器，看起来仍像点击没有打开",
+            host.contains("if (activateMigrated) FileEditorManager.getInstance(project).openFile(file, true)"),
+        )
+    }
+
+    @Test
+    fun `关闭标签页必须按虚拟文件实例清理`() {
+        val host = File("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt").readText()
+        val editor = File(
+            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+        ).readText()
+
+        assertTrue(
+            "重复目标的 editor 可能在源终端迁移完成后才 dispose；只按 key 清理会误杀迁移后的源终端",
+            host.contains("fun closeSession(file: AgentTerminalVirtualFile)"),
+        )
+        assertTrue(
+            "只有当前映射仍属于被关闭的虚拟文件时，才能删除该 key 的 view 与 watcher",
+            host.contains("files.remove(key, file)"),
+        )
+        assertTrue(
+            "editor dispose 必须把自身实例交给宿主做身份校验",
+            editor.contains("closeSession(virtualFile)"),
+        )
+    }
+
+    @Test
+    fun `迁移失败时不启动轮次监控`() {
+        val monitor = File(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        ).readText()
+
+        assertTrue(
+            "迁移没成还挂监控，就是把轮次盯到一个不归这个终端管的会话上",
+            monitor.contains("if (!host.rebindKey(pendingKey, sessionId, title)) return@forEach"),
+        )
+    }
+
+    @Test
+    fun `探测失败时保留重试次数`() {
+        val monitor = File(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        ).readText()
+
+        assertTrue(
+            "/clear 只产生一次无主会话，触发器被一次性消费掉就再没有下一次了，" +
+                "终端会永久停在旧 id 上而且失败是静默的",
+            monitor.contains("if (migrated) driftProbeAttempts.set(0) else driftProbeAttempts.decrementAndGet()"),
+        )
+        assertTrue(
+            "正在探测时必须原样保留重试次数，不能先 drain 再发现走不下去",
+            monitor.contains("if (!probing.compareAndSet(false, true)) return"),
+        )
+        assertTrue(
+            "探测期间若又出现新会话，旧探测完成时不能把新触发器的重试次数清零",
+            monitor.contains("if (driftProbeGeneration.get() == generation)"),
+        )
+    }
+
+    @Test
+    fun `探测只认交互式进程并在应用前复核`() {
+        val monitor = File(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        ).readText()
+
+        assertTrue(
+            "后台 agent 继承了父进程的 IMUX_TAB 却有独立的会话 id，必须排除",
+            monitor.contains("interactivePids(runtimeSessions)"),
+        )
+        assertTrue(
+            "探测是异步的，结果落地前标签页可能已经关掉或被重新打开成另一个终端",
+            monitor.contains("stillApplicable(drifts, host.openTabsByTabId())"),
+        )
+    }
+
+    @Test
     fun `工具窗口必须订阅迁移事件并迁移选中`() {
         val factory = File(
             "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",

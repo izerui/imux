@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.github.izerui"
-version = "0.2.0"
+version = "0.2.1"
 
 repositories {
     // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。

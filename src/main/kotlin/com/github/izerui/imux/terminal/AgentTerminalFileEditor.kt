@@ -259,7 +259,7 @@ class AgentTerminalFileEditor(
         // 漏判会导致拖一下标签页就把会话杀了。
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
 
-        TerminalHost.getInstance(project).closeSession(virtualFile.sessionKey)
+        TerminalHost.getInstance(project).closeSession(virtualFile)
         com.github.izerui.imux.monitor.SessionMonitor.getInstance(project)
             .cancelPendingSession(virtualFile.sessionKey)
     }

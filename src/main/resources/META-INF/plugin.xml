@@ -32,7 +32,6 @@
         <li>按项目自动过滤，只显示属于当前项目的会话</li>
         <li>运行中 / 未读 / 已打开三种状态一眼可辨</li>
         <li>轮次完成气泡提醒 + 后台系统通知</li>
-        <li>关闭标签页前确认，防止误杀正在运行的进程</li>
       </ul>
 
       <p><b>前置条件</b>：IntelliJ IDEA 2026.2+，且 <code>claude</code> / <code>codex</code>
@@ -57,15 +56,6 @@
         <fileEditorProvider
                 implementation="com.github.izerui.imux.terminal.AgentTerminalFileEditorProvider"/>
 
-        <!--
-          关标签页即结束会话，误点一次进程就没了。VirtualFilePreCloseCheck 是平台上
-          唯一能否决关闭的通道（FileEditorManagerListener.Before 返回 void，拦不住），
-          覆盖标签页 x 按钮、Close All 等走 closeFileWithChecks 的入口。
-          Cmd+W 不走这条路，另由下方覆盖的 CloseContent action 兜住。
-        -->
-        <virtualFilePreCloseCheck
-                implementation="com.github.izerui.imux.terminal.AgentSessionCloseCheck"/>
-
         <editorTabTitleProvider
                 implementation="com.github.izerui.imux.terminal.AgentTerminalTabTitleProvider"/>
 
@@ -82,17 +72,4 @@
         <postStartupActivity
                 implementation="com.github.izerui.imux.monitor.ImuxStartupActivity"/>
     </extensions>
-
-    <actions>
-        <!--
-          macOS 的 Cmd+W 绑的是 CloseContent 而不是 CloseEditor，它经 CloseAction
-          走到 EditorTabs，那里调的是**不带 checks** 的 closeFile——
-          virtualFilePreCloseCheck 根本不会被问到，Cmd+W 会直接杀掉会话。
-          覆盖它补上确认；非会话上下文一律原样交给平台实现。
-        -->
-        <action
-                id="CloseContent"
-                class="com.github.izerui.imux.terminal.SessionAwareCloseAction"
-                overrides="true"/>
-    </actions>
 </idea-plugin>

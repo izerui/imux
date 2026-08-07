@@ -82,6 +82,22 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `plugin xml 引用的本地实现类都必须存在`() {
+        val classNames = Regex(
+            """(?:implementation|class|factoryClass)="(com\.github\.izerui\.imux\.[^"]+)"""",
+        ).findAll(pluginXml).map { it.groupValues[1] }.toList()
+        val missing = classNames.filterNot { className ->
+            File("src/main/kotlin/${className.replace('.', '/')}.kt").exists()
+        }
+
+        assertTrue(
+            "plugin.xml 引用了不存在的实现类；若它覆盖平台 action，会连平台原 action 一起移除：" +
+                missing.joinToString(prefix = "\n"),
+            missing.isEmpty(),
+        )
+    }
+
+    @Test
     fun `插件描述符合官方结构校验规则`() {
         val description = Regex(
             """<description><!\[CDATA\[(.*?)]\]></description>""",

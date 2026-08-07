@@ -10,6 +10,8 @@ import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.codexPids
 import com.github.izerui.imux.session.driftOf
+import com.github.izerui.imux.session.interactivePids
+import com.github.izerui.imux.session.stillApplicable
 import com.github.izerui.imux.session.readHeldRollouts
 import com.github.izerui.imux.session.readTabId
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
@@ -36,6 +38,7 @@ import java.time.Instant
 import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 fun interface SessionMonitorListener : EventListener {
     fun stateChanged()
@@ -125,6 +128,12 @@ class SessionMonitor(
     private val checkingCompletedTurns = AtomicBoolean(false)
     private val probing = AtomicBoolean(false)
 
+    /** 还允许尝试几次会话漂移探测，见 [requestDriftProbe]。 */
+    private val driftProbeAttempts = AtomicInteger(0)
+
+    /** 每次出现新的无主会话都会递增，用于区分探测期间到达的新触发器。 */
+    private val driftProbeGeneration = AtomicInteger(0)
+
     init {
         // 扫描结果、新建 pending、pending 绑定真实 id 都由 model 产出。
         // monitor 必须透传这些变化，否则界面只能等下一次运行态轮询才刷新。
@@ -151,10 +160,28 @@ class SessionMonitor(
         val host = TerminalHost.getInstance(project)
         bindings.forEach { (pendingKey, sessionId) ->
             val session = model.sessionOf(sessionId)
-            host.rebindKey(pendingKey, sessionId, session?.title ?: "会话 ${sessionId.take(8)}")
+            val title = session?.title ?: "会话 ${sessionId.take(8)}"
+            // 迁移没成（目标已被别的终端占着）就别接着挂监控：那会把轮次盯到一个
+            // 不归这个终端管的会话上
+            if (!host.rebindKey(pendingKey, sessionId, title)) return@forEach
             // 新建的会话直到落盘才有文件路径，绑定这一刻才能纳入监控
             session?.let { host.startWatchingTurn(sessionId, it.agentType, it.filePath) }
         }
+    }
+
+    /**
+     * 无主新会话出现时登记一次探测意图。
+     *
+     * **不能直接把它当成一次性的触发器**：探测未必一次就成——运行态文件可能还没更新、
+     * `lsof` 可能超时、目标 key 可能被用户刚开的终端占着。而 `/clear` 只产生**一次**
+     * 无主会话，触发器一旦消费掉就没有下一次了，终端会永久停在旧 id 上，
+     * 且失败是静默的。所以登记的是**允许重试的次数**，由后续轮询推进。
+     */
+    private fun requestDriftProbe() {
+        if (model.drainUnclaimedSessions().isEmpty()) return
+        driftProbeGeneration.incrementAndGet()
+        driftProbeAttempts.set(DRIFT_PROBE_ATTEMPTS)
+        probeSessionDrift()
     }
 
     /**
@@ -166,15 +193,18 @@ class SessionMonitor(
      * 未读清不掉、轮次监控盯着一个不再增长的文件，再点新会话还会以真实 id 重开一个
      * `--resume` 终端，与仍在运行的原进程抢同一个会话。
      *
-     * **只在出现无主新会话时才探测**，不是每轮都跑：codex 那侧要 `lsof`，成本不低，
+     * **只在登记过探测意图时才跑**，不是每轮都跑：codex 那侧要 `lsof`，成本不低，
      * 而无主新会话出现的那一刻正是换 id 发生的时刻，没必要平时空转。
      */
     private fun probeSessionDrift() {
         if (project.isDisposed) return
-        if (model.drainUnclaimedSessions().isEmpty()) return
+        if (driftProbeAttempts.get() <= 0) return
+        // 正在探测就直接走开，重试次数原封不动留着——不能在这之前消费掉它
         if (!probing.compareAndSet(false, true)) return
+        val generation = driftProbeGeneration.get()
 
         coroutineScope.launch(Dispatchers.IO) {
+            var migrated = false
             try {
                 val host = TerminalHost.getInstance(project)
                 val openTabs = host.openTabsByTabId()
@@ -183,13 +213,16 @@ class SessionMonitor(
 
                 // 必须重新加载而不是用 runtime 缓存：那是上一轮轮询的快照，
                 // 而 CLI 换 id 后运行态文件立刻就更新了，用旧快照会慢一拍。
-                val byPid = runtimeIndex.load(projectPath).values.associateBy { it.pid }
+                val runtimeSessions = runtimeIndex.load(projectPath).values
+                val byPid = runtimeSessions.associateBy { it.pid }
+                // 后台 agent 继承了父进程的 IMUX_TAB，却有自己独立的会话 id，必须排除
+                val claudePids = interactivePids(runtimeSessions)
                 val live = LiveSessionProbe(
                     pidsOf = { type ->
                         when {
                             // 没开这类标签页就没有要认领的终端，别去翻进程表
                             type !in openTypes -> emptyList()
-                            type == AgentType.CLAUDE -> byPid.keys.toList()
+                            type == AgentType.CLAUDE -> claudePids
                             else -> codexPids()
                         }
                     },
@@ -200,27 +233,49 @@ class SessionMonitor(
 
                 val drifts = driftOf(openTabs, live)
                 if (drifts.isEmpty() || project.isDisposed) return@launch
-                withContext(Dispatchers.EDT) { applyDrifts(drifts) }
+                withContext(Dispatchers.EDT) { migrated = applyDrifts(drifts) }
             } finally {
+                // 只结算本次启动时看到的那一代。探测期间若又出现了无主会话，
+                // requestDriftProbe 已经为新一代重置次数，旧结果不能把它覆盖掉。
+                if (driftProbeGeneration.get() == generation) {
+                    if (migrated) driftProbeAttempts.set(0) else driftProbeAttempts.decrementAndGet()
+                }
                 probing.set(false)
+                // 新触发器若是在 probing=true 时到达，当时无法启动；这里立即补跑一次。
+                if (driftProbeGeneration.get() != generation) probeSessionDrift()
             }
         }
     }
 
-    /** 在 EDT 应用探测结果：换 key、换标题、把轮次监控挪到新会话文件上。 */
-    private fun applyDrifts(drifts: List<KeyDrift>) {
-        if (project.isDisposed) return
+    /**
+     * 在 EDT 应用探测结果：换 key、换标题、把轮次监控挪到新会话文件上。
+     *
+     * 返回是否全部迁移成功——没成功的话调用方要保留重试次数。
+     */
+    private fun applyDrifts(drifts: List<KeyDrift>): Boolean {
+        if (project.isDisposed) return false
         val host = TerminalHost.getInstance(project)
 
-        drifts.forEach { drift ->
+        // 探测是异步的，这期间标签页可能已经关掉、或被关掉后又重新打开成另一个终端。
+        // 只认那些「tabId 还在、且仍记着我们探测时看到的旧 id」的结果。
+        val applicable = stillApplicable(drifts, host.openTabsByTabId())
+        if (applicable.isEmpty()) return false
+
+        var allMigrated = true
+        applicable.forEach { drift ->
             val session = model.sessionOf(drift.to)
-            host.rebindKey(drift.from, drift.to, session?.title ?: "会话 ${drift.to.take(8)}")
+            if (!host.rebindKey(drift.from, drift.to, session?.title ?: "会话 ${drift.to.take(8)}")) {
+                // 目标被占着之类，这次迁不了。保留重试次数，别接着做后面的收尾动作
+                allMigrated = false
+                return@forEach
+            }
             // 新会话直到落盘才有文件路径，迁移这一刻才能纳入监控
             session?.let { host.startWatchingTurn(drift.to, it.agentType, it.filePath) }
             // 旧 id 已经不是这个终端的身份了，挂在它上面的未读该一并撤掉
             clearUnread(drift.from)
         }
         notifyListeners()
+        return allMigrated
     }
 
     /**
@@ -293,7 +348,7 @@ class SessionMonitor(
         model.addListener {
             applyNewBindings()
             syncOpenTabTitles()
-            probeSessionDrift()
+            requestDriftProbe()
         }
         refresh()
     }
@@ -332,6 +387,9 @@ class SessionMonitor(
 
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                // 上一次探测没成的话在这里续上，见 requestDriftProbe
+                probeSessionDrift()
+
                 val host = TerminalHost.getInstance(project)
 
                 // 按项目过滤：运行态目录是全机器共享的，本机实测常年同时跑着五六个项目的
@@ -423,6 +481,17 @@ class SessionMonitor(
     override fun dispose() = Unit
 
     companion object {
+        /**
+         * 一次换 id 最多探测几轮。
+         *
+         * 重试由既有的运行态轮询推进（约 3 秒一轮），因此这个数字就是「给 CLI 多久
+         * 把运行态或文件句柄更新到位」。取 5 约合 15 秒：本机实测 claude 换 id 后
+         * 运行态文件几乎立刻更新，留这么多是给 codex 的 `lsof` 与慢盘兜底。
+         * 有上限是必须的——用户在 IDE 外面自己开的会话永远是无主的，
+         * 不封顶就会每轮都去翻一遍进程表。
+         */
+        private const val DRIFT_PROBE_ATTEMPTS = 5
+
         fun getInstance(project: Project): SessionMonitor = project.getService(SessionMonitor::class.java)
     }
 }
