@@ -1,87 +1,113 @@
 # imux
 
-IntelliJ IDEA 插件：左侧工具窗口列出当前项目的 Claude Code / Codex 会话，双击会话即在编辑器标签页中打开对应的 CLI 终端（可在工具窗口 ⋮ → Behavior 改为单击）。
+在 IntelliJ IDEA 里管理你的 Claude Code 与 Codex 会话——**会话开在编辑器标签页里，不是挤在底部那个终端面板**。
 
-插件本身是个**壳子**——它是两个 CLI 自有会话库的视图，加一个终端宿主。不生成会话 id、不解析对话内容、不存储任何自己的状态。
+左侧 **AI Agents** 面板列出当前项目的所有会话，点一下就续上之前的对话。跑完一轮会弹提醒，不用盯着屏幕等。
 
-- 设计文档：`docs/superpowers/specs/2026-08-03-imux-design.md`
-- 实现计划：`docs/superpowers/plans/2026-08-03-imux.md`
+imux 不托管你的会话，它只是 Claude Code 和 Codex **各自会话库的一个视图**：不生成会话 id、不解析对话内容、不往你的会话文件里写任何东西。删掉插件，你的会话记录一条不少。
 
-## 环境要求
+## 开始之前
 
-| 项 | 版本 | 说明 |
+- **IntelliJ IDEA 2026.2 或更新版本**
+- **`claude` 和 / 或 `codex` 已经装好**，且在你的终端里直接敲命令能跑通
+
+imux 不负责安装这两个 CLI，也不管它们的登录和配置。你在系统终端里能用，在 imux 里就能用——它是用你的登录 shell（`$SHELL`，取不到则用 `/bin/zsh`）启动它们的，所以你的 PATH、alias、环境变量都在。
+
+两个 CLI 装一个也能用，面板里另一个分组空着就是了。
+
+## 安装
+
+IDEA 里 **Settings → Plugins → Marketplace**，搜索 **imux**，Install，重启。
+
+## 快速上手
+
+1. 打开左侧边栏的 **AI Agents** 面板。
+2. 点面板右上角 **+**，选 Claude Code 或 Codex，新建一个会话。
+3. 会话在编辑器标签页里跑起来，和你的代码文件并排——可以分屏，可以拖到另一个窗口。
+
+想接着之前的聊？**双击**列表里的任意会话，imux 会用 `claude --resume` / `codex resume` 把它捞回来。
+
+## 面板里都有什么
+
+会话按 **Claude Code** 和 **Codex** 分成两组，组内按最后活动时间倒序，最近用的在最上面。每组先显示 10 条，更早的点底部 **显示更多…** 展开。
+
+每行是：**状态图标 + 会话标题 + 相对时间**。标题由 CLI 自己生成，没有的话回退成你的第一句话。太长会截断，面板底部可以横向拖动看全。
+
+状态图标：
+
+| 图标 | 含义 |
+|---|---|
+| 转圈动画 | 正在跑 |
+| ● 灰点 | 已经在某个标签页里开着 |
+| 标题加粗 + 标记 | 有新结果你还没看 |
+| 无 | 空闲 |
+
+右上角还有一个**刷新**按钮，用于立刻重扫会话库（正常情况下不需要点，面板每几秒自动跟进一次）。
+
+## 跑完了会提醒你
+
+一轮对话完成时，右下角弹出气泡：
+
+```
+Codex · 耗时 2 分 13 秒
+重构 SessionRepository 的扫描逻辑
+```
+
+点气泡上的 **打开会话**，直接跳到那个标签页并滚到最新输出。
+
+**IDE 窗口不在前台时**，额外补发一条系统通知（macOS 通知中心 / Windows 通知）。点它会把对应的项目窗口提到最前面并打开会话——切出去干别的活时不会漏掉。
+
+消除提醒：点 **打开会话**，或者用任何方式看一眼那个会话（点列表、切回标签页、在终端里敲个键），气泡自己就撤了。
+
+嫌吵想彻底关掉：**Settings → Appearance & Behavior → Notifications**，找到 imux 的通知组关掉即可。
+
+## ⚠️ 关闭标签页 = 结束会话
+
+**关掉会话标签页，正在跑的 CLI 进程会被终止。**
+
+这是有意为之：早期版本关标签页不杀进程，结果后台堆了一地没人管的 CLI 进程。现在的规则简单直接——标签页在，会话就在；标签页关了，进程就没了。
+
+好在**对话历史不会丢**。会话记录躺在 CLI 自己的会话库里，重新在面板里双击它，就是一次 resume，历史重新加载，接着聊。丢的只是那个进程的运行时状态（比如正在执行到一半的任务）。
+
+为了防止手滑，关闭时会弹确认框：
+
+> **结束会话**
+> 结束 Codex 会话「重构 SessionRepository 的扫描逻辑」？关闭标签页会终止它正在运行的 CLI 进程。
+>
+> [结束会话] [取消]
+
+标签页的 × 按钮、**Cmd+W**、Close All 都会被拦下来问一句（Close All 会合并成一次确认，列出所有将被结束的会话）。
+
+不会问的情况：CLI 自己跑完退出后自动关标签页、把标签页拖到别的窗口或分屏、关闭整个项目。
+
+## 偏好设置
+
+面板右上角 **⋮ → Behavior → Open Sessions with Single Click**。
+
+默认双击打开会话；勾上就变成单击。这是目前唯一的设置项，全局生效（不跨机器同步）。
+
+## 它读了你机器上的什么
+
+插件要显示会话列表，就得读 CLI 的会话文件。说清楚读了哪些：
+
+| 路径 | 读什么 | 用途 |
 |---|---|---|
-| IntelliJ IDEA | 2026.2+ | 实测构建号 IU-262.8665.337；插件 `sinceBuild=262`，不设 `untilBuild` |
-| JDK | 21 | `jvmToolchain(21)` |
-| Gradle | 9.6.1 | 由 wrapper 提供。IntelliJ Platform Gradle Plugin 2.18.1 **要求 Gradle 9+** |
-| Kotlin | 2.3.21 | **必须匹配平台自身的 Kotlin 版本**：IDEA 2026.2 的 jar 元数据是 2.3.0，用 2.1.x 编译会报 `incompatible version of Kotlin` |
+| `~/.claude/projects/<项目目录>/*.jsonl` | 会话标题、时间、首条消息 | 列出本项目的 Claude 会话 |
+| `~/.claude/sessions/*.json` | 进程 pid、状态、cwd | 判断哪些会话正在跑 |
+| `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | 首行的 cwd、标题、轮次信号 | 列出本项目的 Codex 会话、检测轮次完成 |
+| `~/.codex/state_5.sqlite` | `threads` 表的 `id, title` | 取 Codex 会话的正式标题 |
 
-平台依赖用 `local("/Applications/IntelliJ IDEA.app")`，即**直接使用本机安装的 IDEA**，不从网络下载。若你的 IDEA 装在别处，改 `build.gradle.kts` 里这一行。
+**全部是只读的**，一个字节都不往里写；sqlite 用的是只读连接。插件自己不存任何会话数据。
 
-## 构建
+**只显示属于当前项目的会话**：Claude 靠目录名匹配项目路径，Codex 靠会话文件首行记录的 `cwd` 字段。别的项目的会话不会出现在这里，也不会为它们弹提醒。
 
-```bash
-./gradlew test          # 跑测试
-./gradlew buildPlugin   # 产出 build/distributions/imux-<version>.zip
-./gradlew runIde        # 起一个带本插件的 IDE 实例
-```
+## 已知限制
 
-### 开发时重启沙箱加载改动
-
-插件包含 `sqlite-jdbc`。该驱动会向 JVM 全局 `DriverManager` 注册实例，使旧插件
-ClassLoader 无法可靠热卸载；IDEA 会提示 `Failed to unload modified plugins: imux`。
-因此构建配置已关闭 `autoReload`，不再支持 `prepareSandbox` 热更新。
-
-用原始 Gradle 命令启动沙箱：
-
-```bash
-./gradlew runIde
-```
-
-代码修改后，在运行 `runIde` 的终端按 `Ctrl+C` 停止沙箱，再重新执行
-`./gradlew runIde`。
-
-沙箱 IDEA 中仍可通过 `File → Open` 打开真实项目进行实机验证。重启会终止沙箱内
-由 imux 启动的 Claude Code / Codex 终端，重启前应确认没有需要保留的运行中会话。
-
-### 如果你在需要代理的网络环境下
-
-**JVM 不读 macOS 的系统代理设置**，必须显式传参，否则 Gradle 解析依赖时会报
-`SSLHandshakeException: Remote host terminated the handshake`：
-
-```bash
-./gradlew test \
-  -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=7890 \
-  -Dhttp.proxyHost=127.0.0.1  -Dhttp.proxyPort=7890
-```
-
-或写进 `~/.gradle/gradle.properties`（不要提交到仓库）：
-
-```properties
-systemProp.https.proxyHost=127.0.0.1
-systemProp.https.proxyPort=7890
-systemProp.http.proxyHost=127.0.0.1
-systemProp.http.proxyPort=7890
-```
-
-构建配置里已针对受限网络做了两处让步，都写在 `build.gradle.kts` 的注释里：
-
-- `instrumentCode = false` —— 插桩需要 `com.jetbrains.intellij.java:java-compiler-ant-tasks`，该仓库在受限网络下不可达。本插件不用 GUI Designer 的 `.form`，关掉无影响。
-- 未引入 `testFramework(TestFrameworkType.Platform)` —— 同样是仓库不可达。它只服务于 `BasePlatformTestCase` 类的平台测试；核心逻辑测试仅依赖 JUnit 4。被搁置的那个测试在 `docs/parked/`，网络允许时可恢复。
-
-`settings.gradle.kts` 的 `pluginManagement` 里配了阿里镜像兜底，因为 `plugins.gradle.org` 在此网络下时通时断。
-
-## 现状
-
-**已验证**：28 个纯逻辑测试全绿（会话读取、合并排序、pending 绑定），插件可打包。
-
-**未验证**（需要 GUI，无法自动化）：
-
-- IDEA 的 Reworked 终端能否正常渲染并交互 Claude Code / Codex。这是整个插件的承重假设，验证步骤见实现计划的 Task 0
-- 关闭标签页后进程是否存活（所有权规则的核心）
-- detached terminal 关闭后，`TerminalView` 的 CoroutineScope 与 backend 会话是否同步释放
-
-跑 `./gradlew runIde` 后按实现计划里 Task 0 / Task 6 Step 7 / Task 7 Step 5 的清单逐项核对。
+- **列表没有右键菜单**。目前的操作只有左键点开、回车打开，以及工具栏的新建 / 刷新。删除、重命名会话请去 CLI 里做。
+- **新建会话不能选参数**。选完 Agent 就直接起 `claude` / `codex`，没有 model、权限模式之类的选项。需要指定参数的话，在终端里正常启动，会话照样会出现在面板里。
+- **正作为后台 agent 运行的会话打不开**。点它会提示「会话正在后台运行」，等它空闲再点。这是为了避开 CLI 本身的并发限制。
+- **Codex 的运行标记有几秒延迟**。点开一个已经在跑的 Codex 会话，转圈图标要等下一轮扫描（约 3 秒）才亮起来。
+- **只在 IDE 内启动的会话才有完成提醒**。你在系统终端里自己跑的会话，会出现在列表里，但不会纳入轮次监控。
 
 ## 许可证
 
