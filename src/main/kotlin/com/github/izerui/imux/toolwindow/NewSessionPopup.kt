@@ -2,37 +2,30 @@ package com.github.izerui.imux.toolwindow
 
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.ui.SimpleTextAttributes
-import com.intellij.ui.components.JBLabel
-import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
-import java.awt.BorderLayout
 import java.awt.Component
-import java.awt.GridLayout
-import javax.swing.JList
-import javax.swing.JPanel
-import javax.swing.ListCellRenderer
 
 /**
  * 「新建会话」的 Agent 选择弹窗。
  *
- * 不用 `createActionGroupPopup`：平台菜单项是单行文字、行高由菜单规格定死，
- * 两个选项挤成一个小方块，而新建是高频操作，每次都要瞄准。
- * 这里自绘列表，每项两行（显示名 + 厂商名），点击面积大得多。
+ * 用平台标准的 action group 菜单：单行「图标 + 名称」，行高、内边距、
+ * 选中态都跟 IDE 其它工具栏菜单一致，不再自绘卡片。
  */
 internal object NewSessionPopup {
 
     /** [anchor] 为 null 时（例如键盘触发，拿不到按钮组件）交给平台自己找位置。 */
     fun show(anchor: Component?, dataContext: DataContext, onChosen: (AgentType) -> Unit) {
-        val popup = JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(AgentType.entries.toList())
-            .setTitle("选择 Agent")
-            .setRenderer(AgentRenderer())
-            .setItemChosenCallback(onChosen)
-            .setRequestFocus(true)
-            .createPopup()
+        val popup = JBPopupFactory.getInstance().createActionGroupPopup(
+            null,
+            agentActionGroup(onChosen),
+            dataContext,
+            JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
+            true,
+        )
 
         if (anchor != null) {
             popup.showUnderneathOf(anchor)
@@ -42,46 +35,16 @@ internal object NewSessionPopup {
     }
 }
 
-/**
- * 每项渲染成一张卡片：左侧品牌标志，右侧上行显示名、下行厂商名。
- *
- * 图标保持 16px 不放大——资源只有 16/32 两档，放大到卡片高度会糊。
- * 「大」体现在行高与内边距上，不靠图标撑。
- */
-private class AgentRenderer : ListCellRenderer<AgentType> {
-
-    override fun getListCellRendererComponent(
-        list: JList<out AgentType>,
-        value: AgentType,
-        index: Int,
-        selected: Boolean,
-        focused: Boolean,
-    ): Component {
-        val foreground = UIUtil.getListForeground(selected, true)
-
-        val name = JBLabel(value.displayName).apply {
-            this.foreground = foreground
-        }
-        val vendor = JBLabel(value.vendor).apply {
-            font = JBUI.Fonts.smallFont()
-            // 选中态下灰色在高亮底上读不清，跟着主文字走；
-            // 未选中时用与会话列表「多久以前」同一个灰，两处观感一致
-            this.foreground =
-                if (selected) foreground else SimpleTextAttributes.GRAYED_ATTRIBUTES.fgColor
-        }
-
-        val text = JPanel(GridLayout(2, 1, 0, JBUI.scale(2))).apply {
-            isOpaque = false
-            add(name)
-            add(vendor)
-        }
-
-        return JPanel(BorderLayout(JBUI.scale(10), 0)).apply {
-            isOpaque = true
-            background = UIUtil.getListBackground(selected, true)
-            border = JBUI.Borders.empty(8, 12)
-            add(JBLabel(AgentIcons.forAgent(value)), BorderLayout.WEST)
-            add(text, BorderLayout.CENTER)
-        }
-    }
-}
+/** 每个 Agent 一项：标题是显示名，描述用厂商名，走状态栏提示而不占菜单行。 */
+internal fun agentActionGroup(onChosen: (AgentType) -> Unit): DefaultActionGroup =
+    DefaultActionGroup(
+        AgentType.entries.map { agentType ->
+            object : DumbAwareAction(
+                agentType.displayName,
+                agentType.vendor,
+                AgentIcons.forAgent(agentType),
+            ) {
+                override fun actionPerformed(event: AnActionEvent) = onChosen(agentType)
+            }
+        },
+    )
