@@ -5,20 +5,18 @@ import com.intellij.ide.nls.NlsMessages
 import java.time.Duration
 
 /**
- * 轮次完成提醒的副标题：`项目 · Agent · 耗时 2 分 13 秒`。
+ * 轮次完成提醒的副标题：`Agent · 耗时 2 分 13 秒`。
  *
  * 标题位置已经给了会话标题，这里放的是**光看标题看不出来的东西**：
- * 系统通知从通知中心弹出时脱离了 IDE 窗口，不写项目名就分不清是哪个项目的；
- * 同时开着好几个项目窗口时尤其如此。
+ * 哪个 agent 跑的、跑了多久。项目名不放——通知本身就挂在项目窗口上，
+ * 重复一遍只会挤占本就紧张的一行宽度。
  *
  * 拿不到的部分整段略去，不留多余的间隔号。
  */
 internal fun completionSubtitle(
-    projectName: String,
     agentType: AgentType?,
     duration: Duration?,
 ): String = listOfNotNull(
-    projectName,
     agentType?.displayName,
     duration?.let { "耗时 ${formatDuration(it)}" },
 ).joinToString(" · ")

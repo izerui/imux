@@ -9,11 +9,20 @@ import java.time.Duration
 class CompletionSubtitleTest {
 
     @Test
-    fun `项目名 agent 耗时依次连起来`() {
+    fun `agent 与耗时依次连起来`() {
         val duration = NlsMessages.formatDuration(133_000)
         assertEquals(
-            "imux · Claude Code · 耗时 $duration",
-            completionSubtitle("imux", AgentType.CLAUDE, Duration.ofSeconds(133)),
+            "Claude Code · 耗时 $duration",
+            completionSubtitle(AgentType.CLAUDE, Duration.ofSeconds(133)),
+        )
+    }
+
+    @Test
+    fun `不带项目名`() {
+        // 通知本身就挂在项目窗口上，再写一遍只会挤掉真正有信息量的部分
+        assertEquals(
+            "Codex · 耗时 ${NlsMessages.formatDuration(5_000)}",
+            completionSubtitle(AgentType.CODEX, Duration.ofSeconds(5)),
         )
     }
 
@@ -21,18 +30,18 @@ class CompletionSubtitleTest {
     fun `agent 未知时跳过它，不留多余间隔号`() {
         // 会话刚落盘、扫描还没纳入时查不到它属于哪个 agent
         val duration = NlsMessages.formatDuration(5_000)
-        assertEquals("imux · 耗时 $duration", completionSubtitle("imux", null, Duration.ofSeconds(5)))
+        assertEquals("耗时 $duration", completionSubtitle(null, Duration.ofSeconds(5)))
     }
 
     @Test
     fun `耗时未知时跳过它`() {
         // 插件启动前就已经在跑的会话，起点无从得知，宁可不显示也不要报个错的数
-        assertEquals("imux · Codex", completionSubtitle("imux", AgentType.CODEX, null))
+        assertEquals("Codex", completionSubtitle(AgentType.CODEX, null))
     }
 
     @Test
-    fun `都没有时只剩项目名`() {
-        assertEquals("imux", completionSubtitle("imux", null, null))
+    fun `都没有时为空`() {
+        assertEquals("", completionSubtitle(null, null))
     }
 
     @Test

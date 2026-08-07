@@ -32,9 +32,9 @@ object TurnNotifier {
         duration: Duration?,
         onOpen: () -> Unit,
     ) {
-        val subtitle = completionSubtitle(project.name, agentType, duration)
+        val subtitle = completionSubtitle(agentType, duration)
 
-        // 上行放「项目 · Agent · 耗时」，下行放会话标题。
+        // 上行放「Agent · 耗时」，下行放会话标题。
         //
         // 反过来看似更直觉，实际不好用：会话标题长短悬殊（上限 60 字符），
         // 长的会把加粗的标题行撑满甚至截断，而元信息长度稳定、正好一行。
