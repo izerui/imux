@@ -5,6 +5,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
+import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.TurnNotifier
 import com.intellij.icons.AllIcons
@@ -196,7 +197,9 @@ class AgentSessionTree(
         // 表现就是「点了没反应，要点好几次」。ClickListener 容忍这点抖动。
         object : ClickListener() {
             override fun onClick(event: MouseEvent, clickCount: Int): Boolean {
-                if (clickCount != 1 || !SwingUtilities.isLeftMouseButton(event)) return false
+                if (!SwingUtilities.isLeftMouseButton(event)) return false
+                val singleClickMode = ImuxSettings.getInstance().state.openWithSingleClick
+                if (!shouldActivate(singleClickMode, clickCount)) return false
                 val path = tree.pathForRowAt(event.y) ?: return false
                 handleActivate(path)
                 return true

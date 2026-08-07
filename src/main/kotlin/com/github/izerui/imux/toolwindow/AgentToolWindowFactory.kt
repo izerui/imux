@@ -3,12 +3,14 @@ package com.github.izerui.imux.toolwindow
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.SessionListModel
+import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.ToggleAction
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -56,6 +58,9 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
                 RefreshAction(),
             ),
         )
+
+        // 挂在工具窗口自带的 ⋮ 齿轮菜单上，与 IDEA 项目视图的 Behavior 菜单同一位置
+        toolWindow.setAdditionalGearActions(DefaultActionGroup(ToggleSingleClickAction()))
 
         // 标签页开或关时立即重绘，不必等下一轮轮询。
         TerminalHost.getInstance(project).addSessionsChangedListener(contentDisposable) {
@@ -182,5 +187,18 @@ private class RefreshAction :
 
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { SessionMonitor.getInstance(it).refresh() }
+    }
+}
+
+private class ToggleSingleClickAction :
+    ToggleAction("单击打开会话"), DumbAware {
+
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun isSelected(event: AnActionEvent): Boolean =
+        ImuxSettings.getInstance().state.openWithSingleClick
+
+    override fun setSelected(event: AnActionEvent, state: Boolean) {
+        ImuxSettings.getInstance().state.openWithSingleClick = state
     }
 }
