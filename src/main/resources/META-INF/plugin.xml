@@ -6,7 +6,7 @@
     <description><![CDATA[
       imux keeps Claude Code and Codex sessions available inside IntelliJ IDEA editor tabs.
       在左侧工具窗口中列出当前项目的 Claude Code 与 Codex 会话，
-      点击会话即在编辑器标签页中打开对应的 CLI 终端。
+      双击会话即在编辑器标签页中打开对应的 CLI 终端（可在工具窗口 ⋮ 菜单改为单击）。
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

@@ -220,6 +220,21 @@ class PlatformApiAlignmentSourceTest {
         assertFalse(tree.contains("\"▶ \""))
     }
 
+    /**
+     * 单击/双击开关组件写好了，但只有 `setAdditionalGearActions(` 把它挂上齿轮菜单才生效。
+     * 这一行一旦被误删，⋮ 菜单里的开关就消失，而现有单测依然全绿——编译器查不出、
+     * 单测碰不到，只能在源码层面钉死这次挂载。
+     */
+    @Test
+    fun `单击双击开关挂在工具窗口齿轮菜单上`() {
+        val factory = source(
+            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+        )
+
+        assertTrue(factory.contains("setAdditionalGearActions("))
+        assertTrue(factory.contains("ToggleSingleClickAction()"))
+    }
+
     @Test
     fun `相对时间与耗时使用平台本地化格式化工具`() {
         val relativeTime = source(
