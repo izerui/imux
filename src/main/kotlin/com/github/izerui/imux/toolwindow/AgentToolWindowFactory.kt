@@ -35,6 +35,11 @@ import com.intellij.ui.content.ContentFactory
  */
 class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
+    // 展示名与注册 id（imux）解耦：改 id 会让用户已保存的工具窗口布局状态失效。
+    override fun init(toolWindow: ToolWindow) {
+        toolWindow.stripeTitle = "AI Agents"
+    }
+
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         timed("构建工具窗口内容", CREATE_WARN_MS) { doCreateContent(project, toolWindow) }
     }
