@@ -259,6 +259,80 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(tree.contains("rowHeight = JBUI.scale(ROW_HEIGHT)"))
     }
 
+    /**
+     * 系统通知点下去要落到那个会话上，而不是只把 IDEA 叫醒。
+     *
+     * 原先调的是三参 [com.intellij.ui.SystemNotifications.notify]，点击回调整个没传——
+     * 于是点它只等于激活 IDEA 应用，停在哪个窗口全看系统心情。多开项目窗口时最难受：
+     * 人是被叫回来了，却停在别的项目上，还得自己翻。
+     *
+     * 平台其实给了四参重载：`MacOsNotifications` 生成 activationId 把 Runnable 存进映射，
+     * 点击时经 NSUserNotificationCenter 的 delegate 取回执行。
+     *
+     * 光传回调还不够。`FileEditorManager.openFile` 与 `IdeFocusManager.requestFocusInProject`
+     * 都只在项目**内部**调焦点，谁都不会把那个 JFrame 提到前台，所以回调里必须显式
+     * `focusProjectWindow`。而回调来自 JNA 的原生线程，落到 EDT 才能碰 UI。
+     *
+     * 这条差异只在正式 IDE 里显形——单测起不了 NSUserNotificationCenter，
+     * 只能在源码层面守住。
+     */
+    @Test
+    fun `系统通知点击回到对应项目窗口并打开会话`() {
+        val notifier = source(
+            "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
+        )
+
+        // 四参重载，末位的 trailing lambda 就是点击回调
+        assertTrue(
+            "系统通知要带点击回调，否则点了无处可去",
+            notifier.contains("notify(GROUP_ID, subtitle, title) {"),
+        )
+        assertTrue(
+            "项目内部的焦点调用提不动 JFrame，必须显式激活窗口",
+            notifier.contains("ProjectUtil.focusProjectWindow(target, true)"),
+        )
+        // 回调由 JNA 原生线程发起，碰 UI 前必须回 EDT
+        assertTrue(notifier.contains("invokeLater"))
+    }
+
+    /**
+     * 系统通知的点击回调被平台的应用级静态单例攥着
+     * （`MacOsNotifications.myCallbacksByActivationId`，上限 32 条、满了才整体清空）。
+     * 回调捕获了什么，什么就跟着一起留到那时——捕获 Project 等于把它连同
+     * [com.github.izerui.imux.monitor.SessionMonitor]、`TerminalHost` 整条服务链
+     * 钉在静态字段上，用户关掉项目也回收不了。
+     *
+     * 所以打开动作只能经无捕获的顶层函数引用传进去，回调本身只带走两个字符串，
+     * Project 到点击那一刻才按 locationHash 现查。
+     *
+     * 改回就地写 lambda 会让泄漏悄悄回来：编译照过、单测照绿、界面行为也一模一样，
+     * 只有堆里那份 Project 不肯走。只能在源码层面守住。
+     */
+    @Test
+    fun `系统通知回调不捕获 Project 与服务实例`() {
+        val notifier = source(
+            "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
+        )
+        val monitor = source(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        )
+
+        // 回调里认 locationHash，不认捕获来的 Project
+        assertTrue(notifier.contains("val locationHash = project.locationHash"))
+        assertTrue(notifier.contains("it.locationHash == locationHash"))
+        // 打开动作由外部以 (Project, String) 传入，TurnNotifier 自己不持有服务
+        assertTrue(notifier.contains("openSession: (Project, String) -> Unit"))
+
+        // 顶层函数（无缩进声明）才没有捕获；挪进类里就成了带 this 的方法引用
+        assertTrue(
+            "打开动作必须是顶层函数，否则函数引用会捕获宿主实例",
+            monitor.contains(
+                "internal fun openSessionFromNotification(project: Project, sessionId: String)",
+            ),
+        )
+        assertTrue(monitor.contains("::openSessionFromNotification"))
+    }
+
     @Test
     fun `相对时间与耗时使用平台本地化格式化工具`() {
         val relativeTime = source(

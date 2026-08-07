@@ -36,6 +36,20 @@ fun interface SessionMonitorListener : EventListener {
 }
 
 /**
+ * 从完成提醒打开会话。
+ *
+ * **必须是顶层函数**，不能换成捕获 project 或 monitor 的 lambda。系统通知的点击回调
+ * 被平台的应用级静态单例攥着（`MacOsNotifications.myCallbacksByActivationId`，
+ * 上限 32 条、满了才整体清空），捕获什么就等于把什么钉在那里——捕获 [SessionMonitor]
+ * 就是把 [Project] 连同它整条服务链一起留住，项目关掉也回收不了。
+ *
+ * 顶层函数引用不带任何捕获，回调因此只带走两个字符串，Project 到点击那一刻才现查。
+ */
+internal fun openSessionFromNotification(project: Project, sessionId: String) {
+    SessionMonitor.getInstance(project).openSession(sessionId)
+}
+
+/**
  * 原子地执行一次初始化；初始化抛异常时释放占位，允许后续重试。
  *
  * 返回 false 表示此前已经成功启动或当前正由其他调用方启动。
@@ -183,6 +197,20 @@ class SessionMonitor(
         model.cancelPending(key)
     }
 
+    /**
+     * 从完成提醒打开会话，并滚到最新输出。
+     *
+     * 抽成方法而不是就地写 lambda：系统通知的点击回调要跨越平台的静态持有，
+     * 详见 [openSessionFromNotification]。
+     */
+    fun openSession(sessionId: String) {
+        model.sessionOf(sessionId)?.let {
+            TerminalHost.getInstance(project).openResumeAtBottom(it.agentType, it.id, it.title)
+        }
+        // 内部会一并撤掉挂着的提醒气泡
+        clearUnread(sessionId)
+    }
+
     /** 启动监听。幂等——工具窗口与启动活动都可能调到。 */
     fun start() {
         if (!started.runOnceResetOnFailure(::startWatching)) return
@@ -259,18 +287,15 @@ class SessionMonitor(
                             statusTracker.lastDuration(sessionId) ?: watcher.lastDuration(sessionId)
                         markUnread(sessionId)
 
+                        // 传顶层函数引用而不是 lambda：见 openSessionFromNotification
                         TurnNotifier.notifyCompleted(
                             project,
                             sessionId,
                             title,
                             session?.agentType,
                             duration,
-                        ) {
-                            model.sessionOf(sessionId)?.let {
-                                host.openResumeAtBottom(it.agentType, it.id, it.title)
-                            }
-                            clearUnread(sessionId)
-                        }
+                            ::openSessionFromNotification,
+                        )
                     }
                 }
             } finally {

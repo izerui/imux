@@ -46,9 +46,11 @@ class TerminalIntegrationSourceTest {
             "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
         ).readText()
 
+        // 不绑定接收者写法：打开动作已挪进 openSession，由无捕获的顶层函数转调，
+        // 接收者因此从局部的 host 变成现取的服务。要守的是「带滚动语义」这件事本身。
         assertTrue(
             "完成通知必须使用带滚动语义的打开方法",
-            monitor.contains("host.openResumeAtBottom(it.agentType, it.id, it.title)"),
+            monitor.contains("openResumeAtBottom(it.agentType, it.id, it.title)"),
         )
         assertTrue(
             "终端打开后必须通过当前 Editor 的 ScrollingModel 滚到底部",

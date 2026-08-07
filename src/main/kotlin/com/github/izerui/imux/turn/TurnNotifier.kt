@@ -1,11 +1,14 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.ide.impl.ProjectUtil
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.SystemNotifications
 import java.time.Duration
@@ -24,13 +27,17 @@ object TurnNotifier {
      */
     private val active = ConcurrentHashMap<String, Notification>()
 
+    /**
+     * [openSession] 必须是**无捕获**的函数引用（顶层函数），不能传捕获了 Project
+     * 或服务实例的 lambda——它会被平台的应用级静态单例长期持有，详见 [notifyOutsideIde]。
+     */
     fun notifyCompleted(
         project: Project,
         sessionId: String,
         title: String,
         agentType: AgentType?,
         duration: Duration?,
-        onOpen: () -> Unit,
+        openSession: (Project, String) -> Unit,
     ) {
         val subtitle = completionSubtitle(agentType, duration)
 
@@ -45,10 +52,11 @@ object TurnNotifier {
 
         // createSimpleExpiring 会在点击后自动让通知过期。
         // 普通的 AnAction 不会——点了之后气泡仍然挂着。
+        // 气泡这边捕获 project 无妨：Notification 的生命周期本就跟着项目走
         notification.addAction(
             NotificationAction.createSimpleExpiring("打开会话") {
                 active.remove(sessionId)
-                onOpen()
+                openSession(project, sessionId)
             },
         )
 
@@ -57,7 +65,7 @@ object TurnNotifier {
         active[sessionId] = notification
         notification.notify(project)
 
-        notifyOutsideIde(project, title, subtitle)
+        notifyOutsideIde(project, sessionId, title, subtitle, openSession)
     }
 
     /**
@@ -74,15 +82,47 @@ object TurnNotifier {
      * 平台不会自动把普通通知转成系统通知——测试跑完、构建完成这些场景都是各自
      * 显式调用的（见 TestsUIUtil、ProgressManagerImpl），本插件同理。
      *
-     * 系统通知点不出「打开会话」：[SystemNotifications.notify] 只收三个字符串，
-     * 没有回调。所以它只负责把人叫回来，真正的入口仍是留在 IDE 里的那个气泡。
+     * 走四参重载把点击回调带上。三参那版等于把回调丢了，点击只能激活 IDEA 应用，
+     * 落到哪个窗口由系统决定——多开项目窗口时人被叫回来却停在别的项目上。
+     * macOS 侧由 `MacOsNotifications` 生成 activationId 存起 Runnable，
+     * 点击时经 NSUserNotificationCenter 的 delegate 取回执行。
      *
-     * 通知后端不可用时（例如未授权、非 macOS 且无 libnotify），平台实现内部静默跳过。
+     * 回调里必须自己把窗口提到前台：[openSession] 内部走的 `FileEditorManager.openFile`
+     * 与 `IdeFocusManager` 都只在项目**内部**调焦点，谁也提不动那个 JFrame。
+     *
+     * 回调由 JNA 的原生线程发起，碰 UI 前先回 EDT，`focusProjectWindow` 也要求 EDT。
+     *
+     * **回调里一个对象都不能捕获。** 平台把它存在应用级静态单例
+     * `MacOsNotifications.myCallbacksByActivationId` 里，上限 32 条、满了才整体清空——
+     * 在此之前捕获的东西一直回收不掉。捕获 [Project] 就等于把它连同整条服务链
+     * 钉在那里，用户关掉项目也释放不了。所以这里只带走 locationHash 与会话 id 两个
+     * 字符串，Project 等到点击那一刻现查；查不到（项目已关闭）就安静地什么都不做。
+     *
+     * 通知后端不可用时（例如未授权、非 macOS 且无 libnotify），平台实现内部静默跳过；
+     * 非 macOS 后端只认三参，`Notifier` 接口的默认实现会忽略回调退回去，不会因此报错。
      */
-    private fun notifyOutsideIde(project: Project, title: String, subtitle: String) {
+    private fun notifyOutsideIde(
+        project: Project,
+        sessionId: String,
+        title: String,
+        subtitle: String,
+        openSession: (Project, String) -> Unit,
+    ) {
         val frame = WindowManager.getInstance().getFrame(project)
         if (frame?.isActive == true) return
-        SystemNotifications.getInstance().notify(GROUP_ID, subtitle, title)
+
+        val locationHash = project.locationHash
+
+        SystemNotifications.getInstance().notify(GROUP_ID, subtitle, title) {
+            ApplicationManager.getApplication().invokeLater {
+                val target = ProjectManager.getInstance().openProjects
+                    .firstOrNull { it.locationHash == locationHash }
+                    ?: return@invokeLater
+                ProjectUtil.focusProjectWindow(target, true)
+                // 撤气泡的活交给 openSession 内部的 clearUnread，不在这里重复
+                openSession(target, sessionId)
+            }
+        }
     }
 
     /**
