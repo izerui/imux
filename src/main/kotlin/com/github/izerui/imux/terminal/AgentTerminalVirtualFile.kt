@@ -29,11 +29,18 @@ import com.intellij.testFramework.LightVirtualFile
  *
  * 注意：本文件不拥有 view，view 的生命周期由 TerminalHost 管理。
  */
+/**
+ * @param sessionKey 该终端**当前**对应的会话 id。会变——用户在终端里 `/clear` 或
+ *   `/new` 之后，CLI 换了会话 id 而进程不变，这里要跟着迁移。
+ * @param tabId 终端自身的身份，一生不变。以 [com.github.izerui.imux.session.IMUX_TAB_ENV]
+ *   注入给 CLI 进程，是把进程认回终端、进而发现 sessionKey 漂移的唯一依据。
+ */
 class AgentTerminalVirtualFile(
     name: String,
     val terminalView: TerminalView,
     var sessionKey: String,
     val agentType: AgentType,
+    val tabId: String,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
 
     var tabTitle: String = name

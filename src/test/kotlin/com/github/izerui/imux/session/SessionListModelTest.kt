@@ -55,6 +55,43 @@ class SessionListModelTest {
     }
 
     @Test
+    fun `没有 pending 认领的新会话被记为无主`() {
+        // 这正是终端里 /clear、/new 的形态：会话凭空出现，没人在等它。
+        // 它可能属于某个已打开的终端（CLI 换了 id），也可能是用户在 IDE 外面
+        // 自己开的——分辨这件事要靠进程探测，model 只负责报告「有这么个东西」。
+        val model = model(FakeClock(base))
+
+        scanResult = listOf(session("凭空出现的id", AgentType.CLAUDE, base))
+        model.refresh()
+
+        assertEquals(listOf("凭空出现的id"), model.drainUnclaimedSessions())
+    }
+
+    @Test
+    fun `无主会话取走即清空`() {
+        val model = model(FakeClock(base))
+        scanResult = listOf(session("某id", AgentType.CLAUDE, base))
+        model.refresh()
+
+        model.drainUnclaimedSessions()
+
+        assertTrue("重复消费会让同一次变化被探测两遍", model.drainUnclaimedSessions().isEmpty())
+    }
+
+    @Test
+    fun `被 pending 认领的新会话不算无主`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        model.registerPending(AgentType.CLAUDE)
+
+        clock.now = base.plusSeconds(30)
+        scanResult = listOf(session("新id", AgentType.CLAUDE, base.plusSeconds(20)))
+        model.refresh()
+
+        assertTrue(model.drainUnclaimedSessions().isEmpty())
+    }
+
+    @Test
     fun `早于启动时刻的会话不被绑定`() {
         val clock = FakeClock(base)
         val model = model(clock)

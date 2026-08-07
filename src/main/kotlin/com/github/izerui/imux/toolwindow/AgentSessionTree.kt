@@ -7,6 +7,7 @@ import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
+import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.turn.TurnNotifier
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -350,6 +351,19 @@ class AgentSessionTree(
     private fun restoreSelection(sessionId: String?) {
         if (sessionId == null) return
         findNode(sessionId)?.let { tree.selectionPath = TreePath(it.path) }
+    }
+
+    /**
+     * 终端换了 key（`/clear`、`/new`，或新建会话落盘绑定），把选中一并挪过去。
+     *
+     * 必须由外部事件驱动：这几种情况都不产生标签页切换，[revealSession] 依赖的
+     * selectionChanged 不会响，而 [reload] 只会用旧 id 去 restoreSelection，
+     * 等于把选中按死在一个已经不属于这个终端的会话上。
+     */
+    fun migrateSelection(from: String, to: String, isActiveTab: Boolean) {
+        val next = selectionAfterMigration(selectedSessionId(), from, to, isActiveTab) ?: return
+        if (next == selectedSessionId()) return
+        revealSession(next)
     }
 
     /**

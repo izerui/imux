@@ -24,6 +24,35 @@ fun interface TerminalSessionsListener : EventListener {
     fun sessionsChanged()
 }
 
+fun interface SessionKeyMigratedListener : EventListener {
+    fun sessionKeyMigrated(from: String, to: String)
+}
+
+/**
+ * 终端换 key 之后，列表里该选中谁。
+ *
+ * `/clear`、`/new` 不产生标签页切换事件，`selectionChanged` 那条既有通路不会响；
+ * 而 [AgentSessionTree.reload] 只会拿重绘前的 id 去 restoreSelection，
+ * 等于把选中按死在一个已经不属于这个终端的会话上。所以必须主动挪。
+ *
+ * 判据是**这个终端是不是用户正看着的那个**（[isActiveTab]），而不是树上眼下选中了什么：
+ * 打开终端后焦点就在终端里敲字，树的选中未必还停在那个会话上——中间点过别的会话、
+ * 或被某次重绘弄丢，靠它做判据会静默失效。
+ *
+ * 终端不在前台时退回保守规则：只有选中的正是被迁移的那个会话才跟着走，
+ * 免得用户正在列表里翻别的会话却被抢走选中。
+ */
+internal fun selectionAfterMigration(
+    current: String?,
+    from: String,
+    to: String,
+    isActiveTab: Boolean,
+): String? = when {
+    isActiveTab -> to
+    current == from -> to
+    else -> current
+}
+
 /**
  * 拥有所有活着的终端 view，按 key 索引。
  *
@@ -52,6 +81,7 @@ class TerminalHost(private val project: Project) : Disposable {
     private val turnWatcher = TurnWatcher()
 
     private val sessionsChangedDispatcher = EventDispatcher.create(TerminalSessionsListener::class.java)
+    private val keyMigratedDispatcher = EventDispatcher.create(SessionKeyMigratedListener::class.java)
 
     /**
      * 启动一个全新会话（不带 resume）。
@@ -147,6 +177,18 @@ class TerminalHost(private val project: Project) : Disposable {
             file.sessionKey = newKey
             updateTabTitle(file, newTitle)
         }
+
+        // 界面得知道 key 变了，否则列表的选中态会一直停在旧会话上——
+        // `/clear`、`/new` 不产生标签页切换事件，selectionChanged 那条通路不会响。
+        keyMigratedDispatcher.multicaster.sessionKeyMigrated(oldKey, newKey)
+    }
+
+    /** 终端换 key 时回调，供界面把选中态一并迁走。在 EDT 调用。 */
+    fun addSessionKeyMigratedListener(
+        parentDisposable: Disposable,
+        listener: SessionKeyMigratedListener,
+    ) {
+        keyMigratedDispatcher.addListener(listener, parentDisposable)
     }
 
     /**
@@ -170,6 +212,24 @@ class TerminalHost(private val project: Project) : Disposable {
         FileEditorManager.getInstance(project).updateFilePresentation(file)
     }
 
+    /**
+     * 已打开的标签页：tabId -> 它当前记账的会话 id。
+     *
+     * 供 [com.github.izerui.imux.session.driftOf] 与探测结果比对。tabId 是终端的固有
+     * 身份，会话 id 则会随 `/clear`、`/new` 变化，两者必须分开看。
+     */
+    fun openTabsByTabId(): Map<String, String> =
+        files.values.associate { it.tabId to it.sessionKey }
+
+    /**
+     * 当前开着标签页的 agent 种类。
+     *
+     * 用来把探测限制在真正需要的范围：codex 那侧要遍历进程表再逐个 `lsof`，
+     * 一个 codex 标签页都没开的时候跑这些纯属白费。
+     */
+    fun openTabAgentTypes(): Set<AgentType> =
+        files.values.mapTo(mutableSetOf()) { it.agentType }
+
     private fun open(
         key: String,
         agentType: AgentType,
@@ -178,8 +238,12 @@ class TerminalHost(private val project: Project) : Disposable {
     ) {
         discardIfTerminated(key)
         val file = files.getOrPut(key) {
-            val view = views.getOrPut(key) { createView(agentType, command, tabTitle) }
-            AgentTerminalVirtualFile(tabTitle, view, key, agentType).also(::closeTabWhenTerminated)
+            // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
+            // 之后从进程 env 里读回来才认得出这个终端。
+            val tabId = newTabId()
+            val view = views.getOrPut(key) { createView(agentType, command, tabTitle, tabId) }
+            AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId)
+                .also(::closeTabWhenTerminated)
         }
         FileEditorManager.getInstance(project).openFile(file, true)
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
@@ -264,13 +328,14 @@ class TerminalHost(private val project: Project) : Disposable {
         agentType: AgentType,
         command: List<String>,
         tabTitle: String,
+        tabId: String,
     ): TerminalView {
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab = manager
             .createTabBuilder()
             .workingDirectory(projectPath())
             .shellCommand(command)
-            .envVariables(launchEnvironment(agentType))
+            .envVariables(launchEnvironment(agentType, tabId))
             .tabName(tabTitle)
             .requestFocus(false)
             .deferSessionStartUntilUiShown(false)
@@ -298,6 +363,15 @@ class TerminalHost(private val project: Project) : Disposable {
         views.clear()
         files.clear()
     }
+
+    /**
+     * 终端的身份。
+     *
+     * 不用 pid：命令是 `shell -l -i -c "cli"`，CLI 是 shell 的子进程，
+     * 而 shell 是否 exec 掉自己因 shell 与平台而异，pid 对不对得上没有保证。
+     * 自己发一个 id 注入进去，读回来就是确定的。
+     */
+    private fun newTabId(): String = "imux-" + java.util.UUID.randomUUID()
 
     companion object {
         private val LOG = logger<TerminalHost>()

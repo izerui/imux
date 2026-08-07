@@ -1,7 +1,9 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.IMUX_TAB_ENV
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,10 +38,23 @@ class AgentCommandTest {
     @Test
     fun `claude 使用原生终端光标供输入法定位`() {
         assertEquals(
-            mapOf("CLAUDE_CODE_NATIVE_CURSOR" to "1"),
-            launchEnvironment(AgentType.CLAUDE),
+            "1",
+            launchEnvironment(AgentType.CLAUDE, "tab-1")["CLAUDE_CODE_NATIVE_CURSOR"],
         )
-        assertTrue(launchEnvironment(AgentType.CODEX).isEmpty())
+        assertNull(launchEnvironment(AgentType.CODEX, "tab-1")["CLAUDE_CODE_NATIVE_CURSOR"])
+    }
+
+    @Test
+    fun `两种 agent 都带上终端标记`() {
+        // CLI 在 /clear、/new 后会换会话 id 而进程不变，这个标记是把进程认回
+        // 对应终端的唯一依据，两边都不能少。见 LiveSessionProbe。
+        AgentType.entries.forEach { type ->
+            assertEquals(
+                "$type 的终端必须带 IMUX_TAB",
+                "tab-7",
+                launchEnvironment(type, "tab-7")[IMUX_TAB_ENV],
+            )
+        }
     }
 
     @Test

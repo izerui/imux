@@ -45,6 +45,15 @@ class SessionListModel(
      * 否则运行中标识失效、再次点击会重开一个终端。消费方取走后即清空。
      */
     private val newBindings = mutableListOf<Pair<String, String>>()
+
+    /**
+     * 本轮出现、却没有任何 pending 认领的新会话。
+     *
+     * 终端里 `/clear`（claude）、`/new`（codex）就是这个形态：CLI 换了会话 id 而进程
+     * 不变，插件这边没有任何人在等它。消费方据此去探测进程，把终端迁到新 id 下。
+     * 与 [newBindings] 一样是破坏性读取。
+     */
+    private val unclaimed = mutableListOf<String>()
     private var knownIds: Set<String> = emptySet()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
@@ -78,6 +87,13 @@ class SessionListModel(
     fun drainNewBindings(): List<Pair<String, String>> {
         val drained = newBindings.toList()
         newBindings.clear()
+        return drained
+    }
+
+    /** 取走并清空本轮的无主新会话，见 [unclaimed]。 */
+    fun drainUnclaimedSessions(): List<String> {
+        val drained = unclaimed.toList()
+        unclaimed.clear()
         return drained
     }
 
@@ -131,7 +147,13 @@ class SessionListModel(
                 .filter { it.agentType == session.agentType }
                 .filter { !it.startedAt.isAfter(session.lastActiveAt) }
                 .maxByOrNull { it.startedAt }
-                ?: continue
+            if (candidate == null) {
+                // 没人在等这个会话。两种可能：某个已打开的终端在 /clear、/new 之后
+                // 换了会话 id（进程没变），或者用户在 IDE 外面自己开了一个。
+                // 分辨要靠进程探测，这里只负责报告。
+                unclaimed.add(session.id)
+                continue
+            }
             bindings[candidate.key] = session.id
             newBindings.add(candidate.key to session.id)
         }

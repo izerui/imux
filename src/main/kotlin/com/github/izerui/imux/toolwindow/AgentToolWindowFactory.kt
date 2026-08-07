@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.DumbAware
@@ -79,6 +80,16 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         // 标签页开或关时立即重绘，不必等下一轮轮询。
         TerminalHost.getInstance(project).addSessionsChangedListener(contentDisposable) {
             sessionTree.reload()
+        }
+
+        // 终端换 key 时把选中挪过去。`/clear`、`/new` 与新建会话落盘都走这里，
+        // 它们都不产生标签页切换，下面那条 selectionChanged 通路接不住。
+        TerminalHost.getInstance(project).addSessionKeyMigratedListener(contentDisposable) { from, to ->
+            sessionTree.reload()
+            // rebindKey 里已经把 file.sessionKey 改成了新 id，所以拿新 id 比对
+            val activeKey = (FileEditorManager.getInstance(project).selectedEditor?.file
+                as? AgentTerminalVirtualFile)?.sessionKey
+            sessionTree.migrateSelection(from, to, isActiveTab = activeKey == to)
         }
 
         // 工具窗口真正显示时兜底扫描一次。

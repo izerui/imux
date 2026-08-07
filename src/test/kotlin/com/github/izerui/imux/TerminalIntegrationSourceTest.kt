@@ -32,8 +32,13 @@ class TerminalIntegrationSourceTest {
             terminalHost.contains("shouldAddToToolWindow("),
         )
         assertTrue(
-            "Claude 的原生光标环境变量必须传入终端进程，不能只停留在命令构造层",
-            terminalHost.contains(".envVariables(launchEnvironment(agentType))"),
+            "启动环境必须传入终端进程，不能只停留在命令构造层",
+            terminalHost.contains(".envVariables(launchEnvironment(agentType, tabId))"),
+        )
+        assertTrue(
+            "tabId 必须在建 view 之前定下：它要随进程启动进入环境变量，" +
+                "之后才能从进程 env 读回来认出这个终端（见 LiveSessionProbe）",
+            terminalHost.contains("val tabId = newTabId()"),
         )
     }
 

@@ -4,8 +4,14 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.ClaudeSessionReader
+import com.github.izerui.imux.session.KeyDrift
+import com.github.izerui.imux.session.LiveSessionProbe
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
+import com.github.izerui.imux.session.codexPids
+import com.github.izerui.imux.session.driftOf
+import com.github.izerui.imux.session.readHeldRollouts
+import com.github.izerui.imux.session.readTabId
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.RunningSessions
@@ -117,6 +123,7 @@ class SessionMonitor(
     private val started = AtomicBoolean(false)
     private val scanning = AtomicBoolean(false)
     private val checkingCompletedTurns = AtomicBoolean(false)
+    private val probing = AtomicBoolean(false)
 
     init {
         // 扫描结果、新建 pending、pending 绑定真实 id 都由 model 产出。
@@ -148,6 +155,72 @@ class SessionMonitor(
             // 新建的会话直到落盘才有文件路径，绑定这一刻才能纳入监控
             session?.let { host.startWatchingTurn(sessionId, it.agentType, it.filePath) }
         }
+    }
+
+    /**
+     * 发现有终端在 `/clear`、`/new` 之后换了会话 id，把它迁到新 id 下。
+     *
+     * **为什么不能靠 pending 机制兜住**：pending 只在插件自己发起「新建」时登记。
+     * 用户在终端里敲 `/clear`，CLI 换一个会话 id 而进程不变，插件这边没有任何人在
+     * 等它——那个新会话就成了无主的，而终端一直记在旧 id 下。后果是标题停更、
+     * 未读清不掉、轮次监控盯着一个不再增长的文件，再点新会话还会以真实 id 重开一个
+     * `--resume` 终端，与仍在运行的原进程抢同一个会话。
+     *
+     * **只在出现无主新会话时才探测**，不是每轮都跑：codex 那侧要 `lsof`，成本不低，
+     * 而无主新会话出现的那一刻正是换 id 发生的时刻，没必要平时空转。
+     */
+    private fun probeSessionDrift() {
+        if (project.isDisposed) return
+        if (model.drainUnclaimedSessions().isEmpty()) return
+        if (!probing.compareAndSet(false, true)) return
+
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                val host = TerminalHost.getInstance(project)
+                val openTabs = host.openTabsByTabId()
+                if (openTabs.isEmpty()) return@launch
+                val openTypes = host.openTabAgentTypes()
+
+                // 必须重新加载而不是用 runtime 缓存：那是上一轮轮询的快照，
+                // 而 CLI 换 id 后运行态文件立刻就更新了，用旧快照会慢一拍。
+                val byPid = runtimeIndex.load(projectPath).values.associateBy { it.pid }
+                val live = LiveSessionProbe(
+                    pidsOf = { type ->
+                        when {
+                            // 没开这类标签页就没有要认领的终端，别去翻进程表
+                            type !in openTypes -> emptyList()
+                            type == AgentType.CLAUDE -> byPid.keys.toList()
+                            else -> codexPids()
+                        }
+                    },
+                    tabIdOf = ::readTabId,
+                    claudeSessionOf = { pid -> byPid[pid]?.sessionId },
+                    rolloutsHeldBy = ::readHeldRollouts,
+                ).probe()
+
+                val drifts = driftOf(openTabs, live)
+                if (drifts.isEmpty() || project.isDisposed) return@launch
+                withContext(Dispatchers.EDT) { applyDrifts(drifts) }
+            } finally {
+                probing.set(false)
+            }
+        }
+    }
+
+    /** 在 EDT 应用探测结果：换 key、换标题、把轮次监控挪到新会话文件上。 */
+    private fun applyDrifts(drifts: List<KeyDrift>) {
+        if (project.isDisposed) return
+        val host = TerminalHost.getInstance(project)
+
+        drifts.forEach { drift ->
+            val session = model.sessionOf(drift.to)
+            host.rebindKey(drift.from, drift.to, session?.title ?: "会话 ${drift.to.take(8)}")
+            // 新会话直到落盘才有文件路径，迁移这一刻才能纳入监控
+            session?.let { host.startWatchingTurn(drift.to, it.agentType, it.filePath) }
+            // 旧 id 已经不是这个终端的身份了，挂在它上面的未读该一并撤掉
+            clearUnread(drift.from)
+        }
+        notifyListeners()
     }
 
     /**
@@ -220,6 +293,7 @@ class SessionMonitor(
         model.addListener {
             applyNewBindings()
             syncOpenTabTitles()
+            probeSessionDrift()
         }
         refresh()
     }
