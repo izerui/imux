@@ -79,10 +79,30 @@ javap -classpath \
 3. 本地资料找不到或可能已经更新时，再查询 JetBrains 官方在线文档或官方源码。
 4. 不直接修改 `.reference/jetbrains/` 下的上游资料。
 
+文档正文都在 `intellij-sdk-docs/topics/` 下，常用子目录：
+
+- `topics/reference_guide/`：平台能力参考，含 `embedded_terminal.md`、`editors.md`、
+  `icons.md`、`messaging_infrastructure.md`、`accessibility.md`、`settings_guide.md`
+- `topics/user_interface_components/`：官方 UI 组件用法，含 `tool_windows.md`、
+  `popups.md`、`lists_and_trees.md`、`kotlin_ui_dsl_version_2.md`、`dialog_wrapper.md`
+- `topics/basics/`：`action_system.md`、`disposers.md`、`persisting_state_of_components.md`
+  等基础机制
+- `topics/ui/`：JetBrains UI 设计规范（视觉、交互、文案）
+- `reference_guide/api_changes_list_2026.md`：262 的 API 变更清单
+
+`images/`（69M）和 `topics/_generated/` 是噪音，检索时优先限定到具体子目录。
+
 检索示例：
 
 ```bash
+# 全量检索
 rg "TerminalToolWindowTabsManager" .reference/jetbrains
+
+# 限定文档正文，避免命中图片和生成文件
+rg "VisibleAreaListener" .reference/jetbrains/intellij-sdk-docs/topics
+
+# 在官方示例中找可直接参考的实现
+rg -l "ToolWindowFactory" .reference/jetbrains/intellij-sdk-code-samples
 ```
 
 更新本地文档：

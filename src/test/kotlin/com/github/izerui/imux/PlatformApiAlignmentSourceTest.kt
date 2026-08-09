@@ -155,6 +155,30 @@ class PlatformApiAlignmentSourceTest {
         assertTrue("设置标题要碰 Swing，必须在 EDT", monitor.contains("Dispatchers.EDT"))
     }
 
+    /**
+     * `updateFilePresentation` 只重画标签页。窗口标题的文件名段平台只在 selectionChanged
+     * 时重算，而 CLI 事后生成标题不产生任何标签页切换事件——于是列表和标签页都跟着变了，
+     * 窗口标题却一直挂着旧标题，非得用户手动切一次标签页才追上。
+     *
+     * 与未读星号那条对称：星号推 [com.intellij.openapi.wm.impl.ProjectFrameHelper] 的
+     * 项目名段，标题推它的文件名段，两段各推各的。
+     */
+    @Test
+    fun `标签页改名时同步窗口标题的文件名段`() {
+        val terminalHost = source(
+            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+        )
+
+        assertTrue(
+            "只刷标签页不够，窗口标题会停在旧标题",
+            terminalHost.contains("setFileTitle("),
+        )
+        assertTrue(
+            "后台标签页改名不能抢走窗口标题，那上面写的是用户眼下正看的文件",
+            terminalHost.contains("selectedFiles.any { it === file }"),
+        )
+    }
+
     @Test
     fun `已打开标记覆盖已有与待绑定会话`() {
         val tree = source(
