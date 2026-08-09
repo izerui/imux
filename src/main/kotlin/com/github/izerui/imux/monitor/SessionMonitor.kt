@@ -23,11 +23,14 @@ import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.WindowManager
+import com.intellij.openapi.wm.impl.FrameTitleBuilder
 import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -308,6 +311,7 @@ class SessionMonitor(
     fun markUnread(sessionId: String) {
         if (unread.add(sessionId)) {
             updateOpenTabIcons(setOf(sessionId))
+            updateFrameTitle()
             notifyListeners()
         }
     }
@@ -317,6 +321,7 @@ class SessionMonitor(
         TurnNotifier.dismiss(sessionId)
         if (unread.remove(sessionId)) {
             updateOpenTabIcons(setOf(sessionId))
+            updateFrameTitle()
             notifyListeners()
         }
     }
@@ -476,6 +481,25 @@ class SessionMonitor(
             .filterIsInstance<AgentTerminalVirtualFile>()
             .filter { sessionIds == null || it.sessionKey in sessionIds }
             .forEach { file -> manager.updateFilePresentation(file) }
+    }
+
+    /**
+     * 把未读星号推到窗口标题上。
+     *
+     * [UnreadFrameTitleBuilder] 只在平台自发重算标题时被调用（切文件、项目状态变化），
+     * 未读刚变化的那一刻没有任何重算触发。而「切文件」本身往往就是清未读的动作——
+     * 光靠 builder，星号亮起的那一刻用户根本看不到。
+     *
+     * 只设项目名那一段：[com.intellij.openapi.wm.impl.ProjectFrameHelper] 把项目名与
+     * 文件名分成两个字段存，传项目名进去，文件名与分隔符仍由平台自己拼。
+     */
+    private fun updateFrameTitle() {
+        coroutineScope.launch(Dispatchers.EDT) {
+            if (project.isDisposed) return@launch
+            val titleBuilder = serviceOrNull<FrameTitleBuilder>() ?: return@launch
+            WindowManager.getInstance().getIdeFrame(project)
+                ?.setFrameTitle(titleBuilder.getProjectTitle(project))
+        }
     }
 
     override fun dispose() = Unit

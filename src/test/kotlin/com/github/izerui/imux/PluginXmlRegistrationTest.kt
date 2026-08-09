@@ -61,6 +61,24 @@ class PluginXmlRegistrationTest {
         assertTrue("工具窗口应停靠在左侧", pluginXml.contains("anchor=\"left\""))
     }
 
+    /**
+     * 窗口标题的未读星号靠覆盖平台的 FrameTitleBuilder 实现。这个覆盖只在
+     * plugin.xml 里存在，类写好了却没注册的话平台照用原实现，标题一切正常，
+     * 编译与单测都发现不了。
+     */
+    @Test
+    fun `覆盖了平台的窗口标题构建器`() {
+        assertTrue(
+            "plugin.xml 未注册 UnreadFrameTitleBuilder，窗口标题不会出现未读星号",
+            pluginXml.contains("com.github.izerui.imux.frame.UnreadFrameTitleBuilder"),
+        )
+        assertTrue(
+            "必须声明 overrides=\"true\"，否则平台会因服务重复注册而报错",
+            pluginXml.contains("serviceInterface=\"com.intellij.openapi.wm.impl.FrameTitleBuilder\"") &&
+                pluginXml.contains("overrides=\"true\""),
+        )
+    }
+
     @Test
     fun `注册了项目启动活动`() {
         // 工具窗口的内容是懒加载的：监听若只在 createToolWindowContent 里启动，

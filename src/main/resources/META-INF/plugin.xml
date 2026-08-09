@@ -62,6 +62,16 @@
         <fileIconProvider
                 implementation="com.github.izerui.imux.terminal.AgentTerminalFileIconProvider"/>
 
+        <!--
+          覆盖平台的窗口标题构建器，给有未读会话的项目名加星号前缀。
+          macOS 把多个项目窗口合并成标签栏后，标签上只有 NSWindow title，
+          未读状态若不送到这里，切出该项目就完全不可见。
+        -->
+        <applicationService
+                serviceInterface="com.intellij.openapi.wm.impl.FrameTitleBuilder"
+                serviceImplementation="com.github.izerui.imux.frame.UnreadFrameTitleBuilder"
+                overrides="true"/>
+
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
 

@@ -10,6 +10,12 @@ class PlatformApiAlignmentSourceTest {
     private fun source(path: String): String =
         File(path).takeIf(File::exists)?.readText().orEmpty()
 
+    /** 断言「不许调用某 API」时用，免得注释里解释原因的那句话把测试带红。 */
+    private fun stripComments(source: String): String =
+        source.lineSequence()
+            .filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("//") }
+            .joinToString("\n")
+
     @Test
     fun `标签标题使用 EditorTabTitleProvider 而不是重命名只读虚拟文件`() {
         val terminalHost = source(
@@ -101,6 +107,52 @@ class PlatformApiAlignmentSourceTest {
                 .findAll(monitor)
                 .count() >= 2,
         )
+    }
+
+    /**
+     * 覆盖后的 [com.intellij.openapi.wm.impl.FrameTitleBuilder] 对 IDE 里**所有**项目
+     * 窗口生效，包括从没开过 AI 会话的项目。若用 `SessionMonitor.getInstance(project)`
+     * 查未读，平台每渲染一次标题就会把这个项目服务连同它的轮询协程一起创建出来——
+     * 用户没用过 imux，却被扫了一遍会话目录。
+     *
+     * 这条差异在开发沙箱里看不出来（那儿只有一个项目、还总是开着工具窗口），
+     * 单测也碰不到服务容器，只能在源码层面钉死。
+     */
+    @Test
+    fun `窗口标题查未读不得意外创建项目服务`() {
+        val builder = source(
+            "src/main/kotlin/com/github/izerui/imux/frame/UnreadFrameTitleBuilder.kt",
+        )
+
+        assertTrue(builder.contains("getServiceIfCreated(SessionMonitor::class.java)"))
+        // 只禁实际调用；注释里那段「为什么不能用 getInstance」的说明要留着
+        assertFalse(
+            "getInstance 会创建服务，标题渲染不该有这个副作用",
+            stripComments(builder).contains("SessionMonitor.getInstance("),
+        )
+        // 标题也可能在项目关闭过程中被重算
+        assertTrue(builder.contains("project.isDisposed"))
+    }
+
+    /**
+     * 光有 builder 不够：它只在平台自发重算标题时被调用（切文件、项目状态变化）。
+     * 未读刚变化的那一刻没有任何重算触发，星号要等到用户下次切文件才出现或消失——
+     * 而「切文件」本身往往就是清未读的动作，用户根本看不到星号亮起。
+     *
+     * 所以 markUnread / clearUnread 两处都必须主动推一次标题。
+     */
+    @Test
+    fun `未读变化时主动刷新窗口标题`() {
+        val monitor = source(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        )
+
+        assertTrue(
+            "标记与清除未读都要刷新标题，缺一处就会出现「星号不消失」或「星号不出现」",
+            Regex("""updateFrameTitle\(\)""").findAll(monitor).count() >= 3,
+        )
+        assertTrue(monitor.contains("WindowManager.getInstance().getIdeFrame(project)"))
+        assertTrue("设置标题要碰 Swing，必须在 EDT", monitor.contains("Dispatchers.EDT"))
     }
 
     @Test
