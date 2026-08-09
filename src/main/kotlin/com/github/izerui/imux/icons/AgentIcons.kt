@@ -5,6 +5,10 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.RowIcon
+import java.awt.Component
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
 import kotlin.math.cos
@@ -19,6 +23,14 @@ private const val BREATH_FRAME_MS = 100
 private const val BREATH_MIN_ALPHA = 0.35f
 
 /**
+ * 呼吸最小处的缩放比例。
+ *
+ * 16px 的图标缩到 0.8 就只剩 13px，边缘细节会糊成一团；0.88 掉的那 2px
+ * 刚好看得出在收缩，又不至于让品牌标志认不出来。
+ */
+private const val BREATH_MIN_SCALE = 0.88
+
+/**
  * `AllIcons` 没有 OpenAI / Claude 品牌标志，无法用语义匹配的平台图标替代；
  * 资源仍交给 [IconLoader] 选择主题与 HiDPI 变体。
  *
@@ -31,7 +43,7 @@ internal object AgentIcons {
     private val codex = IconLoader.getIcon("/icons/codex.png", javaClass)
 
     // 动画帧只建一次：标签页会反复来取图标，每次新建不只是浪费，
-    // 还会让呼吸每次都从第一帧重来，看着像卡住。
+    // 还会让动画每次都从第一帧重来，看着像卡住。
     private val claudeBusy by lazy { breathing(claude) }
     private val codexBusy by lazy { breathing(codex) }
 
@@ -49,7 +61,7 @@ internal object AgentIcons {
         AgentType.CODEX -> codex
     }
 
-    /** 品牌图标明暗呼吸，表示这个会话正在跑。 */
+    /** 品牌图标一边明暗呼吸一边收放，表示这个会话正在跑。 */
     fun busy(agentType: AgentType): Icon = when (agentType) {
         AgentType.CLAUDE -> claudeBusy
         AgentType.CODEX -> codexBusy
@@ -78,20 +90,54 @@ internal object AgentIcons {
         }
 
     /**
-     * 亮度按余弦往复，而不是线性来回。
+     * 亮度与大小同相位按余弦往复，而不是线性来回。
      *
      * 线性的话最亮和最暗两端会有明显的折返感，像被掐了一下；余弦在两端自然减速，
-     * 才是「呼吸」。首帧 alpha 为 1，所以刚变忙碌时是从满亮度开始暗下去。
+     * 才是「呼吸」。两条曲线同相位——最暗的那一帧同时也最小——分开走会像两个动画
+     * 各跑各的。首帧 alpha 与缩放都是 1，所以刚变忙碌时是从满亮度、原尺寸开始收。
      */
     private fun breathing(base: Icon): Icon = AnimatedIcon(
         BREATH_FRAME_MS,
         *Array<Icon>(BREATH_FRAMES) { frame ->
             val phase = 2 * Math.PI * frame / BREATH_FRAMES
-            val brightness = ((1 + cos(phase)) / 2).toFloat()
-            IconLoader.getTransparentIcon(
+            val brightness = (1 + cos(phase)) / 2
+            val faded = IconLoader.getTransparentIcon(
                 base,
-                BREATH_MIN_ALPHA + (1f - BREATH_MIN_ALPHA) * brightness,
+                BREATH_MIN_ALPHA + (1f - BREATH_MIN_ALPHA) * brightness.toFloat(),
             )
+            val scale = BREATH_MIN_SCALE + (1.0 - BREATH_MIN_SCALE) * brightness
+            if (frame == 0) faded else ScaledIcon(faded, scale)
         },
     )
+
+    /**
+     * 以中心为原点缩放绘制，但对外仍报原来的尺寸。
+     *
+     * 尺寸必须保持不变：一是 [AnimatedIcon] 要求各帧同尺寸，二是尺寸一变标签里的
+     * 标题就会跟着横移。这里只缩小不放大，画出来的内容始终落在声明区域内，不会被裁。
+     */
+    private class ScaledIcon(private val base: Icon, private val scale: Double) : Icon {
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                // 缩放会让图标落在半像素上，不开插值的话边缘是硬切的锯齿。
+                g2.setRenderingHint(
+                    RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BILINEAR,
+                )
+                val cx = x + base.iconWidth / 2.0
+                val cy = y + base.iconHeight / 2.0
+                g2.translate(cx, cy)
+                g2.scale(scale, scale)
+                g2.translate(-cx, -cy)
+                base.paintIcon(c, g2, x, y)
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getIconWidth(): Int = base.iconWidth
+
+        override fun getIconHeight(): Int = base.iconHeight
+    }
 }
