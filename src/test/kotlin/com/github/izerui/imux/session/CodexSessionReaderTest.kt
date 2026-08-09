@@ -15,10 +15,18 @@ class CodexSessionReaderTest {
 
     private fun reader() = CodexSessionReader(tmp.root.toPath())
 
-    private fun writeRollout(uuid: String, cwd: String, body: String = "") {
+    private fun writeRollout(
+        uuid: String,
+        cwd: String,
+        body: String = "",
+        source: String = "\"cli\"",
+        threadSource: String? = null,
+    ) {
         val dir = File(tmp.root, "sessions/2026/08/03").apply { mkdirs() }
+        val threadSourceField =
+            threadSource?.let { ""","thread_source":"$it"""" }.orEmpty()
         val meta =
-            """{"timestamp":"2026-08-03T11:31:27.000Z","type":"session_meta","payload":{"id":"$uuid","cwd":"$cwd"}}"""
+            """{"timestamp":"2026-08-03T11:31:27.000Z","type":"session_meta","payload":{"id":"$uuid","cwd":"$cwd","source":$source$threadSourceField}}"""
         File(dir, "rollout-2026-08-03T11-31-27-$uuid.jsonl")
             .writeText(if (body.isEmpty()) meta else "$meta\n$body")
     }
@@ -36,6 +44,23 @@ class CodexSessionReaderTest {
         assertEquals(1, sessions.size)
         assertEquals("uuid-mine", sessions[0].id)
         assertEquals(AgentType.CODEX, sessions[0].agentType)
+    }
+
+    @Test
+    fun `过滤 review 子代理避免与父会话重复`() {
+        val prompt = userMessage("Review the code changes against the base branch")
+        writeRollout("uuid-parent", "/Users/demo/proj", prompt)
+        writeRollout(
+            "uuid-review",
+            "/Users/demo/proj",
+            prompt,
+            source = """{"subagent":"review"}""",
+            threadSource = "subagent",
+        )
+
+        val sessions = reader().read("/Users/demo/proj")
+
+        assertEquals(listOf("uuid-parent"), sessions.map { it.id })
     }
 
     @Test

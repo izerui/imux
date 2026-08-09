@@ -51,6 +51,7 @@ class CodexSessionReader(private val codexHome: Path) {
     ): AgentSession? = runCatching {
         val meta = firstLine(file) ?: return null
         if (!meta.contains(META_MARKER)) return null
+        if (JsonLineScanner.stringValue(meta, "thread_source") == SUBAGENT_THREAD_SOURCE) return null
 
         val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
         if (cwd != projectPath) return null
@@ -97,5 +98,6 @@ class CodexSessionReader(private val codexHome: Path) {
 
         const val META_MARKER = "\"session_meta\""
         const val USER_ROLE_MARKER = "\"role\":\"user\""
+        const val SUBAGENT_THREAD_SOURCE = "subagent"
     }
 }
