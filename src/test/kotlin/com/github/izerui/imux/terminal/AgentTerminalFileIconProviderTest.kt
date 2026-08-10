@@ -65,11 +65,12 @@ class AgentTerminalFileIconProviderTest {
 
     /** 未读标记与会话列表用同一个常量，两处样式才一致。 */
     @Test
-    fun `未读标记就是列表里那一个且跟在品牌图标后面`() {
+    fun `未读标记就是列表里那一个且排在品牌图标之前`() {
         val unread = terminalTabIcon(AgentType.CLAUDE, running = false, unread = true) as RowIcon
 
-        assertSame(AgentIcons.forAgent(AgentType.CLAUDE), unread.getIcon(0))
-        assertSame(AllIcons.General.Modified, unread.getIcon(1))
+        // 标记在最左：一排标签的未读标记才会对齐在同一侧，一眼数得出哪几个有新结果。
+        assertSame(AllIcons.General.Modified, unread.getIcon(0))
+        assertSame(AgentIcons.forAgent(AgentType.CLAUDE), unread.getIcon(1))
     }
 
     /** 没有未读时不留空位：图标就是品牌图标本身，不多占一格。 */
@@ -81,7 +82,7 @@ class AgentTerminalFileIconProviderTest {
         assertEquals(16, idle.iconWidth)
     }
 
-    /** 动画只建一次：每次新建会让呼吸从头开始，看着像卡住。 */
+    /** 动画只建一次：每次新建会让转圈从头开始，看着像卡住。 */
     @Test
     fun `同一状态复用同一个实例`() {
         assertSame(
@@ -90,7 +91,7 @@ class AgentTerminalFileIconProviderTest {
         )
     }
 
-    /** 忙碌不改变尺寸：呼吸只动亮度，标题不会一忙起来就横移。 */
+    /** 忙碌不改变尺寸：只绕中心转，标题不会一忙起来就横移。 */
     @Test
     fun `忙碌与否宽度相同`() {
         assertEquals(
