@@ -24,11 +24,13 @@ class ClaudeRuntimeIndexTest {
         kind: String = "interactive",
         status: String? = "idle",
         cwd: String = "/Users/demo/proj",
+        waitingFor: String? = null,
     ) {
         val dir = File(tmp.root, "sessions").apply { mkdirs() }
         val statusField = if (status == null) "" else ""","status":"$status""""
+        val waitingField = if (waitingFor == null) "" else ""","waitingFor":"$waitingFor""""
         File(dir, "$pid.json").writeText(
-            """{"pid":"$pid","sessionId":"$sessionId","cwd":"$cwd","kind":"$kind"$statusField}""",
+            """{"pid":"$pid","sessionId":"$sessionId","cwd":"$cwd","kind":"$kind"$statusField$waitingField}""",
         )
     }
 
@@ -124,6 +126,34 @@ class ClaudeRuntimeIndexTest {
         writeSession(1001, "s1", kind = "interactive", status = "idle")
 
         assertFalse(index().load()["s1"]!!.isBackground)
+    }
+
+    /**
+     * `waiting` 是 CLI 的第四种状态：弹出了权限确认或选择框，这一轮已经停下等用户操作。
+     * 对用户来说对话已经中断，不该继续转菊花——那会让人以为它还在跑。
+     */
+    @Test
+    fun `等待用户选择时不算忙碌`() {
+        writeSession(1001, "s1", status = "waiting")
+
+        val entry = index().load()["s1"]!!
+        assertFalse(entry.isBusy)
+        assertTrue(entry.isWaiting)
+    }
+
+    /** 但进程仍占着会话，resume 预检要按占用处理。 */
+    @Test
+    fun `等待用户选择时仍算被占用`() {
+        writeSession(1001, "s1", kind = "bg", status = "waiting")
+
+        assertTrue(index().load()["s1"]!!.isOccupied)
+    }
+
+    @Test
+    fun `读出等待原因`() {
+        writeSession(1001, "s1", status = "waiting", waitingFor = "permission prompt")
+
+        assertEquals("permission prompt", index().load()["s1"]!!.waitingFor)
     }
 
     @Test

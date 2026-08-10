@@ -19,8 +19,12 @@ data class ClaudeRuntimeSession(
     val kind: String?,
     val status: String?,
     val cwd: String?,
+    val waitingFor: String? = null,
 ) {
     val isBackground: Boolean get() = kind == "bg"
+
+    /** 弹出了权限确认或选择框，这一轮停下等用户操作。 */
+    val isWaiting: Boolean get() = status == WAITING
 
     /**
      * 这一轮还在跑。据此显示运行中标记、判定轮次完成。
@@ -28,14 +32,19 @@ data class ClaudeRuntimeSession(
      * `shell` 不算：那时回答早打完了，只剩后台 shell 在收尾。实测状态序列是
      * `busy` -> `shell` -> `idle`，若把 `shell` 也算忙碌，用户眼里就是
      * 「明明执行完了还一直转菊花」，且品牌图标要等到后台任务结束才回来。
+     *
+     * `waiting` 同样不算：那是 CLI 弹出了权限确认或选择框，对话已经停下等用户操作。
+     * 继续转菊花会让人以为它还在跑，而实际上不去点一下它永远不会动。
      */
-    val isBusy: Boolean get() = status != null && status != "idle" && status != SHELL
+    val isBusy: Boolean get() =
+        status != null && status != "idle" && status != SHELL && status != WAITING
 
     /** 会话被这个进程占着。resume 一个未空闲的后台会话会被 CLI 拒绝。 */
     val isOccupied: Boolean get() = status != null && status != "idle"
 
     private companion object {
         const val SHELL = "shell"
+        const val WAITING = "waiting"
     }
 }
 
@@ -99,6 +108,7 @@ class ClaudeRuntimeIndex(
             kind = record.stringOf("kind"),
             status = record.stringOf("status"),
             cwd = record.stringOf("cwd"),
+            waitingFor = record.stringOf("waitingFor"),
         )
     }.getOrNull()
 

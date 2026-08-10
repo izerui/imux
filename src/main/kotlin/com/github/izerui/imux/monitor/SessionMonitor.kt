@@ -19,6 +19,7 @@ import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.RunningSessions
 import com.github.izerui.imux.turn.RuntimeStatusTracker
 import com.github.izerui.imux.turn.TurnNotifier
+import com.github.izerui.imux.turn.waitingNotificationWanted
 import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
@@ -403,7 +404,8 @@ class SessionMonitor(
                 val snapshot = runtimeIndex.load(projectPath)
                 val watcher = host.turnWatcher()
                 // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
-                val completed = (statusTracker.completedSince(snapshot) + watcher.poll()).distinct()
+                val outcome = statusTracker.completedSince(snapshot)
+                val completed = (outcome.completed + watcher.poll()).distinct()
                 val running = RunningSessions.of(snapshot, watcher.workingIds(AgentType.CODEX))
 
                 withContext(Dispatchers.EDT) {
@@ -434,6 +436,26 @@ class SessionMonitor(
                             ::openSessionFromNotification,
                         )
                     }
+
+                    if (outcome.waiting.isNotEmpty()) {
+                        val selected = selectedSessionKeys()
+                        outcome.waiting.forEach { waiting ->
+                            val session = model.sessionOf(waiting.sessionId)
+                            markUnread(waiting.sessionId)
+
+                            // 人正看着它就别弹了，CLI 的选择框已经占在屏幕上
+                            if (!waitingNotificationWanted(waiting.sessionId, selected)) return@forEach
+
+                            TurnNotifier.notifyWaiting(
+                                project,
+                                waiting.sessionId,
+                                session?.title ?: "会话 ${waiting.sessionId.take(8)}",
+                                session?.agentType,
+                                waiting.reason,
+                                ::openSessionFromNotification,
+                            )
+                        }
+                    }
                 }
             } finally {
                 checkingCompletedTurns.set(false)
@@ -456,6 +478,17 @@ class SessionMonitor(
         watcher.start()
         Disposer.register(this, watcher)
     }
+
+    /**
+     * 此刻处于选中态的会话标签页。分屏时会有多个，故返回集合。
+     *
+     * 必须在 EDT 调用：`selectedFiles` 读的是编辑器 UI 状态。
+     */
+    private fun selectedSessionKeys(): Set<String> =
+        FileEditorManager.getInstance(project).selectedFiles
+            .filterIsInstance<AgentTerminalVirtualFile>()
+            .map { it.sessionKey }
+            .toSet()
 
     /** 从别处切回该会话的标签页时消除未读。 */
     private fun clearUnreadOnTabSwitch() {

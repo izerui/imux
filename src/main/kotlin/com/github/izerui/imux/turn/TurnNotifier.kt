@@ -38,9 +38,33 @@ object TurnNotifier {
         agentType: AgentType?,
         duration: Duration?,
         openSession: (Project, String) -> Unit,
-    ) {
-        val subtitle = completionSubtitle(agentType, duration)
+    ) = notify(project, sessionId, title, completionSubtitle(agentType, duration), openSession)
 
+    /**
+     * 该会话弹出了权限确认或选择框，停下等用户操作。
+     *
+     * 与 [notifyCompleted] 共用同一套气泡与去重表——对用户来说下一步动作都是
+     * 「打开看看」，区别只在副标题说的是「等待权限确认」还是「已完成 · 耗时 2 分」。
+     * 不报耗时：这一轮并未结束，任何数字都是错的。
+     *
+     * 调用方需先用 [waitingNotificationWanted] 判断该不该弹。
+     */
+    fun notifyWaiting(
+        project: Project,
+        sessionId: String,
+        title: String,
+        agentType: AgentType?,
+        waitingFor: String?,
+        openSession: (Project, String) -> Unit,
+    ) = notify(project, sessionId, title, waitingSubtitle(agentType, waitingFor), openSession)
+
+    private fun notify(
+        project: Project,
+        sessionId: String,
+        title: String,
+        subtitle: String,
+        openSession: (Project, String) -> Unit,
+    ) {
         // 上行放「Agent · 耗时」，下行放会话标题。
         //
         // 反过来看似更直觉，实际不好用：会话标题长短悬殊（上限 60 字符），
