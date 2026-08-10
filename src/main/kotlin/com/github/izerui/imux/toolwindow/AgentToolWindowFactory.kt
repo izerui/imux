@@ -24,6 +24,7 @@ import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
+import com.intellij.openapi.wm.impl.content.ToolWindowContentUi
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.content.ContentFactory
 
@@ -58,6 +59,12 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
             // 往右拖能把整条标题读完——渲染器按当前可视宽度截断，拖到哪就显示到哪。
             setContent(JBScrollPane(sessionTree.component()))
         }
+
+        // 新 UI 默认把标题栏图标折叠成「鼠标悬停或窗口聚焦才浮现」，但新建/刷新是这里的高频入口，
+        // 藏起来等于每次都要先摸一下才知道点哪。平台给了这个开关（见 InternalDecoratorImpl
+        // .updateActiveAndHoverState），置位后图标常驻，等价于用户手动开 Advanced Settings 里的
+        // ide.always.show.tool.window.header.icons，但只作用于本窗口，不动别人。
+        toolWindow.component.putClientProperty(ToolWindowContentUi.DONT_HIDE_TOOLBAR_IN_HEADER, true)
 
         toolWindow.setTitleActions(
             listOf(
