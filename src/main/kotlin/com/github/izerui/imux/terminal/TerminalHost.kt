@@ -9,8 +9,6 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.WindowManager
-import com.intellij.openapi.wm.impl.ProjectFrameHelper
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.github.izerui.imux.turn.TurnWatcher
@@ -250,30 +248,14 @@ class TerminalHost(private val project: Project) : Disposable {
         }
     }
 
+    /**
+     * 不再同步窗口标题：[com.github.izerui.imux.frame.AgentFrameTitleBuilder] 把文件名段
+     * 整个抹掉了，窗口标题只剩项目名与会话状态，没有可跟的那一段。
+     */
     private fun updateTabTitle(file: AgentTerminalVirtualFile, newTitle: String) {
         if (file.tabTitle == newTitle) return
         file.tabTitle = newTitle
-        val manager = FileEditorManager.getInstance(project)
-        manager.updateFilePresentation(file)
-        syncFrameFileTitle(newTitle, isSelected = manager.selectedFiles.any { it === file })
-    }
-
-    /**
-     * 让 IDE 窗口标题也跟上改完的标签页标题。
-     *
-     * [FileEditorManager.updateFilePresentation] 只重画标签页本身。窗口标题的文件名段
-     * 平台只在 selectionChanged 时才重算，而 CLI 事后生成标题（claude 的 ai-title、
-     * codex 写进 sqlite 的标题）不产生任何标签页切换事件——于是列表和标签页都变了，
-     * 窗口标题却一直停在旧值，非得用户手动切一次标签页才追上。
-     *
-     * 只设文件名那一段，与 [com.github.izerui.imux.monitor.SessionMonitor] 里推未读星号
-     * 的 setFrameTitle 对称：[com.intellij.openapi.wm.impl.ProjectFrameHelper] 把项目名
-     * 与文件名分成两个字段存，各推各的，分隔符由平台自己拼。
-     */
-    private fun syncFrameFileTitle(newTitle: String, isSelected: Boolean) {
-        val frameTitle = frameFileTitleAfterRename(isSelected, newTitle) ?: return
-        val frameHelper = WindowManager.getInstance().getIdeFrame(project) as? ProjectFrameHelper
-        frameHelper?.setFileTitle(frameTitle, null)
+        FileEditorManager.getInstance(project).updateFilePresentation(file)
     }
 
     /**
@@ -461,15 +443,6 @@ internal fun staleTabTitles(
     val latest = latestTitleOf(key)
     if (latest.isNullOrEmpty() || latest == title) null else key to latest
 }.toMap()
-
-/**
- * 标签页改完名后，窗口标题的文件名段该改成什么；不该动时返回 null。
- *
- * 两种情况保持原样：改的是后台标签页——窗口标题上写的是用户眼下正看的那个文件，
- * 不能被背后的会话抢走；以及新标题为空——那会把窗口标题刷成只剩项目名。
- */
-internal fun frameFileTitleAfterRename(isSelected: Boolean, newTitle: String): String? =
-    if (isSelected && newTitle.isNotEmpty()) newTitle else null
 
 internal fun isViewportAtBottom(
     visibleTop: Int,

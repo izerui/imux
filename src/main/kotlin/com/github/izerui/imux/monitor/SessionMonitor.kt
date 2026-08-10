@@ -32,6 +32,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.impl.FrameTitleBuilder
+import com.intellij.openapi.wm.impl.ProjectFrameHelper
 import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -527,15 +528,19 @@ class SessionMonitor(
      * 未读或运行数刚变化的那一刻没有任何重算触发。而「切文件」本身往往就是清未读的
      * 动作——光靠 builder，星号亮起的那一刻用户根本看不到。
      *
-     * 只设项目名那一段：[com.intellij.openapi.wm.impl.ProjectFrameHelper] 把项目名与
-     * 文件名分成两个字段存，传项目名进去，文件名与分隔符仍由平台自己拼。
+     * 必须走 `updateTitle` 而不是 `setFrameTitle`。后者只调 `IdeFrameImpl.setTitle`
+     * 直接盖 AWT 标题，**不写项目名字段**；平台随后在切文件时用「缓存的未装饰项目名 +
+     * 新文件名」重拼一遍，装饰就没了。而 `getProjectTitle` 全平台只在项目打开与改名
+     * 时被调用，也补不回来。`updateTitle` 是写项目名字段的唯一公开入口，写进去的装饰
+     * 才活得过平台重算。
      */
     private fun updateFrameTitle() {
         coroutineScope.launch(Dispatchers.EDT) {
             if (project.isDisposed) return@launch
             val titleBuilder = serviceOrNull<FrameTitleBuilder>() ?: return@launch
-            WindowManager.getInstance().getIdeFrame(project)
-                ?.setFrameTitle(titleBuilder.getProjectTitle(project))
+            val frameHelper =
+                WindowManager.getInstance().getIdeFrame(project) as? ProjectFrameHelper
+            frameHelper?.updateTitle(titleBuilder.getProjectTitle(project), project)
         }
     }
 

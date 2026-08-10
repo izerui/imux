@@ -2,6 +2,7 @@ package com.github.izerui.imux.frame
 
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.impl.PlatformFrameTitleBuilder
 
 /**
@@ -12,8 +13,11 @@ import com.intellij.openapi.wm.impl.PlatformFrameTitleBuilder
  * 哪个项目跑完了活、哪个还在跑。窗口标题由平台的 [PlatformFrameTitleBuilder] 生成，
  * 覆盖它是把这些状态送出窗口的唯一稳妥途径。
  *
- * 只覆盖项目名那一段：标签宽度有限，标题末尾会被省略号截掉，只有开头能保证可见。
- * 后缀因此夹在项目名与文件路径之间，而不是整条标题的末尾。
+ * 同时把文件名那一段抹掉，标题就只剩「项目名 + 状态」。平台没有隐藏文件名的设置项:
+ * `UISettings.fullPathsInWindowHeader` 只在全路径与短名之间切，
+ * `ide.show.fileType.icon.in.titleBar` 管的是文件类型图标。覆写生成端是唯一途径——
+ * 改用 `setFileTitle("")` 清空没用，平台每次 selectionChanged 都会用
+ * [getFileTitleAsync] 的结果写回。
  *
  * 标题只能是纯文本，无法加粗或着色——状态的视觉强度以字符本身为上限。
  */
@@ -27,6 +31,16 @@ class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
             runningCount = monitor?.runningIds?.size ?: 0,
         )
     }
+
+    /**
+     * 空串而不是 null：平台的 `appendTitlePart` 对 null 与空白一视同仁地早退，
+     * 连同前面的 ` – ` 分隔符一起跳过，不会留下孤零零的破折号。
+     *
+     * 同步与异步两个重载都要覆写——平台按调用点分走两条路径。
+     */
+    override fun getFileTitle(project: Project, file: VirtualFile): String = ""
+
+    override suspend fun getFileTitleAsync(project: Project, file: VirtualFile): String = ""
 
     companion object {
 

@@ -161,27 +161,43 @@ class PlatformApiAlignmentSourceTest {
     }
 
     /**
-     * `updateFilePresentation` 只重画标签页。窗口标题的文件名段平台只在 selectionChanged
-     * 时重算，而 CLI 事后生成标题不产生任何标签页切换事件——于是列表和标签页都跟着变了，
-     * 窗口标题却一直挂着旧标题，非得用户手动切一次标签页才追上。
+     * 平台把标题拆成项目名段与文件名段，`setFrameTitle` 只盖 AWT 标题、不写项目名字段，
+     * 于是切一次文件平台就用「缓存的未装饰项目名 + 新文件名」重拼，装饰全丢。
      *
-     * 与未读星号那条对称：星号推 [com.intellij.openapi.wm.impl.ProjectFrameHelper] 的
-     * 项目名段，标题推它的文件名段，两段各推各的。
+     * `updateTitle(String, Project)` 是写项目名字段的唯一公开入口（public suspend，
+     * 不带 `$intellij_platform_ide_impl` 后缀即非 internal），装饰写进去才活得过重算。
      */
     @Test
-    fun `标签页改名时同步窗口标题的文件名段`() {
-        val terminalHost = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+    fun `状态装饰写进项目名字段而不是直接盖标题`() {
+        val monitor = source(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
         )
 
         assertTrue(
-            "只刷标签页不够，窗口标题会停在旧标题",
-            terminalHost.contains("setFileTitle("),
+            "updateTitle 才写项目名字段，装饰才活得过平台重算",
+            monitor.contains("updateTitle("),
         )
-        assertTrue(
-            "后台标签页改名不能抢走窗口标题，那上面写的是用户眼下正看的文件",
-            terminalHost.contains("selectedFiles.any { it === file }"),
+        assertFalse(
+            "setFrameTitle 只盖 AWT 标题，切一次文件装饰就被冲掉",
+            stripComments(monitor).contains("setFrameTitle("),
         )
+    }
+
+    /**
+     * 平台没有隐藏文件名段的设置项：`fullPathsInWindowHeader` 只在全路径与短名之间切，
+     * `ide.show.fileType.icon.in.titleBar` 管的是图标。唯一途径是覆写文件名段的生成端。
+     *
+     * 不能改用 `setFileTitle("")` 清空——平台每次 selectionChanged 都会用
+     * `getFileTitleAsync` 的结果写回，清空会被立刻覆盖。
+     */
+    @Test
+    fun `窗口标题不显示文件名段`() {
+        val builder = source(
+            "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
+        )
+
+        assertTrue("同步与异步两个重载都要覆写，平台两条路径都会走", builder.contains("getFileTitle("))
+        assertTrue(builder.contains("getFileTitleAsync("))
     }
 
     @Test
