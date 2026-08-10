@@ -69,7 +69,7 @@
         -->
         <applicationService
                 serviceInterface="com.intellij.openapi.wm.impl.FrameTitleBuilder"
-                serviceImplementation="com.github.izerui.imux.frame.UnreadFrameTitleBuilder"
+                serviceImplementation="com.github.izerui.imux.frame.AgentFrameTitleBuilder"
                 overrides="true"/>
 
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->

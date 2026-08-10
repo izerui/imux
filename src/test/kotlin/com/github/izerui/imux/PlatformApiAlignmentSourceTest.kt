@@ -100,7 +100,12 @@ class PlatformApiAlignmentSourceTest {
         // 未读格与会话列表用同一个常量，两处样式才一致
         assertTrue(icons.contains("AllIcons.General.Modified"))
         assertTrue(monitor.contains("val runningChanged = runningIds != running"))
-        assertTrue(monitor.contains("if (runningChanged) updateOpenTabIcons()"))
+        // 标签图标与窗口标题读同一个信号，漏掉任一处都会让那处停在上一次的运行态
+        assertTrue(
+            "运行态变化要同时刷新标签图标与窗口标题",
+            Regex("""if \(runningChanged\) \{\s*updateOpenTabIcons\(\)\s*updateFrameTitle\(\)\s*}""")
+                .containsMatchIn(monitor),
+        )
         assertTrue(monitor.contains("updateFilePresentation(file)"))
         assertTrue(
             Regex("""updateOpenTabIcons\(setOf\(sessionId\)\)""")
@@ -121,7 +126,7 @@ class PlatformApiAlignmentSourceTest {
     @Test
     fun `窗口标题查未读不得意外创建项目服务`() {
         val builder = source(
-            "src/main/kotlin/com/github/izerui/imux/frame/UnreadFrameTitleBuilder.kt",
+            "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
         )
 
         assertTrue(builder.contains("getServiceIfCreated(SessionMonitor::class.java)"))

@@ -412,7 +412,11 @@ class SessionMonitor(
                     val runningChanged = runningIds != running
                     runtime = snapshot
                     runningIds = running
-                    if (runningChanged) updateOpenTabIcons()
+                    // 标签图标与窗口标题读的是同一个信号，一并推
+                    if (runningChanged) {
+                        updateOpenTabIcons()
+                        updateFrameTitle()
+                    }
                     notifyListeners()
 
                     completed.forEach { sessionId ->
@@ -517,11 +521,11 @@ class SessionMonitor(
     }
 
     /**
-     * 把未读星号推到窗口标题上。
+     * 把未读星号与运行中数量推到窗口标题上。
      *
-     * [UnreadFrameTitleBuilder] 只在平台自发重算标题时被调用（切文件、项目状态变化），
-     * 未读刚变化的那一刻没有任何重算触发。而「切文件」本身往往就是清未读的动作——
-     * 光靠 builder，星号亮起的那一刻用户根本看不到。
+     * [AgentFrameTitleBuilder] 只在平台自发重算标题时被调用（切文件、项目状态变化），
+     * 未读或运行数刚变化的那一刻没有任何重算触发。而「切文件」本身往往就是清未读的
+     * 动作——光靠 builder，星号亮起的那一刻用户根本看不到。
      *
      * 只设项目名那一段：[com.intellij.openapi.wm.impl.ProjectFrameHelper] 把项目名与
      * 文件名分成两个字段存，传项目名进去，文件名与分隔符仍由平台自己拼。
