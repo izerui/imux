@@ -17,7 +17,7 @@ internal fun completionSubtitle(
     agentType: AgentType?,
     duration: Duration?,
 ): String = listOfNotNull(
-    agentType?.displayName,
+    agentType?.shortName,
     duration?.let { "耗时 ${formatDuration(it)}" },
 ).joinToString(" · ")
 

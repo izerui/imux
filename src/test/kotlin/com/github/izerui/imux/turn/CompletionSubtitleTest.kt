@@ -12,7 +12,7 @@ class CompletionSubtitleTest {
     fun `agent 与耗时依次连起来`() {
         val duration = NlsMessages.formatDuration(133_000)
         assertEquals(
-            "Claude Code · 耗时 $duration",
+            "Claude · 耗时 $duration",
             completionSubtitle(AgentType.CLAUDE, Duration.ofSeconds(133)),
         )
     }

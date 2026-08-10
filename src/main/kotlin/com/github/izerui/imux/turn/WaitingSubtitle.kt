@@ -15,7 +15,7 @@ internal fun waitingSubtitle(
     agentType: AgentType?,
     waitingFor: String?,
 ): String = listOfNotNull(
-    agentType?.displayName,
+    agentType?.shortName,
     waitingReason(waitingFor),
 ).joinToString(" · ")
 

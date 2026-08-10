@@ -3,9 +3,19 @@ package com.github.izerui.imux.model
 import java.nio.file.Path
 import java.time.Instant
 
-enum class AgentType(val displayName: String, val cli: String, val vendor: String) {
-    CLAUDE("Claude Code", "claude", "Anthropic"),
-    CODEX("Codex", "codex", "OpenAI"),
+/**
+ * [displayName] 是产品全称，用在有横向空间的地方——会话树分组、新建会话弹窗。
+ * [shortName] 用在通知副标题：那一行还要挤下耗时或等待原因，
+ * 「Code」二字不带任何信息量，让位给真正要读的部分。
+ */
+enum class AgentType(
+    val displayName: String,
+    val shortName: String,
+    val cli: String,
+    val vendor: String,
+) {
+    CLAUDE("Claude Code", "Claude", "claude", "Anthropic"),
+    CODEX("Codex", "Codex", "codex", "OpenAI"),
 }
 
 data class AgentSession(

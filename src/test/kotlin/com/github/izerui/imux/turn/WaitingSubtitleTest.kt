@@ -8,17 +8,17 @@ class WaitingSubtitleTest {
 
     @Test
     fun `权限确认单列文案`() {
-        assertEquals("Claude Code · 等待权限确认", waitingSubtitle(AgentType.CLAUDE, "permission prompt"))
+        assertEquals("Claude · 等待权限确认", waitingSubtitle(AgentType.CLAUDE, "permission prompt"))
     }
 
     @Test
     fun `选择框单列文案`() {
-        assertEquals("Claude Code · 等待你的选择", waitingSubtitle(AgentType.CLAUDE, "dialog open"))
+        assertEquals("Claude · 等待你的选择", waitingSubtitle(AgentType.CLAUDE, "dialog open"))
     }
 
     @Test
     fun `需要输入单列文案`() {
-        assertEquals("Claude Code · 等待输入", waitingSubtitle(AgentType.CLAUDE, "input needed"))
+        assertEquals("Claude · 等待输入", waitingSubtitle(AgentType.CLAUDE, "input needed"))
     }
 
     /**
@@ -27,18 +27,18 @@ class WaitingSubtitleTest {
      */
     @Test
     fun `子代理与沙箱请求走兜底文案`() {
-        assertEquals("Claude Code · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "worker request"))
-        assertEquals("Claude Code · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "sandbox request"))
+        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "worker request"))
+        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "sandbox request"))
     }
 
     @Test
     fun `未知取值走兜底文案`() {
-        assertEquals("Claude Code · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "某个将来才有的原因"))
+        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "某个将来才有的原因"))
     }
 
     @Test
     fun `缺少等待原因时走兜底文案`() {
-        assertEquals("Claude Code · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, null))
+        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, null))
     }
 
     /** 与 completionSubtitle 一致：拿不到的部分整段略去，不留多余的间隔号。 */
