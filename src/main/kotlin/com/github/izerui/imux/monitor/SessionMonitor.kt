@@ -308,6 +308,8 @@ class SessionMonitor(
 
     fun hasUnread(): Boolean = unread.isNotEmpty()
 
+    fun unreadCount(): Int = unread.size
+
     fun isUnread(sessionId: String): Boolean = sessionId in unread
 
     fun markUnread(sessionId: String) {
@@ -522,11 +524,11 @@ class SessionMonitor(
     }
 
     /**
-     * 把未读星号与运行中数量推到窗口标题上。
+     * 把未读与运行中数量推到窗口标题上。
      *
      * [AgentFrameTitleBuilder] 只在平台自发重算标题时被调用（切文件、项目状态变化），
      * 未读或运行数刚变化的那一刻没有任何重算触发。而「切文件」本身往往就是清未读的
-     * 动作——光靠 builder，星号亮起的那一刻用户根本看不到。
+     * 动作——光靠 builder，标记亮起的那一刻用户根本看不到。
      *
      * 必须走 `updateTitle` 而不是 `setFrameTitle`。后者只调 `IdeFrameImpl.setTitle`
      * 直接盖 AWT 标题，**不写项目名字段**；平台随后在切文件时用「缓存的未装饰项目名 +

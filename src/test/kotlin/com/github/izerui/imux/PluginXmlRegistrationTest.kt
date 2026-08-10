@@ -62,14 +62,14 @@ class PluginXmlRegistrationTest {
     }
 
     /**
-     * 窗口标题的未读星号与运行中数量靠覆盖平台的 FrameTitleBuilder 实现。这个覆盖只在
+     * 窗口标题的未读与运行中数量靠覆盖平台的 FrameTitleBuilder 实现。这个覆盖只在
      * plugin.xml 里存在，类写好了却没注册的话平台照用原实现，标题一切正常，
      * 编译与单测都发现不了。
      */
     @Test
     fun `覆盖了平台的窗口标题构建器`() {
         assertTrue(
-            "plugin.xml 未注册 AgentFrameTitleBuilder，窗口标题不会出现未读星号与运行中数量",
+            "plugin.xml 未注册 AgentFrameTitleBuilder，窗口标题不会出现未读与运行中数量",
             pluginXml.contains("com.github.izerui.imux.frame.AgentFrameTitleBuilder"),
         )
         assertTrue(

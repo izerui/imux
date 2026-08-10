@@ -141,8 +141,8 @@ class PlatformApiAlignmentSourceTest {
 
     /**
      * 光有 builder 不够：它只在平台自发重算标题时被调用（切文件、项目状态变化）。
-     * 未读刚变化的那一刻没有任何重算触发，星号要等到用户下次切文件才出现或消失——
-     * 而「切文件」本身往往就是清未读的动作，用户根本看不到星号亮起。
+     * 未读刚变化的那一刻没有任何重算触发，标记要等到用户下次切文件才出现或消失——
+     * 而「切文件」本身往往就是清未读的动作，用户根本看不到标记亮起。
      *
      * 所以 markUnread / clearUnread 两处都必须主动推一次标题。
      */
@@ -153,7 +153,7 @@ class PlatformApiAlignmentSourceTest {
         )
 
         assertTrue(
-            "标记与清除未读都要刷新标题，缺一处就会出现「星号不消失」或「星号不出现」",
+            "标记与清除未读都要刷新标题，缺一处就会出现「标记不消失」或「标记不出现」",
             Regex("""updateFrameTitle\(\)""").findAll(monitor).count() >= 3,
         )
         assertTrue(monitor.contains("WindowManager.getInstance().getIdeFrame(project)"))
