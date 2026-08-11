@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
+
 plugins {
     // 必须与 IDEA 2026.2 自身的 Kotlin 版本对齐：平台 jar 的 kotlin_module
     // 元数据是 2.3.0 版本，用 2.1.x 编译会报「incompatible version of Kotlin」。
@@ -6,7 +8,7 @@ plugins {
 }
 
 group = "com.github.izerui"
-version = "0.2.6"
+version = "0.2.7"
 
 repositories {
     // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。
@@ -46,6 +48,16 @@ dependencies {
 
 kotlin {
     jvmToolchain(25)
+
+    compilerOptions {
+        // 默认的 `enable` 模式会给每个实现类补一份「桥接 override」，把接口里所有
+        // 继承来的默认方法（含平台已弃用的 ToolWindowFactory.isApplicable、
+        // EditorTabTitleProvider.getEditorTabTooltipText 等）都重新实现一遍并回调过去。
+        // 我们一行都没写，插件验证器却报出 6 处「已弃用 API 用法」，来源就是这些桥接。
+        // no-compatibility 让实现类直接继承接口的 JVM default 方法，桥接不再生成。
+        // 本项目自己声明的接口都没有默认实现，不存在 DefaultImpls 的二进制兼容包袱。
+        jvmDefault = JvmDefaultMode.NO_COMPATIBILITY
+    }
 }
 
 intellijPlatform {
