@@ -81,5 +81,11 @@
         -->
         <postStartupActivity
                 implementation="com.github.izerui.imux.monitor.ImuxStartupActivity"/>
+
+        <!--
+          接收 pi 扩展的会话上报。pi 的会话切换（/new、/resume、/fork）无法从进程外
+          观测，只能由它自己上报，见 PiSessionReportHandler 的说明。
+        -->
+        <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
     </extensions>
 </idea-plugin>

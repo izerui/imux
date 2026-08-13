@@ -116,6 +116,14 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了 pi 会话上报的 HTTP 接收端`() {
+        assertTrue(
+            "缺了注册，pi 扩展报上来的会话切换没人接收，标签页不会跟随",
+            pluginXml.contains("""<httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>"""),
+        )
+    }
+
+    @Test
     fun `插件描述符合官方结构校验规则`() {
         val description = Regex(
             """<description><!\[CDATA\[(.*?)]\]></description>""",
