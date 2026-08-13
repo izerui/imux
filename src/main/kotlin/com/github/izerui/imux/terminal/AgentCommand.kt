@@ -37,7 +37,7 @@ internal fun launchCommand(shell: String, agentType: AgentType, resumeId: String
 /**
  * 传给 CLI 进程的终端环境。
  *
- * [IMUX_TAB_ENV] 两种 agent 都要带：它是把一个 CLI 进程认回对应终端的唯一依据。
+ * [IMUX_TAB_ENV] 每种 agent 都要带：它是把一个 CLI 进程认回对应终端的唯一依据。
  * 会话 id 不是终端的固有属性——用户敲 `/clear` 或 `/new`，CLI 换一个会话 id 而进程
  * 不变，插件得靠这个标记发现这件事。用我们自己发的 tabId 而不用 pid，是因为命令是
  * `shell -l -i -c "cli"`，CLI 是 shell 的子进程，而 shell 是否 exec 掉自己
@@ -48,11 +48,23 @@ internal fun launchCommand(shell: String, agentType: AgentType, resumeId: String
  * 变化，导致 output model 的 cursorOffset 停在 Claude 启动时的 grid home，
  * IME 候选窗也跟着定位到旧输出处。native cursor 模式保留完整 TUI，但会持续维护
  * 可被终端追踪的真实光标。Codex 本来就显式维护真实光标，不需要这个变量。
+ *
+ * `PI_HARDWARE_CURSOR` 是 pi 的同款开关，成因与解法都和 claude 那条一模一样：pi 默认
+ * 不显示硬件光标（`showHardwareCursor ?? PI_HARDWARE_CURSOR == "1"`，默认 false），
+ * 光标一停更新，候选窗和组合文本就都定位到旧位置。pi 官方文档的 IntelliJ IDEA 一节
+ * 正是这么建议的，另一处还直接点了症状：CJK 候选窗不跟随光标时就设这个变量。
+ *
+ * 注意 pi 的取值判定是 settings 优先：用户若在 `~/.pi/agent/settings.json` 里显式写了
+ * `showHardwareCursor: false`，这个环境变量就不起作用——那是用户自己的选择，不去覆盖。
  */
 internal fun launchEnvironment(agentType: AgentType, tabId: String): Map<String, String> =
     buildMap {
         put(IMUX_TAB_ENV, tabId)
-        if (agentType == AgentType.CLAUDE) put("CLAUDE_CODE_NATIVE_CURSOR", "1")
+        when (agentType) {
+            AgentType.CLAUDE -> put("CLAUDE_CODE_NATIVE_CURSOR", "1")
+            AgentType.PI -> put("PI_HARDWARE_CURSOR", "1")
+            AgentType.CODEX -> Unit
+        }
     }
 
 /**

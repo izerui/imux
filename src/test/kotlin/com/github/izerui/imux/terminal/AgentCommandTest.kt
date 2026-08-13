@@ -73,6 +73,20 @@ class AgentCommandTest {
         assertNull(launchEnvironment(AgentType.CODEX, "tab-1")["CLAUDE_CODE_NATIVE_CURSOR"])
     }
 
+    /**
+     * pi 默认不显示硬件光标（自绘一个），于是 262 的 cursor tracker 拿不到位置更新，
+     * output model 的 cursorOffset 停在原处——输入法候选窗和组合文本都跟着定位到错处。
+     *
+     * pi 官方文档的 IntelliJ 一节就是这么说的：想要真实光标就设 PI_HARDWARE_CURSOR=1。
+     * 与 claude 的 CLAUDE_CODE_NATIVE_CURSOR 是同一类问题、同一类解法。
+     */
+    @Test
+    fun `pi 显示硬件光标供输入法定位`() {
+        assertEquals("1", launchEnvironment(AgentType.PI, "tab-1")["PI_HARDWARE_CURSOR"])
+        assertNull(launchEnvironment(AgentType.CODEX, "tab-1")["PI_HARDWARE_CURSOR"])
+        assertNull(launchEnvironment(AgentType.CLAUDE, "tab-1")["PI_HARDWARE_CURSOR"])
+    }
+
     @Test
     fun `两种 agent 都带上终端标记`() {
         // CLI 在 /clear、/new 后会换会话 id 而进程不变，这个标记是把进程认回
