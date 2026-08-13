@@ -278,4 +278,31 @@ class LiveSessionProbeTest {
 
         assertTrue(stillApplicable(drifts, currentTabs = mapOf("tab-1" to "别的id")).isEmpty())
     }
+
+    // ---- pi 上报复用既有漂移判定 ----
+
+    /**
+     * pi 走上报而不是进程探测，但迁移判定复用同一套：把上报转成 LiveTab 交给 driftOf，
+     * 这样「同一 tabId 报了不同会话就不动」「标签页已关就不迁」这些规则不必写第二遍。
+     */
+    @Test
+    fun `pi 上报能直接喂给既有的漂移判定`() {
+        val live = listOf(LiveTab("tab-1", "pi-new"))
+        val openTabs = mapOf("tab-1" to "pi-old")
+
+        assertEquals(
+            listOf(KeyDrift("tab-1", from = "pi-old", to = "pi-new")),
+            driftOf(openTabs, live),
+        )
+    }
+
+    @Test
+    fun `上报的会话与当前一致时不产生迁移`() {
+        assertTrue(driftOf(mapOf("tab-1" to "pi-same"), listOf(LiveTab("tab-1", "pi-same"))).isEmpty())
+    }
+
+    @Test
+    fun `上报来自未知标签页时不产生迁移`() {
+        assertTrue(driftOf(mapOf("tab-1" to "pi-old"), listOf(LiveTab("tab-9", "pi-new"))).isEmpty())
+    }
 }

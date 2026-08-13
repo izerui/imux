@@ -7,6 +7,8 @@ import com.github.izerui.imux.session.ClaudeSessionReader
 import com.github.izerui.imux.session.PiSessionReader
 import com.github.izerui.imux.session.KeyDrift
 import com.github.izerui.imux.session.LiveSessionProbe
+import com.github.izerui.imux.session.LiveTab
+import com.github.izerui.imux.session.PiSessionReport
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.codexPids
@@ -250,6 +252,28 @@ class SessionMonitor(
                 // 新触发器若是在 probing=true 时到达，当时无法启动；这里立即补跑一次。
                 if (driftProbeGeneration.get() != generation) probeSessionDrift()
             }
+        }
+    }
+
+    /**
+     * 收到 pi 扩展的会话上报：它换会话了（`/new`、`/resume`、`/fork`），把标签页迁过去。
+     *
+     * 与 claude、codex 的区别在于**信息怎么来的**，不在于迁移怎么做：那两个靠进程探测
+     * （[probeSessionDrift]），pi 三条观测面全断只能由它自己上报。判定与落地完全复用
+     * 同一套 [driftOf] + [applyDrifts]，「同一 tabId 报了不同会话就不动」
+     * 「标签页已关就不迁」这些规则不必写第二遍。
+     *
+     * 由 netty 的 EventLoop 线程调用，因此这里只排期、不干活。
+     */
+    fun onPiSessionReported(report: PiSessionReport) {
+        if (project.isDisposed) return
+
+        coroutineScope.launch(Dispatchers.EDT) {
+            if (project.isDisposed) return@launch
+            val host = TerminalHost.getInstance(project)
+            val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
+            if (drifts.isEmpty()) return@launch
+            applyDrifts(drifts)
         }
     }
 
