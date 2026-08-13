@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.PiReportEndpoint
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -381,7 +382,13 @@ class TerminalHost(private val project: Project) : Disposable {
             .createTabBuilder()
             .workingDirectory(projectPath())
             .shellCommand(command)
-            .envVariables(launchEnvironment(agentType, tabId))
+            .envVariables(
+                launchEnvironment(
+                    agentType,
+                    tabId,
+                    piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
+                ),
+            )
             .tabName(tabTitle)
             .requestFocus(false)
             .deferSessionStartUntilUiShown(false)
@@ -394,10 +401,24 @@ class TerminalHost(private val project: Project) : Disposable {
         project.basePath ?: System.getProperty("user.home")
 
     private fun newCommand(agentType: AgentType, sessionId: String?): List<String> =
-        launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = sessionId)
+        launchCommand(
+            resolveShell(System.getenv("SHELL")),
+            agentType,
+            resumeId = sessionId,
+            piExtension = piExtensionFor(agentType),
+        )
 
     private fun resumeCommand(agentType: AgentType, sessionId: String): List<String> =
-        launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = sessionId)
+        launchCommand(
+            resolveShell(System.getenv("SHELL")),
+            agentType,
+            resumeId = sessionId,
+            piExtension = piExtensionFor(agentType),
+        )
+
+    /** 只有 pi 需要上报扩展，别的 agent 一律不加。 */
+    private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? =
+        if (agentType == AgentType.PI) piReporterScript() else null
 
     /**
      * 项目关闭时终结所有会话。这是唯一该杀进程的地方。

@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.IMUX_TAB_ENV
+import com.github.izerui.imux.session.PiReportEndpoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -117,5 +118,62 @@ class AgentCommandTest {
         assertEquals("/bin/zsh", resolveShell(null))
         assertEquals("/bin/zsh", resolveShell(""))
         assertEquals("/bin/bash", resolveShell("/bin/bash"))
+    }
+
+    @Test
+    fun `pi 带上上报扩展`() {
+        val script = java.nio.file.Paths.get("/plugins/imux/scripts/pi-imux-reporter.js")
+
+        assertEquals(
+            "pi --session-id 'abc-123' -e '/plugins/imux/scripts/pi-imux-reporter.js'",
+            launchCommand("/bin/zsh", AgentType.PI, "abc-123", script).last(),
+        )
+    }
+
+    /**
+     * 脚本缺失（安装不完整）时绝不能拼出半截 -e：pi 加载不到扩展会启动失败，
+     * 代价是整个会话起不来，而少了上报只是标签页不自动跟随。
+     */
+    @Test
+    fun `扩展脚本缺失时不加 -e`() {
+        assertEquals(
+            "pi --session-id 'abc-123'",
+            launchCommand("/bin/zsh", AgentType.PI, "abc-123", null).last(),
+        )
+    }
+
+    @Test
+    fun `扩展只给 pi，不给另外两个 agent`() {
+        val script = java.nio.file.Paths.get("/plugins/imux/scripts/pi-imux-reporter.js")
+
+        assertEquals("claude --resume 'x'", launchCommand("/bin/zsh", AgentType.CLAUDE, "x", script).last())
+        assertEquals("codex resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", script).last())
+    }
+
+    @Test
+    fun `pi 拿到上报地址与令牌`() {
+        val endpoint = PiReportEndpoint("http://127.0.0.1:63342/imux/pi-session", "tok-1")
+        val env = launchEnvironment(AgentType.PI, "tab-1", endpoint)
+
+        assertEquals("http://127.0.0.1:63342/imux/pi-session", env["IMUX_REPORT_URL"])
+        assertEquals("tok-1", env["IMUX_TOKEN"])
+    }
+
+    /** 令牌是这个接口唯一的门禁：平台在 HttpRequestHandler 这层不做任何校验。 */
+    @Test
+    fun `令牌不发给 pi 以外的 agent`() {
+        val endpoint = PiReportEndpoint("http://127.0.0.1:63342/imux/pi-session", "tok-1")
+
+        assertNull(launchEnvironment(AgentType.CLAUDE, "tab-1", endpoint)["IMUX_TOKEN"])
+        assertNull(launchEnvironment(AgentType.CODEX, "tab-1", endpoint)["IMUX_TOKEN"])
+    }
+
+    @Test
+    fun `内置服务不可用时 pi 照常启动`() {
+        val env = launchEnvironment(AgentType.PI, "tab-1", null)
+
+        assertNull(env["IMUX_REPORT_URL"])
+        assertNull(env["IMUX_TOKEN"])
+        assertEquals("tab-1", env[IMUX_TAB_ENV])
     }
 }

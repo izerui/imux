@@ -33,7 +33,10 @@ class TerminalIntegrationSourceTest {
         )
         assertTrue(
             "启动环境必须传入终端进程，不能只停留在命令构造层",
-            terminalHost.contains(".envVariables(launchEnvironment(agentType, tabId))"),
+            terminalHost.contains(".envVariables(") &&
+                terminalHost.contains("launchEnvironment(") &&
+                terminalHost.contains("agentType,") &&
+                terminalHost.contains("tabId,"),
         )
         assertTrue(
             "tabId 必须在建 view 之前定下：它要随进程启动进入环境变量，" +

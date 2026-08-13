@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.IMUX_TAB_ENV
+import com.github.izerui.imux.session.PiReportEndpoint
 
 /**
  * 启动 CLI 的命令行。
@@ -21,13 +22,23 @@ import com.github.izerui.imux.session.IMUX_TAB_ENV
  * 不用 `exec` 替换进程：多一层 shell 无妨，而 `-c` 执行完即退出，
  * CLI 一结束 shell 也跟着结束，「进程终止即关标签页」的行为不受影响。
  */
-internal fun launchCommand(shell: String, agentType: AgentType, resumeId: String?): List<String> {
+internal fun launchCommand(
+    shell: String,
+    agentType: AgentType,
+    resumeId: String?,
+    piExtension: java.nio.file.Path? = null,
+): List<String> {
     val cli = agentType.cli
     val script = when {
         resumeId == null -> cli
         // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
         // 所以新建与续聊是同一条命令——新建时 id 由 imux 预先生成传进来。
-        agentType == AgentType.PI -> "$cli --session-id ${singleQuote(resumeId)}"
+        agentType == AgentType.PI -> buildString {
+            append("$cli --session-id ${singleQuote(resumeId)}")
+            // 脚本缺失时**不加** -e：拼出一个加载不了的扩展会让 pi 启动失败，
+            // 那是整个会话起不来；而少了上报只是标签页不自动跟随。
+            piExtension?.let { append(" -e ${singleQuote(it.toString())}") }
+        }
         agentType == AgentType.CODEX -> "$cli resume ${singleQuote(resumeId)}"
         else -> "$cli --resume ${singleQuote(resumeId)}"
     }
@@ -57,12 +68,23 @@ internal fun launchCommand(shell: String, agentType: AgentType, resumeId: String
  * 注意 pi 的取值判定是 settings 优先：用户若在 `~/.pi/agent/settings.json` 里显式写了
  * `showHardwareCursor: false`，这个环境变量就不起作用——那是用户自己的选择，不去覆盖。
  */
-internal fun launchEnvironment(agentType: AgentType, tabId: String): Map<String, String> =
+internal fun launchEnvironment(
+    agentType: AgentType,
+    tabId: String,
+    piReport: PiReportEndpoint? = null,
+): Map<String, String> =
     buildMap {
         put(IMUX_TAB_ENV, tabId)
         when (agentType) {
             AgentType.CLAUDE -> put("CLAUDE_CODE_NATIVE_CURSOR", "1")
-            AgentType.PI -> put("PI_HARDWARE_CURSOR", "1")
+            AgentType.PI -> {
+                put("PI_HARDWARE_CURSOR", "1")
+                // 令牌只发给 pi：它是上报接口唯一的门禁，多发一个进程就多一份泄漏面
+                piReport?.let {
+                    put("IMUX_REPORT_URL", it.url)
+                    put("IMUX_TOKEN", it.token)
+                }
+            }
             AgentType.CODEX -> Unit
         }
     }
