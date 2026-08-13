@@ -392,6 +392,48 @@ class PlatformApiAlignmentSourceTest {
     }
 
     /**
+     * 同时挂着多条系统通知时，第二条起点下去必然毫无反应。
+     *
+     * 平台把点击回调存在应用级的 `MacOsNotifications.myCallbacksByActivationId` 里，
+     * 而任意一条被点击时执行的 `cleanupDeliveredNotifications()` 清的是**整张表**
+     * （`map.clear()`），不是它自己那条。于是点掉第一条之后其余全成死通知：
+     * `map.remove` 取不到回调就静默 return，既不跳转、也不撤通知——撤通知的动作
+     * 就在 `callback != null` 分支里面。症状是「点了没反应、通知还赖着，但有时候又好的」。
+     *
+     * 多开工程必然踩到：每个项目各发各的提醒，离开一会儿通知中心里就是好几条。
+     * 单开一个工程通常只有一条，点它永远算「第一条」，所以一直看着正常——
+     * 这也是为什么这个坑能长期藏着。
+     *
+     * 所以发新通知前必须先把已投递的撤掉，让能点的永远只有回调还在的那一条。
+     * 平台没公开撤通知的入口（`removeDeliveredNotifications` 是私有静态方法），
+     * 只能按平台自己的写法走 Foundation 调同一个 selector。
+     *
+     * 这条差异只在正式 IDE 的真实点击里显形，单测起不了 NSUserNotificationCenter，
+     * 只能在源码层面守住。
+     */
+    @Test
+    fun `发系统通知前撤掉已投递的那些`() {
+        val notifier = source(
+            "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
+        )
+
+        // 撤旧必须发生在发新之前，否则刚发出的那条会被自己撤掉
+        val dismissAt = notifier.indexOf("dismissDeliveredSystemNotifications()\n")
+        val notifyAt = notifier.indexOf("notify(GROUP_ID, subtitle, title) {")
+        assertTrue("必须先撤掉已投递的系统通知", dismissAt in 0 until notifyAt)
+
+        // 走平台自己那套 Foundation 调用，别自己造 JNA
+        assertTrue(
+            notifier.contains(
+                "Foundation.invoke(\"NSUserNotificationCenter\", \"defaultUserNotificationCenter\")",
+            ),
+        )
+        assertTrue(notifier.contains("Foundation.invoke(center, \"removeAllDeliveredNotifications\")"))
+        // 非 macOS 没有这套机制，进去就会炸
+        assertTrue(notifier.contains("if (!SystemInfo.isMac) return"))
+    }
+
+    /**
      * 系统通知的点击回调被平台的应用级静态单例攥着
      * （`MacOsNotifications.myCallbacksByActivationId`，上限 32 条、满了才整体清空）。
      * 回调捕获了什么，什么就跟着一起留到那时——捕获 Project 等于把它连同

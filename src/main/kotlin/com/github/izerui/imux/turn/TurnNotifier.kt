@@ -9,8 +9,11 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.SystemNotifications
+import com.intellij.ui.mac.foundation.Foundation
+import com.intellij.ui.mac.foundation.ID
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
@@ -122,6 +125,8 @@ object TurnNotifier {
      * 钉在那里，用户关掉项目也释放不了。所以这里只带走 locationHash 与会话 id 两个
      * 字符串，Project 等到点击那一刻现查；查不到（项目已关闭）就安静地什么都不做。
      *
+     * 发之前先撤掉此前投递的那些，原因见 [dismissDeliveredSystemNotifications]。
+     *
      * 通知后端不可用时（例如未授权、非 macOS 且无 libnotify），平台实现内部静默跳过；
      * 非 macOS 后端只认三参，`Notifier` 接口的默认实现会忽略回调退回去，不会因此报错。
      */
@@ -137,6 +142,8 @@ object TurnNotifier {
 
         val locationHash = project.locationHash
 
+        dismissDeliveredSystemNotifications()
+
         SystemNotifications.getInstance().notify(GROUP_ID, subtitle, title) {
             ApplicationManager.getApplication().invokeLater {
                 val target = ProjectManager.getInstance().openProjects
@@ -147,6 +154,35 @@ object TurnNotifier {
                 openSession(target, sessionId)
             }
         }
+    }
+
+    /**
+     * 撤掉此前已投递的系统通知，保证通知中心里同时只挂着最新那一条。
+     *
+     * **不这样做，第二条起点下去必然毫无反应。** 平台把点击回调存在应用级的
+     * `MacOsNotifications.myCallbacksByActivationId` 里，而任意一条通知被点击时执行的
+     * `cleanupDeliveredNotifications()` 清的是**整张表**（`map.clear()`），不是它自己那条。
+     * 于是同时堆着几条通知时，点掉第一条之后其余全成死通知：`map.remove` 取不到回调就
+     * 静默 return，既不跳转、也不把通知撤掉——撤通知的动作就在 `callback != null`
+     * 分支里面。表面症状是「点了没反应，通知还赖着不走，但有时候又是好的」。
+     *
+     * 多开工程时必然踩到：每个项目各自发提醒，人离开一会儿回来，通知中心里就是好几条。
+     * 单开一个工程通常只有一条，点它永远算「第一条」，所以一直看着正常。
+     * `map.size() >= 32` 那条整表清空是同一个坑的另一半。
+     *
+     * 平台没有公开撤系统通知的入口（`MacOsNotifications.removeDeliveredNotifications`
+     * 是私有静态方法），所以这里按平台自己的写法用 [Foundation] 调同一个 selector。
+     * 代价是离开期间完成多个会话只保留最新一条可点，其余靠 IDE 内的未读标记找回——
+     * 而在此之前，那些「多出来的通知」本来就是点不动的死通知。
+     *
+     * 非 macOS 没有这套机制，直接跳过；[SystemNotifications] 那边同样会自行退化。
+     */
+    private fun dismissDeliveredSystemNotifications() {
+        if (!SystemInfo.isMac) return
+
+        val center = Foundation.invoke("NSUserNotificationCenter", "defaultUserNotificationCenter")
+        if (center == ID.NIL) return
+        Foundation.invoke(center, "removeAllDeliveredNotifications")
     }
 
     /**
