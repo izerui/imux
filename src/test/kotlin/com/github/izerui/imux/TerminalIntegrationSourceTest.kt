@@ -183,7 +183,7 @@ class TerminalIntegrationSourceTest {
     }
 
     @Test
-    fun `Codex 输入法组合文本不能进入终端 Editor 布局`() {
+    fun `流式重绘 agent 的输入法组合文本不能进入终端 Editor 布局`() {
         val virtualFile = File(
             "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalVirtualFile.kt",
         ).readText()
@@ -191,20 +191,20 @@ class TerminalIntegrationSourceTest {
             "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
         ).readText()
         val compositionSupportFile = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/CodexImeCompositionSupport.kt",
-        ).takeIf(File::exists) ?: File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/CodexImeInlayStabilizer.kt",
+            "src/main/kotlin/com/github/izerui/imux/terminal/AgentImeCompositionSupport.kt",
         )
         val compositionSupport = compositionSupportFile.readText()
 
         assertTrue(
-            "虚拟文件必须保留 agent 类型，才能把平台 IME 规避严格限定在 Codex",
+            "虚拟文件必须保留 agent 类型，才能把平台 IME 规避限定在需要它的 agent 上",
             virtualFile.contains("val agentType: AgentType"),
         )
         assertTrue(
-            "Codex 当前 terminal Editor 必须安装非布局型输入法组合文本支持",
-            fileEditor.contains("virtualFile.agentType == AgentType.CODEX") &&
-                fileEditor.contains("CodexImeCompositionSupport(") &&
+            "需要覆盖层的 agent，其当前 terminal Editor 必须安装非布局型输入法组合文本支持。" +
+                "判据要走 AgentType 属性而不是点名某个 agent——点名的写法每加一个 CLI 都得记得改，" +
+                "漏了就是打字时输入区抽行",
+            fileEditor.contains("virtualFile.agentType.needsImeCompositionOverlay") &&
+                fileEditor.contains("AgentImeCompositionSupport(") &&
                 fileEditor.contains("virtualFile.terminalView"),
         )
         assertTrue(
@@ -222,7 +222,7 @@ class TerminalIntegrationSourceTest {
             compositionSupport.contains("event.consume()"),
         )
         assertTrue(
-            "已提交文字必须继续通过公开 TerminalView API 发给 Codex",
+            "已提交文字必须继续通过公开 TerminalView API 发给 CLI",
             compositionSupport.contains("terminalView.sendText(committedText)"),
         )
         assertTrue(

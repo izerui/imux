@@ -27,10 +27,26 @@ enum class AgentType(
      * 也不必事后翻进程表探测漂移，见 [com.github.izerui.imux.session.LiveSessionProbe]。
      */
     val preassignsSessionId: Boolean = false,
+    /**
+     * 输入法组合文本是否需要画在覆盖层上，而不是交给平台默认的 inline inlay。
+     *
+     * 需要它的是**流式重绘、每帧都移动终端光标**的 TUI：光标一动平台就重建 inlay，
+     * 而 inline inlay 参与 soft-wrap 计算，于是输入区在打字期间反复抽行。
+     * claude 不需要——它走 `CLAUDE_CODE_NATIVE_CURSOR` 维护真实光标，
+     * 平台原生路径就能正确定位，见 [com.github.izerui.imux.terminal.launchEnvironment]。
+     */
+    val needsImeCompositionOverlay: Boolean = false,
 ) {
     CLAUDE("Claude Code", "Claude", "claude", "Anthropic", hasRuntimeStatusFile = true),
-    CODEX("Codex", "Codex", "codex", "OpenAI"),
-    PI("Pi", "Pi", "pi", "Earendil Works", preassignsSessionId = true),
+    CODEX("Codex", "Codex", "codex", "OpenAI", needsImeCompositionOverlay = true),
+    PI(
+        "Pi",
+        "Pi",
+        "pi",
+        "Earendil Works",
+        preassignsSessionId = true,
+        needsImeCompositionOverlay = true,
+    ),
 }
 
 data class AgentSession(

@@ -1,6 +1,5 @@
 package com.github.izerui.imux.terminal
 
-import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -74,7 +73,7 @@ class AgentTerminalFileEditor(
     private var scrollToolbarComponent: JComponent? = null
     private var scrollButtonVisible = false
     private var observedEditor: Editor? = null
-    private var imeCompositionSupport: CodexImeCompositionSupport? = null
+    private var imeCompositionSupport: AgentImeCompositionSupport? = null
     private val visibleAreaListener = VisibleAreaListener { refreshScrollButton() }
     private val editorMouseListener = object : EditorMouseListener {
         override fun mousePressed(event: EditorMouseEvent) {
@@ -197,8 +196,8 @@ class AgentTerminalFileEditor(
             observedEditor = editor
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
             editor?.addEditorMouseListener(editorMouseListener)
-            if (editor != null && virtualFile.agentType == AgentType.CODEX) {
-                imeCompositionSupport = CodexImeCompositionSupport(
+            if (editor != null && virtualFile.agentType.needsImeCompositionOverlay) {
+                imeCompositionSupport = AgentImeCompositionSupport(
                     editor,
                     virtualFile.terminalView,
                 )

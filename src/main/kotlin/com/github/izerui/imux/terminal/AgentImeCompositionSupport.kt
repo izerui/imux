@@ -18,27 +18,30 @@ import java.text.AttributedCharacterIterator
 import javax.swing.SwingConstants
 
 /**
- * 在 Codex terminal 中以非布局覆盖层显示输入法组合文本。
+ * 以非布局覆盖层显示输入法组合文本。
  *
- * IDEA 262 默认把未提交文字创建成 inline inlay。Codex 流式输出时每帧都会移动
+ * 服务于流式重绘的 agent terminal（codex、pi），见
+ * [com.github.izerui.imux.model.AgentType.needsImeCompositionOverlay]。
+ *
+ * IDEA 262 默认把未提交文字创建成 inline inlay。这类 TUI 流式输出时每帧都会移动
  * terminal 光标，平台随之不断重建 inlay；inline inlay 会参与 soft-wrap 计算，
  * 因而输入区和整个视口会在组合期间反复多出一行。
  *
  * InlayProperties 的禁用换行选项对 inline inlay 无效，关闭整个 Editor soft-wrap
- * 又会破坏 Codex 输入区背景。因此这里在 AWT 分发前消费原始组合事件：已提交文字
+ * 又会破坏 CLI 自绘的输入区背景。因此这里在 AWT 分发前消费原始组合事件：已提交文字
  * 通过公开的 [TerminalView.sendText] 发送，未提交文字画在 Editor content component
  * 的透明子组件上，不进入 Editor 布局。
  *
  * 平台原有 InputMethodRequests 不变，所以 macOS 候选窗仍按 terminal 真实光标定位。
  */
-internal class CodexImeCompositionSupport(
+internal class AgentImeCompositionSupport(
     private val editor: Editor,
     private val terminalView: TerminalView,
 ) : AWTEventListener {
 
     private val contentComponent = editor.contentComponent
     private val modelListenerDisposable: Disposable =
-        Disposer.newDisposable("Codex IME composition model listener")
+        Disposer.newDisposable("Agent IME composition model listener")
     private val compositionLabel = JBLabel().apply {
         isFocusable = false
         isOpaque = false
