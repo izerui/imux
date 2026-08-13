@@ -148,3 +148,8 @@ plugin.xml 无需改动（agent 类型完全由枚举与代码分支驱动，没
 伪终端实测佐证：默认启动 pi 只发 `ESC[?25l` 隐藏光标、一次 `ESC[?25h` 都没有；带上该变量后渲染完成会把光标交还终端。用户实机验证已确认候选框恢复跟随。
 
 注意 pi 的取值判定是 `settings.showHardwareCursor ?? PI_HARDWARE_CURSOR == "1"`，settings 优先。用户显式关掉的话环境变量不生效，这是有意不去覆盖的。
+
+## 后续：/new 的标签页跟随（已实现）
+
+本文档写作时列为已知缺口的「pi 里 `/new` 不跟随标签页」已经解决，做法是让 pi 通过自带扩展主动上报，
+见 `2026-08-13-pi-new-session-tracking-design.md`。
