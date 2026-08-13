@@ -138,6 +138,13 @@ README 更新：
 
 plugin.xml 无需改动（agent 类型完全由枚举与代码分支驱动，没有按 agent 注册的扩展点），仅描述文案里提到 Claude/Codex 的地方可一并更新。
 
-## 暂不处理
+## 输入法适配（实施时补充）
 
-**输入法适配。** Codex 为流式输出冲掉中文输入法组合专门写了 `CodexImeCompositionSupport`，pi 是否有同样问题尚未实测。先不挂：`AgentTerminalFileEditor` 里保持只有 Codex 分支启用。真用起来发现问题，再把该支持泛化成按 agent 开关的通用能力。
+原计划先不挂，实测后确认 pi 两个毛病都有，已一并处理：
+
+1. **组合文本进入 Editor 布局**：`CodexImeCompositionSupport` 更名为 `AgentImeCompositionSupport`，挂载判据从点名 `CODEX` 改为 `AgentType.needsImeCompositionOverlay`（Codex、Pi 为真；Claude 走原生光标路径，不需要）。
+2. **光标定位错位**：pi 默认不显示硬件光标，262 的 cursor tracker 因而不发布位置变化，`cursorOffset` 停滞，候选窗与组合层一起画到旧输出处。`launchEnvironment` 为 pi 注入 `PI_HARDWARE_CURSOR=1`——与 claude 的 `CLAUDE_CODE_NATIVE_CURSOR` 同源同解，pi 官方文档的 IntelliJ IDEA 一节正是这么建议的。
+
+伪终端实测佐证：默认启动 pi 只发 `ESC[?25l` 隐藏光标、一次 `ESC[?25h` 都没有；带上该变量后渲染完成会把光标交还终端。用户实机验证已确认候选框恢复跟随。
+
+注意 pi 的取值判定是 `settings.showHardwareCursor ?? PI_HARDWARE_CURSOR == "1"`，settings 优先。用户显式关掉的话环境变量不生效，这是有意不去覆盖的。
