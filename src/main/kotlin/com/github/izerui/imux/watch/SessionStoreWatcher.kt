@@ -17,13 +17,15 @@ import java.util.concurrent.atomic.AtomicReference
  * 监听 sessions 根目录收不到任何事件。要覆盖就得递归注册并对新建目录动态补注册，
  * 复杂度和出错面都明显更大。轮询只需 stat 少量目录，逻辑简单且可单测。
  *
- * 成本被刻意限制：claude 侧只看本项目那一个目录，codex 侧只看最近两天的日期目录
- * ——新会话必然落在这些位置。历史目录不参与轮询。
+ * 成本被刻意限制：claude 与 pi 侧各只看本项目那一个目录，codex 侧只看最近两天的
+ * 日期目录——新会话必然落在这些位置。历史目录不参与轮询。
  */
 class SessionStoreWatcher(
     private val claudeHome: Path,
     private val codexHome: Path,
+    private val piHome: Path,
     private val claudeProjectDirName: String,
+    private val piProjectDirName: String,
     private val onChange: () -> Unit,
     /**
      * 刷新运行状态，与会话文件是否变化无关。
@@ -109,6 +111,8 @@ class SessionStoreWatcher(
             claudeHome.resolve("projects").resolve(claudeProjectDirName),
             codexSessions.resolve(datePath(day)),
             codexSessions.resolve(datePath(day.minusDays(1))),
+            // pi 与 claude 一样按 cwd 分目录，一个项目一个目录，不必按日期回看
+            piHome.resolve("agent").resolve("sessions").resolve(piProjectDirName),
         )
     }
 

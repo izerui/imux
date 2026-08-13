@@ -2,6 +2,7 @@ package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,11 +19,18 @@ class LiveSessionProbeTest {
     private fun probe(
         claudePids: List<Long> = emptyList(),
         codexPids: List<Long> = emptyList(),
+        piPids: List<Long> = emptyList(),
         env: Map<Long, String> = emptyMap(),
         claudeSession: Map<Long, String> = emptyMap(),
         rollouts: Map<Long, List<String>> = emptyMap(),
     ) = LiveSessionProbe(
-        pidsOf = { type -> if (type == AgentType.CLAUDE) claudePids else codexPids },
+        pidsOf = { type ->
+            when (type) {
+                AgentType.CLAUDE -> claudePids
+                AgentType.CODEX -> codexPids
+                AgentType.PI -> piPids
+            }
+        },
         tabIdOf = { pid -> env[pid] },
         claudeSessionOf = { pid -> claudeSession[pid] },
         rolloutsHeldBy = { pid -> rollouts[pid].orEmpty() },
@@ -35,6 +43,30 @@ class LiveSessionProbeTest {
     private val oldThread = "019fd5a8-0890-73f3-abf8-891be422a5a6"
     private val newThread = "019fd5b4-dca1-7593-bf7c-048a1a9370b5"
     private val codexThread = "019fd7f4-4e51-73a2-be05-4018cd1bd186"
+
+    /**
+     * pi 不在探测范围内：它的会话 id 由 imux 用 `--session-id` 预先定下，
+     * 终端与会话从启动那一刻就绑好了，没有可探测的漂移。
+     *
+     * 连进程表都不该去翻——pi 由 node 启动，可执行名不是 `pi`，
+     * 按名字匹配既费事又容易误伤别的 node 进程。
+     */
+    @Test
+    fun `pi 不参与进程探测`() {
+        var askedForPiPids = false
+        val probe = LiveSessionProbe(
+            pidsOf = { type ->
+                if (type == AgentType.PI) askedForPiPids = true
+                emptyList()
+            },
+            tabIdOf = { null },
+            claudeSessionOf = { null },
+            rolloutsHeldBy = { emptyList() },
+        )
+
+        assertTrue(probe.probe().isEmpty())
+        assertFalse("不该为 pi 去翻进程表", askedForPiPids)
+    }
 
     @Test
     fun `claude 进程换了会话 id 后探测到新 id`() {

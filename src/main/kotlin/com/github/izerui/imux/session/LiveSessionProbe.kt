@@ -57,12 +57,15 @@ class LiveSessionProbe(
      * 认错会把终端迁到别人的会话上，比不迁移更糟。
      */
     fun probe(): List<LiveTab> =
-        AgentType.entries.flatMap { type ->
+        // 预绑定会话 id 的 agent（pi）没有可探测的漂移，连进程表都不必翻
+        AgentType.entries.filterNot { it.preassignsSessionId }.flatMap { type ->
             pidsOf(type).mapNotNull { pid ->
                 val tabId = tabIdOf(pid) ?: return@mapNotNull null
                 val sessionId = when (type) {
                     AgentType.CLAUDE -> claudeSessionOf(pid)
                     AgentType.CODEX -> currentThreadOf(rolloutsHeldBy(pid))
+                    // 上面已按 preassignsSessionId 滤掉，走不到这里
+                    AgentType.PI -> null
                 } ?: return@mapNotNull null
                 LiveTab(tabId, sessionId)
             }

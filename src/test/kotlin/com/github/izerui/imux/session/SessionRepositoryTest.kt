@@ -17,9 +17,11 @@ class SessionRepositoryTest {
     private fun repository(): SessionRepository {
         val claudeHome = File(tmp.root, "claude").apply { mkdirs() }
         val codexHome = File(tmp.root, "codex").apply { mkdirs() }
+        val piHome = File(tmp.root, "pi").apply { mkdirs() }
         return SessionRepository(
             ClaudeSessionReader(claudeHome.toPath()),
             CodexSessionReader(codexHome.toPath()),
+            PiSessionReader(piHome.toPath()),
         )
     }
 
@@ -49,15 +51,27 @@ class SessionRepositoryTest {
         }
     }
 
+    private fun piSession(uuid: String, lastModified: Long) {
+        val dir = File(tmp.root, "pi/agent/sessions/--Users-demo-proj--").apply { mkdirs() }
+        File(dir, "2026-08-13T10-00-00-000Z_$uuid.jsonl").apply {
+            writeText("""{"type":"session","version":3,"id":"$uuid","cwd":"/Users/demo/proj"}""")
+            setLastModified(lastModified)
+        }
+    }
+
     @Test
-    fun `两个会话库的结果被合并`() {
+    fun `三个会话库的结果被合并`() {
         claudeSession("aaa", 1_000_000)
         codexSession("bbb", 2_000_000)
+        piSession("ccc", 3_000_000)
 
         val sessions = repository().scan("/Users/demo/proj")
 
-        assertEquals(2, sessions.size)
-        assertEquals(setOf(AgentType.CLAUDE, AgentType.CODEX), sessions.map { it.agentType }.toSet())
+        assertEquals(3, sessions.size)
+        assertEquals(
+            setOf(AgentType.CLAUDE, AgentType.CODEX, AgentType.PI),
+            sessions.map { it.agentType }.toSet(),
+        )
     }
 
     @Test
@@ -65,10 +79,11 @@ class SessionRepositoryTest {
         claudeSession("old", 1_000_000)
         codexSession("new", 3_000_000)
         claudeSession("mid", 2_000_000)
+        piSession("newest", 4_000_000)
 
         val ids = repository().scan("/Users/demo/proj").map { it.id }
 
-        assertEquals(listOf("new", "mid", "old"), ids)
+        assertEquals(listOf("newest", "new", "mid", "old"), ids)
     }
 
     @Test
@@ -90,7 +105,7 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `两个会话库都为空时返回空列表`() {
+    fun `所有会话库都为空时返回空列表`() {
         assertTrue(repository().scan("/Users/demo/proj").isEmpty())
     }
 }

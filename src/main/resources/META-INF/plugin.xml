@@ -11,19 +11,19 @@
          若把它挪进 <p> 或删掉，PluginXmlRegistrationTest 会失败。
     -->
     <description><![CDATA[
-      imux manages your Claude Code and Codex sessions inside IntelliJ IDEA editor tabs.
+      imux manages your Claude Code, Codex and pi sessions inside IntelliJ IDEA editor tabs.
 
-      <p>在 IntelliJ IDEA 里管理你的 Claude Code 与 Codex 会话。会话开在<b>编辑器标签页</b>里，
+      <p>在 IntelliJ IDEA 里管理你的 Claude Code、Codex 与 pi 会话。会话开在<b>编辑器标签页</b>里，
       和代码文件并排——可以分屏，可以拖到另一个窗口，不再挤在底部那个终端面板。</p>
 
       <p>左侧 <b>AI Agents</b> 面板列出当前项目的所有会话，按最近活动排序。点一下就用
-      <code>claude --resume</code> / <code>codex resume</code> 续上之前的对话，
+      <code>claude --resume</code> / <code>codex resume</code> / <code>pi --session-id</code> 续上之前的对话，
       不用记会话 id，也不用回终端翻历史。</p>
 
       <p>一轮对话跑完会弹提醒，告诉你是哪个 Agent、耗时多久、会话标题是什么，点一下直接跳到最新输出。
       IDE 窗口不在前台时还会补发系统通知——切出去干别的活，不会漏掉。</p>
 
-      <p><b>imux 不托管你的会话</b>，它只是 Claude Code 和 Codex 各自会话库的一个视图：
+      <p><b>imux 不托管你的会话</b>，它只是这几个 CLI 各自会话库的一个视图：
       只读取，不写入，不存储任何自己的数据。删掉插件，你的会话记录一条不少。</p>
 
       <p><b>主要功能</b></p>
@@ -34,8 +34,8 @@
         <li>轮次完成气泡提醒 + 后台系统通知</li>
       </ul>
 
-      <p><b>前置条件</b>：IntelliJ IDEA 2026.2+，且 <code>claude</code> / <code>codex</code>
-      已在你的终端里可用（装一个也能用）。</p>
+      <p><b>前置条件</b>：IntelliJ IDEA 2026.2+，且 <code>claude</code> / <code>codex</code> /
+      <code>pi</code> 已在你的终端里可用（装一个也能用）。</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

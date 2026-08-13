@@ -13,9 +13,24 @@ enum class AgentType(
     val shortName: String,
     val cli: String,
     val vendor: String,
+    /**
+     * CLI 是否自己维护运行态文件（claude 的 `~/.claude/sessions/<pid>.json`）。
+     *
+     * 有的话状态是一手的，打开会话就知道在不在跑；没有的话只能从会话文件的轮次信号推断，
+     * 归 [com.github.izerui.imux.turn.TurnWatcher] 监控。两条路同时走会让同一轮完成被报两次。
+     */
+    val hasRuntimeStatusFile: Boolean = false,
+    /**
+     * 会话 id 能否在启动前由 imux 定下（pi 的 `--session-id`）。
+     *
+     * 能的话终端与会话从启动那一刻就绑好了，不必等 CLI 落盘再靠时间窗认领，
+     * 也不必事后翻进程表探测漂移，见 [com.github.izerui.imux.session.LiveSessionProbe]。
+     */
+    val preassignsSessionId: Boolean = false,
 ) {
-    CLAUDE("Claude Code", "Claude", "claude", "Anthropic"),
+    CLAUDE("Claude Code", "Claude", "claude", "Anthropic", hasRuntimeStatusFile = true),
     CODEX("Codex", "Codex", "codex", "OpenAI"),
+    PI("Pi", "Pi", "pi", "Earendil Works", preassignsSessionId = true),
 }
 
 data class AgentSession(

@@ -35,6 +35,35 @@ class AgentCommandTest {
         )
     }
 
+    /**
+     * pi 的会话 id 由 imux 预先生成：`--session-id` 对已存在的 id 是打开、不存在则以该 id 创建，
+     * 所以新建与续聊是同一条命令。这样标签页与会话 id 从启动那一刻就是确定的，
+     * 不需要像 codex 那样事后靠 lsof 反推绑定。
+     */
+    @Test
+    fun `pi 新建与续聊都用 session-id 预绑定`() {
+        assertEquals(
+            "pi --session-id 'abc-123'",
+            launchCommand("/bin/zsh", AgentType.PI, "abc-123").last(),
+        )
+    }
+
+    @Test
+    fun `pi 缺少会话 id 时退回裸命令`() {
+        // 正常路径不会走到这里（新建也会给 id），但缺了 id 也得能起得来，
+        // 让 pi 自己生成 id，总好过拼出 `pi --session-id` 这种残命令。
+        assertEquals("pi", launchCommand("/bin/zsh", AgentType.PI, null).last())
+    }
+
+    @Test
+    fun `只有 pi 在新建时预先确定会话 id`() {
+        // claude 与 codex 的 id 由 CLI 自己生成，插件事后再认领；
+        // 替它们预分配 id 既做不到，也会让绑定逻辑凭空多一条假设。
+        assertNull(preassignedSessionId(AgentType.CLAUDE))
+        assertNull(preassignedSessionId(AgentType.CODEX))
+        assertEquals("uuid-1", preassignedSessionId(AgentType.PI) { "uuid-1" })
+    }
+
     @Test
     fun `claude 使用原生终端光标供输入法定位`() {
         assertEquals(

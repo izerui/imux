@@ -10,6 +10,8 @@ data class PendingSession(
     val key: String,
     val agentType: AgentType,
     val startedAt: Instant,
+    /** 启动前就已确定的会话 id，见 [SessionListModel.registerPending]。 */
+    val sessionId: String? = null,
 )
 
 sealed interface ListEntry {
@@ -63,11 +65,12 @@ class SessionListModel(
         listeners.add(listener)
     }
 
-    fun registerPending(agentType: AgentType): PendingSession {
+    fun registerPending(agentType: AgentType, sessionId: String? = null): PendingSession {
         val pending = PendingSession(
             key = "pending-${pendingSeq++}",
             agentType = agentType,
             startedAt = clock(),
+            sessionId = sessionId,
         )
         pendings.add(pending)
         notifyListeners()
@@ -142,11 +145,15 @@ class SessionListModel(
     private fun bindNewSessions(scanned: List<AgentSession>) {
         val fresh = scanned.filter { it.id !in knownIds }
         for (session in fresh.sortedBy { it.lastActiveAt }) {
-            val candidate = pendings
-                .filter { it.key !in bindings }
-                .filter { it.agentType == session.agentType }
-                .filter { !it.startedAt.isAfter(session.lastActiveAt) }
-                .maxByOrNull { it.startedAt }
+            val free = pendings.filter { it.key !in bindings }
+            // 预知 id 的 pending（pi）走精确匹配，不参与下面的时间窗竞争：
+            // id 在启动前就定了，没有可猜的余地，也不该被别的会话抢走。
+            val candidate = free.firstOrNull { it.sessionId == session.id }
+                ?: free
+                    .filter { it.sessionId == null }
+                    .filter { it.agentType == session.agentType }
+                    .filter { !it.startedAt.isAfter(session.lastActiveAt) }
+                    .maxByOrNull { it.startedAt }
             if (candidate == null) {
                 // 没人在等这个会话。两种可能：某个已打开的终端在 /clear、/new 之后
                 // 换了会话 id（进程没变），或者用户在 IDE 外面自己开了一个。

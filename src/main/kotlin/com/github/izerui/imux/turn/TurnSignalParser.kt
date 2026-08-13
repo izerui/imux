@@ -46,6 +46,7 @@ object TurnSignalParser {
             val signal = when (agentType) {
                 AgentType.CLAUDE -> claudeSignal(line)
                 AgentType.CODEX -> codexSignal(line)
+                AgentType.PI -> piSignal(line)
             } ?: continue
 
             if (state != signal.state) {
@@ -94,9 +95,39 @@ object TurnSignalParser {
         else -> null
     }
 
+    /**
+     * pi 没有 codex 那样的 task_started / task_complete 事件，判据是 assistant 消息的
+     * stopReason，取值为 stop | length | toolUse | error | aborted。
+     *
+     * 与 claude 同样用黑名单：只有 toolUse 算进行中，aborted 算用户中断，
+     * 其余（含 length、error）一律算这一轮结束了。截断和报错也是「停下来了，去看看」，
+     * 当成未完成的话用户会一直等一个永远不来的通知。
+     *
+     * 用户消息开启新一轮，但要排掉 toolResult——它的 role 不是 user，
+     * 所以按 role 精确匹配即可，不能用「行里含 user」这种子串判断。
+     */
+    private fun piSignal(line: String): Signal? = when {
+        line.contains(PI_STOP_REASON_KEY) -> {
+            when (runCatching { JsonLineScanner.stringValue(line, "stopReason") }.getOrNull()) {
+                PI_TOOL_USE -> Signal(TurnState.WORKING, TurnEvent.NONE)
+                PI_ABORTED -> Signal(TurnState.IDLE, TurnEvent.ABORTED)
+                else -> Signal(TurnState.IDLE, TurnEvent.COMPLETED)
+            }
+        }
+
+        line.contains(PI_USER_ROLE) -> Signal(TurnState.WORKING, TurnEvent.NONE)
+
+        else -> null
+    }
+
     private const val STOP_REASON_KEY = "\"stop_reason\""
     private const val TOOL_USE = "tool_use"
     private const val USER_RECORD = "\"type\":\"user\""
+
+    private const val PI_STOP_REASON_KEY = "\"stopReason\""
+    private const val PI_TOOL_USE = "toolUse"
+    private const val PI_ABORTED = "aborted"
+    private const val PI_USER_ROLE = "\"role\":\"user\""
 
     private const val TASK_STARTED = "\"task_started\""
     private const val TASK_COMPLETE = "\"task_complete\""

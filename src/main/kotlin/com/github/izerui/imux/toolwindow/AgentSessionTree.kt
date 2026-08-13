@@ -41,6 +41,15 @@ import javax.swing.tree.TreeSelectionModel
 private const val PAGE_SIZE = 10
 
 /**
+ * 每个分组的初始条数上限。
+ *
+ * 由枚举自己长齐而不是手写字面量：取用处是 `getValue`，少一个 key 就是运行时异常，
+ * 而不是少显示几条。
+ */
+internal fun initialLimits(): MutableMap<AgentType, Int> =
+    AgentType.entries.associateWithTo(mutableMapOf()) { PAGE_SIZE }
+
+/**
  * 会话行的高度（未缩放），取自平台 Islands 主题的 `Tree.rowHeight`：16px 图标上下各留 4px。
  *
  * 不留给主题决定：平台默认主题给 24，而第三方主题往往不写 `ui.Tree`，只能吃 Darcula
@@ -262,7 +271,7 @@ class AgentSessionTree(
     }
 
     /** 每个分组当前展示的条数上限，点「显示更多」后递增。 */
-    private val limits = mutableMapOf(AgentType.CLAUDE to PAGE_SIZE, AgentType.CODEX to PAGE_SIZE)
+    private val limits = initialLimits()
 
     /** 用户主动折叠过的分组。其余一律展开，见 [restoreExpansion]。 */
     private val collapsedByUser = mutableSetOf<AgentType>()

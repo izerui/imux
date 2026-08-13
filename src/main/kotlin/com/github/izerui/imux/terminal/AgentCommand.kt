@@ -25,6 +25,9 @@ internal fun launchCommand(shell: String, agentType: AgentType, resumeId: String
     val cli = agentType.cli
     val script = when {
         resumeId == null -> cli
+        // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
+        // 所以新建与续聊是同一条命令——新建时 id 由 imux 预先生成传进来。
+        agentType == AgentType.PI -> "$cli --session-id ${singleQuote(resumeId)}"
         agentType == AgentType.CODEX -> "$cli resume ${singleQuote(resumeId)}"
         else -> "$cli --resume ${singleQuote(resumeId)}"
     }
@@ -51,6 +54,20 @@ internal fun launchEnvironment(agentType: AgentType, tabId: String): Map<String,
         put(IMUX_TAB_ENV, tabId)
         if (agentType == AgentType.CLAUDE) put("CLAUDE_CODE_NATIVE_CURSOR", "1")
     }
+
+/**
+ * 新建会话时预先定下的会话 id，没有则返回 null。
+ *
+ * 只有 pi 有：它的 `--session-id` 接受任意 id，不存在就以该 id 创建，于是标签页与会话
+ * 从启动那一刻起就是确定的，不必等 CLI 落盘后再靠时间窗去猜是哪一个
+ * （见 [com.github.izerui.imux.session.SessionListModel.registerPending]）。
+ *
+ * claude 与 codex 没有对应能力，id 只能由 CLI 自己生成、插件事后认领。
+ */
+internal fun preassignedSessionId(
+    agentType: AgentType,
+    newId: () -> String = { java.util.UUID.randomUUID().toString() },
+): String? = if (agentType == AgentType.PI) newId() else null
 
 /** 用户的登录 shell；取不到时退回 zsh（macOS 自 Catalina 起的默认）。 */
 internal fun resolveShell(shellEnv: String?): String =

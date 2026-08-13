@@ -24,21 +24,23 @@ private const val SPIN_FRAMES = 24
 private const val SPIN_FRAME_MS = 85
 
 /**
- * `AllIcons` 没有 OpenAI / Claude 品牌标志，无法用语义匹配的平台图标替代；
+ * `AllIcons` 没有 OpenAI / Claude / pi 的品牌标志，无法用语义匹配的平台图标替代；
  * 资源仍交给 [IconLoader] 选择主题与 HiDPI 变体。
  *
  * 忙碌是让品牌图标**自己**转起来，而不是换成平台的转菊花——换掉的话标签页一忙起来
- * 就只剩一个菊花，既认不出是 Claude 还是 Codex 的会话，也认不出它和旁边普通编辑器标签的区别。
+ * 就只剩一个菊花，既认不出是哪个 agent 的会话，也认不出它和旁边普通编辑器标签的区别。
  * 未读则在品牌图标与标题之间另加一格，见 [forTab]。
  */
 internal object AgentIcons {
     private val claude = IconLoader.getIcon("/icons/claude.png", javaClass)
     private val codex = IconLoader.getIcon("/icons/codex.png", javaClass)
+    private val pi = IconLoader.getIcon("/icons/pi.png", javaClass)
 
     // 动画帧只建一次：标签页会反复来取图标，每次新建不只是浪费，
     // 还会让动画每次都从第一帧重来，看着像卡住。
     private val claudeBusy by lazy { spinning(claude) }
     private val codexBusy by lazy { spinning(codex) }
+    private val piBusy by lazy { spinning(pi) }
 
     // 四种组合各缓存一份，理由同上：动画那一格必须是同一个实例。
     private val tabIcons = ConcurrentHashMap<TabIconKey, Icon>()
@@ -52,12 +54,14 @@ internal object AgentIcons {
     fun forAgent(agentType: AgentType): Icon = when (agentType) {
         AgentType.CLAUDE -> claude
         AgentType.CODEX -> codex
+        AgentType.PI -> pi
     }
 
     /** 品牌图标原地转圈，表示这个会话正在跑。 */
     fun busy(agentType: AgentType): Icon = when (agentType) {
         AgentType.CLAUDE -> claudeBusy
         AgentType.CODEX -> codexBusy
+        AgentType.PI -> piBusy
     }
 
     /**
@@ -88,8 +92,12 @@ internal object AgentIcons {
     /**
      * 匀速转一整圈，亮度与尺寸都不动。
      *
-     * 两个品牌标志都是径向的（Claude 是星芒，Codex 是环），绕中心转看着就是在转，
-     * 不会像方形图案那样转出歪斜感。首帧是 0°，即原图本身，所以刚变忙碌时不会跳一下。
+     * Claude 是星芒、Codex 是环，都是径向图案，绕中心转看着就是在转。pi 是直角阶梯，
+     * 转起来会有方形特有的歪斜感，但仍是同一套动效，好过一忙起来就认不出是哪个 agent。
+     * 首帧是 0°，即原图本身，所以刚变忙碌时不会跳一下。
+     *
+     * 图案必须落在声明区域的内切圆里，否则转到 45° 会削角——pi 的图标为此特意
+     * 画得比另外两个小一圈，见 IconResourceTest「Pi 图标留出旋转所需的余量」。
      */
     private fun spinning(base: Icon): Icon = AnimatedIcon(
         SPIN_FRAME_MS,

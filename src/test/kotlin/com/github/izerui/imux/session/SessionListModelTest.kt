@@ -54,6 +54,47 @@ class SessionListModelTest {
         assertTrue("绑定后应显示为真实会话", entries[0] is ListEntry.Existing)
     }
 
+    // ---- 预知 id 的 pending（pi）----
+    //
+    // pi 用 `--session-id` 启动，会话 id 在启动那一刻就定了，不必靠「时间窗内最近的
+    // pending」去猜。猜是有代价的：同时新建两个会话时，两条 pending 都符合时间窗，
+    // 谁绑谁全看落盘顺序，绑错就把终端迁到别人的会话上。
+
+    @Test
+    fun `预知 id 的 pending 只认领同 id 的会话`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val first = model.registerPending(AgentType.PI, sessionId = "pi-1")
+        val second = model.registerPending(AgentType.PI, sessionId = "pi-2")
+
+        clock.now = base.plusSeconds(30)
+        // 落盘顺序与新建顺序相反：pi-2 先写盘。按时间窗猜的话它会被 second 之后
+        // 启动的那条 pending 抢走，而 id 是确定的，抢不走。
+        scanResult = listOf(
+            session("pi-2", AgentType.PI, base.plusSeconds(10)),
+            session("pi-1", AgentType.PI, base.plusSeconds(20)),
+        )
+        model.refresh()
+
+        assertEquals("pi-1", model.boundIdFor(first.key))
+        assertEquals("pi-2", model.boundIdFor(second.key))
+    }
+
+    @Test
+    fun `预知 id 的 pending 不认领其他会话`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.PI, sessionId = "pi-mine")
+
+        clock.now = base.plusSeconds(30)
+        // 用户在 IDE 外面自己开的 pi 会话，时间窗完全吻合，但 id 不是我们要的那个
+        scanResult = listOf(session("pi-other", AgentType.PI, base.plusSeconds(20)))
+        model.refresh()
+
+        assertNull(model.boundIdFor(pending.key))
+        assertEquals(listOf("pi-other"), model.drainUnclaimedSessions())
+    }
+
     @Test
     fun `没有 pending 认领的新会话被记为无主`() {
         // 这正是终端里 /clear、/new 的形态：会话凭空出现，没人在等它。

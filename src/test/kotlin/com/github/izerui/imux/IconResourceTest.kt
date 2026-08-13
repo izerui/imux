@@ -56,12 +56,13 @@ class IconResourceTest {
 
     @Test
     fun `Agent 标签图标提供标准与高分辨率资源`() {
-        listOf("codex.png", "codex_dark.png", "claude.png").forEach { name ->
+        listOf("codex.png", "codex_dark.png", "claude.png", "pi.png", "pi_dark.png").forEach { name ->
             val image = rasterIcon(name)
             assertEquals("$name 宽度错误", 16, image.width)
             assertEquals("$name 高度错误", 16, image.height)
         }
-        listOf("codex@2x.png", "codex@2x_dark.png", "claude@2x.png").forEach { name ->
+        listOf("codex@2x.png", "codex@2x_dark.png", "claude@2x.png", "pi@2x.png", "pi@2x_dark.png").forEach { name ->
+
             val image = rasterIcon(name)
             assertEquals("$name 宽度错误", 32, image.width)
             assertEquals("$name 高度错误", 32, image.height)
@@ -80,6 +81,55 @@ class IconResourceTest {
             light.getRGB(8, 2),
             dark.getRGB(8, 2),
         )
+    }
+
+    @Test
+    fun `Pi 图标透明且按主题切换填充色`() {
+        val light = rasterIcon("pi.png")
+        val dark = rasterIcon("pi_dark.png")
+
+        assertEquals("Pi 图标四角必须透明", 0, light.getRGB(0, 0).ushr(24))
+        assertEquals("深色 Pi 图标四角必须透明", 0, dark.getRGB(0, 0).ushr(24))
+        assertNotEquals(
+            "浅色与深色 Pi 图标不能完全相同",
+            light.getRGB(4, 4),
+            dark.getRGB(4, 4),
+        )
+    }
+
+    /**
+     * 忙碌时品牌图标要原地转一整圈（见 AgentIcons.spinning），转到 45° 时占用的是
+     * 图案的**外接圆**。pi 的图案是直角阶梯，四角离中心最远——画得太满，转起来就削角。
+     *
+     * 外接圆直径 = 图案边长 × √2，要 ≤ 16px，图案边长就不能超过 11px。
+     *
+     * 量的是实心部分（不透明度 ≥ 200），不含抗锯齿羽化出来的那圈半透明像素：
+     * 羽化边缘转出去削掉半个像素肉眼无感，实心笔画被切才看得出来。
+     */
+    @Test
+    fun `Pi 图标留出旋转所需的余量`() {
+        val image = rasterIcon("pi.png")
+
+        var minX = image.width
+        var minY = image.height
+        var maxX = -1
+        var maxY = -1
+        for (y in 0 until image.height) {
+            for (x in 0 until image.width) {
+                if (image.getRGB(x, y).ushr(24) < 200) continue
+                if (x < minX) minX = x
+                if (y < minY) minY = y
+                if (x > maxX) maxX = x
+                if (y > maxY) maxY = y
+            }
+        }
+
+        val width = maxX - minX + 1
+        val height = maxY - minY + 1
+        assertTrue("图案宽 $width px，旋转到 45° 会被裁角", width <= 11)
+        assertTrue("图案高 $height px，旋转到 45° 会被裁角", height <= 11)
+        // 也不能小得没边——太小的话与 claude、codex 摆在一起会明显轻一档
+        assertTrue("图案宽 $width px，比另外两个 agent 的图标小太多", width >= 9)
     }
 
     @Test

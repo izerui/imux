@@ -92,8 +92,8 @@ class TerminalHost(private val project: Project) : Disposable {
      * `--resume` 终端，与仍在运行的原终端抢同一个会话，CLI 会报
      * 「currently running as a background agent」。
      */
-    fun openNew(agentType: AgentType, key: String, tabTitle: String) {
-        open(key, agentType, newCommand(agentType), tabTitle)
+    fun openNew(agentType: AgentType, key: String, tabTitle: String, sessionId: String? = null) {
+        open(key, agentType, newCommand(agentType, sessionId), tabTitle)
     }
 
     /**
@@ -393,8 +393,8 @@ class TerminalHost(private val project: Project) : Disposable {
     private fun projectPath(): String =
         project.basePath ?: System.getProperty("user.home")
 
-    private fun newCommand(agentType: AgentType): List<String> =
-        launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = null)
+    private fun newCommand(agentType: AgentType, sessionId: String?): List<String> =
+        launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = sessionId)
 
     private fun resumeCommand(agentType: AgentType, sessionId: String): List<String> =
         launchCommand(resolveShell(System.getenv("SHELL")), agentType, resumeId = sessionId)

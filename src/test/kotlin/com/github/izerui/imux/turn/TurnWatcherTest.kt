@@ -396,6 +396,58 @@ class TurnWatcherTest {
     private val claudeToolUse = """{"type":"assistant","message":{"stop_reason":"tool_use"}}"""
     private val claudeDone = """{"type":"assistant","message":{"stop_reason":"end_turn"}}"""
 
+    // ---- pi ----
+    //
+    // pi 与 codex 一样没有运行态文件，轮次只能从会话文件推断，因此同样归本类监控。
+
+    private val piUser =
+        """{"type":"message","id":"u1","timestamp":"2026-08-13T08:03:09.000Z","message":{"role":"user","content":[{"type":"text","text":"改一下"}]}}"""
+    private val piStop =
+        """{"type":"message","id":"a1","timestamp":"2026-08-13T08:03:21.000Z","message":{"role":"assistant","content":[],"stopReason":"stop"}}"""
+
+    @Test
+    fun `pi 会话纳入监控并按 stopReason 判定执行中`() {
+        val file = newFile("pi.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("p1", AgentType.PI, file.toPath())
+
+        file.append(piUser)
+        watcher.poll()
+
+        assertEquals(setOf("p1"), watcher.workingIds(AgentType.PI))
+    }
+
+    @Test
+    fun `pi 会话完成时触发提醒`() {
+        val file = newFile("pi2.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("p1", AgentType.PI, file.toPath())
+
+        file.append(piUser)
+        file.append(piStop)
+
+        assertEquals(listOf("p1"), watcher.poll())
+    }
+
+    /**
+     * SessionMonitor 要的是「所有靠会话文件推断的 agent 此刻在跑的会话」。
+     * 按类型逐个取再合并，等于每加一个 agent 就得改一次调用点，漏了就静默不亮。
+     */
+    @Test
+    fun `执行中会话可一次取全而不必逐个 agent 点名`() {
+        val codexFile = newFile("all-codex.jsonl")
+        val piFile = newFile("all-pi.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("codex1", AgentType.CODEX, codexFile.toPath())
+        watcher.watch("pi1", AgentType.PI, piFile.toPath())
+
+        codexFile.append(started)
+        piFile.append(piUser)
+        watcher.poll()
+
+        assertEquals(setOf("codex1", "pi1"), watcher.workingIds())
+    }
+
     @Test
     fun `claude 会话不纳入监控`() {
         val file = newFile("claude.jsonl", "$claudeToolUse\n")

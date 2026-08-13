@@ -25,6 +25,7 @@ class SessionStoreWatcherTest {
 
     private lateinit var claudeHome: File
     private lateinit var codexHome: File
+    private lateinit var piHome: File
 
     private var changes = 0
     private var ticks = 0
@@ -36,10 +37,13 @@ class SessionStoreWatcherTest {
     ): SessionStoreWatcher {
         claudeHome = File(tmp.root, "claude").apply { mkdirs() }
         codexHome = File(tmp.root, "codex").apply { mkdirs() }
+        piHome = File(tmp.root, "pi").apply { mkdirs() }
         return SessionStoreWatcher(
             claudeHome = claudeHome.toPath(),
             codexHome = codexHome.toPath(),
+            piHome = piHome.toPath(),
             claudeProjectDirName = "-Users-demo-proj",
+            piProjectDirName = "--Users-demo-proj--",
             onChange = { changes++ },
             onTick = onTick,
             fastTickWanted = fastTickWanted,
@@ -55,18 +59,34 @@ class SessionStoreWatcherTest {
         File(codexHome, "sessions/%04d/%02d/%02d".format(day.year, day.monthValue, day.dayOfMonth))
             .apply { mkdirs() }
 
+    private fun piDir(): File =
+        File(piHome, "agent/sessions/--Users-demo-proj--").apply { mkdirs() }
+
     // ---- 监听范围 ----
 
     @Test
-    fun `只盯本项目的 claude 目录与 codex 最近两天`() {
+    fun `只盯本项目的 claude 与 pi 目录，以及 codex 最近两天`() {
         val w = watcher()
 
         val dirs = w.watchedDirs().map { it.toString() }
 
-        assertEquals(3, dirs.size)
+        assertEquals(4, dirs.size)
         assertTrue(dirs[0].endsWith("projects/-Users-demo-proj"))
         assertTrue(dirs[1].endsWith("sessions/2026/08/06"))
         assertTrue(dirs[2].endsWith("sessions/2026/08/05"))
+        // pi 与 claude 一样是一个项目一个目录，不必按日期回看
+        assertTrue(dirs[3].endsWith("agent/sessions/--Users-demo-proj--"))
+    }
+
+    @Test
+    fun `pi 会话文件的变化会触发回调`() {
+        val w = watcher()
+        w.start()
+        File(piDir(), "2026-08-13T10-00-00-000Z_p1.jsonl").writeText("{}")
+
+        repeat(3) { w.tick() }
+
+        assertEquals(1, changes)
     }
 
     /** 跨月要借位到上个月的最后一天，不能变成 08/00。 */
@@ -77,7 +97,9 @@ class SessionStoreWatcherTest {
         val w = SessionStoreWatcher(
             claudeHome = claudeHome.toPath(),
             codexHome = codexHome.toPath(),
+            piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
             claudeProjectDirName = "p",
+            piProjectDirName = "--p--",
             onChange = {},
             today = { LocalDate.of(2026, 8, 1) },
         )

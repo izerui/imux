@@ -4,6 +4,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.ClaudeSessionReader
+import com.github.izerui.imux.session.PiSessionReader
 import com.github.izerui.imux.session.KeyDrift
 import com.github.izerui.imux.session.LiveSessionProbe
 import com.github.izerui.imux.session.SessionListModel
@@ -409,7 +410,8 @@ class SessionMonitor(
                 // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
                 val outcome = statusTracker.completedSince(snapshot)
                 val completed = (outcome.completed + watcher.poll()).distinct()
-                val running = RunningSessions.of(snapshot, watcher.workingIds(AgentType.CODEX))
+                // 取全部而不点名某个 agent：凡是靠会话文件推断的都该算进来
+                val running = RunningSessions.of(snapshot, watcher.workingIds())
 
                 withContext(Dispatchers.EDT) {
                     val runningChanged = runningIds != running
@@ -473,10 +475,13 @@ class SessionMonitor(
     private fun startWatching() {
         val home = Paths.get(System.getProperty("user.home"))
         val claudeHome = home.resolve(".claude")
+        val piHome = home.resolve(".pi")
         val watcher = SessionStoreWatcher(
             claudeHome = claudeHome,
             codexHome = home.resolve(".codex"),
+            piHome = piHome,
             claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
+            piProjectDirName = PiSessionReader(piHome).projectDirName(projectPath),
             onChange = ::refresh,
             onTick = ::checkCompletedTurns,
             // 一个标签页都没开时没人看运行中标记，退回慢节奏
