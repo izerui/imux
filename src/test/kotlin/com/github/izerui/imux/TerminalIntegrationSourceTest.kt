@@ -33,10 +33,13 @@ class TerminalIntegrationSourceTest {
         )
         assertTrue(
             "启动环境必须传入终端进程，不能只停留在命令构造层",
-            terminalHost.contains(".envVariables(") &&
-                terminalHost.contains("launchEnvironment(") &&
-                terminalHost.contains("agentType,") &&
-                terminalHost.contains("tabId,"),
+            // 用正则跨换行钉住「.envVariables( 之后紧跟着 launchEnvironment(」这条链路，
+            // 不能拆成几个独立的 contains：`agentType,`、`tabId,` 这类片段在本文件里
+            // 到处都是，拆开之后断言几乎恒真，守卫就名存实亡了（曾因调用改成多行而被
+            // 削弱成那样）。这里必须让「把 launchEnvironment 从 envVariables 里摘掉」
+            // 这个破坏动作真的能让测试变红。
+            Regex("""\.envVariables\(\s*launchEnvironment\(\s*agentType,\s*tabId,""")
+                .containsMatchIn(terminalHost),
         )
         assertTrue(
             "tabId 必须在建 view 之前定下：它要随进程启动进入环境变量，" +

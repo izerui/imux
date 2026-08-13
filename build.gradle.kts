@@ -82,6 +82,16 @@ intellijPlatform {
 
 // 上报脚本必须以**文件**形式随插件安装存在：pi 的 -e 收的是路径，读不了 jar 内资源。
 // 放进插件目录而不是运行时解压到别处，是为了守住「插件不写盘」这条承诺。
+//
+// 必须用 withType 而不是 named("prepareSandbox")：本插件注册了 5 个 PrepareSandboxTask
+// 实例——prepareSandbox（buildPlugin 打包用）、prepareSandbox_runIdeBackend /
+// _runIdeFrontend（runIde 的分体沙箱）、prepareTestSandbox（测试）、
+// prepareTestIdePerformanceSandbox。named 只配到第一个。
+//
+// 打出来的 zip 因此仍然是对的，但 runIde 的沙箱与测试沙箱里都没有这个脚本：
+// 开发时在沙箱里跑 pi，piReporterScript() 找不到文件就退回「不加 -e」，
+// 会话照常起、只是标签页不跟随——正因为没有任何报错，这类缺失极难被发现。
+// withType 覆盖全部实例，脚本在所有沙箱里都在。
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
 }
