@@ -122,13 +122,17 @@ class SessionKeyMigrationTest {
 
     @Test
     fun `迁移失败时不启动轮次监控`() {
-        val monitor = File(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+        val applier = File(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionDriftApplier.kt",
         ).readText()
 
+        // 行为本身由 SessionDriftApplierTest 直接断言（迁移失败时既不挂监控也不清未读），
+        // 这里只守住「失败分支必须提前返回，不往下做收尾动作」这个源码形态
         assertTrue(
             "迁移没成还挂监控，就是把轮次盯到一个不归这个终端管的会话上",
-            monitor.contains("if (!host.rebindKey(pendingKey, sessionId, title)) return@forEach"),
+            applier.contains("rememberFailedRebind(drift)") &&
+                Regex("""rememberFailedRebind\(drift\)\s*\n\s*return false""")
+                    .containsMatchIn(applier),
         )
     }
 
@@ -158,6 +162,9 @@ class SessionKeyMigrationTest {
         val monitor = File(
             "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
         ).readText()
+        val applier = File(
+            "src/main/kotlin/com/github/izerui/imux/monitor/SessionDriftApplier.kt",
+        ).readText()
 
         assertTrue(
             "后台 agent 继承了父进程的 IMUX_TAB 却有独立的会话 id，必须排除",
@@ -165,7 +172,7 @@ class SessionKeyMigrationTest {
         )
         assertTrue(
             "探测是异步的，结果落地前标签页可能已经关掉或被重新打开成另一个终端",
-            monitor.contains("stillApplicable(drifts, host.openTabsByTabId())"),
+            applier.contains("stillApplicable(drifts, openTabs())"),
         )
     }
 

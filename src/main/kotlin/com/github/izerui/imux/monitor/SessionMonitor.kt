@@ -139,6 +139,23 @@ class SessionMonitor(
     /** 还允许尝试几次会话漂移探测，见 [requestDriftProbe]。 */
     private val driftProbeAttempts = AtomicInteger(0)
 
+    /**
+     * 会话迁移的落地器。**必须长期持有**：它记着「已迁移但还等着扫描给出文件路径」
+     * 的会话，以及没迁成要重试的那些。每次现造一个就等于把这些队列扔掉，
+     * pi 的会话会因此永远进不了轮次监控，见该类的说明。
+     */
+    private val driftApplier = SessionDriftApplier(
+        sessionOf = { model.sessionOf(it) },
+        openTabs = { TerminalHost.getInstance(project).openTabsByTabId() },
+        rebindKey = { from, to, title ->
+            TerminalHost.getInstance(project).rebindKey(from, to, title)
+        },
+        startWatching = {
+            TerminalHost.getInstance(project).startWatchingTurn(it.id, it.agentType, it.filePath)
+        },
+        clearUnread = ::clearUnread,
+    )
+
     /** 每次出现新的无主会话都会递增，用于区分探测期间到达的新触发器。 */
     private val driftProbeGeneration = AtomicInteger(0)
 
@@ -159,22 +176,27 @@ class SessionMonitor(
      * [SessionListModel.drainNewBindings] 是破坏性读取，取走即清空，所以只能有一个
      * 消费者，且这个消费者必须一直活着。原先它挂在会话树的重绘里，而树是工具窗口
      * 懒加载出来、可被销毁的东西——树没接住，这笔迁移就永远丢了。
+     *
+     * **绑定与漂移走同一条落地通路**（转成 [KeyDrift] 交给 [applyDrifts]），不是为了
+     * 少写几行：pi 的终端可能在扫描之前就已经被上报迁到真实 id 上了，此时这笔绑定
+     * 是一笔**已经完成**的迁移。分成两条路的话，`rebindKey("pending-N", …)` 会因为
+     * 找不到 view 而失败并刷一条 WARN（那条日志本是用来抓真故障的），
+     * 同时把紧随其后的挂监控一并跳过。交给 [stillApplicable] 判断即可——
+     * 标签页已经不记着 pending key 了，这笔自然就被滤掉，不会有任何多余动作。
      */
     private fun applyNewBindings() {
         if (project.isDisposed) return
         val bindings = model.drainNewBindings()
         if (bindings.isEmpty()) return
 
-        val host = TerminalHost.getInstance(project)
-        bindings.forEach { (pendingKey, sessionId) ->
-            val session = model.sessionOf(sessionId)
-            val title = session?.title ?: "会话 ${sessionId.take(8)}"
-            // 迁移没成（目标已被别的终端占着）就别接着挂监控：那会把轮次盯到一个
-            // 不归这个终端管的会话上
-            if (!host.rebindKey(pendingKey, sessionId, title)) return@forEach
-            // 新建的会话直到落盘才有文件路径，绑定这一刻才能纳入监控
-            session?.let { host.startWatchingTurn(sessionId, it.agentType, it.filePath) }
-        }
+        val tabIdOf = TerminalHost.getInstance(project).openTabsByTabId()
+            .entries.associate { (tabId, sessionKey) -> sessionKey to tabId }
+        applyDrifts(
+            bindings.mapNotNull { (pendingKey, sessionId) ->
+                val tabId = tabIdOf[pendingKey] ?: return@mapNotNull null
+                KeyDrift(tabId, from = pendingKey, to = sessionId)
+            },
+        )
     }
 
     /**
@@ -284,26 +306,7 @@ class SessionMonitor(
      */
     private fun applyDrifts(drifts: List<KeyDrift>): Boolean {
         if (project.isDisposed) return false
-        val host = TerminalHost.getInstance(project)
-
-        // 探测是异步的，这期间标签页可能已经关掉、或被关掉后又重新打开成另一个终端。
-        // 只认那些「tabId 还在、且仍记着我们探测时看到的旧 id」的结果。
-        val applicable = stillApplicable(drifts, host.openTabsByTabId())
-        if (applicable.isEmpty()) return false
-
-        var allMigrated = true
-        applicable.forEach { drift ->
-            val session = model.sessionOf(drift.to)
-            if (!host.rebindKey(drift.from, drift.to, session?.title ?: "会话 ${drift.to.take(8)}")) {
-                // 目标被占着之类，这次迁不了。保留重试次数，别接着做后面的收尾动作
-                allMigrated = false
-                return@forEach
-            }
-            // 新会话直到落盘才有文件路径，迁移这一刻才能纳入监控
-            session?.let { host.startWatchingTurn(drift.to, it.agentType, it.filePath) }
-            // 旧 id 已经不是这个终端的身份了，挂在它上面的未读该一并撤掉
-            clearUnread(drift.from)
-        }
+        val allMigrated = driftApplier.apply(drifts)
         notifyListeners()
         return allMigrated
     }
@@ -381,6 +384,9 @@ class SessionMonitor(
         // 顺序有意义：先把 key 迁到真实 id，标题同步才查得到对应的会话。
         model.addListener {
             applyNewBindings()
+            // 必须在绑定之后：上一轮迁过去却因当时查不到文件路径而没挂上监控的会话，
+            // 以及没迁成的那些，都等这次扫描的结果补齐
+            driftApplier.retryPendingWatches()
             syncOpenTabTitles()
             requestDriftProbe()
         }
@@ -423,6 +429,14 @@ class SessionMonitor(
             try {
                 // 上一次探测没成的话在这里续上，见 requestDriftProbe
                 probeSessionDrift()
+
+                // 迁移与补挂的重试也在这里续一拍。只挂在扫描监听上是不够的：
+                // 那条通路要 applyScan 判定「结果有变化」才会通知，而占着目标 key
+                // 的重复终端被收拾掉、或用户关掉标签页，都**不改变扫描结果**——
+                // 队列会因此停摆。本轮询无条件按拍走，是重试的兜底节奏。
+                withContext(Dispatchers.EDT) {
+                    if (!project.isDisposed) driftApplier.retryPendingWatches()
+                }
 
                 val host = TerminalHost.getInstance(project)
 
