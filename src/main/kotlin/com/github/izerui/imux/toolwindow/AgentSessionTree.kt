@@ -333,6 +333,9 @@ class AgentSessionTree(
      */
     private var renderedContent: Map<AgentType, List<NodeData>>? = null
 
+    /** 迁移目标还没出现在列表里时先记着，等它出现再选中。见 [DeferredSelection]。 */
+    private val deferredSelection = DeferredSelection()
+
     fun reload() {
         // 绑定迁移不在这里做：那是核心状态迁移，挂在界面重绘上会随树一起失效。
         // 见 SessionMonitor.applyNewBindings。
@@ -351,6 +354,10 @@ class AgentSessionTree(
 
         restoreExpansion()
         restoreSelection(selected)
+
+        // 迁移当时目标还没落进列表的话，这一轮它可能出现了。
+        // 用重建前的选中值判断「用户有没有自己动过」——重建本身不算用户操作。
+        deferredSelection.claim(selected) { locate(it) != null }?.let(::revealSession)
     }
 
     private fun selectedSessionId(): String? =
@@ -370,9 +377,12 @@ class AgentSessionTree(
      * 等于把选中按死在一个已经不属于这个终端的会话上。
      */
     fun migrateSelection(from: String, to: String, isActiveTab: Boolean) {
-        val next = selectionAfterMigration(selectedSessionId(), from, to, isActiveTab) ?: return
-        if (next == selectedSessionId()) return
-        revealSession(next)
+        val current = selectedSessionId()
+        val next = selectionAfterMigration(current, from, to, isActiveTab) ?: return
+        if (next == current) return
+        // 定位不到说明列表还没扫到这个新会话（pi 在 /new 当下就上报，比扫描早）。
+        // 静默放弃的话高亮会一直钉在旧会话上，所以记下来等它出现。
+        if (!revealSession(next)) deferredSelection.defer(selectedAtDefer = current, target = next)
     }
 
     /**
@@ -384,9 +394,13 @@ class AgentSessionTree(
      *
      * [key] 可能是会话真实 id，也可能是新建会话尚未落盘时的合成 key——
      * 标签页就是以后者登记的，两种都要能定位。
+     *
+     * 返回是否真的选中了。定位不到就返回 false 而不是抛错：列表可能还没扫到这个
+     * 会话（pi 在 `/new` 当下就上报，比扫描早一步），调用方据此决定是放弃还是
+     * 记下来等它出现，见 [DeferredSelection]。
      */
-    fun revealSession(key: String) {
-        val located = locate(key) ?: return
+    fun revealSession(key: String): Boolean {
+        val located = locate(key) ?: return false
         val (agentType, index) = located
 
         val raised = limitCovering(index, limits.getValue(agentType), PAGE_SIZE)
@@ -395,12 +409,13 @@ class AgentSessionTree(
             reload()
         }
 
-        val node = findNode(key) ?: return
+        val node = findNode(key) ?: return false
         val path = TreePath(node.path)
         // 分组折叠时 setSelectionPath 不会自己展开，选中会看不见
         node.parent?.let { tree.expandPath(TreePath((it as DefaultMutableTreeNode).path)) }
         tree.selectionPath = path
         tree.scrollPathToVisible(path)
+        return true
     }
 
     /** 找出 [key] 属于哪个分组、在该分组条目里排第几。找不到返回 null。 */
