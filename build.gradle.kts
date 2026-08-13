@@ -79,3 +79,9 @@ intellijPlatform {
         }
     }
 }
+
+// 上报脚本必须以**文件**形式随插件安装存在：pi 的 -e 收的是路径，读不了 jar 内资源。
+// 放进插件目录而不是运行时解压到别处，是为了守住「插件不写盘」这条承诺。
+tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
+    from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
+}
