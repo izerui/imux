@@ -51,23 +51,23 @@ class PiReporterBehaviorTest {
         )
     }
 
-    /** 环境变量缺失时彻底不干活——用户自己在终端里跑 pi 的情形。 */
+    /** 缺少上报凭据时仍注册 session_start 做光标适配，但不注册终态上报。 */
     @Test
-    fun `缺少环境变量时不注册回调`() {
+    fun `缺少环境变量时只注册光标适配`() {
         assertEquals(
-            "ok:none",
+            "ok:session_start",
             runReporter(
-                piExpression = "({ on(name) { globalThis.__registered = name; } })",
-                report = """"ok:" + (globalThis.__registered ?? "none")""",
+                piExpression = "({ on(name) { (globalThis.__registered ??= []).push(name); } })",
+                report = """"ok:" + (globalThis.__registered?.join(",") ?? "none")""",
                 env = emptyMap(),
             ),
         )
     }
 
     @Test
-    fun `默认 editor 去掉反色假光标但保留 marker 与字符`() {
+    fun `默认 editor 强制硬件光标并去掉反色假光标`() {
         assertEquals(
-            "prefix:<ESC>_pi:c<BEL>中:suffix",
+            "true|prefix:<ESC>_pi:c<BEL>中:suffix",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
@@ -83,10 +83,13 @@ class PiReporterBehaviorTest {
                       ui,
                       sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
                     });
-                    const editor = ui.factory({}, {}, {});
-                    globalThis.__rendered = editor.render(80)[0]
+                    const editor = ui.factory({
+                      setShowHardwareCursor(value) { globalThis.__hardwareCursor = value; },
+                    }, {}, {});
+                    const rendered = editor.render(80)[0]
                       .replaceAll("\x1b", "<ESC>")
                       .replaceAll("\x07", "<BEL>");
+                    globalThis.__rendered = `${'$'}{globalThis.__hardwareCursor}|${'$'}{rendered}`;
                     """.trimIndent(),
                 report = "globalThis.__rendered",
             ),

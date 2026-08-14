@@ -26,6 +26,9 @@ function installHardwareCursorEditor(ctx) {
   if (!previousFactory && typeof CustomEditor !== "function") return;
 
   const factory = (tui, theme, keybindings) => {
+    // settings.showHardwareCursor=false 会覆盖环境变量；只在 imux 的 TUI 实例上重新启用，
+    // 不改写用户配置文件，也不影响用户从普通终端启动的 pi。
+    tui.setShowHardwareCursor?.(true);
     const editor = previousFactory
       ? previousFactory(tui, theme, keybindings)
       : new CustomEditor(tui, theme, keybindings);
@@ -45,7 +48,7 @@ function installHardwareCursorEditor(ctx) {
  * 每次会话开始或切换（/new、/resume、/fork、/clone）都报一次，
  * imux 据此把终端标签页迁到新会话上。
  *
- * 三条硬约束，改动时不要破坏：
+ * 四条硬约束，改动时不要破坏：
  * 1. 不 await：阻塞 session_start 会让用户敲 /new 时卡顿
  * 2. 全程吞异常：本扩展的任何故障都不该影响用户的 pi 会话
  * 3. 短超时：IDE 已关闭或端口变了，不能把 pi 拖住
@@ -79,11 +82,8 @@ export default function (pi) {
 
     const credentials = globalThis[stateKey];
 
-    // 用户自己在终端里跑 pi 时这个扩展根本不会被加载（-e 是 imux 启动时才加的）；
-    // 这里再挡一道，缺任何一项就彻底不干活。
-    if (!credentials?.url || !credentials?.token || !credentials?.tabId) return;
-
     const report = (type, ctx, stopReason, messageId) => {
+      if (!credentials?.url || !credentials?.token || !credentials?.tabId) return;
       try {
         const sessionId = ctx?.sessionManager?.getSessionId?.();
         const cwd = ctx?.sessionManager?.getCwd?.();
@@ -108,12 +108,16 @@ export default function (pi) {
 
     pi.on("session_start", async (_event, ctx) => {
       try {
+        // 光标适配不依赖 HTTP 上报服务；endpoint 暂不可用时也不能退回双光标。
         installHardwareCursorEditor(ctx);
       } catch {
         // editor API 或渲染实现变化时退回 pi 默认 editor，不影响会话与上报
       }
       report("session_start", ctx);
     });
+
+    // 没有凭据时只保留光标适配，不注册无意义的终态上报。
+    if (!credentials?.url || !credentials?.token || !credentials?.tabId) return;
 
     // error / length 可能先触发 pi 的自动重试或自动压缩，不能在会话文件刚写下时
     // 就当作整轮结束。agent_settled 是 pi 明确提供给状态集成的最终信号：
