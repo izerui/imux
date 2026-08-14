@@ -9,7 +9,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentCommandTest {
-
     @Test
     fun `经登录且交互的 shell 启动，而不是直接 exec`() {
         // 直接 exec 拿不到用户的 PATH：IDE 从 Dock 启动时 PATH 只有系统那几个目录，
@@ -75,11 +74,8 @@ class AgentCommandTest {
     }
 
     /**
-     * pi 默认不显示硬件光标（自绘一个），于是 262 的 cursor tracker 拿不到位置更新，
-     * output model 的 cursorOffset 停在原处——输入法候选窗和组合文本都跟着定位到错处。
-     *
-     * pi 官方文档的 IntelliJ 一节就是这么说的：想要真实光标就设 PI_HARDWARE_CURSOR=1。
-     * 与 claude 的 CLAUDE_CODE_NATIVE_CURSOR 是同一类问题、同一类解法。
+     * IDEA 262 的输入法请求只在 terminal cursor 可见时使用它的位置，因此仍需打开硬件光标。
+     * pi 的反色假光标由随进程加载的 imux editor 包装器去掉，不能在这里关闭定位来源。
      */
     @Test
     fun `pi 显示硬件光标供输入法定位`() {
@@ -122,7 +118,9 @@ class AgentCommandTest {
 
     @Test
     fun `pi 带上上报扩展`() {
-        val script = java.nio.file.Paths.get("/plugins/imux/scripts/pi-imux-reporter.js")
+        val script =
+            java.nio.file.Paths
+                .get("/plugins/imux/scripts/pi-imux-reporter.js")
 
         assertEquals(
             "pi --session-id 'abc-123' -e '/plugins/imux/scripts/pi-imux-reporter.js'",
@@ -144,7 +142,9 @@ class AgentCommandTest {
 
     @Test
     fun `扩展只给 pi，不给另外两个 agent`() {
-        val script = java.nio.file.Paths.get("/plugins/imux/scripts/pi-imux-reporter.js")
+        val script =
+            java.nio.file.Paths
+                .get("/plugins/imux/scripts/pi-imux-reporter.js")
 
         assertEquals("claude --resume 'x'", launchCommand("/bin/zsh", AgentType.CLAUDE, "x", script).last())
         assertEquals("codex resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", script).last())

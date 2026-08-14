@@ -29,19 +29,31 @@ internal fun launchCommand(
     piExtension: java.nio.file.Path? = null,
 ): List<String> {
     val cli = agentType.cli
-    val script = when {
-        resumeId == null -> cli
-        // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
-        // 所以新建与续聊是同一条命令——新建时 id 由 imux 预先生成传进来。
-        agentType == AgentType.PI -> buildString {
-            append("$cli --session-id ${singleQuote(resumeId)}")
-            // 脚本缺失时**不加** -e：拼出一个加载不了的扩展会让 pi 启动失败，
-            // 那是整个会话起不来；而少了上报只是标签页不自动跟随。
-            piExtension?.let { append(" -e ${singleQuote(it.toString())}") }
+    val script =
+        when {
+            resumeId == null -> {
+                cli
+            }
+
+            // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
+            // 所以新建与续聊是同一条命令——新建时 id 由 imux 预先生成传进来。
+            agentType == AgentType.PI -> {
+                buildString {
+                    append("$cli --session-id ${singleQuote(resumeId)}")
+                    // 脚本缺失时**不加** -e：拼出一个加载不了的扩展会让 pi 启动失败，
+                    // 那是整个会话起不来；而少了上报只是标签页不自动跟随。
+                    piExtension?.let { append(" -e ${singleQuote(it.toString())}") }
+                }
+            }
+
+            agentType == AgentType.CODEX -> {
+                "$cli resume ${singleQuote(resumeId)}"
+            }
+
+            else -> {
+                "$cli --resume ${singleQuote(resumeId)}"
+            }
         }
-        agentType == AgentType.CODEX -> "$cli resume ${singleQuote(resumeId)}"
-        else -> "$cli --resume ${singleQuote(resumeId)}"
-    }
     return listOf(shell, "-l", "-i", "-c", script)
 }
 
@@ -60,13 +72,10 @@ internal fun launchCommand(
  * IME 候选窗也跟着定位到旧输出处。native cursor 模式保留完整 TUI，但会持续维护
  * 可被终端追踪的真实光标。Codex 本来就显式维护真实光标，不需要这个变量。
  *
- * `PI_HARDWARE_CURSOR` 是 pi 的同款开关，成因与解法都和 claude 那条一模一样：pi 默认
- * 不显示硬件光标（`showHardwareCursor ?? PI_HARDWARE_CURSOR == "1"`，默认 false），
- * 光标一停更新，候选窗和组合文本就都定位到旧位置。pi 官方文档的 IntelliJ IDEA 一节
- * 正是这么建议的，另一处还直接点了症状：CJK 候选窗不跟随光标时就设这个变量。
- *
- * 注意 pi 的取值判定是 settings 优先：用户若在 `~/.pi/agent/settings.json` 里显式写了
- * `showHardwareCursor: false`，这个环境变量就不起作用——那是用户自己的选择，不去覆盖。
+ * pi 注入 `PI_HARDWARE_CURSOR=1`，让 IDEA 262 能用可见 terminal cursor 定位 macOS
+ * 输入法候选窗。pi 同时画出的反色假光标由 imux 自带扩展通过官方 editor factory
+ * 去掉（见 `pi-imux-reporter.js`）：保留 CURSOR_MARKER 与硬件光标，只去掉紧随 marker
+ * 的反色渲染。这样候选窗能跟随，中文双宽字符间移动时也只有一套可见光标。
  */
 internal fun launchEnvironment(
     agentType: AgentType,
@@ -76,7 +85,10 @@ internal fun launchEnvironment(
     buildMap {
         put(IMUX_TAB_ENV, tabId)
         when (agentType) {
-            AgentType.CLAUDE -> put("CLAUDE_CODE_NATIVE_CURSOR", "1")
+            AgentType.CLAUDE -> {
+                put("CLAUDE_CODE_NATIVE_CURSOR", "1")
+            }
+
             AgentType.PI -> {
                 put("PI_HARDWARE_CURSOR", "1")
                 // 令牌只发给 pi：它是上报接口唯一的门禁，多发一个进程就多一份泄漏面
@@ -85,7 +97,10 @@ internal fun launchEnvironment(
                     put("IMUX_TOKEN", it.token)
                 }
             }
-            AgentType.CODEX -> Unit
+
+            AgentType.CODEX -> {
+                Unit
+            }
         }
     }
 
@@ -100,12 +115,15 @@ internal fun launchEnvironment(
  */
 internal fun preassignedSessionId(
     agentType: AgentType,
-    newId: () -> String = { java.util.UUID.randomUUID().toString() },
+    newId: () -> String = {
+        java.util.UUID
+            .randomUUID()
+            .toString()
+    },
 ): String? = if (agentType == AgentType.PI) newId() else null
 
 /** 用户的登录 shell；取不到时退回 zsh（macOS 自 Catalina 起的默认）。 */
-internal fun resolveShell(shellEnv: String?): String =
-    shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
+internal fun resolveShell(shellEnv: String?): String = shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
 
 /**
  * 包成单引号字符串。

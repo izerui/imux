@@ -1,5 +1,44 @@
+import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
+
+const CURSOR_MARKER = "\x1b_pi:c\x07";
+const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
+
 /**
- * imux 会话上报器。
+ * IDEA 必须看到 pi 的硬件光标，macOS 输入法候选窗才会跟随；pi 默认又会在同一位置
+ * 画一个反色假光标。中文双宽字符间移动后，两套 painter 还可能错开。
+ *
+ * 只移除 marker 后紧邻的反色段，marker 和被反色的字符都保留。硬件光标因此仍由 pi
+ * 定位并交给 IDEA 绘制，输入与已有自定义 editor 的其余行为不变。
+ */
+function stripFakeCursor(line) {
+  return line.replace(FAKE_CURSOR_AFTER_MARKER, `${CURSOR_MARKER}$1`);
+}
+
+function installHardwareCursorEditor(ctx) {
+  if (ctx?.mode !== "tui") return;
+  if (typeof ctx.ui?.getEditorComponent !== "function" || typeof ctx.ui?.setEditorComponent !== "function") return;
+
+  const wrapperKey = Symbol.for("com.github.izerui.imux.pi-cursor-editor");
+  const previousFactory = ctx.ui.getEditorComponent();
+  if (previousFactory?.[wrapperKey]) return;
+
+  const CustomEditor = PiCodingAgent.CustomEditor;
+  if (!previousFactory && typeof CustomEditor !== "function") return;
+
+  const factory = (tui, theme, keybindings) => {
+    const editor = previousFactory
+      ? previousFactory(tui, theme, keybindings)
+      : new CustomEditor(tui, theme, keybindings);
+    const render = editor.render.bind(editor);
+    editor.render = (width) => render(width).map(stripFakeCursor);
+    return editor;
+  };
+  factory[wrapperKey] = true;
+  ctx.ui.setEditorComponent(factory);
+}
+
+/**
+ * imux 会话上报与 IDEA 光标适配扩展。
  *
  * pi 不对外暴露「此刻在跑哪个会话」：没有运行态文件、不持有会话文件句柄，
  * 又因为设了 process.title 而让 ps 读不到它的环境变量。于是改由 pi 自己说——
@@ -10,8 +49,9 @@
  * 1. 不 await：阻塞 session_start 会让用户敲 /new 时卡顿
  * 2. 全程吞异常：本扩展的任何故障都不该影响用户的 pi 会话
  * 3. 短超时：IDE 已关闭或端口变了，不能把 pi 拖住
+ * 4. IDEA 下保留硬件光标定位，但去掉 pi 与之重叠的反色假光标
  *
- * 只做上报，不解析、不改动任何东西。
+ * 上报部分不解析、不改动会话内容；光标适配只包装 pi 官方 editor 扩展点。
  */
 export default function (pi) {
   // 整个函数体都要兜住，不能只兜回调内部。`pi.on(...)` 这次调用本身也会抛：
@@ -67,6 +107,11 @@ export default function (pi) {
     };
 
     pi.on("session_start", async (_event, ctx) => {
+      try {
+        installHardwareCursorEditor(ctx);
+      } catch {
+        // editor API 或渲染实现变化时退回 pi 默认 editor，不影响会话与上报
+      }
       report("session_start", ctx);
     });
 
@@ -79,7 +124,7 @@ export default function (pi) {
         if (!Array.isArray(branch)) return;
         const lastAssistant = branch.findLast?.(
           (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
-        ) ?? [...branch].reverse().find(
+        ) ?? branch.toReversed().find(
           (entry) => entry?.type === "message" && entry?.message?.role === "assistant",
         );
         const stopReason = lastAssistant?.message?.stopReason;

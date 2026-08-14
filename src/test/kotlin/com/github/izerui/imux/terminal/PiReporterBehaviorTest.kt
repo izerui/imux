@@ -18,7 +18,6 @@ import java.util.concurrent.TimeUnit
  * try/catch 放在回调内部还是包住整个函数体，源码上只差两行缩进，行为却天差地别。
  */
 class PiReporterBehaviorTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -66,14 +65,77 @@ class PiReporterBehaviorTest {
     }
 
     @Test
+    fun `默认 editor 去掉反色假光标但保留 marker 与字符`() {
+        assertEquals(
+            "prefix:<ESC>_pi:c<BEL>中:suffix",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    globalThis.__editorLines = ["prefix:\x1b_pi:c\x07\x1b[7m中\x1b[0m:suffix"];
+                    const ui = {
+                      factory: undefined,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const editor = ui.factory({}, {}, {});
+                    globalThis.__rendered = editor.render(80)[0]
+                      .replaceAll("\x1b", "<ESC>")
+                      .replaceAll("\x07", "<BEL>");
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
+    fun `包装已有自定义 editor 且重复 session start 不叠加`() {
+        assertEquals(
+            "true|custom:<ESC>_pi:c<BEL>X",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({ render: () => ["custom:\x1b_pi:c\x07\x1b[7mX\x1b[27m"] });
+                    const ui = {
+                      factory: customFactory,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    const ctx = {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    };
+                    await globalThis.__handlers.session_start({}, ctx);
+                    const installedOnce = ui.factory;
+                    await globalThis.__handlers.session_start({}, ctx);
+                    const rendered = ui.factory({}, {}, {}).render(80)[0]
+                      .replaceAll("\x1b", "<ESC>")
+                      .replaceAll("\x07", "<BEL>");
+                    globalThis.__result = `${'$'}{installedOnce === ui.factory}|${'$'}{rendered}`;
+                    """.trimIndent(),
+                report = "globalThis.__result",
+            ),
+        )
+    }
+
+    @Test
     fun `上报官方会话 id 与 cwd 并清除子进程环境凭据`() {
         assertEquals(
             """{"envCleared":true,"body":{"type":"session_start","tabId":"imux-tab","sessionId":"custom.id-1","cwd":"/Users/demo/project"}}""",
             runReporter(
                 piExpression =
-                    """({
+                    """
+                    ({
                         on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; }
-                    })""".trimIndent(),
+                    })
+                    """.trimIndent(),
                 beforeReport =
                     """
                     globalThis.fetch = (_url, options) => {
@@ -105,9 +167,11 @@ class PiReporterBehaviorTest {
             """{"type":"agent_settled","tabId":"imux-tab","sessionId":"abc-1","cwd":"/tmp/project","stopReason":"error","messageId":"a1"}""",
             runReporter(
                 piExpression =
-                    """({
+                    """
+                    ({
                         on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; }
-                    })""".trimIndent(),
+                    })
+                    """.trimIndent(),
                 beforeReport =
                     """
                     globalThis.fetch = (_url, options) => {
@@ -144,14 +208,27 @@ class PiReporterBehaviorTest {
         piExpression: String,
         report: String = """"ok"""",
         beforeReport: String = "",
-        env: Map<String, String> = mapOf(
-            "IMUX_REPORT_URL" to "http://127.0.0.1:1/imux/pi-session",
-            "IMUX_TOKEN" to "token",
-            "IMUX_TAB" to "imux-tab",
-        ),
+        env: Map<String, String> =
+            mapOf(
+                "IMUX_REPORT_URL" to "http://127.0.0.1:1/imux/pi-session",
+                "IMUX_TOKEN" to "token",
+                "IMUX_TAB" to "imux-tab",
+            ),
     ): String {
         val node = File("/opt/homebrew/bin/node").takeIf { it.canExecute() }?.absolutePath ?: "node"
         assumeTrue("需要 node 才能执行扩展脚本", canRun(node))
+
+        val packageDir = File(tmp.root, "node_modules/@earendil-works/pi-coding-agent").apply { mkdirs() }
+        File(packageDir, "package.json").writeText(
+            """{"type":"module","exports":"./index.js"}""",
+        )
+        File(packageDir, "index.js").writeText(
+            """
+            export class CustomEditor {
+              render() { return globalThis.__editorLines ?? []; }
+            }
+            """.trimIndent(),
+        )
 
         // 源码是 ESM（export default），必须以 .mjs 载入才能不依赖 package.json
         val script = File(tmp.root, "reporter.mjs")
@@ -167,23 +244,30 @@ class PiReporterBehaviorTest {
             """.trimIndent(),
         )
 
-        val process = ProcessBuilder(node, driver.absolutePath)
-            .directory(tmp.root)
-            .redirectErrorStream(true)
-            .apply {
-                environment().keys.retainAll(setOf("PATH", "HOME"))
-                environment().putAll(env)
-            }
-            .start()
+        val process =
+            ProcessBuilder(node, driver.absolutePath)
+                .directory(tmp.root)
+                .redirectErrorStream(true)
+                .apply {
+                    environment().keys.retainAll(setOf("PATH", "HOME"))
+                    environment().putAll(env)
+                }.start()
         process.waitFor(30, TimeUnit.SECONDS)
-        val output = process.inputStream.bufferedReader().readText().trim()
+        val output =
+            process.inputStream
+                .bufferedReader()
+                .readText()
+                .trim()
         assertEquals("脚本必须正常退出，异常冒到加载器就是会话起不来：\n$output", 0, process.exitValue())
         return output
     }
 
-    private fun canRun(node: String): Boolean = runCatching {
-        ProcessBuilder(node, "--version").redirectErrorStream(true).start()
-            .also { it.waitFor(10, TimeUnit.SECONDS) }
-            .exitValue() == 0
-    }.getOrDefault(false)
+    private fun canRun(node: String): Boolean =
+        runCatching {
+            ProcessBuilder(node, "--version")
+                .redirectErrorStream(true)
+                .start()
+                .also { it.waitFor(10, TimeUnit.SECONDS) }
+                .exitValue() == 0
+        }.getOrDefault(false)
 }

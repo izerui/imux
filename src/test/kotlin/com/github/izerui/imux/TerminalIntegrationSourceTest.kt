@@ -244,6 +244,13 @@ class TerminalIntegrationSourceTest {
             compositionSupport.contains("contentComponent.add(compositionLabel)") &&
                 compositionSupport.contains("compositionLabel.setBounds("),
         )
+        assertTrue(
+            "组合层必须遮住预编辑起点处的 pi 自绘光标，并在预编辑文本末尾只画一个 caret",
+            compositionSupport.contains("isOpaque = true") &&
+                compositionSupport.contains("compositionLabel.background") &&
+                compositionSupport.contains("compositionLabel.border") &&
+                compositionSupport.contains("JBUI.Borders.customLine"),
+        )
         assertFalse(
             "inline inlay 必然参与 soft-wrap 计算，不能再用于 Codex 组合文本",
             compositionSupport.contains("InlayModel") ||

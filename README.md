@@ -38,7 +38,7 @@ IDEA 里 **Settings → Plugins → Marketplace**，搜索 **imux**，Install，
 状态图标：
 
 | 图标 | 含义 |
-|---|---|
+| --- | --- |
 | 转圈动画 | 正在跑 |
 | ● 灰点 | 已经在某个标签页里开着 |
 | 标题加粗 + 标记 | 有新结果你还没看 |
@@ -93,7 +93,7 @@ Codex · 耗时 2 分 13 秒
 插件要显示会话列表，就得读 CLI 的会话文件。说清楚读了哪些：
 
 | 路径 | 读什么 | 用途 |
-|---|---|---|
+| --- | --- | --- |
 | `~/.claude/projects/<项目目录>/*.jsonl` | 会话标题、时间、首条消息 | 列出本项目的 Claude 会话 |
 | `~/.claude/sessions/*.json` | 进程 pid、状态、cwd | 判断哪些会话正在跑 |
 | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | 首行的 cwd、标题、轮次信号 | 列出本项目的 Codex 会话、检测轮次完成 |
@@ -105,7 +105,7 @@ Codex · 耗时 2 分 13 秒
 还会查两样进程信息，**只针对 imux 自己启动的 CLI 进程**，用来认出你在终端里 `/clear`、`/new` 之后换了哪个会话（见下一节）：
 
 | 命令 | 查什么 |
-|---|---|
+| --- | --- |
 | `ps eww -p <pid>` | 进程的环境变量，找 imux 启动时注入的标记 |
 | `lsof -p <pid>` | 进程打开着哪个 Codex 会话文件 |
 
@@ -116,9 +116,9 @@ pi 不走这两条——它把这些信息全藏住了，`ps` 读不到它的环
 启动 pi 时还多做三件事，都是为了让它能上报会话切换：
 
 | 做什么 | 具体内容 |
-|---|---|
-| 注入环境变量 | `IMUX_TAB`（标签页标识，三种 CLI 都注入）、`PI_HARDWARE_CURSOR=1`（让 pi 显示硬件光标，供输入法定位，与上报无关）、`IMUX_REPORT_URL`、`IMUX_TOKEN` |
-| 加载一个扩展 | imux 自带的 `pi-imux-reporter.js`，随启动命令加载进 pi 进程 |
+| --- | --- |
+| 注入环境变量 | `IMUX_TAB`（标签页标识，三种 CLI 都注入）、`PI_HARDWARE_CURSOR=1`（供 IDEA 定位输入法候选窗）、`IMUX_REPORT_URL`、`IMUX_TOKEN` |
+| 加载一个扩展 | imux 自带的 `pi-imux-reporter.js`，上报会话切换，并在 IDEA 中保留硬件光标定位、去掉 pi 重叠的反色假光标 |
 | 开一个本机路由 | 在 IDE 内置 HTTP 服务上注册 `/imux/pi-session`，只收 POST，校验 `x-imux-token` 请求头 |
 
 会话切换上报包含 `tabId`、pi 官方返回的 `sessionId` 和当前 `cwd`；最终的 `error` / `length` 还会在 `agent_settled` 后补报结束原因，避免自动重试期间提前提醒。`IMUX_REPORT_URL` 形如 `http://127.0.0.1:<IDE 内置服务端口>/imux/pi-session`。

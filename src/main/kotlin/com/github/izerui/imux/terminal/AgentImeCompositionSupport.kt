@@ -38,27 +38,28 @@ internal class AgentImeCompositionSupport(
     private val editor: Editor,
     private val terminalView: TerminalView,
 ) : AWTEventListener {
-
     private val contentComponent = editor.contentComponent
     private val modelListenerDisposable: Disposable =
         Disposer.newDisposable("Agent IME composition model listener")
-    private val compositionLabel = JBLabel().apply {
-        isFocusable = false
-        isOpaque = false
-        horizontalAlignment = SwingConstants.LEFT
-        verticalAlignment = SwingConstants.CENTER
-        isVisible = false
-    }
+    private val compositionLabel =
+        JBLabel().apply {
+            isFocusable = false
+            isOpaque = true
+            horizontalAlignment = SwingConstants.LEFT
+            verticalAlignment = SwingConstants.CENTER
+            isVisible = false
+        }
     private var composedText = ""
-    private val modelListener = object : TerminalOutputModelListener {
-        override fun afterContentChanged(event: TerminalContentChangeEvent) {
-            updateCompositionBounds()
-        }
+    private val modelListener =
+        object : TerminalOutputModelListener {
+            override fun afterContentChanged(event: TerminalContentChangeEvent) {
+                updateCompositionBounds()
+            }
 
-        override fun cursorOffsetChanged(event: TerminalCursorOffsetChangeEvent) {
-            updateCompositionBounds()
+            override fun cursorOffsetChanged(event: TerminalCursorOffsetChangeEvent) {
+                updateCompositionBounds()
+            }
         }
-    }
 
     init {
         contentComponent.add(compositionLabel)
@@ -78,10 +79,11 @@ internal class AgentImeCompositionSupport(
 
         when (event.id) {
             InputMethodEvent.INPUT_METHOD_TEXT_CHANGED -> {
-                val (committedText, newComposedText) = splitInputMethodText(
-                    event.text,
-                    event.committedCharacterCount,
-                )
+                val (committedText, newComposedText) =
+                    splitInputMethodText(
+                        event.text,
+                        event.committedCharacterCount,
+                    )
                 if (committedText.isNotEmpty()) {
                     terminalView.sendText(committedText)
                 }
@@ -89,7 +91,9 @@ internal class AgentImeCompositionSupport(
                 event.consume()
             }
 
-            InputMethodEvent.CARET_POSITION_CHANGED -> event.consume()
+            InputMethodEvent.CARET_POSITION_CHANGED -> {
+                event.consume()
+            }
         }
     }
 
@@ -115,20 +119,24 @@ internal class AgentImeCompositionSupport(
         if (composedText.isEmpty() || editor.isDisposed) return
 
         val model = terminalView.outputModels.active.value
-        val relativeOffset = (model.cursorOffset - model.startOffset)
-            .coerceIn(0L, model.textLength.toLong())
-            .toInt()
+        val relativeOffset =
+            (model.cursorOffset - model.startOffset)
+                .coerceIn(0L, model.textLength.toLong())
+                .toInt()
         val point = editor.offsetToXY(relativeOffset)
         val colorsScheme = editor.colorsScheme
         val foreground = colorsScheme.defaultForeground
 
         compositionLabel.font = colorsScheme.getFont(EditorFontType.CONSOLE_PLAIN)
         compositionLabel.foreground = foreground
+        compositionLabel.background = colorsScheme.defaultBackground
         compositionLabel.border = JBUI.Borders.customLine(foreground, 0, 0, 1, 0)
 
-        val width = compositionLabel.getFontMetrics(compositionLabel.font)
-            .stringWidth(composedText)
-            .coerceAtLeast(1)
+        val width =
+            compositionLabel
+                .getFontMetrics(compositionLabel.font)
+                .stringWidth(composedText)
+                .coerceAtLeast(1)
         compositionLabel.setBounds(
             point.x,
             point.y,
