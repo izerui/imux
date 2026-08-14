@@ -91,7 +91,8 @@ class PiSessionReader(private val piHome: Path) {
         file.useLines { lines ->
             for (line in lines) {
                 if (!line.contains(SESSION_INFO_MARKER)) continue
-                JsonLineScanner.stringValue(line, "name")?.let { name = it }
+                val reported = JsonLineScanner.stringValue(line, "name") ?: continue
+                name = reported.trim().takeIf { it.isNotEmpty() }
             }
         }
         return name
@@ -105,11 +106,18 @@ class PiSessionReader(private val piHome: Path) {
      */
     private fun firstUserMessage(file: Path): String? = file.useLines { lines ->
         lines.take(MAX_SCAN_LINES)
-            .filter { it.contains(USER_ROLE_MARKER) }
-            .mapNotNull { JsonLineScanner.stringValue(it, "text") }
+            .mapNotNull(::userMessageText)
             .map { it.replace('\n', ' ').replace('\t', ' ').trim() }
             .firstOrNull { it.isNotEmpty() }
     }?.let(::truncate)
+
+    private fun userMessageText(line: String): String? {
+        if (!line.contains(USER_ROLE_MARKER)) return null
+        if (JsonLineScanner.topLevelStringValue(line, "type") != MESSAGE_TYPE) return null
+        if (JsonLineScanner.objectStringValue(line, "message", "role") != USER_ROLE) return null
+        return JsonLineScanner.objectStringValue(line, "message", "content")
+            ?: JsonLineScanner.stringValueInObject(line, "message", "text")
+    }
 
     private fun truncate(text: String): String =
         if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
@@ -123,5 +131,7 @@ class PiSessionReader(private val piHome: Path) {
         const val SESSION_HEAD_MARKER = "\"type\":\"session\""
         const val SESSION_INFO_MARKER = "\"type\":\"session_info\""
         const val USER_ROLE_MARKER = "\"role\":\"user\""
+        const val MESSAGE_TYPE = "message"
+        const val USER_ROLE = "user"
     }
 }

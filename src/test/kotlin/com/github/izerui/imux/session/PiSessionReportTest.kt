@@ -6,33 +6,36 @@ import org.junit.Test
 
 class PiSessionReportTest {
 
-    private val file =
-        "/Users/demo/.pi/agent/sessions/--Users-demo-proj--/2026-08-13T09-45-00-045Z_019ffa82-bd8d-7edd-a9aa-e5e711524a7a.jsonl"
-
     @Test
-    fun `从会话文件路径解析出会话 id`() {
-        assertEquals("019ffa82-bd8d-7edd-a9aa-e5e711524a7a", piSessionIdOf(file))
-    }
-
-    /** 文件名是 <时间戳>_<uuid>.jsonl，时间戳里也有横杠，不能按横杠切。 */
-    @Test
-    fun `时间戳不会被误当成 id`() {
-        assertEquals(36, piSessionIdOf(file)?.length)
-    }
-
-    @Test
-    fun `形状不对的路径解析为 null`() {
-        assertNull(piSessionIdOf("/tmp/notasession.jsonl"))
-        assertNull(piSessionIdOf("/tmp/2026-08-13T09-45-00-045Z_短id.jsonl"))
-        assertNull(piSessionIdOf(""))
-    }
-
-    @Test
-    fun `解析上报体`() {
-        val body = """{"tabId":"imux-1","sessionFile":"$file"}"""
+    fun `解析会话切换上报体`() {
+        val body =
+            """{"type":"session_start","tabId":"imux-1","sessionId":"team.custom_1","cwd":"/Users/demo/proj"}"""
 
         assertEquals(
-            PiSessionReport("imux-1", "019ffa82-bd8d-7edd-a9aa-e5e711524a7a"),
+            PiSessionReport(
+                PiReportType.SESSION_START,
+                "imux-1",
+                "team.custom_1",
+                "/Users/demo/proj",
+            ),
+            parsePiReport(body),
+        )
+    }
+
+    @Test
+    fun `解析自动重试后的最终失败`() {
+        val body =
+            """{"type":"agent_settled","tabId":"imux-1","sessionId":"abc-123","cwd":"/Users/demo/proj","stopReason":"error","messageId":"msg-1"}"""
+
+        assertEquals(
+            PiSessionReport(
+                PiReportType.AGENT_SETTLED,
+                "imux-1",
+                "abc-123",
+                "/Users/demo/proj",
+                PiStopReason.ERROR,
+                "msg-1",
+            ),
             parsePiReport(body),
         )
     }
@@ -42,9 +45,42 @@ class PiSessionReportTest {
     fun `缺字段或损坏的上报体解析为 null`() {
         assertNull(parsePiReport(""))
         assertNull(parsePiReport("这不是 json"))
-        assertNull(parsePiReport("""{"tabId":"imux-1"}"""))
-        assertNull(parsePiReport("""{"sessionFile":"$file"}"""))
-        assertNull(parsePiReport("""{"tabId":"","sessionFile":"$file"}"""))
-        assertNull(parsePiReport("""{"tabId":"imux-1","sessionFile":"/tmp/x.jsonl"}"""))
+        assertNull(parsePiReport("""{"tabId":"imux-1","sessionId":"abc","cwd":"/tmp"}"""))
+        assertNull(parsePiReport("""{"type":"session_start","sessionId":"abc","cwd":"/tmp"}"""))
+        assertNull(parsePiReport("""{"type":"session_start","tabId":"","sessionId":"abc","cwd":"/tmp"}"""))
+        assertNull(parsePiReport("""{"type":"session_start","tabId":"imux-1","sessionId":"abc","cwd":""}"""))
+    }
+
+    @Test
+    fun `会话 id 只接受 pi 官方允许的字符与边界`() {
+        fun report(id: String) =
+            """{"type":"session_start","tabId":"imux-1","sessionId":"$id","cwd":"/tmp"}"""
+
+        assertEquals("a", parsePiReport(report("a"))?.sessionId)
+        assertEquals("A0._-z", parsePiReport(report("A0._-z"))?.sessionId)
+        assertNull(parsePiReport(report("-abc")))
+        assertNull(parsePiReport(report("abc_")))
+        assertNull(parsePiReport(report("a/b")))
+        assertNull(parsePiReport(report("中文")))
+    }
+
+    @Test
+    fun `settled 只接受 error 或 length`() {
+        fun report(reason: String) =
+            """{"type":"agent_settled","tabId":"imux-1","sessionId":"abc","cwd":"/tmp","stopReason":"$reason","messageId":"msg-1"}"""
+
+        assertEquals(PiStopReason.LENGTH, parsePiReport(report("length"))?.stopReason)
+        assertNull(parsePiReport(report("stop")))
+        assertNull(parsePiReport(report("unknown")))
+        assertNull(
+            parsePiReport(
+                """{"type":"agent_settled","tabId":"imux-1","sessionId":"abc","cwd":"/tmp"}""",
+            ),
+        )
+        assertNull(
+            parsePiReport(
+                """{"type":"agent_settled","tabId":"imux-1","sessionId":"abc","cwd":"/tmp","stopReason":"error"}""",
+            ),
+        )
     }
 }

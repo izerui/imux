@@ -1,6 +1,8 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.JsonLineScanner
+import com.github.izerui.imux.session.PiStopReason
 import com.github.izerui.imux.session.scanTail
 import com.intellij.openapi.diagnostic.logger
 import java.nio.ByteBuffer
@@ -44,6 +46,7 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
         @Volatile var state: TurnState,
         /** 本轮开始执行的时刻；不在执行中时为 null。 */
         @Volatile var workingSince: Instant? = null,
+        var lastPiMessageId: String? = null,
     )
 
     /** 最近一次完成的耗时，供提醒展示。 */
@@ -56,18 +59,23 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
      */
     private val entries = ConcurrentHashMap<String, Entry>()
 
+    /** pi 最终失败的明确终态；等文件里的 error / length 先把状态推进到 WORKING 后再收口。 */
+    private val piSettled = ConcurrentHashMap<String, PiSettlement>()
+
     /**
      * 纳入监控。**自带运行态文件的 agent 一律拒绝**——它们由运行态文件判定，见本类 KDoc。
      */
     fun watch(sessionId: String, agentType: AgentType, file: Path) {
         if (agentType.hasRuntimeStatusFile) return
         if (entries.containsKey(sessionId)) return
+        val initial = initialStateOf(agentType, file)
         entries[sessionId] = Entry(
             agentType = agentType,
             file = file,
             offset = currentSize(file),
             // workingSince 保持 null：起点在观察窗口之外，报一个从此刻算起的耗时是错的
-            state = initialStateOf(agentType, file),
+            state = initial.state,
+            lastPiMessageId = initial.lastPiMessageId,
         )
     }
 
@@ -83,15 +91,32 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
      * 窗口里一个信号都没有时返回 null，交由 [scanTail] 把窗口翻倍重来；
      * 到了文件头仍找不到，说明这个文件里就没有轮次信号，按空闲处理。
      */
-    private fun initialStateOf(agentType: AgentType, file: Path): TurnState =
+    private fun initialStateOf(agentType: AgentType, file: Path): InitialState =
         scanTail(file) { lines ->
             val result = TurnSignalParser.parse(agentType, TurnState.IDLE, lines)
-            if (result.transitions.isEmpty()) null else result.state
-        } ?: TurnState.IDLE
+            if (result.transitions.isEmpty()) {
+                null
+            } else {
+                InitialState(result.state, lastPiMessageId(lines))
+            }
+        } ?: InitialState(TurnState.IDLE, null)
 
     fun unwatch(sessionId: String) {
         entries.remove(sessionId)
         durations.remove(sessionId)
+        piSettled.remove(sessionId)
+    }
+
+    /**
+     * pi 已确认自动重试、压缩重试和后续消息全部结束。
+     *
+     * 正常 stop 仍由会话文件直接判定；这里只接管会被自动恢复的 error / length，
+     * 因而不会与文件信号重复提醒。
+     */
+    fun reportPiSettled(sessionId: String, stopReason: PiStopReason, messageId: String) {
+        if (stopReason == PiStopReason.ERROR || stopReason == PiStopReason.LENGTH) {
+            piSettled[sessionId] = PiSettlement(stopReason, messageId)
+        }
     }
 
     /** 该会话最近一轮跑了多久；未观察到完整的一轮时为 null。 */
@@ -122,9 +147,26 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
     fun poll(): List<String> {
         val completed = mutableListOf<String>()
         for ((sessionId, entry) in entries) {
-            if (advance(sessionId, entry) == TurnEvent.COMPLETED) completed += sessionId
+            val fileEvent = advance(sessionId, entry)
+            val settledEvent = applyPiSettled(sessionId, entry)
+            if (fileEvent == TurnEvent.COMPLETED || settledEvent == TurnEvent.COMPLETED) {
+                completed += sessionId
+            }
         }
         return completed
+    }
+
+    private fun applyPiSettled(sessionId: String, entry: Entry): TurnEvent {
+        if (entry.agentType != AgentType.PI || entry.state != TurnState.WORKING) return TurnEvent.NONE
+        val settled = piSettled[sessionId] ?: return TurnEvent.NONE
+        if (entry.lastPiMessageId != settled.messageId) return TurnEvent.NONE
+        piSettled.remove(sessionId, settled)
+
+        entry.state = TurnState.IDLE
+        entry.workingSince?.let { durations[sessionId] = Duration.between(it, clock()) }
+            ?: durations.remove(sessionId)
+        entry.workingSince = null
+        return TurnEvent.COMPLETED
     }
 
     private fun advance(sessionId: String, entry: Entry): TurnEvent = runCatching {
@@ -142,7 +184,11 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
         val appended = readRange(entry.file, entry.offset, size)
         entry.offset = size
 
-        val result = TurnSignalParser.parse(entry.agentType, entry.state, appended.lines())
+        val lines = appended.lines()
+        val result = TurnSignalParser.parse(entry.agentType, entry.state, lines)
+        if (entry.agentType == AgentType.PI) {
+            lastPiMessageId(lines)?.let { entry.lastPiMessageId = it }
+        }
         val observedAt = clock()
         var startedInThisBatch = false
 
@@ -187,7 +233,22 @@ class TurnWatcher(private val clock: () -> Instant = { Instant.now() }) {
             String(buffer.array(), 0, buffer.position(), Charsets.UTF_8)
         }
 
+    private fun lastPiMessageId(lines: List<String>): String? = lines.asReversed()
+        .firstNotNullOfOrNull { line ->
+            if (JsonLineScanner.topLevelStringValue(line, "type") != PI_MESSAGE) return@firstNotNullOfOrNull null
+            val role = JsonLineScanner.objectStringValue(line, "message", "role")
+            if (role != PI_USER && role != PI_ASSISTANT) return@firstNotNullOfOrNull null
+            JsonLineScanner.topLevelStringValue(line, "id")
+        }
+
+    private data class InitialState(val state: TurnState, val lastPiMessageId: String?)
+
+    private data class PiSettlement(val reason: PiStopReason, val messageId: String)
+
     private companion object {
         val LOG = logger<TurnWatcher>()
+        const val PI_MESSAGE = "message"
+        const val PI_USER = "user"
+        const val PI_ASSISTANT = "assistant"
     }
 }

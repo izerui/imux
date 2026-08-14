@@ -123,4 +123,33 @@ class JsonLineScannerTest {
 
         assertEquals("2026-08-06T00:00:00Z", JsonLineScanner.stringValue(line, "timestamp"))
     }
+
+    @Test
+    fun `只读取根对象直接字符串字段`() {
+        val json =
+            """{"type":"message","message":{"type":"nested","role":"assistant"},"text":"contains \"type\":\"fake\""}"""
+
+        assertEquals("message", JsonLineScanner.topLevelStringValue(json, "type"))
+        assertNull(JsonLineScanner.topLevelStringValue(json, "role"))
+    }
+
+    @Test
+    fun `读取根对象直接子对象中的字段`() {
+        val json =
+            """{"type":"message","message":{"role":"assistant","content":[{"text":"} ]"}],"stopReason":"stop"},"tail":1}"""
+
+        assertEquals("assistant", JsonLineScanner.objectStringValue(json, "message", "role"))
+        assertEquals("stop", JsonLineScanner.objectStringValue(json, "message", "stopReason"))
+        assertEquals("} ]", JsonLineScanner.stringValueInObject(json, "message", "text"))
+    }
+
+    @Test
+    fun `超大子对象可直接读取字段`() {
+        val huge = "x".repeat(500_000)
+        val json =
+            """{"type":"message","message":{"role":"assistant","content":[{"text":"$huge"}],"stopReason":"error"}}"""
+
+        assertEquals("assistant", JsonLineScanner.objectStringValue(json, "message", "role"))
+        assertEquals("error", JsonLineScanner.objectStringValue(json, "message", "stopReason"))
+    }
 }

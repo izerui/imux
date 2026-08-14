@@ -1,6 +1,7 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.PiStopReason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -404,6 +405,8 @@ class TurnWatcherTest {
         """{"type":"message","id":"u1","timestamp":"2026-08-13T08:03:09.000Z","message":{"role":"user","content":[{"type":"text","text":"改一下"}]}}"""
     private val piStop =
         """{"type":"message","id":"a1","timestamp":"2026-08-13T08:03:21.000Z","message":{"role":"assistant","content":[],"stopReason":"stop"}}"""
+    private val piError =
+        """{"type":"message","id":"a2","timestamp":"2026-08-13T08:03:21.000Z","message":{"role":"assistant","content":[],"stopReason":"error"}}"""
 
     @Test
     fun `pi 会话纳入监控并按 stopReason 判定执行中`() {
@@ -427,6 +430,58 @@ class TurnWatcherTest {
         file.append(piStop)
 
         assertEquals(listOf("p1"), watcher.poll())
+    }
+
+    @Test
+    fun `pi error 写入时不提醒直到 agent settled`() {
+        val file = newFile("pi-error.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("p1", AgentType.PI, file.toPath())
+
+        file.append(piUser)
+        file.append(piError)
+
+        assertTrue(watcher.poll().isEmpty())
+        assertEquals(setOf("p1"), watcher.workingIds(AgentType.PI))
+
+        watcher.reportPiSettled("p1", PiStopReason.ERROR, "a2")
+
+        assertEquals(listOf("p1"), watcher.poll())
+        assertTrue(watcher.workingIds(AgentType.PI).isEmpty())
+    }
+
+    @Test
+    fun `旧轮 settled 不会结束已经开始的新轮`() {
+        val file = newFile("pi-stale-settled.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("p1", AgentType.PI, file.toPath())
+
+        file.append(piUser)
+        file.append(piError)
+        watcher.poll()
+        watcher.reportPiSettled("p1", PiStopReason.ERROR, "a2")
+        file.append(
+            """{"type":"message","id":"u2","timestamp":"2026-08-13T08:04:00.000Z","message":{"role":"user","content":"继续"}}""",
+        )
+
+        assertTrue(watcher.poll().isEmpty())
+        assertEquals(setOf("p1"), watcher.workingIds(AgentType.PI))
+    }
+
+    @Test
+    fun `pi 自动重试成功后只由最终 stop 提醒`() {
+        val file = newFile("pi-retry-success.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("p1", AgentType.PI, file.toPath())
+
+        file.append(piUser)
+        file.append(piError)
+        assertTrue(watcher.poll().isEmpty())
+
+        file.append(piStop)
+
+        assertEquals(listOf("p1"), watcher.poll())
+        assertTrue(watcher.poll().isEmpty())
     }
 
     /**

@@ -121,7 +121,7 @@ pi 不走这两条——它把这些信息全藏住了，`ps` 读不到它的环
 | 加载一个扩展 | imux 自带的 `pi-imux-reporter.js`，随启动命令加载进 pi 进程 |
 | 开一个本机路由 | 在 IDE 内置 HTTP 服务上注册 `/imux/pi-session`，只收 POST，校验 `x-imux-token` 请求头 |
 
-上报的内容只有两个字段：`tabId` 和 `sessionFile`（会话文件的绝对路径）。`IMUX_REPORT_URL` 形如 `http://127.0.0.1:<IDE 内置服务端口>/imux/pi-session`。
+会话切换上报包含 `tabId`、pi 官方返回的 `sessionId` 和当前 `cwd`；最终的 `error` / `length` 还会在 `agent_settled` 后补报结束原因，避免自动重试期间提前提醒。`IMUX_REPORT_URL` 形如 `http://127.0.0.1:<IDE 内置服务端口>/imux/pi-session`。
 
 **为什么要有令牌**：IDE 的内置 HTTP 服务本机任意进程都能访问，平台在这一层不做任何校验，令牌是这个接口唯一的门禁——没有它，别的进程就能伪造上报，把你的标签页迁到另一个会话上。`IMUX_TOKEN` 是随机生成的一次性令牌，只存在于 IDE 内存里，不落盘，每次 IDE 启动都不同。
 
@@ -135,7 +135,7 @@ pi 不走这两条——它把这些信息全藏住了，`ps` 读不到它的环
 
 三个 CLI 都支持，但 pi 的做法不同：Claude 与 Codex 是 imux 去翻进程信息认出来的，而 pi 把这些信息全藏住了（没有运行态文件、不持有会话文件句柄、`ps` 读不到它的环境变量），只能由它自己上报——imux 启动 pi 时会加载一个自带的扩展 `pi-imux-reporter.js`，它在会话切换时把「哪个标签页换到了哪个会话」发回 IDE。
 
-这个扩展只做这一件事：读 `IMUX_REPORT_URL`、`IMUX_TOKEN`、`IMUX_TAB` 三个环境变量，在会话切换时把 `tabId` 和会话文件路径 POST 给 IDE 的本机 HTTP 接口。不读你的对话、不碰会话文件、不联网。你在 pi 里按 `Ctrl+O` 能在 `[Extensions]` 一栏看到它。你自己在终端里跑 pi 时它不会被加载。
+这个扩展只做这一件事：启动时读取 `IMUX_REPORT_URL`、`IMUX_TOKEN`、`IMUX_TAB` 三个环境变量，随即从 pi 进程环境中删除，避免 pi 的 bash 子进程继承上报凭据；之后在会话切换和最终失败时把 `tabId`、`sessionId`、`cwd` 与必要的结束原因 POST 给 IDE 的本机 HTTP 接口。不读你的对话、不碰会话文件、不联网。你在 pi 里按 `Ctrl+O` 能在 `[Extensions]` 一栏看到它。你自己在终端里跑 pi 时它不会被加载。
 
 ## 已知限制
 

@@ -43,6 +43,9 @@ class PiSessionReaderTest {
     private fun userMessage(text: String, at: String = "2026-08-13T08:03:20.000Z") =
         """{"type":"message","id":"u1","parentId":null,"timestamp":"$at","message":{"role":"user","content":[{"type":"text","text":"$text"}]}}"""
 
+    private fun stringUserMessage(text: String, at: String = "2026-08-13T08:03:20.000Z") =
+        """{"type":"message","id":"u1","parentId":null,"timestamp":"$at","message":{"role":"user","content":"$text"}}"""
+
     @Test
     fun `按项目路径编码后的目录读取会话`() {
         writeSession("uuid-mine", "/Users/demo/proj")
@@ -90,6 +93,39 @@ class PiSessionReaderTest {
         writeSession("uuid-msg", "/Users/demo/proj", userMessage("帮我重构这个函数"))
 
         assertEquals("帮我重构这个函数", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `字符串形式的用户 content 也可作为标题`() {
+        writeSession("uuid-string-msg", "/Users/demo/proj", stringUserMessage("检查发布流程"))
+
+        assertEquals("检查发布流程", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `最后一次名称被清空后回退用户消息`() {
+        writeSession(
+            "uuid-cleared-name",
+            "/Users/demo/proj",
+            sessionInfo("旧名字") + "\n" +
+                userMessage("回退标题") + "\n" +
+                sessionInfo("   ", at = "2026-08-13T09:00:00.000Z"),
+        )
+
+        assertEquals("回退标题", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `不带 name 的 session info 不清除已有名称`() {
+        val unrelatedInfo =
+            """{"type":"session_info","id":"n2","parentId":null,"timestamp":"2026-08-13T09:00:00.000Z"}"""
+        writeSession(
+            "uuid-name-kept",
+            "/Users/demo/proj",
+            sessionInfo("保留名字") + "\n" + unrelatedInfo,
+        )
+
+        assertEquals("保留名字", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test

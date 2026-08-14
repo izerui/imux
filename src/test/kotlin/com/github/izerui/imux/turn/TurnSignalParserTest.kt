@@ -130,20 +130,18 @@ class TurnSignalParserTest {
         assertEquals(TurnEvent.COMPLETED, r.event)
     }
 
-    /** 撞上下文上限而截断，同样是「这一轮结束了，去看看」，该提醒。 */
     @Test
-    fun `pi length 视为完成`() {
+    fun `pi length 等待 settled 而不提前完成`() {
         val r = pi(TurnState.WORKING, piAssistant("length"))
-        assertEquals(TurnState.IDLE, r.state)
-        assertEquals(TurnEvent.COMPLETED, r.event)
+        assertEquals(TurnState.WORKING, r.state)
+        assertEquals(TurnEvent.NONE, r.event)
     }
 
-    /** 报错也是停下来了，不提醒的话用户会一直等一个永远不来的通知。 */
     @Test
-    fun `pi error 视为完成`() {
+    fun `pi error 等待 settled 而不提前完成`() {
         val r = pi(TurnState.WORKING, piAssistant("error"))
-        assertEquals(TurnState.IDLE, r.state)
-        assertEquals(TurnEvent.COMPLETED, r.event)
+        assertEquals(TurnState.WORKING, r.state)
+        assertEquals(TurnEvent.NONE, r.event)
     }
 
     @Test
@@ -167,6 +165,35 @@ class TurnSignalParserTest {
         assertEquals(TurnState.IDLE, r.state)
         assertEquals(TurnEvent.COMPLETED, r.event)
         assertEquals("应当只有 IDLE→WORKING 与 WORKING→IDLE 两次跃迁", 2, r.transitions.size)
+    }
+
+    @Test
+    fun `pi 嵌套对象里的 stopReason 不触发完成`() {
+        val nested =
+            """{"type":"message","message":{"role":"user","content":[{"type":"text","text":"{\"stopReason\":\"stop\"}"}]},"metadata":{"stopReason":"stop"}}"""
+
+        val r = pi(TurnState.IDLE, nested)
+
+        assertEquals(TurnState.WORKING, r.state)
+        assertEquals(TurnEvent.NONE, r.event)
+    }
+
+    @Test
+    fun `pi 非 message 或非 assistant 的 stopReason 被忽略`() {
+        val wrongType =
+            """{"type":"custom","message":{"role":"assistant","stopReason":"stop"}}"""
+        val wrongRole =
+            """{"type":"message","message":{"role":"toolResult","stopReason":"stop"}}"""
+
+        assertEquals(TurnState.WORKING, pi(TurnState.WORKING, wrongType, wrongRole).state)
+    }
+
+    @Test
+    fun `pi 未知 stopReason 被忽略`() {
+        val r = pi(TurnState.WORKING, piAssistant("futureReason"))
+
+        assertEquals(TurnState.WORKING, r.state)
+        assertEquals(TurnEvent.NONE, r.event)
     }
 
     // ---- 通用 ----

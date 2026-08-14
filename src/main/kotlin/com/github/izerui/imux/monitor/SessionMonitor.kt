@@ -9,6 +9,7 @@ import com.github.izerui.imux.session.KeyDrift
 import com.github.izerui.imux.session.LiveSessionProbe
 import com.github.izerui.imux.session.LiveTab
 import com.github.izerui.imux.session.PiSessionReport
+import com.github.izerui.imux.session.PiReportType
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.codexPids
@@ -51,6 +52,9 @@ import java.util.concurrent.atomic.AtomicInteger
 fun interface SessionMonitorListener : EventListener {
     fun stateChanged()
 }
+
+internal fun piReportBelongsToProject(report: PiSessionReport, projectPath: String): Boolean =
+    report.cwd == projectPath
 
 /**
  * 从完成提醒打开会话。
@@ -288,14 +292,25 @@ class SessionMonitor(
      * 由 netty 的 EventLoop 线程调用，因此这里只排期、不干活。
      */
     fun onPiSessionReported(report: PiSessionReport) {
-        if (project.isDisposed) return
+        if (project.isDisposed || !piReportBelongsToProject(report, projectPath)) return
 
         coroutineScope.launch(Dispatchers.EDT) {
             if (project.isDisposed) return@launch
             val host = TerminalHost.getInstance(project)
-            val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
-            if (drifts.isEmpty()) return@launch
-            applyDrifts(drifts)
+            when (report.type) {
+                PiReportType.SESSION_START -> {
+                    val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
+                    if (drifts.isNotEmpty()) applyDrifts(drifts)
+                }
+
+                PiReportType.AGENT_SETTLED -> {
+                    if (host.openTabsByTabId()[report.tabId] != report.sessionId) return@launch
+                    val reason = report.stopReason ?: return@launch
+                    val messageId = report.messageId ?: return@launch
+                    host.turnWatcher().reportPiSettled(report.sessionId, reason, messageId)
+                    checkCompletedTurns()
+                }
+            }
         }
     }
 

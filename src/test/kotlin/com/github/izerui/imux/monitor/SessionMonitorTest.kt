@@ -1,6 +1,8 @@
 package com.github.izerui.imux.monitor
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.PiReportType
+import com.github.izerui.imux.session.PiSessionReport
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +53,19 @@ class SessionMonitorTest {
         assertEquals(2, attempts)
         assertFalse(started.runOnceResetOnFailure { attempts++ })
         assertEquals(2, attempts)
+    }
+
+    @Test
+    fun `pi 上报只属于 cwd 完全相同的项目`() {
+        val report = PiSessionReport(
+            PiReportType.SESSION_START,
+            "imux-1",
+            "session-1",
+            "/Users/demo/project-a",
+        )
+
+        assertEquals(true, piReportBelongsToProject(report, "/Users/demo/project-a"))
+        assertFalse(piReportBelongsToProject(report, "/Users/demo/project-b"))
     }
 
     private fun testProject(): Project =

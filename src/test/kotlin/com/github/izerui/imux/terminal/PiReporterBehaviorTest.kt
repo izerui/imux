@@ -42,12 +42,12 @@ class PiReporterBehaviorTest {
 
     /** 正常形态下必须真的注册上，否则上面两条「不抛异常」用空实现也能过。 */
     @Test
-    fun `API 正常时注册 session_start 回调`() {
+    fun `API 正常时注册会话切换与最终结束回调`() {
         assertEquals(
-            "ok:session_start",
+            "ok:session_start,agent_settled",
             runReporter(
-                piExpression = "({ on(name) { globalThis.__registered = name; } })",
-                report = """"ok:" + (globalThis.__registered ?? "none")""",
+                piExpression = "({ on(name) { (globalThis.__registered ??= []).push(name); } })",
+                report = """"ok:" + (globalThis.__registered?.join(",") ?? "none")""",
             ),
         )
     }
@@ -65,6 +65,75 @@ class PiReporterBehaviorTest {
         )
     }
 
+    @Test
+    fun `上报官方会话 id 与 cwd 并清除子进程环境凭据`() {
+        assertEquals(
+            """{"envCleared":true,"body":{"type":"session_start","tabId":"imux-tab","sessionId":"custom.id-1","cwd":"/Users/demo/project"}}""",
+            runReporter(
+                piExpression =
+                    """({
+                        on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; }
+                    })""".trimIndent(),
+                beforeReport =
+                    """
+                    globalThis.fetch = (_url, options) => {
+                      globalThis.__body = JSON.parse(options.body);
+                      return Promise.resolve({ ok: true });
+                    };
+                    const ctx = {
+                      sessionManager: {
+                        getSessionId: () => "custom.id-1",
+                        getCwd: () => "/Users/demo/project",
+                      },
+                    };
+                    await globalThis.__handlers.session_start({}, ctx);
+                    """.trimIndent(),
+                report =
+                    """
+                    JSON.stringify({
+                      envCleared: !process.env.IMUX_REPORT_URL && !process.env.IMUX_TOKEN && !process.env.IMUX_TAB,
+                      body: globalThis.__body,
+                    })
+                    """.trimIndent(),
+            ),
+        )
+    }
+
+    @Test
+    fun `扩展重载后从 globalThis 恢复凭据并上报 settled`() {
+        assertEquals(
+            """{"type":"agent_settled","tabId":"imux-tab","sessionId":"abc-1","cwd":"/tmp/project","stopReason":"error","messageId":"a1"}""",
+            runReporter(
+                piExpression =
+                    """({
+                        on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; }
+                    })""".trimIndent(),
+                beforeReport =
+                    """
+                    globalThis.fetch = (_url, options) => {
+                      globalThis.__body = JSON.parse(options.body);
+                      return Promise.resolve({ ok: true });
+                    };
+                    const second = {
+                      on(name, handler) { (globalThis.__secondHandlers ??= {})[name] = handler; }
+                    };
+                    reporter(second);
+                    const ctx = {
+                      sessionManager: {
+                        getSessionId: () => "abc-1",
+                        getCwd: () => "/tmp/project",
+                        getBranch: () => [
+                          { type: "message", id: "a1", message: { role: "assistant", stopReason: "error" } },
+                        ],
+                      },
+                    };
+                    await globalThis.__secondHandlers.agent_settled({}, ctx);
+                    """.trimIndent(),
+                report = "JSON.stringify(globalThis.__body)",
+            ),
+        )
+    }
+
     /**
      * 真的把脚本加载起来跑一遍。
      *
@@ -74,6 +143,7 @@ class PiReporterBehaviorTest {
     private fun runReporter(
         piExpression: String,
         report: String = """"ok"""",
+        beforeReport: String = "",
         env: Map<String, String> = mapOf(
             "IMUX_REPORT_URL" to "http://127.0.0.1:1/imux/pi-session",
             "IMUX_TOKEN" to "token",
@@ -92,6 +162,7 @@ class PiReporterBehaviorTest {
             """
             import reporter from "./reporter.mjs";
             reporter($piExpression);
+            $beforeReport
             console.log($report);
             """.trimIndent(),
         )

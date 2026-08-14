@@ -33,6 +33,149 @@ internal object JsonLineScanner {
         }
     }
 
+    /**
+     * 只读取根对象的直接字符串字段，不会命中嵌套对象或字符串内容里的同名键。
+     */
+    fun topLevelStringValue(line: String, key: String): String? =
+        topLevelValue(line, key)?.takeIf { line[it] == '"' }?.let { readString(line, it) }
+
+    /** 读取根对象中某个直接子对象的直接字符串字段，不复制整个子对象。 */
+    fun objectStringValue(line: String, objectKey: String, key: String): String? {
+        val range = topLevelObjectRange(line, objectKey) ?: return null
+        return directStringValue(line, key, range.first, range.last + 1)
+    }
+
+    /** 在根对象的直接子对象范围内查找任意层级的字符串字段，不复制子对象。 */
+    fun stringValueInObject(line: String, objectKey: String, key: String): String? {
+        val range = topLevelObjectRange(line, objectKey) ?: return null
+        return stringValue(line, key, range.first, range.last + 1)
+    }
+
+    private fun topLevelObjectRange(line: String, key: String): IntRange? {
+        val start = topLevelValue(line, key)?.takeIf { line[it] == '{' } ?: return null
+        val end = skipValue(line, start) ?: return null
+        return (start + 1)..<(end - 1)
+    }
+
+    private fun directStringValue(line: String, key: String, from: Int, to: Int): String? {
+        var i = from
+        while (true) {
+            i = skipWhitespace(line, i)
+            if (i >= to || line[i] == '}') return null
+            if (line[i] != '"') return null
+
+            val keyEnd = stringEnd(line, i) ?: return null
+            val currentKey = readString(line, i) ?: return null
+            i = skipWhitespace(line, keyEnd)
+            if (i >= to || line[i] != ':') return null
+            i = skipWhitespace(line, i + 1)
+            if (i >= to) return null
+
+            if (currentKey == key) {
+                return i.takeIf { line[it] == '"' }?.let { readString(line, it) }
+            }
+
+            i = skipValue(line, i) ?: return null
+            i = skipWhitespace(line, i)
+            when {
+                i >= to -> return null
+                line[i] == ',' -> i++
+                line[i] == '}' -> return null
+                else -> return null
+            }
+        }
+    }
+
+    private fun stringValue(line: String, key: String, from: Int, to: Int): String? {
+        val marker = "\"$key\""
+        var searchFrom = from
+        while (true) {
+            val keyAt = line.indexOf(marker, searchFrom)
+            if (keyAt < 0 || keyAt >= to) return null
+
+            val valueQuote = locateValueQuote(line, keyAt + marker.length)
+            if (valueQuote in 0..<to) return readString(line, valueQuote)
+            searchFrom = keyAt + marker.length
+        }
+    }
+
+    private fun topLevelValue(line: String, wantedKey: String): Int? {
+        var i = skipWhitespace(line, 0)
+        if (i >= line.length || line[i] != '{') return null
+        i++
+
+        while (true) {
+            i = skipWhitespace(line, i)
+            if (i >= line.length || line[i] == '}') return null
+            if (line[i] != '"') return null
+
+            val keyEnd = stringEnd(line, i) ?: return null
+            val key = readString(line, i) ?: return null
+            i = skipWhitespace(line, keyEnd)
+            if (i >= line.length || line[i] != ':') return null
+            i = skipWhitespace(line, i + 1)
+            if (i >= line.length) return null
+
+            if (key == wantedKey) return i
+
+            i = skipValue(line, i) ?: return null
+            i = skipWhitespace(line, i)
+            when {
+                i >= line.length -> return null
+                line[i] == ',' -> i++
+                line[i] == '}' -> return null
+                else -> return null
+            }
+        }
+    }
+
+    /** 返回 JSON 值结束后的下标。 */
+    private fun skipValue(line: String, start: Int): Int? = when (line[start]) {
+        '"' -> stringEnd(line, start)
+        '{', '[' -> containerEnd(line, start)
+        else -> {
+            var i = start
+            while (i < line.length && line[i] != ',' && line[i] != '}' && line[i] != ']') i++
+            i
+        }
+    }
+
+    private fun containerEnd(line: String, start: Int): Int? {
+        val opening = line[start]
+        val closing = if (opening == '{') '}' else ']'
+        var depth = 1
+        var i = start + 1
+        while (i < line.length) {
+            when (line[i]) {
+                '"' -> i = stringEnd(line, i) ?: return null
+                opening -> {
+                    depth++
+                    i++
+                }
+                closing -> {
+                    depth--
+                    i++
+                    if (depth == 0) return i
+                }
+                '{', '[' -> i = containerEnd(line, i) ?: return null
+                else -> i++
+            }
+        }
+        return null
+    }
+
+    private fun stringEnd(line: String, quoteIndex: Int): Int? {
+        var i = quoteIndex + 1
+        while (i < line.length) {
+            when (line[i]) {
+                '"' -> return i + 1
+                '\\' -> i += 2
+                else -> i++
+            }
+        }
+        return null
+    }
+
     /** 从键之后定位值的起始双引号；不是字符串值则返回 -1。 */
     private fun locateValueQuote(line: String, afterKey: Int): Int {
         var i = skipWhitespace(line, afterKey)

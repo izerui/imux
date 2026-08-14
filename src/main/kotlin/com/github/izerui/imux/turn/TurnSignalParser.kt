@@ -2,6 +2,7 @@ package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.JsonLineScanner
+import com.github.izerui.imux.session.PiStopReason
 
 enum class TurnState { WORKING, IDLE }
 
@@ -99,35 +100,40 @@ object TurnSignalParser {
      * pi 没有 codex 那样的 task_started / task_complete 事件，判据是 assistant 消息的
      * stopReason，取值为 stop | length | toolUse | error | aborted。
      *
-     * 与 claude 同样用黑名单：只有 toolUse 算进行中，aborted 算用户中断，
-     * 其余（含 length、error）一律算这一轮结束了。截断和报错也是「停下来了，去看看」，
-     * 当成未完成的话用户会一直等一个永远不来的通知。
+     * error / length 不能在写入时立即算完成：pi 可能自动重试或压缩后重试。
+     * 它们先保持 WORKING，最终失败由扩展的 agent_settled 上报收口。
      *
      * 用户消息开启新一轮，但要排掉 toolResult——它的 role 不是 user，
      * 所以按 role 精确匹配即可，不能用「行里含 user」这种子串判断。
      */
-    private fun piSignal(line: String): Signal? = when {
-        line.contains(PI_STOP_REASON_KEY) -> {
-            when (runCatching { JsonLineScanner.stringValue(line, "stopReason") }.getOrNull()) {
-                PI_TOOL_USE -> Signal(TurnState.WORKING, TurnEvent.NONE)
-                PI_ABORTED -> Signal(TurnState.IDLE, TurnEvent.ABORTED)
-                else -> Signal(TurnState.IDLE, TurnEvent.COMPLETED)
+    private fun piSignal(line: String): Signal? {
+        if (JsonLineScanner.topLevelStringValue(line, "type") != PI_MESSAGE) return null
+        return when (JsonLineScanner.objectStringValue(line, "message", "role")) {
+            PI_USER -> Signal(TurnState.WORKING, TurnEvent.NONE)
+            PI_ASSISTANT -> when (
+                PiStopReason.fromWire(JsonLineScanner.objectStringValue(line, "message", "stopReason"))
+            ) {
+                PiStopReason.STOP -> Signal(TurnState.IDLE, TurnEvent.COMPLETED)
+                PiStopReason.ABORTED -> Signal(TurnState.IDLE, TurnEvent.ABORTED)
+                PiStopReason.TOOL_USE,
+                PiStopReason.ERROR,
+                PiStopReason.LENGTH,
+                -> Signal(TurnState.WORKING, TurnEvent.NONE)
+
+                null -> null
             }
+
+            else -> null
         }
-
-        line.contains(PI_USER_ROLE) -> Signal(TurnState.WORKING, TurnEvent.NONE)
-
-        else -> null
     }
 
     private const val STOP_REASON_KEY = "\"stop_reason\""
     private const val TOOL_USE = "tool_use"
     private const val USER_RECORD = "\"type\":\"user\""
 
-    private const val PI_STOP_REASON_KEY = "\"stopReason\""
-    private const val PI_TOOL_USE = "toolUse"
-    private const val PI_ABORTED = "aborted"
-    private const val PI_USER_ROLE = "\"role\":\"user\""
+    private const val PI_MESSAGE = "message"
+    private const val PI_USER = "user"
+    private const val PI_ASSISTANT = "assistant"
 
     private const val TASK_STARTED = "\"task_started\""
     private const val TASK_COMPLETE = "\"task_complete\""
