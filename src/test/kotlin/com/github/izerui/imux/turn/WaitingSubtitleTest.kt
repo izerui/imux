@@ -5,45 +5,31 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class WaitingSubtitleTest {
-
     @Test
-    fun `权限确认单列文案`() {
-        assertEquals("Claude · 等待权限确认", waitingSubtitle(AgentType.CLAUDE, "permission prompt"))
+    fun `formats permission prompt`() {
+        assertEquals("Claude · Waiting for permission", waitingSubtitle(AgentType.CLAUDE, "permission prompt"))
     }
 
     @Test
-    fun `选择框单列文案`() {
-        assertEquals("Claude · 等待你的选择", waitingSubtitle(AgentType.CLAUDE, "dialog open"))
+    fun `formats selection dialog`() {
+        assertEquals("Claude · Waiting for your selection", waitingSubtitle(AgentType.CLAUDE, "dialog open"))
     }
 
     @Test
-    fun `需要输入单列文案`() {
-        assertEquals("Claude · 等待输入", waitingSubtitle(AgentType.CLAUDE, "input needed"))
-    }
-
-    /**
-     * 子代理与沙箱场景日常几乎不出现，单列文案不会被读到，统一走兜底。
-     * CLI 将来新增取值时同样落到这里，不会显示成空白。
-     */
-    @Test
-    fun `子代理与沙箱请求走兜底文案`() {
-        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "worker request"))
-        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "sandbox request"))
+    fun `formats input request`() {
+        assertEquals("Claude · Waiting for input", waitingSubtitle(AgentType.CLAUDE, "input needed"))
     }
 
     @Test
-    fun `未知取值走兜底文案`() {
-        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, "某个将来才有的原因"))
+    fun `uses fallback for uncommon or unknown reasons`() {
+        assertEquals("Claude · Waiting for your confirmation", waitingSubtitle(AgentType.CLAUDE, "worker request"))
+        assertEquals("Claude · Waiting for your confirmation", waitingSubtitle(AgentType.CLAUDE, "sandbox request"))
+        assertEquals("Claude · Waiting for your confirmation", waitingSubtitle(AgentType.CLAUDE, "future reason"))
+        assertEquals("Claude · Waiting for your confirmation", waitingSubtitle(AgentType.CLAUDE, null))
     }
 
     @Test
-    fun `缺少等待原因时走兜底文案`() {
-        assertEquals("Claude · 等待你的确认", waitingSubtitle(AgentType.CLAUDE, null))
-    }
-
-    /** 与 completionSubtitle 一致：拿不到的部分整段略去，不留多余的间隔号。 */
-    @Test
-    fun `拿不到 agent 时只留原因`() {
-        assertEquals("等待权限确认", waitingSubtitle(null, "permission prompt"))
+    fun `omits unknown agent without an extra separator`() {
+        assertEquals("Waiting for permission", waitingSubtitle(null, "permission prompt"))
     }
 }

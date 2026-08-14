@@ -35,7 +35,6 @@ internal class SessionDriftApplier(
     private val startWatching: (AgentSession) -> Unit,
     private val clearUnread: (String) -> Unit,
 ) {
-
     /**
      * 已经迁过去、但当时还查不到文件路径的会话 id。
      *
@@ -86,8 +85,11 @@ internal class SessionDriftApplier(
         val attempts = (awaitingRebind[drift.tabId]?.takeIf { it.drift == drift }?.attempts ?: 0) + 1
         // 有上限是必须的：目标 key 若被一个长期存在的终端占着，重试永远不会成功，
         // 不封顶就是每轮扫描都白跑一遍并刷一条 WARN
-        if (attempts > MAX_REBIND_ATTEMPTS) awaitingRebind.remove(drift.tabId)
-        else awaitingRebind[drift.tabId] = RetriedDrift(drift, attempts)
+        if (attempts > MAX_REBIND_ATTEMPTS) {
+            awaitingRebind.remove(drift.tabId)
+        } else {
+            awaitingRebind[drift.tabId] = RetriedDrift(drift, attempts)
+        }
     }
 
     private fun retryRebinds() {
@@ -96,8 +98,11 @@ internal class SessionDriftApplier(
         awaitingRebind.values.map { it.drift }.forEach { drift ->
             // 标签页关了、或已经不记着那个旧 id 了（用户关掉又开了别的终端）：
             // 硬迁就是张冠李戴，直接丢弃
-            if (tabs[drift.tabId] != drift.from) awaitingRebind.remove(drift.tabId)
-            else applyOne(drift)
+            if (tabs[drift.tabId] != drift.from) {
+                awaitingRebind.remove(drift.tabId)
+            } else {
+                applyOne(drift)
+            }
         }
     }
 
@@ -120,7 +125,10 @@ internal class SessionDriftApplier(
         startWatching(session)
     }
 
-    private data class RetriedDrift(val drift: KeyDrift, val attempts: Int)
+    private data class RetriedDrift(
+        val drift: KeyDrift,
+        val attempts: Int,
+    )
 
     private companion object {
         /**
@@ -131,5 +139,5 @@ internal class SessionDriftApplier(
     }
 }
 
-/** 查不到会话时的兜底标题，与列表里的占位保持一致。 */
-internal fun defaultTitle(sessionId: String): String = "会话 ${sessionId.take(8)}"
+/** Fallback title used until a session appears in the scanned session list. */
+internal fun defaultTitle(sessionId: String): String = "Session ${sessionId.take(8)}"

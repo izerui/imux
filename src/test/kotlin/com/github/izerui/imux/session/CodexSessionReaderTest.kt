@@ -9,7 +9,6 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class CodexSessionReaderTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -83,7 +82,7 @@ class CodexSessionReaderTest {
     fun `没有用户消息时回退为会话 id 短码`() {
         writeRollout("01abcdef-2222", "/Users/demo/proj")
 
-        assertEquals("会话 01abcdef", reader().read("/Users/demo/proj")[0].title)
+        assertEquals("Session 01abcdef", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test
@@ -151,9 +150,10 @@ class CodexSessionReaderTest {
     @Test
     fun `文件里没有时间戳时回退到 mtime`() {
         val dir = File(tmp.root, "sessions/2026/08/03").apply { mkdirs() }
-        val file = File(dir, "rollout-2026-08-03T11-31-27-uuid-nots.jsonl").apply {
-            writeText("""{"type":"session_meta","payload":{"id":"uuid-nots","cwd":"/Users/demo/proj"}}""")
-        }
+        val file =
+            File(dir, "rollout-2026-08-03T11-31-27-uuid-nots.jsonl").apply {
+                writeText("""{"type":"session_meta","payload":{"id":"uuid-nots","cwd":"/Users/demo/proj"}}""")
+            }
 
         assertEquals(
             file.lastModified(),

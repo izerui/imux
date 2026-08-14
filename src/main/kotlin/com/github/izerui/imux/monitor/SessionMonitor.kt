@@ -4,20 +4,20 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.ClaudeSessionReader
-import com.github.izerui.imux.session.PiSessionReader
 import com.github.izerui.imux.session.KeyDrift
 import com.github.izerui.imux.session.LiveSessionProbe
 import com.github.izerui.imux.session.LiveTab
-import com.github.izerui.imux.session.PiSessionReport
 import com.github.izerui.imux.session.PiReportType
+import com.github.izerui.imux.session.PiSessionReader
+import com.github.izerui.imux.session.PiSessionReport
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.codexPids
 import com.github.izerui.imux.session.driftOf
 import com.github.izerui.imux.session.interactivePids
-import com.github.izerui.imux.session.stillApplicable
 import com.github.izerui.imux.session.readHeldRollouts
 import com.github.izerui.imux.session.readTabId
+import com.github.izerui.imux.session.stillApplicable
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.RunningSessions
@@ -53,8 +53,10 @@ fun interface SessionMonitorListener : EventListener {
     fun stateChanged()
 }
 
-internal fun piReportBelongsToProject(report: PiSessionReport, projectPath: String): Boolean =
-    report.cwd == projectPath
+internal fun piReportBelongsToProject(
+    report: PiSessionReport,
+    projectPath: String,
+): Boolean = report.cwd == projectPath
 
 /**
  * 从完成提醒打开会话。
@@ -66,7 +68,10 @@ internal fun piReportBelongsToProject(report: PiSessionReport, projectPath: Stri
  *
  * 顶层函数引用不带任何捕获，回调因此只带走两个字符串，Project 到点击那一刻才现查。
  */
-internal fun openSessionFromNotification(project: Project, sessionId: String) {
+internal fun openSessionFromNotification(
+    project: Project,
+    sessionId: String,
+) {
     SessionMonitor.getInstance(project).openSession(sessionId)
 }
 
@@ -102,18 +107,19 @@ class SessionMonitor(
     private val project: Project,
     private val coroutineScope: CoroutineScope,
 ) : Disposable {
-
     private val projectPath = project.basePath ?: System.getProperty("user.home")
     private val repository = SessionRepository.forUserHome()
 
-    val model = SessionListModel(
-        scan = { repository.scan(projectPath) },
-        clock = { Instant.now() },
-    )
+    val model =
+        SessionListModel(
+            scan = { repository.scan(projectPath) },
+            clock = { Instant.now() },
+        )
 
-    private val runtimeIndex = ClaudeRuntimeIndex(
-        Paths.get(System.getProperty("user.home")).resolve(".claude"),
-    )
+    private val runtimeIndex =
+        ClaudeRuntimeIndex(
+            Paths.get(System.getProperty("user.home")).resolve(".claude"),
+        )
     private val statusTracker = RuntimeStatusTracker()
 
     /** 轮次刚完成、用户还没回来看的会话 id。 */
@@ -148,17 +154,18 @@ class SessionMonitor(
      * 的会话，以及没迁成要重试的那些。每次现造一个就等于把这些队列扔掉，
      * pi 的会话会因此永远进不了轮次监控，见该类的说明。
      */
-    private val driftApplier = SessionDriftApplier(
-        sessionOf = { model.sessionOf(it) },
-        openTabs = { TerminalHost.getInstance(project).openTabsByTabId() },
-        rebindKey = { from, to, title ->
-            TerminalHost.getInstance(project).rebindKey(from, to, title)
-        },
-        startWatching = {
-            TerminalHost.getInstance(project).startWatchingTurn(it.id, it.agentType, it.filePath)
-        },
-        clearUnread = ::clearUnread,
-    )
+    private val driftApplier =
+        SessionDriftApplier(
+            sessionOf = { model.sessionOf(it) },
+            openTabs = { TerminalHost.getInstance(project).openTabsByTabId() },
+            rebindKey = { from, to, title ->
+                TerminalHost.getInstance(project).rebindKey(from, to, title)
+            },
+            startWatching = {
+                TerminalHost.getInstance(project).startWatchingTurn(it.id, it.agentType, it.filePath)
+            },
+            clearUnread = ::clearUnread,
+        )
 
     /** 每次出现新的无主会话都会递增，用于区分探测期间到达的新触发器。 */
     private val driftProbeGeneration = AtomicInteger(0)
@@ -193,8 +200,12 @@ class SessionMonitor(
         val bindings = model.drainNewBindings()
         if (bindings.isEmpty()) return
 
-        val tabIdOf = TerminalHost.getInstance(project).openTabsByTabId()
-            .entries.associate { (tabId, sessionKey) -> sessionKey to tabId }
+        val tabIdOf =
+            TerminalHost
+                .getInstance(project)
+                .openTabsByTabId()
+                .entries
+                .associate { (tabId, sessionKey) -> sessionKey to tabId }
         applyDrifts(
             bindings.mapNotNull { (pendingKey, sessionId) ->
                 val tabId = tabIdOf[pendingKey] ?: return@mapNotNull null
@@ -251,19 +262,22 @@ class SessionMonitor(
                 val byPid = runtimeSessions.associateBy { it.pid }
                 // 后台 agent 继承了父进程的 IMUX_TAB，却有自己独立的会话 id，必须排除
                 val claudePids = interactivePids(runtimeSessions)
-                val live = LiveSessionProbe(
-                    pidsOf = { type ->
-                        when {
-                            // 没开这类标签页就没有要认领的终端，别去翻进程表
-                            type !in openTypes -> emptyList()
-                            type == AgentType.CLAUDE -> claudePids
-                            else -> codexPids()
-                        }
-                    },
-                    tabIdOf = ::readTabId,
-                    claudeSessionOf = { pid -> byPid[pid]?.sessionId },
-                    rolloutsHeldBy = ::readHeldRollouts,
-                ).probe()
+                val live =
+                    LiveSessionProbe(
+                        pidsOf = { type ->
+                            when {
+                                // 没开这类标签页就没有要认领的终端，别去翻进程表
+                                type !in openTypes -> emptyList()
+
+                                type == AgentType.CLAUDE -> claudePids
+
+                                else -> codexPids()
+                            }
+                        },
+                        tabIdOf = ::readTabId,
+                        claudeSessionOf = { pid -> byPid[pid]?.sessionId },
+                        rolloutsHeldBy = ::readHeldRollouts,
+                    ).probe()
 
                 val drifts = driftOf(openTabs, live)
                 if (drifts.isEmpty() || project.isDisposed) return@launch
@@ -421,11 +435,12 @@ class SessionMonitor(
         if (!scanning.compareAndSet(false, true)) return
 
         coroutineScope.launch(Dispatchers.IO) {
-            val scanned = try {
-                runCatching { repository.scan(projectPath) }.getOrNull()
-            } finally {
-                scanning.set(false)
-            }
+            val scanned =
+                try {
+                    runCatching { repository.scan(projectPath) }.getOrNull()
+                } finally {
+                    scanning.set(false)
+                }
             if (scanned != null && !project.isDisposed) {
                 withContext(Dispatchers.EDT) { model.applyScan(scanned) }
             }
@@ -482,7 +497,7 @@ class SessionMonitor(
                         // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
                         // 标记由终端官方输入事件在用户真正交互时消除。
                         val session = model.sessionOf(sessionId)
-                        val title = session?.title ?: "会话 ${sessionId.take(8)}"
+                        val title = session?.title ?: "Session ${sessionId.take(8)}"
                         // 两个来源各记各的：claude 走运行态跃迁，codex 走会话文件信号
                         val duration =
                             statusTracker.lastDuration(sessionId) ?: watcher.lastDuration(sessionId)
@@ -511,7 +526,7 @@ class SessionMonitor(
                             TurnNotifier.notifyWaiting(
                                 project,
                                 waiting.sessionId,
-                                session?.title ?: "会话 ${waiting.sessionId.take(8)}",
+                                session?.title ?: "Session ${waiting.sessionId.take(8)}",
                                 session?.agentType,
                                 waiting.reason,
                                 ::openSessionFromNotification,
@@ -529,17 +544,18 @@ class SessionMonitor(
         val home = Paths.get(System.getProperty("user.home"))
         val claudeHome = home.resolve(".claude")
         val piHome = home.resolve(".pi")
-        val watcher = SessionStoreWatcher(
-            claudeHome = claudeHome,
-            codexHome = home.resolve(".codex"),
-            piHome = piHome,
-            claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
-            piProjectDirName = PiSessionReader(piHome).projectDirName(projectPath),
-            onChange = ::refresh,
-            onTick = ::checkCompletedTurns,
-            // 一个标签页都没开时没人看运行中标记，退回慢节奏
-            fastTickWanted = { TerminalHost.getInstance(project).openTabKeys().isNotEmpty() },
-        )
+        val watcher =
+            SessionStoreWatcher(
+                claudeHome = claudeHome,
+                codexHome = home.resolve(".codex"),
+                piHome = piHome,
+                claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
+                piProjectDirName = PiSessionReader(piHome).projectDirName(projectPath),
+                onChange = ::refresh,
+                onTick = ::checkCompletedTurns,
+                // 一个标签页都没开时没人看运行中标记，退回慢节奏
+                fastTickWanted = { TerminalHost.getInstance(project).openTabKeys().isNotEmpty() },
+            )
         watcher.start()
         Disposer.register(this, watcher)
     }
@@ -550,7 +566,9 @@ class SessionMonitor(
      * 必须在 EDT 调用：`selectedFiles` 读的是编辑器 UI 状态。
      */
     private fun selectedSessionKeys(): Set<String> =
-        FileEditorManager.getInstance(project).selectedFiles
+        FileEditorManager
+            .getInstance(project)
+            .selectedFiles
             .filterIsInstance<AgentTerminalVirtualFile>()
             .map { it.sessionKey }
             .toSet()

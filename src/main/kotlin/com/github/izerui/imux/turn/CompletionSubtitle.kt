@@ -1,7 +1,6 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
-import com.intellij.ide.nls.NlsMessages
 import java.time.Duration
 
 /**
@@ -16,10 +15,11 @@ import java.time.Duration
 internal fun completionSubtitle(
     agentType: AgentType?,
     duration: Duration?,
-): String = listOfNotNull(
-    agentType?.shortName,
-    duration?.let { "耗时 ${formatDuration(it)}" },
-).joinToString(" · ")
+): String =
+    listOfNotNull(
+        agentType?.shortName,
+        duration?.let { "Elapsed: ${formatDuration(it)}" },
+    ).joinToString(" · ")
 
 /**
  * 人话时长。只保留两级单位——秒级精度对「跑了多久」这件事已经足够，
@@ -28,6 +28,34 @@ internal fun completionSubtitle(
  * 负值按 0 处理：时钟回拨等极端情况下不该显示成「-3 秒」。
  */
 internal fun formatDuration(duration: Duration): String {
-    val millis = duration.toMillis().coerceAtLeast(0)
-    return NlsMessages.formatDuration(millis)
+    var seconds = duration.seconds.coerceAtLeast(0)
+    val hours = seconds / 3_600
+    seconds %= 3_600
+    val minutes = seconds / 60
+    seconds %= 60
+
+    return when {
+        hours > 0 -> {
+            buildList {
+                add(unit(hours, "hour"))
+                if (minutes > 0) add(unit(minutes, "minute"))
+            }
+        }
+
+        minutes > 0 -> {
+            buildList {
+                add(unit(minutes, "minute"))
+                if (seconds > 0) add(unit(seconds, "second"))
+            }
+        }
+
+        else -> {
+            listOf(unit(seconds, "second"))
+        }
+    }.joinToString(" ")
 }
+
+private fun unit(
+    value: Long,
+    name: String,
+): String = "$value $name${if (value == 1L) "" else "s"}"

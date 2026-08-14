@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class StatusTitleSuffixTest {
-
     @Test
     fun `两种状态都没有时原样返回`() {
         assertEquals(
@@ -16,7 +15,7 @@ class StatusTitleSuffixTest {
     @Test
     fun `只有未读时只显示未读`() {
         assertEquals(
-            "imux（1 个未读）",
+            "imux (1 unread)",
             AgentFrameTitleBuilder.decorate("imux", unreadCount = 1, runningCount = 0),
         )
     }
@@ -24,7 +23,7 @@ class StatusTitleSuffixTest {
     @Test
     fun `只有运行中时只显示运行中`() {
         assertEquals(
-            "imux（2 个运行中）",
+            "imux (2 running)",
             AgentFrameTitleBuilder.decorate("imux", unreadCount = 0, runningCount = 2),
         )
     }
@@ -33,7 +32,7 @@ class StatusTitleSuffixTest {
     @Test
     fun `两种状态并存时未读在前`() {
         assertEquals(
-            "imux（1 个未读 · 2 个运行中）",
+            "imux (1 unread · 2 running)",
             AgentFrameTitleBuilder.decorate("imux", unreadCount = 1, runningCount = 2),
         )
     }
@@ -47,7 +46,7 @@ class StatusTitleSuffixTest {
         val before = AgentFrameTitleBuilder.decorate("imux", unreadCount = 1, runningCount = 2)
 
         assertEquals(
-            "imux（3 个未读 · 4 个运行中）",
+            "imux (3 unread · 4 running)",
             AgentFrameTitleBuilder.decorate(before, unreadCount = 3, runningCount = 4),
         )
     }
@@ -81,7 +80,7 @@ class StatusTitleSuffixTest {
     @Test
     fun `项目名自带的括号不被当成状态后缀剥掉`() {
         assertEquals(
-            "我的项目（旧）（1 个未读）",
+            "我的项目（旧） (1 unread)",
             AgentFrameTitleBuilder.decorate("我的项目（旧）", unreadCount = 1, runningCount = 0),
         )
     }

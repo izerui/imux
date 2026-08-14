@@ -19,7 +19,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** 会话轮次完成时弹出的 IDE 通知，点击可直接跳到该会话。 */
 object TurnNotifier {
-
     private const val GROUP_ID = "imux.turnCompleted"
 
     /**
@@ -73,15 +72,17 @@ object TurnNotifier {
         // 反过来看似更直觉，实际不好用：会话标题长短悬殊（上限 60 字符），
         // 长的会把加粗的标题行撑满甚至截断，而元信息长度稳定、正好一行。
         // 标题挪到下面反倒能完整读到，元信息也就顺势替它扛住了截断。
-        val notification = NotificationGroupManager.getInstance()
-            .getNotificationGroup(GROUP_ID)
-            .createNotification(subtitle, title, NotificationType.INFORMATION)
+        val notification =
+            NotificationGroupManager
+                .getInstance()
+                .getNotificationGroup(GROUP_ID)
+                .createNotification(subtitle, title, NotificationType.INFORMATION)
 
         // createSimpleExpiring 会在点击后自动让通知过期。
         // 普通的 AnAction 不会——点了之后气泡仍然挂着。
         // 气泡这边捕获 project 无妨：Notification 的生命周期本就跟着项目走
         notification.addAction(
-            NotificationAction.createSimpleExpiring("打开会话") {
+            NotificationAction.createSimpleExpiring("Open Session") {
                 active.remove(sessionId)
                 openSession(project, sessionId)
             },
@@ -146,9 +147,12 @@ object TurnNotifier {
 
         SystemNotifications.getInstance().notify(GROUP_ID, subtitle, title) {
             ApplicationManager.getApplication().invokeLater {
-                val target = ProjectManager.getInstance().openProjects
-                    .firstOrNull { it.locationHash == locationHash }
-                    ?: return@invokeLater
+                val target =
+                    ProjectManager
+                        .getInstance()
+                        .openProjects
+                        .firstOrNull { it.locationHash == locationHash }
+                        ?: return@invokeLater
                 ProjectUtil.focusProjectWindow(target, true)
                 // 撤气泡的活交给 openSession 内部的 clearUnread，不在这里重复
                 openSession(target, sessionId)
@@ -191,15 +195,18 @@ object TurnNotifier {
      * 提前提示，避免用户在终端里撞上 CLI 的
      * 「currently running as a background agent」报错。
      */
-    fun notifyBusy(project: Project, title: String) {
-        NotificationGroupManager.getInstance()
+    fun notifyBusy(
+        project: Project,
+        title: String,
+    ) {
+        NotificationGroupManager
+            .getInstance()
             .getNotificationGroup(GROUP_ID)
             .createNotification(
-                "会话正在后台运行",
-                "「$title」正作为后台 agent 执行任务，等它空闲后再打开。",
+                "Session Is Running in the Background",
+                "\"$title\" is running as a background agent. Open it after it becomes idle.",
                 NotificationType.WARNING,
-            )
-            .notify(project)
+            ).notify(project)
     }
 
     /** 用户已经通过别的途径看到该会话，撤掉对应通知。 */

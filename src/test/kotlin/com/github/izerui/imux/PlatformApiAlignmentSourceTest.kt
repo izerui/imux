@@ -6,24 +6,25 @@ import org.junit.Test
 import java.io.File
 
 class PlatformApiAlignmentSourceTest {
-
-    private fun source(path: String): String =
-        File(path).takeIf(File::exists)?.readText().orEmpty()
+    private fun source(path: String): String = File(path).takeIf(File::exists)?.readText().orEmpty()
 
     /** 断言「不许调用某 API」时用，免得注释里解释原因的那句话把测试带红。 */
     private fun stripComments(source: String): String =
-        source.lineSequence()
+        source
+            .lineSequence()
             .filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("//") }
             .joinToString("\n")
 
     @Test
     fun `标签标题使用 EditorTabTitleProvider 而不是重命名只读虚拟文件`() {
-        val terminalHost = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
-        )
-        val titleProvider = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalTabTitleProvider.kt",
-        )
+        val terminalHost =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+            )
+        val titleProvider =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalTabTitleProvider.kt",
+            )
         val pluginXml = source("src/main/resources/META-INF/plugin.xml")
 
         assertFalse(terminalHost.contains("WriteAction"))
@@ -44,9 +45,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `读 sqlite 不走 DriverManager`() {
-        val index = source(
-            "src/main/kotlin/com/github/izerui/imux/session/CodexThreadIndex.kt",
-        )
+        val index =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/session/CodexThreadIndex.kt",
+            )
 
         // 只禁实际调用；注释里那段「不要改回 DriverManager」的原因说明要留着
         assertFalse(
@@ -67,12 +69,14 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `绑定迁移由 monitor 消费而不是界面`() {
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
-        val tree = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
-        )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
+        val tree =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+            )
 
         assertTrue(monitor.contains("drainNewBindings()"))
         assertTrue(monitor.contains("rebindKey("))
@@ -82,12 +86,14 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `运行态与未读变化通过官方文件呈现刷新标签图标`() {
-        val provider = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProvider.kt",
-        )
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
+        val provider =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileIconProvider.kt",
+            )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
 
         val icons = source("src/main/kotlin/com/github/izerui/imux/icons/AgentIcons.kt")
 
@@ -124,9 +130,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `窗口标题查未读不得意外创建项目服务`() {
-        val builder = source(
-            "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
-        )
+        val builder =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
+            )
 
         assertTrue(builder.contains("getServiceIfCreated(SessionMonitor::class.java)"))
         // 只禁实际调用；注释里那段「为什么不能用 getInstance」的说明要留着
@@ -147,9 +154,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `未读变化时主动刷新窗口标题`() {
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
 
         assertTrue(
             "标记与清除未读都要刷新标题，缺一处就会出现「标记不消失」或「标记不出现」",
@@ -168,9 +176,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `状态装饰写进项目名字段而不是直接盖标题`() {
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
 
         assertTrue(
             "updateTitle 才写项目名字段，装饰才活得过平台重算",
@@ -191,9 +200,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `窗口标题不显示文件名段`() {
-        val builder = source(
-            "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
-        )
+        val builder =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
+            )
 
         assertTrue("同步与异步两个重载都要覆写，平台两条路径都会走", builder.contains("getFileTitle("))
         assertTrue(builder.contains("getFileTitleAsync("))
@@ -201,9 +211,10 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `已打开标记覆盖已有与待绑定会话`() {
-        val tree = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
-        )
+        val tree =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+            )
 
         assertTrue(tree.contains("data class PendingSession("))
         assertTrue(tree.contains("opened = entry.pending.key in openTabs"))
@@ -217,15 +228,18 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `界面监听器绑定父级 Disposable`() {
-        val terminalHost = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
-        )
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
-        val factory = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
-        )
+        val terminalHost =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+            )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
+        val factory =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            )
 
         assertTrue(terminalHost.contains("EventDispatcher"))
         assertTrue(terminalHost.contains("addListener(listener, parentDisposable)"))
@@ -236,12 +250,14 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `终端交互使用终端与 Editor 官方事件`() {
-        val editor = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        )
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
+        val editor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
 
         assertTrue(editor.contains("keyEventsFlow.collect"))
         assertFalse(editor.contains("addInputInterceptor("))
@@ -252,9 +268,10 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `终端创建不使用平台 Internal API`() {
-        val terminalHost = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
-        )
+        val terminalHost =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+            )
 
         assertFalse(terminalHost.contains("shouldAddToToolWindow("))
         assertTrue(terminalHost.contains("requestFocus(false)"))
@@ -263,9 +280,10 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `项目服务使用注入的 CoroutineScope 调度扫描与界面更新`() {
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
 
         assertTrue(monitor.contains("CoroutineScope"))
         assertTrue(monitor.contains("Dispatchers.IO"))
@@ -276,12 +294,14 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `Action 使用 DumbAwareAction Presentation 与明确更新线程`() {
-        val editor = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        )
-        val factory = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
-        )
+        val editor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            )
+        val factory =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            )
 
         assertTrue(editor.contains("DumbAwareAction("))
         assertTrue(editor.contains("event.presentation.isEnabledAndVisible"))
@@ -293,15 +313,18 @@ class PlatformApiAlignmentSourceTest {
 
     @Test
     fun `焦点工具窗口颜色图标与快捷键使用平台 API`() {
-        val editor = source(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        )
-        val factory = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
-        )
-        val tree = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
-        )
+        val editor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            )
+        val factory =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            )
+        val tree =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+            )
 
         assertTrue(editor.contains("IdeFocusManager"))
         assertTrue(factory.contains("IdeFocusManager"))
@@ -327,9 +350,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `单击双击开关挂在工具窗口齿轮菜单上`() {
-        val factory = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
-        )
+        val factory =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            )
 
         assertTrue(factory.contains("setAdditionalGearActions("))
         assertTrue(factory.contains("ToggleSingleClickAction()"))
@@ -347,9 +371,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `会话树行高固定不随主题漂移`() {
-        val tree = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
-        )
+        val tree =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
+            )
 
         assertTrue(tree.contains("private const val ROW_HEIGHT = 24"))
         assertTrue(tree.contains("rowHeight = JBUI.scale(ROW_HEIGHT)"))
@@ -374,9 +399,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `系统通知点击回到对应项目窗口并打开会话`() {
-        val notifier = source(
-            "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
-        )
+        val notifier =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
+            )
 
         // 四参重载，末位的 trailing lambda 就是点击回调
         assertTrue(
@@ -413,9 +439,10 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `发系统通知前撤掉已投递的那些`() {
-        val notifier = source(
-            "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
-        )
+        val notifier =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
+            )
 
         // 撤旧必须发生在发新之前，否则刚发出的那条会被自己撤掉
         val dismissAt = notifier.indexOf("dismissDeliveredSystemNotifications()\n")
@@ -448,12 +475,14 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `系统通知回调不捕获 Project 与服务实例`() {
-        val notifier = source(
-            "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
-        )
-        val monitor = source(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        )
+        val notifier =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/turn/TurnNotifier.kt",
+            )
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
 
         // 回调里认 locationHash，不认捕获来的 Project
         assertTrue(notifier.contains("val locationHash = project.locationHash"))
@@ -472,15 +501,19 @@ class PlatformApiAlignmentSourceTest {
     }
 
     @Test
-    fun `相对时间与耗时使用平台本地化格式化工具`() {
-        val relativeTime = source(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/RelativeTime.kt",
-        )
-        val completionSubtitle = source(
-            "src/main/kotlin/com/github/izerui/imux/turn/CompletionSubtitle.kt",
-        )
+    fun `relative time and duration use fixed English formatting`() {
+        val relativeTime =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/RelativeTime.kt",
+            )
+        val completionSubtitle =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/turn/CompletionSubtitle.kt",
+            )
 
-        assertTrue(relativeTime.contains("DateFormatUtil.formatBetweenDates"))
-        assertTrue(completionSubtitle.contains("NlsMessages.formatDuration"))
+        assertFalse(relativeTime.contains("DateFormatUtil.formatBetweenDates"))
+        assertFalse(completionSubtitle.contains("NlsMessages.formatDuration"))
+        assertTrue(relativeTime.contains("ago"))
+        assertTrue(completionSubtitle.contains("Elapsed:"))
     }
 }

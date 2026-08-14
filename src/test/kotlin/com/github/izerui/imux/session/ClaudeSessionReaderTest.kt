@@ -9,7 +9,6 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class ClaudeSessionReaderTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -86,7 +85,7 @@ class ClaudeSessionReaderTest {
         File(projectDir(), "bbbb-4444.jsonl")
             .writeText("""{"type":"system","subtype":"init"}""")
 
-        assertEquals("会话 bbbb-444", reader().read("/Users/demo/proj")[0].title)
+        assertEquals("Session bbbb-444", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test

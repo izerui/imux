@@ -22,7 +22,6 @@ import com.intellij.openapi.wm.impl.PlatformFrameTitleBuilder
  * 标题只能是纯文本，无法加粗或着色——状态的视觉强度以字符本身为上限。
  */
 class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
-
     override fun getProjectTitle(project: Project): String {
         val monitor = monitorOf(project)
         return decorate(
@@ -38,12 +37,17 @@ class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
      *
      * 同步与异步两个重载都要覆写——平台按调用点分走两条路径。
      */
-    override fun getFileTitle(project: Project, file: VirtualFile): String = ""
+    override fun getFileTitle(
+        project: Project,
+        file: VirtualFile,
+    ): String = ""
 
-    override suspend fun getFileTitleAsync(project: Project, file: VirtualFile): String = ""
+    override suspend fun getFileTitleAsync(
+        project: Project,
+        file: VirtualFile,
+    ): String = ""
 
     companion object {
-
         /**
          * 只匹配自己生成的三种形态，不能宽泛成「结尾的任意全角括号」——项目名本身
          * 就可能带括号（`我的项目（旧）`），那会被连着吃掉。
@@ -52,19 +56,24 @@ class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
          * 只能先剥离再追加。正常路径下 `base` 来自平台的 `getProjectTitle` 本就干净，
          * 这里永远空转；但标题会被反复重算，这份保险省不得。
          */
-        private val STATUS_SUFFIX = Regex("（\\d+ 个(?:未读|运行中)(?: · \\d+ 个运行中)?）$")
+        private val STATUS_SUFFIX = Regex(" \\(\\d+ (?:unread|running)(?: · \\d+ running)?\\)$")
 
         /**
          * 未读排在运行中之前：未读是「要你去看」的强提示，运行中是「还在跑、不用管」
          * 的弱信息，强的靠前。
          */
-        internal fun decorate(base: String, unreadCount: Int, runningCount: Int): String {
+        internal fun decorate(
+            base: String,
+            unreadCount: Int,
+            runningCount: Int,
+        ): String {
             val stripped = base.replace(STATUS_SUFFIX, "")
-            val parts = buildList {
-                if (unreadCount > 0) add("$unreadCount 个未读")
-                if (runningCount > 0) add("$runningCount 个运行中")
-            }
-            return if (parts.isEmpty()) stripped else "$stripped（${parts.joinToString(" · ")}）"
+            val parts =
+                buildList {
+                    if (unreadCount > 0) add("$unreadCount unread")
+                    if (runningCount > 0) add("$runningCount running")
+                }
+            return if (parts.isEmpty()) stripped else "$stripped (${parts.joinToString(" · ")})"
         }
 
         /**

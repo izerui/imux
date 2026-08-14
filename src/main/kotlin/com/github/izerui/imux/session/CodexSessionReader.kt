@@ -16,8 +16,9 @@ import kotlin.io.path.useLines
  * 1. 目录按日期组织而非按 cwd，归属需读首行 session_meta 的 cwd 字段判断
  * 2. 没有标题类记录，标题回退为首条用户消息截断
  */
-class CodexSessionReader(private val codexHome: Path) {
-
+class CodexSessionReader(
+    private val codexHome: Path,
+) {
     private val threadIndex = CodexThreadIndex(codexHome)
 
     fun read(projectPath: String): List<AgentSession> {
@@ -28,7 +29,8 @@ class CodexSessionReader(private val codexHome: Path) {
         val titles = threadIndex.load()
 
         return Files.walk(root).use { stream ->
-            stream.toList()
+            stream
+                .toList()
                 .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".jsonl") }
                 .mapNotNull { readOne(it, projectPath, titles) }
         }
@@ -48,47 +50,50 @@ class CodexSessionReader(private val codexHome: Path) {
         file: Path,
         projectPath: String,
         titles: Map<String, String>,
-    ): AgentSession? = runCatching {
-        val meta = firstLine(file) ?: return null
-        if (!meta.contains(META_MARKER)) return null
-        if (JsonLineScanner.stringValue(meta, "thread_source") == SUBAGENT_THREAD_SOURCE) return null
+    ): AgentSession? =
+        runCatching {
+            val meta = firstLine(file) ?: return null
+            if (!meta.contains(META_MARKER)) return null
+            if (JsonLineScanner.stringValue(meta, "thread_source") == SUBAGENT_THREAD_SOURCE) return null
 
-        val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
-        if (cwd != projectPath) return null
+            val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
+            if (cwd != projectPath) return null
 
-        val id = JsonLineScanner.stringValue(meta, "id") ?: return null
+            val id = JsonLineScanner.stringValue(meta, "id") ?: return null
 
-        AgentSession(
-            id = id,
-            // 回退链：sqlite 里的标题 -> 首条用户消息 -> id 短码
-            title = titles[id]?.let(::truncate)
-                ?: firstUserMessage(file)?.let(::truncate)
-                ?: "会话 ${id.take(8)}",
-            agentType = AgentType.CODEX,
-            // 优先用记录自带的时刻，与 claude 侧同一口径。mtime 反映的是「文件何时被写」，
-            // 任何不含对话的追加、乃至外部工具 touch 都会把它推到当下。
-            // 这个值不只用于列表排序——新建会话的绑定判据
-            // （lastActiveAt >= pending.startedAt）也依赖它，错了会让绑定静默失败。
-            lastActiveAt = lastTimestampOf(file) ?: Files.getLastModifiedTime(file).toInstant(),
-            createdAt = creationTimeOf(file),
-            filePath = file,
-        )
-    }.onFailure { LOG.warn("跳过无法解析的 Codex 会话文件 $file", it) }.getOrNull()
+            AgentSession(
+                id = id,
+                // 回退链：sqlite 里的标题 -> 首条用户消息 -> id 短码
+                title =
+                    titles[id]?.let(::truncate)
+                        ?: firstUserMessage(file)?.let(::truncate)
+                        ?: "Session ${id.take(8)}",
+                agentType = AgentType.CODEX,
+                // 优先用记录自带的时刻，与 claude 侧同一口径。mtime 反映的是「文件何时被写」，
+                // 任何不含对话的追加、乃至外部工具 touch 都会把它推到当下。
+                // 这个值不只用于列表排序——新建会话的绑定判据
+                // （lastActiveAt >= pending.startedAt）也依赖它，错了会让绑定静默失败。
+                lastActiveAt = lastTimestampOf(file) ?: Files.getLastModifiedTime(file).toInstant(),
+                createdAt = creationTimeOf(file),
+                filePath = file,
+            )
+        }.onFailure { LOG.warn("跳过无法解析的 Codex 会话文件 $file", it) }.getOrNull()
 
     private fun firstLine(file: Path): String? = file.useLines { it.firstOrNull() }
 
     /** 只扫前若干行找首条用户消息，避免为一个标题读完整个大文件。 */
-    private fun firstUserMessage(file: Path): String? = file.useLines { lines ->
-        lines.take(MAX_SCAN_LINES)
-            .filter { it.contains(USER_ROLE_MARKER) }
-            .mapNotNull { JsonLineScanner.stringValue(it, "text") }
-            .firstOrNull()
-    }
-        ?.replace('\n', ' ')
-        ?.replace('\t', ' ')
+    private fun firstUserMessage(file: Path): String? =
+        file
+            .useLines { lines ->
+                lines
+                    .take(MAX_SCAN_LINES)
+                    .filter { it.contains(USER_ROLE_MARKER) }
+                    .mapNotNull { JsonLineScanner.stringValue(it, "text") }
+                    .firstOrNull()
+            }?.replace('\n', ' ')
+            ?.replace('\t', ' ')
 
-    private fun truncate(text: String): String =
-        if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
+    private fun truncate(text: String): String = if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
 
     private companion object {
         val LOG = logger<CodexSessionReader>()

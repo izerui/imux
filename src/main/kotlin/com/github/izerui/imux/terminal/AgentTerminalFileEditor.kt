@@ -3,11 +3,11 @@ package com.github.izerui.imux.terminal
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
-import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
-import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -41,8 +41,8 @@ import javax.swing.JLayeredPane
 class AgentTerminalFileEditor(
     private val project: Project,
     private val virtualFile: AgentTerminalVirtualFile,
-) : UserDataHolderBase(), FileEditor {
-
+) : UserDataHolderBase(),
+    FileEditor {
     /**
      * 把落到面板上的焦点转交给真正的编辑器组件。
      *
@@ -54,17 +54,18 @@ class AgentTerminalFileEditor(
      * 隐藏时不更新 cursorOffset；该问题由启动时启用 Claude native cursor 模式解决，
      * 见 AgentCommand.kt。
      */
-    private val focusForwarder = object : FocusAdapter() {
-        override fun focusGained(event: FocusEvent) {
-            // 必须每次实时取：它解析自 TerminalLayeredPane 的 curEditor，
-            // TUI 切 alternate buffer 时会换成另一个 editor 的 content component。
-            // 存成字段就会在切 buffer 后把焦点投到已经不显示的旧 editor 上。
-            val target = virtualFile.terminalView.preferredFocusableComponent
-            if (target !== event.component && target.isShowing) {
-                IdeFocusManager.getInstance(project).requestFocusInProject(target, project)
+    private val focusForwarder =
+        object : FocusAdapter() {
+            override fun focusGained(event: FocusEvent) {
+                // 必须每次实时取：它解析自 TerminalLayeredPane 的 curEditor，
+                // TUI 切 alternate buffer 时会换成另一个 editor 的 content component。
+                // 存成字段就会在切 buffer 后把焦点投到已经不显示的旧 editor 上。
+                val target = virtualFile.terminalView.preferredFocusableComponent
+                if (target !== event.component && target.isShowing) {
+                    IdeFocusManager.getInstance(project).requestFocusInProject(target, project)
+                }
             }
         }
-    }
 
     /** 已挂上转发器的面板。用它保证只挂一次，也用于 [dispose] 时摘除。 */
     private var focusHost: JComponent? = null
@@ -75,19 +76,20 @@ class AgentTerminalFileEditor(
     private var observedEditor: Editor? = null
     private var imeCompositionSupport: AgentImeCompositionSupport? = null
     private val visibleAreaListener = VisibleAreaListener { refreshScrollButton() }
-    private val editorMouseListener = object : EditorMouseListener {
-        override fun mousePressed(event: EditorMouseEvent) {
-            clearUnread()
+    private val editorMouseListener =
+        object : EditorMouseListener {
+            override fun mousePressed(event: EditorMouseEvent) {
+                clearUnread()
+            }
         }
-    }
     private var activeModelJob: Job? = null
     private var keyEventsJob: Job? = null
     private var disposed = false
 
     private val scrollToBottomAction =
         object : DumbAwareAction(
-            "滚动到底部",
-            "滚动到终端最新输出",
+            "Scroll to Bottom",
+            "Scroll to the latest terminal output",
             AllIcons.General.ArrowDown,
         ) {
             override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
@@ -117,14 +119,17 @@ class AgentTerminalFileEditor(
             focusHost = terminal
         }
 
-        val toolbar = ActionManager.getInstance().createActionToolbar(
-            "imuxTerminalEditor",
-            DefaultActionGroup(scrollToBottomAction),
-            true,
-        ).apply {
-            targetComponent = terminal
-            setMiniMode(true)
-        }
+        val toolbar =
+            ActionManager
+                .getInstance()
+                .createActionToolbar(
+                    "imuxTerminalEditor",
+                    DefaultActionGroup(scrollToBottomAction),
+                    true,
+                ).apply {
+                    targetComponent = terminal
+                    setMiniMode(true)
+                }
         scrollToolbar = toolbar
         val toolbarComponent = toolbar.component.apply { isOpaque = false }
         scrollToolbarComponent = toolbarComponent
@@ -160,21 +165,23 @@ class AgentTerminalFileEditor(
     }
 
     private fun startScrollTracking() {
-        activeModelJob = virtualFile.terminalView.coroutineScope.launch {
-            virtualFile.terminalView.outputModels.active.collect {
-                scheduleScrollButtonRefresh()
+        activeModelJob =
+            virtualFile.terminalView.coroutineScope.launch {
+                virtualFile.terminalView.outputModels.active.collect {
+                    scheduleScrollButtonRefresh()
+                }
             }
-        }
     }
 
     private fun startInputTracking() {
-        keyEventsJob = virtualFile.terminalView.coroutineScope.launch {
-            virtualFile.terminalView.keyEventsFlow.collect {
-                withContext(Dispatchers.EDT) {
-                    if (!disposed && !project.isDisposed) clearUnread()
+        keyEventsJob =
+            virtualFile.terminalView.coroutineScope.launch {
+                virtualFile.terminalView.keyEventsFlow.collect {
+                    withContext(Dispatchers.EDT) {
+                        if (!disposed && !project.isDisposed) clearUnread()
+                    }
                 }
             }
-        }
     }
 
     private fun scheduleScrollButtonRefresh() {
@@ -197,10 +204,11 @@ class AgentTerminalFileEditor(
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
             editor?.addEditorMouseListener(editorMouseListener)
             if (editor != null && virtualFile.agentType.needsImeCompositionOverlay) {
-                imeCompositionSupport = AgentImeCompositionSupport(
-                    editor,
-                    virtualFile.terminalView,
-                )
+                imeCompositionSupport =
+                    AgentImeCompositionSupport(
+                        editor,
+                        virtualFile.terminalView,
+                    )
             }
         }
 
@@ -209,13 +217,13 @@ class AgentTerminalFileEditor(
     }
 
     private fun clearUnread() {
-        com.github.izerui.imux.monitor.SessionMonitor.getInstance(project)
+        com.github.izerui.imux.monitor.SessionMonitor
+            .getInstance(project)
             .clearUnread(virtualFile.sessionKey)
     }
 
     /** 只在标签页首次打开时被平台咨询，之后的焦点由 [focusForwarder] 兜住。 */
-    override fun getPreferredFocusedComponent(): JComponent =
-        virtualFile.terminalView.preferredFocusableComponent
+    override fun getPreferredFocusedComponent(): JComponent = virtualFile.terminalView.preferredFocusableComponent
 
     override fun getName(): String = virtualFile.name
 
@@ -259,7 +267,8 @@ class AgentTerminalFileEditor(
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
 
         TerminalHost.getInstance(project).closeSession(virtualFile)
-        com.github.izerui.imux.monitor.SessionMonitor.getInstance(project)
+        com.github.izerui.imux.monitor.SessionMonitor
+            .getInstance(project)
             .cancelPendingSession(virtualFile.sessionKey)
     }
 }

@@ -14,10 +14,11 @@ import com.github.izerui.imux.model.AgentType
 internal fun waitingSubtitle(
     agentType: AgentType?,
     waitingFor: String?,
-): String = listOfNotNull(
-    agentType?.shortName,
-    waitingReason(waitingFor),
-).joinToString(" · ")
+): String =
+    listOfNotNull(
+        agentType?.shortName,
+        waitingReason(waitingFor),
+    ).joinToString(" · ")
 
 /**
  * 把 CLI 的 `waitingFor` 译成人话。
@@ -26,6 +27,7 @@ internal fun waitingSubtitle(
  * `sandbox request`（沙箱请求）走兜底：它们几乎不出现，单列的文案没人会读到。
  * 未知取值同样落到兜底，CLI 将来新增取值时不至于显示成空白。
  */
+
 /**
  * 这条等待提醒该不该弹气泡。
  *
@@ -41,9 +43,10 @@ internal fun waitingNotificationWanted(
     selectedSessionKeys: Set<String>,
 ): Boolean = sessionId !in selectedSessionKeys
 
-private fun waitingReason(waitingFor: String?): String = when (waitingFor) {
-    "permission prompt" -> "等待权限确认"
-    "dialog open" -> "等待你的选择"
-    "input needed" -> "等待输入"
-    else -> "等待你的确认"
-}
+private fun waitingReason(waitingFor: String?): String =
+    when (waitingFor) {
+        "permission prompt" -> "Waiting for permission"
+        "dialog open" -> "Waiting for your selection"
+        "input needed" -> "Waiting for input"
+        else -> "Waiting for your confirmation"
+    }

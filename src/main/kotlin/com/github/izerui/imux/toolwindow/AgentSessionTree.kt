@@ -16,15 +16,16 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonShortcuts
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
-import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.render.RenderingHelper
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.EmptyIcon
 import com.intellij.util.ui.JBUI
 import java.awt.event.MouseEvent
+import java.time.Instant
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JTree
@@ -34,7 +35,6 @@ import javax.swing.event.TreeExpansionListener
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreePath
-import java.time.Instant
 import javax.swing.tree.TreeSelectionModel
 
 /** 每个分组首屏显示的条数，也是点一次「显示更多」的增量。 */
@@ -46,8 +46,7 @@ private const val PAGE_SIZE = 10
  * 由枚举自己长齐而不是手写字面量：取用处是 `getValue`，少一个 key 就是运行时异常，
  * 而不是少显示几条。
  */
-internal fun initialLimits(): MutableMap<AgentType, Int> =
-    AgentType.entries.associateWithTo(mutableMapOf()) { PAGE_SIZE }
+internal fun initialLimits(): MutableMap<AgentType, Int> = AgentType.entries.associateWithTo(mutableMapOf()) { PAGE_SIZE }
 
 /**
  * 会话行的高度（未缩放），取自平台 Islands 主题的 `Tree.rowHeight`：16px 图标上下各留 4px。
@@ -75,15 +74,23 @@ internal fun JTree.pathForRowAt(y: Int): TreePath? {
  *
  * 只增不减：用户手动点过「显示更多」把上限撑大了，定位一条靠前的会话不该把它缩回去。
  */
-internal fun limitCovering(index: Int, current: Int, pageSize: Int): Int =
-    if (index < current) current else ((index / pageSize) + 1) * pageSize
+internal fun limitCovering(
+    index: Int,
+    current: Int,
+    pageSize: Int,
+): Int = if (index < current) current else ((index / pageSize) + 1) * pageSize
 
-internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolean): Icon? = when {
-    running -> AnimatedIcon.Default.INSTANCE
-    unread -> AllIcons.General.Modified
-    opened -> AllIcons.Ide.GrayDot
-    else -> EmptyIcon.ICON_16
-}
+internal fun sessionStatusIcon(
+    running: Boolean,
+    unread: Boolean,
+    opened: Boolean,
+): Icon? =
+    when {
+        running -> AnimatedIcon.Default.INSTANCE
+        unread -> AllIcons.General.Modified
+        opened -> AllIcons.Ide.GrayDot
+        else -> EmptyIcon.ICON_16
+    }
 
 /**
  * 这次点击是否应该打开会话。
@@ -92,8 +99,10 @@ internal fun sessionStatusIcon(running: Boolean, unread: Boolean, opened: Boolea
  * 其中一次：单击模式认第一次，双击模式认第二次。双击模式下被放过的第一次
  * 仍会走 JTree 默认逻辑选中该行，正是想要的效果。
  */
-internal fun shouldActivate(singleClickMode: Boolean, clickCount: Int): Boolean =
-    clickCount == if (singleClickMode) 1 else 2
+internal fun shouldActivate(
+    singleClickMode: Boolean,
+    clickCount: Int,
+): Boolean = clickCount == if (singleClickMode) 1 else 2
 
 internal fun enableRendererAnimation(component: JComponent) {
     component.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
@@ -101,7 +110,9 @@ internal fun enableRendererAnimation(component: JComponent) {
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
-    data class Group(val agentType: AgentType) : NodeData {
+    data class Group(
+        val agentType: AgentType,
+    ) : NodeData {
         override fun toString(): String = agentType.displayName
     }
 
@@ -126,11 +137,13 @@ private sealed interface NodeData {
         val key: String,
         val opened: Boolean,
     ) : NodeData {
-        override fun toString(): String = "新会话（等待首条消息）"
+        override fun toString(): String = "New session (waiting for first message)"
     }
 
-    data class ShowMore(val agentType: AgentType) : NodeData {
-        override fun toString(): String = "显示更多…"
+    data class ShowMore(
+        val agentType: AgentType,
+    ) : NodeData {
+        override fun toString(): String = "Show More…"
     }
 }
 
@@ -139,7 +152,11 @@ private sealed interface NodeData {
  *
  * [width] 是「量一段文本有多宽」，由调用方绑定字体。放在类外是为了能直接测。
  */
-internal fun ellipsize(title: String, budget: Int, width: (String) -> Int): String {
+internal fun ellipsize(
+    title: String,
+    budget: Int,
+    width: (String) -> Int,
+): String {
     val ellipsis = "…"
     if (budget <= width(ellipsis)) return ellipsis
     val room = budget - width(ellipsis)
@@ -170,7 +187,6 @@ internal fun ellipsize(title: String, budget: Int, width: (String) -> Int): Stri
  * 都改成了空实现，不会引起重绘循环。
  */
 private class EllipsizingCellRenderer : ColoredTreeCellRenderer() {
-
     private var title: String = ""
     private var titleAttributes: SimpleTextAttributes = SimpleTextAttributes.REGULAR_ATTRIBUTES
 
@@ -192,20 +208,36 @@ private class EllipsizingCellRenderer : ColoredTreeCellRenderer() {
         val data = (value as? DefaultMutableTreeNode)?.userObject
         val session = data as? NodeData.Session
 
-        nodeIcon = when (data) {
-            is NodeData.Group -> AgentIcons.forAgent(data.agentType)
-            // 优先级：正在跑 > 未读 > 已打开 > 普通
-            is NodeData.Session -> sessionStatusIcon(session!!.running, session.unread, session.opened)
-            is NodeData.PendingSession ->
-                sessionStatusIcon(running = false, unread = false, opened = data.opened)
+        nodeIcon =
+            when (data) {
+                is NodeData.Group -> {
+                    AgentIcons.forAgent(data.agentType)
+                }
 
-            is NodeData.ShowMore -> EmptyIcon.ICON_16
-            else -> null
-        }
+                // 优先级：正在跑 > 未读 > 已打开 > 普通
+                is NodeData.Session -> {
+                    sessionStatusIcon(session!!.running, session.unread, session.opened)
+                }
+
+                is NodeData.PendingSession -> {
+                    sessionStatusIcon(running = false, unread = false, opened = data.opened)
+                }
+
+                is NodeData.ShowMore -> {
+                    EmptyIcon.ICON_16
+                }
+
+                else -> {
+                    null
+                }
+            }
         title = data?.toString() ?: ""
         titleAttributes =
-            if (session?.unread == true) SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
-            else SimpleTextAttributes.REGULAR_ATTRIBUTES
+            if (session?.unread == true) {
+                SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+            } else {
+                SimpleTextAttributes.REGULAR_ATTRIBUTES
+            }
         suffix = session?.let { "  ${it.relativeTime}" }
 
         // 先按完整标题铺一遍：行高与首选宽度都由此得出，绘制时再按实际宽度收。
@@ -252,23 +284,23 @@ class AgentSessionTree(
     private val monitor: SessionMonitor,
     parentDisposable: Disposable,
 ) {
-
     private val model: SessionListModel get() = monitor.model
 
     private val root = DefaultMutableTreeNode("root")
     private val treeModel = DefaultTreeModel(root)
 
-    private val tree = Tree(treeModel).apply {
-        isRootVisible = false
-        showsRootHandles = true
-        selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
-        rowHeight = JBUI.scale(ROW_HEIGHT)
-        enableRendererAnimation(this)
-        // 让渲染器缩到可视宽度，标题超出的部分交给 [EllipsizingCellRenderer] 收成省略号，
-        // 而不是把树撑宽、逼用户左右拖着看——工具窗口本就窄，会话标题动辄一整句话。
-        putClientProperty(RenderingHelper.SHRINK_LONG_RENDERER, true)
-        cellRenderer = EllipsizingCellRenderer()
-    }
+    private val tree =
+        Tree(treeModel).apply {
+            isRootVisible = false
+            showsRootHandles = true
+            selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
+            rowHeight = JBUI.scale(ROW_HEIGHT)
+            enableRendererAnimation(this)
+            // 让渲染器缩到可视宽度，标题超出的部分交给 [EllipsizingCellRenderer] 收成省略号，
+            // 而不是把树撑宽、逼用户左右拖着看——工具窗口本就窄，会话标题动辄一整句话。
+            putClientProperty(RenderingHelper.SHRINK_LONG_RENDERER, true)
+            cellRenderer = EllipsizingCellRenderer()
+        }
 
     /** 每个分组当前展示的条数上限，点「显示更多」后递增。 */
     private val limits = initialLimits()
@@ -284,7 +316,10 @@ class AgentSessionTree(
         // mouseClicked 要求按下与抬起严格同点，手指稍有位移就不触发，
         // 表现就是「点了没反应，要点好几次」。ClickListener 容忍这点抖动。
         object : ClickListener() {
-            override fun onClick(event: MouseEvent, clickCount: Int): Boolean {
+            override fun onClick(
+                event: MouseEvent,
+                clickCount: Int,
+            ): Boolean {
                 if (!SwingUtilities.isLeftMouseButton(event)) return false
                 val singleClickMode = ImuxSettings.getInstance().state.openWithSingleClick
                 if (!shouldActivate(singleClickMode, clickCount)) return false
@@ -304,17 +339,19 @@ class AgentSessionTree(
         }.registerCustomShortcutSet(CommonShortcuts.ENTER, tree, parentDisposable)
 
         // 记下用户自己的折叠意图，重建树时照办
-        tree.addTreeExpansionListener(object : TreeExpansionListener {
-            override fun treeExpanded(event: TreeExpansionEvent) {
-                if (restoringExpansion) return
-                groupOf(event.path)?.let { collapsedByUser.remove(it) }
-            }
+        tree.addTreeExpansionListener(
+            object : TreeExpansionListener {
+                override fun treeExpanded(event: TreeExpansionEvent) {
+                    if (restoringExpansion) return
+                    groupOf(event.path)?.let { collapsedByUser.remove(it) }
+                }
 
-            override fun treeCollapsed(event: TreeExpansionEvent) {
-                if (restoringExpansion) return
-                groupOf(event.path)?.let { collapsedByUser.add(it) }
-            }
-        })
+                override fun treeCollapsed(event: TreeExpansionEvent) {
+                    if (restoringExpansion) return
+                    groupOf(event.path)?.let { collapsedByUser.add(it) }
+                }
+            },
+        )
 
         monitor.addListener(parentDisposable) { reload() }
     }
@@ -361,8 +398,10 @@ class AgentSessionTree(
     }
 
     private fun selectedSessionId(): String? =
-        ((tree.selectionPath?.lastPathComponent as? DefaultMutableTreeNode)?.userObject
-            as? NodeData.Session)?.id
+        (
+            (tree.selectionPath?.lastPathComponent as? DefaultMutableTreeNode)?.userObject
+                as? NodeData.Session
+        )?.id
 
     private fun restoreSelection(sessionId: String?) {
         if (sessionId == null) return
@@ -376,7 +415,11 @@ class AgentSessionTree(
      * selectionChanged 不会响，而 [reload] 只会用旧 id 去 restoreSelection，
      * 等于把选中按死在一个已经不属于这个终端的会话上。
      */
-    fun migrateSelection(from: String, to: String, isActiveTab: Boolean) {
+    fun migrateSelection(
+        from: String,
+        to: String,
+        isActiveTab: Boolean,
+    ) {
         val current = selectedSessionId()
         val next = selectionAfterMigration(current, from, to, isActiveTab) ?: return
         if (next == current) return
@@ -421,28 +464,33 @@ class AgentSessionTree(
     /** 找出 [key] 属于哪个分组、在该分组条目里排第几。找不到返回 null。 */
     private fun locate(key: String): Pair<AgentType, Int>? {
         AgentType.entries.forEach { agentType ->
-            val index = model.entries(agentType).indexOfFirst { entry ->
-                when (entry) {
-                    is ListEntry.Existing -> entry.session.id == key
-                    is ListEntry.Pending -> entry.pending.key == key
+            val index =
+                model.entries(agentType).indexOfFirst { entry ->
+                    when (entry) {
+                        is ListEntry.Existing -> entry.session.id == key
+                        is ListEntry.Pending -> entry.pending.key == key
+                    }
                 }
-            }
             if (index >= 0) return agentType to index
         }
         return null
     }
 
-    private fun findNode(key: String): DefaultMutableTreeNode? = groupNodes()
-        .flatMap { it.children().toList().filterIsInstance<DefaultMutableTreeNode>() }
-        .firstOrNull { node ->
-            when (val data = node.userObject) {
-                is NodeData.Session -> data.id == key
-                is NodeData.PendingSession -> data.key == key
-                else -> false
+    private fun findNode(key: String): DefaultMutableTreeNode? =
+        groupNodes()
+            .flatMap { it.children().toList().filterIsInstance<DefaultMutableTreeNode>() }
+            .firstOrNull { node ->
+                when (val data = node.userObject) {
+                    is NodeData.Session -> data.id == key
+                    is NodeData.PendingSession -> data.key == key
+                    else -> false
+                }
             }
-        }
 
-    private fun addGroup(agentType: AgentType, nodes: List<NodeData>) {
+    private fun addGroup(
+        agentType: AgentType,
+        nodes: List<NodeData>,
+    ) {
         val groupNode = DefaultMutableTreeNode(NodeData.Group(agentType))
         root.add(groupNode)
         nodes.forEach { groupNode.add(DefaultMutableTreeNode(it)) }
@@ -454,32 +502,38 @@ class AgentSessionTree(
         val limit = limits.getValue(agentType)
         val openTabs = TerminalHost.getInstance(project).openTabKeys()
 
-        val nodes = entries.take(limit).map { entry ->
-            when (entry) {
-                is ListEntry.Existing -> NodeData.Session(
-                    agentType,
-                    entry.session.id,
-                    entry.session.title,
-                    relativeTime = RelativeTime.format(
-                        entry.session.lastActiveAt,
-                        Instant.now(),
-                    ),
-                    // 与标签页取交集：只关心自己正在用的会话。IDE 之外启动的
-                    // claude 进程在运行态文件里可见，但不该出现在列表标记上。
-                    // 交集在此实时求，而非由外部预先算好——否则关标签页后标记
-                    // 要等下一轮才消失。
-                    running = entry.session.id in monitor.runningIds && entry.session.id in openTabs,
-                    unread = monitor.isUnread(entry.session.id),
-                    opened = entry.session.id in openTabs,
-                )
+        val nodes =
+            entries.take(limit).map { entry ->
+                when (entry) {
+                    is ListEntry.Existing -> {
+                        NodeData.Session(
+                            agentType,
+                            entry.session.id,
+                            entry.session.title,
+                            relativeTime =
+                                RelativeTime.format(
+                                    entry.session.lastActiveAt,
+                                    Instant.now(),
+                                ),
+                            // 与标签页取交集：只关心自己正在用的会话。IDE 之外启动的
+                            // claude 进程在运行态文件里可见，但不该出现在列表标记上。
+                            // 交集在此实时求，而非由外部预先算好——否则关标签页后标记
+                            // 要等下一轮才消失。
+                            running = entry.session.id in monitor.runningIds && entry.session.id in openTabs,
+                            unread = monitor.isUnread(entry.session.id),
+                            opened = entry.session.id in openTabs,
+                        )
+                    }
 
-                is ListEntry.Pending -> NodeData.PendingSession(
-                    agentType,
-                    entry.pending.key,
-                    opened = entry.pending.key in openTabs,
-                )
+                    is ListEntry.Pending -> {
+                        NodeData.PendingSession(
+                            agentType,
+                            entry.pending.key,
+                            opened = entry.pending.key in openTabs,
+                        )
+                    }
+                }
             }
-        }
 
         return if (entries.size > limit) nodes + NodeData.ShowMore(agentType) else nodes
     }
@@ -508,8 +562,9 @@ class AgentSessionTree(
             is NodeData.PendingSession -> {
                 val boundId = model.boundIdFor(data.key)
                 if (boundId != null) {
-                    TerminalHost.getInstance(project)
-                        .openResume(data.agentType, boundId, "会话 ${boundId.take(8)}")
+                    TerminalHost
+                        .getInstance(project)
+                        .openResume(data.agentType, boundId, "Session ${boundId.take(8)}")
                 }
                 // 未绑定时无操作：终端已在新建时打开，双击无额外语义
             }
@@ -519,12 +574,13 @@ class AgentSessionTree(
                 reload()
             }
 
-            else -> Unit
+            else -> {
+                Unit
+            }
         }
     }
 
-    private fun groupNodes(): List<DefaultMutableTreeNode> =
-        root.children().toList().filterIsInstance<DefaultMutableTreeNode>()
+    private fun groupNodes(): List<DefaultMutableTreeNode> = root.children().toList().filterIsInstance<DefaultMutableTreeNode>()
 
     /**
      * 分组默认展开，除非用户自己折叠过。

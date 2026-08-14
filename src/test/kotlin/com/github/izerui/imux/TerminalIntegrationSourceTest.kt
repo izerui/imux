@@ -6,13 +6,13 @@ import org.junit.Test
 import java.io.File
 
 class TerminalIntegrationSourceTest {
-
     @Test
     fun `只支持 262 并使用官方 detached tab 生命周期`() {
         val buildFile = File("build.gradle.kts").readText()
-        val terminalHost = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
-        ).readText()
+        val terminalHost =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+            ).readText()
 
         assertTrue("插件最低版本必须是 IDEA 2026.2 / build 262", buildFile.contains("""sinceBuild = "262""""))
         assertTrue(
@@ -50,12 +50,14 @@ class TerminalIntegrationSourceTest {
 
     @Test
     fun `完成通知打开已有会话时滚动到终端底部`() {
-        val monitor = File(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        ).readText()
-        val terminalHost = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
-        ).readText()
+        val monitor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            ).readText()
+        val terminalHost =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
+            ).readText()
 
         // 不绑定接收者写法：打开动作已挪进 openSession，由无捕获的顶层函数转调，
         // 接收者因此从局部的 host 变成现取的服务。要守的是「带滚动语义」这件事本身。
@@ -71,9 +73,10 @@ class TerminalIntegrationSourceTest {
 
     @Test
     fun `会话 editor 内提供滚动到底部按钮`() {
-        val fileEditor = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        ).readText()
+        val fileEditor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            ).readText()
 
         assertTrue(
             "会话 editor 必须使用平台 Action Toolbar 提供按钮",
@@ -82,7 +85,7 @@ class TerminalIntegrationSourceTest {
         )
         assertTrue(
             "按钮必须使用接近 OpenAI 样式的简洁向下箭头并提供明确 tooltip",
-            fileEditor.contains(""""滚动到终端最新输出"""") &&
+            fileEditor.contains("\"Scroll to the latest terminal output\"") &&
                 fileEditor.contains("AllIcons.General.ArrowDown"),
         )
         assertTrue(
@@ -142,9 +145,10 @@ class TerminalIntegrationSourceTest {
 
     @Test
     fun `滚动按钮必须位于终端组件上层`() {
-        val fileEditor = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        ).readText()
+        val fileEditor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            ).readText()
 
         assertTrue(
             "终端组件必须显式放在默认层",
@@ -168,9 +172,10 @@ class TerminalIntegrationSourceTest {
      */
     @Test
     fun `焦点必须转发到终端的编辑器组件且不缓存`() {
-        val fileEditor = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        ).readText()
+        val fileEditor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            ).readText()
 
         assertTrue(
             "面板拿到焦点后必须通过 IDE 焦点管理器转发，否则输入法候选窗定位在左上角",
@@ -190,15 +195,18 @@ class TerminalIntegrationSourceTest {
 
     @Test
     fun `流式重绘 agent 的输入法组合文本不能进入终端 Editor 布局`() {
-        val virtualFile = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalVirtualFile.kt",
-        ).readText()
-        val fileEditor = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        ).readText()
-        val compositionSupportFile = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentImeCompositionSupport.kt",
-        )
+        val virtualFile =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalVirtualFile.kt",
+            ).readText()
+        val fileEditor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            ).readText()
+        val compositionSupportFile =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentImeCompositionSupport.kt",
+            )
         val compositionSupport = compositionSupportFile.readText()
 
         assertTrue(
@@ -256,9 +264,10 @@ class TerminalIntegrationSourceTest {
 
     @Test
     fun `延迟转发焦点前必须确认终端仍是当前 editor`() {
-        val toolWindowFactory = File(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
-        ).readText()
+        val toolWindowFactory =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            ).readText()
 
         assertTrue(
             "invokeLater 执行前必须用本次 selectionChanged 的 editor 重新校验活动选择",

@@ -36,18 +36,25 @@ import com.intellij.ui.content.ContentFactory
  * 工具窗口的内容是懒加载的，把那些逻辑放在这里，从没展开过面板的项目就一片死寂。
  * 这里只是它的一个订阅者，随时可以被创建或销毁。
  */
-class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
-
+class AgentToolWindowFactory :
+    ToolWindowFactory,
+    DumbAware {
     // 展示名与注册 id（imux）解耦：改 id 会让用户已保存的工具窗口布局状态失效。
     override fun init(toolWindow: ToolWindow) {
         toolWindow.stripeTitle = "AI Agents"
     }
 
-    override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+    override fun createToolWindowContent(
+        project: Project,
+        toolWindow: ToolWindow,
+    ) {
         timed("构建工具窗口内容", CREATE_WARN_MS) { doCreateContent(project, toolWindow) }
     }
 
-    private fun doCreateContent(project: Project, toolWindow: ToolWindow) {
+    private fun doCreateContent(
+        project: Project,
+        toolWindow: ToolWindow,
+    ) {
         val monitor = SessionMonitor.getInstance(project)
         // 幂等。正常情况下启动活动已经跑过，这里只是兜底——
         // 万一启动活动因故没执行，至少打开面板还能把监听拉起来。
@@ -55,11 +62,12 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
 
         val contentDisposable = Disposer.newDisposable("imux tool window content")
         val sessionTree = AgentSessionTree(project, monitor, contentDisposable)
-        val panel = SimpleToolWindowPanel(true, true).apply {
-            // 保留水平滚动条：标题默认收成省略号，但省略号看不出被吃掉的是什么，
-            // 往右拖能把整条标题读完——渲染器按当前可视宽度截断，拖到哪就显示到哪。
-            setContent(JBScrollPane(sessionTree.component()))
-        }
+        val panel =
+            SimpleToolWindowPanel(true, true).apply {
+                // 保留水平滚动条：标题默认收成省略号，但省略号看不出被吃掉的是什么，
+                // 往右拖能把整条标题读完——渲染器按当前可视宽度截断，拖到哪就显示到哪。
+                setContent(JBScrollPane(sessionTree.component()))
+            }
 
         // 新 UI 默认把标题栏图标折叠成「鼠标悬停或窗口聚焦才浮现」，但新建/刷新是这里的高频入口，
         // 藏起来等于每次都要先摸一下才知道点哪。平台给了这个开关（见 InternalDecoratorImpl
@@ -95,8 +103,11 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
         TerminalHost.getInstance(project).addSessionKeyMigratedListener(contentDisposable) { from, to ->
             sessionTree.reload()
             // rebindKey 里已经把 file.sessionKey 改成了新 id，所以拿新 id 比对
-            val activeKey = (FileEditorManager.getInstance(project).selectedEditor?.file
-                as? AgentTerminalVirtualFile)?.sessionKey
+            val activeKey =
+                (
+                    FileEditorManager.getInstance(project).selectedEditor?.file
+                        as? AgentTerminalVirtualFile
+                )?.sessionKey
             sessionTree.migrateSelection(from, to, isActiveTab = activeKey == to)
         }
 
@@ -150,7 +161,11 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 
     /** 只在超过阈值时记一条，平时零噪音；用于定位卡顿来自哪一段。 */
-    private inline fun <T> timed(label: String, thresholdMs: Long, block: () -> T): T {
+    private inline fun <T> timed(
+        label: String,
+        thresholdMs: Long,
+        block: () -> T,
+    ): T {
         val start = System.nanoTime()
         val result = block()
         val elapsed = (System.nanoTime() - start) / 1_000_000
@@ -166,9 +181,7 @@ class AgentToolWindowFactory : ToolWindowFactory, DumbAware {
     }
 }
 
-private class NewSessionAction :
-    DumbAwareAction("新建会话", "新建一个 AI Agent 会话", AllIcons.General.Add) {
-
+private class NewSessionAction : DumbAwareAction("New Session", "Start a new AI agent session", AllIcons.General.Add) {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(event: AnActionEvent) {
@@ -178,7 +191,10 @@ private class NewSessionAction :
         }
     }
 
-    private fun createSession(project: Project, agentType: AgentType) {
+    private fun createSession(
+        project: Project,
+        agentType: AgentType,
+    ) {
         val monitor = SessionMonitor.getInstance(project)
         val model: SessionListModel = monitor.model
         // pi 的会话 id 可以先定下来（见 preassignedSessionId），其余 agent 为 null
@@ -186,14 +202,12 @@ private class NewSessionAction :
         // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
         val pending = model.registerPending(agentType, sessionId)
         // 终端必须以 pending.key 记录：会话落盘后要靠这个 key 把终端迁到真实 id 下
-        TerminalHost.getInstance(project).openNew(agentType, pending.key, "新会话", sessionId)
+        TerminalHost.getInstance(project).openNew(agentType, pending.key, "New Session", sessionId)
         monitor.refresh()
     }
 }
 
-private class RefreshAction :
-    DumbAwareAction("刷新", "重新扫描会话库", AllIcons.Actions.Refresh) {
-
+private class RefreshAction : DumbAwareAction("Refresh", "Rescan session stores", AllIcons.Actions.Refresh) {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(event: AnActionEvent) {
@@ -201,15 +215,15 @@ private class RefreshAction :
     }
 }
 
-private class ToggleSingleClickAction :
-    DumbAwareToggleAction("Open Sessions with Single Click") {
-
+private class ToggleSingleClickAction : DumbAwareToggleAction("Open Sessions with Single Click") {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
-    override fun isSelected(event: AnActionEvent): Boolean =
-        ImuxSettings.getInstance().state.openWithSingleClick
+    override fun isSelected(event: AnActionEvent): Boolean = ImuxSettings.getInstance().state.openWithSingleClick
 
-    override fun setSelected(event: AnActionEvent, state: Boolean) {
+    override fun setSelected(
+        event: AnActionEvent,
+        state: Boolean,
+    ) {
         ImuxSettings.getInstance().state.openWithSingleClick = state
     }
 }

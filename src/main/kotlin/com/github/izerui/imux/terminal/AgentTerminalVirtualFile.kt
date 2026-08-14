@@ -29,6 +29,7 @@ import com.intellij.testFramework.LightVirtualFile
  *
  * 注意：本文件不拥有 view，view 的生命周期由 TerminalHost 管理。
  */
+
 /**
  * @param sessionKey 该终端**当前**对应的会话 id。会变——用户在终端里 `/clear` 或
  *   `/new` 之后，CLI 换了会话 id 而进程不变，这里要跟着迁移。
@@ -42,7 +43,6 @@ class AgentTerminalVirtualFile(
     val agentType: AgentType,
     val tabId: String,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
-
     var tabTitle: String = name
 
     override fun getFileType(): FileType = AgentTerminalFileType
@@ -53,7 +53,7 @@ class AgentTerminalVirtualFile(
 object AgentTerminalFileType : FakeFileType() {
     override fun getName(): String = "imuxTerminal"
 
-    override fun getDescription(): String = "imux 终端会话"
+    override fun getDescription(): String = "imux terminal session"
 
     override fun isMyFileType(file: VirtualFile): Boolean = file is AgentTerminalVirtualFile
 }
