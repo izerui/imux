@@ -79,9 +79,17 @@ class SessionListModel(
 
     fun boundIdFor(key: String): String? = bindings[key]
 
+    /**
+     * 取消尚未产生可恢复历史的新会话。
+     *
+     * 通常关闭时传入的是 pending key；pi 例外：它会在首次扫描前通过扩展上报，
+     * 把终端提前迁到预分配的真实 sessionId。此时仍要能找到原 pending，否则
+     * 只有 session header 的空会话会一直显示到 30 分钟超时。
+     */
     fun cancelPending(key: String): Boolean {
-        if (key in bindings) return false
-        val removed = pendings.removeIf { it.key == key }
+        val pending = pendings.firstOrNull { it.key == key || it.sessionId == key } ?: return false
+        if (pending.key in bindings) return false
+        val removed = pendings.remove(pending)
         if (removed) notifyListeners()
         return removed
     }

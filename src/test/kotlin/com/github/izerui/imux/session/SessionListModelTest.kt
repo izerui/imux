@@ -212,6 +212,33 @@ class SessionListModelTest {
     }
 
     @Test
+    fun `pi 终端提前迁到预分配 id 后仍可取消未绑定 pending`() {
+        val model = model(FakeClock(base))
+        val pending = model.registerPending(AgentType.PI, sessionId = "pi-empty")
+
+        val removed = model.cancelPending("pi-empty")
+
+        assertTrue(removed)
+        assertTrue(model.entries(AgentType.PI).isEmpty())
+        assertNull(model.boundIdFor(pending.key))
+    }
+
+    @Test
+    fun `预分配 id 已绑定真实会话后不能取消`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.PI, sessionId = "pi-started")
+        scanResult = listOf(session("pi-started", AgentType.PI, base.plusSeconds(10)))
+        model.refresh()
+
+        val removed = model.cancelPending("pi-started")
+
+        assertFalse(removed)
+        assertEquals("pi-started", model.boundIdFor(pending.key))
+        assertEquals(1, model.entries(AgentType.PI).size)
+    }
+
+    @Test
     fun `取消已绑定 pending 不影响真实会话并返回 false`() {
         val clock = FakeClock(base)
         val model = model(clock)

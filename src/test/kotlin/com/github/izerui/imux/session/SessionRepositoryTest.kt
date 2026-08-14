@@ -54,7 +54,12 @@ class SessionRepositoryTest {
     private fun piSession(uuid: String, lastModified: Long) {
         val dir = File(tmp.root, "pi/agent/sessions/--Users-demo-proj--").apply { mkdirs() }
         File(dir, "2026-08-13T10-00-00-000Z_$uuid.jsonl").apply {
-            writeText("""{"type":"session","version":3,"id":"$uuid","cwd":"/Users/demo/proj"}""")
+            writeText(
+                """
+                {"type":"session","version":3,"id":"$uuid","cwd":"/Users/demo/proj"}
+                {"type":"message","message":{"role":"user","content":"消息-$uuid"}}
+                """.trimIndent(),
+            )
             setLastModified(lastModified)
         }
     }
