@@ -11,14 +11,18 @@ import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.turn.TurnNotifier
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonShortcuts
+import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.PopupHandler
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.render.RenderingHelper
 import com.intellij.ui.treeStructure.Tree
@@ -107,6 +111,11 @@ internal fun shouldActivate(
 internal fun enableRendererAnimation(component: JComponent) {
     component.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
 }
+
+internal fun sessionClipboardText(
+    agentType: AgentType,
+    sessionId: String,
+): String = "Session type: ${agentType.displayName}\nSession ID: $sessionId"
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {
@@ -328,6 +337,39 @@ class AgentSessionTree(
                 return true
             }
         }.installOn(tree)
+
+        tree.addMouseListener(
+            object : PopupHandler() {
+                override fun invokePopup(
+                    component: java.awt.Component,
+                    x: Int,
+                    y: Int,
+                ) {
+                    val path = tree.pathForRowAt(y) ?: return
+                    val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
+                    val session = node.userObject as? NodeData.Session ?: return
+                    tree.selectionPath = path
+
+                    val copyAction =
+                        object : DumbAwareAction(
+                            "Copy Session Type and ID",
+                            "Copy the session type and ID to the clipboard",
+                            AllIcons.Actions.Copy,
+                        ) {
+                            override fun actionPerformed(event: AnActionEvent) {
+                                CopyPasteManager.copyTextToClipboard(
+                                    sessionClipboardText(session.agentType, session.id),
+                                )
+                            }
+                        }
+                    ActionManager
+                        .getInstance()
+                        .createActionPopupMenu("ImuxSessionTreePopup", DefaultActionGroup(copyAction))
+                        .component
+                        .show(tree, x, y)
+                }
+            },
+        )
 
         // 键盘可达：选中后回车等同于单击
         object : DumbAwareAction() {
