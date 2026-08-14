@@ -31,8 +31,9 @@ import com.intellij.testFramework.LightVirtualFile
  */
 
 /**
- * @param sessionKey 该终端**当前**对应的会话 id。会变——用户在终端里 `/clear` 或
- *   `/new` 之后，CLI 换了会话 id 而进程不变，这里要跟着迁移。
+ * @param sessionKey 该终端当前的记账 key。新建会话落盘前可能是 `pending-*`，绑定后会
+ *   迁移为真实会话 id；用户在终端里 `/clear` 或 `/new` 后也会跟着迁移。
+ * @param sessionId 可供用户复制的真实会话 id；尚未落盘且无法预分配时为 null。
  * @param tabId 终端自身的身份，一生不变。以 [com.github.izerui.imux.session.IMUX_TAB_ENV]
  *   注入给 CLI 进程，是把进程认回终端、进而发现 sessionKey 漂移的唯一依据。
  */
@@ -42,6 +43,7 @@ class AgentTerminalVirtualFile(
     var sessionKey: String,
     val agentType: AgentType,
     val tabId: String,
+    var sessionId: String? = null,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
 

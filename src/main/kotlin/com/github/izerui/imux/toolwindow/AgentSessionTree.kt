@@ -8,6 +8,7 @@ import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.selectionAfterMigration
+import com.github.izerui.imux.terminal.sessionClipboardText
 import com.github.izerui.imux.turn.TurnNotifier
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -111,11 +112,6 @@ internal fun shouldActivate(
 internal fun enableRendererAnimation(component: JComponent) {
     component.putClientProperty(AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED, true)
 }
-
-internal fun sessionClipboardText(
-    agentType: AgentType,
-    sessionId: String,
-): String = "Session type: ${agentType.displayName}\nSession ID: $sessionId"
 
 /** 树节点承载的数据。用密封接口避免在渲染与点击处理中做字符串判断。 */
 private sealed interface NodeData {

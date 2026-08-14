@@ -1,6 +1,7 @@
 package com.github.izerui.imux.toolwindow
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.terminal.sessionClipboardText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

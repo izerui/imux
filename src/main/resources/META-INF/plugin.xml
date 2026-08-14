@@ -88,4 +88,15 @@
         -->
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
     </extensions>
+
+    <actions>
+        <action
+                id="imux.CopySessionIdentity"
+                class="com.github.izerui.imux.terminal.CopySessionIdentityAction"
+                text="Copy Session Type and ID"
+                description="Copy the imux session type and ID to the clipboard"
+                icon="AllIcons.Actions.Copy">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

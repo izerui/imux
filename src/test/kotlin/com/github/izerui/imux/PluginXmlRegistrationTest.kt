@@ -14,7 +14,6 @@ import java.io.File
  * 这类错误编译器查不出来、单元测试也碰不到，只能靠断言注册内容本身。
  */
 class PluginXmlRegistrationTest {
-
     private val pluginXml: String by lazy {
         val file = File("src/main/resources/META-INF/plugin.xml")
         assertTrue("找不到 plugin.xml：${file.absolutePath}", file.exists())
@@ -101,17 +100,32 @@ class PluginXmlRegistrationTest {
 
     @Test
     fun `plugin xml 引用的本地实现类都必须存在`() {
-        val classNames = Regex(
-            """(?:implementation|class|factoryClass)="(com\.github\.izerui\.imux\.[^"]+)"""",
-        ).findAll(pluginXml).map { it.groupValues[1] }.toList()
-        val missing = classNames.filterNot { className ->
-            File("src/main/kotlin/${className.replace('.', '/')}.kt").exists()
-        }
+        val classNames =
+            Regex(
+                """(?:implementation|class|factoryClass)="(com\.github\.izerui\.imux\.[^"]+)"""",
+            ).findAll(pluginXml).map { it.groupValues[1] }.toList()
+        val missing =
+            classNames.filterNot { className ->
+                File("src/main/kotlin/${className.replace('.', '/')}.kt").exists()
+            }
 
         assertTrue(
             "plugin.xml 引用了不存在的实现类；若它覆盖平台 action，会连平台原 action 一起移除：" +
                 missing.joinToString(prefix = "\n"),
             missing.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `会话复制动作注册到终端正文右键菜单`() {
+        assertTrue(
+            "终端正文右键菜单必须包含会话类型与 id 的复制动作",
+            pluginXml.contains(
+                """class="com.github.izerui.imux.terminal.CopySessionIdentityAction"""",
+            ) &&
+                pluginXml.contains(
+                    """group-id="Terminal.ReworkedTerminalContextMenu"""",
+                ),
         )
     }
 
@@ -125,10 +139,11 @@ class PluginXmlRegistrationTest {
 
     @Test
     fun `插件描述符合官方结构校验规则`() {
-        val description = Regex(
-            """<description><!\[CDATA\[(.*?)]\]></description>""",
-            RegexOption.DOT_MATCHES_ALL,
-        ).find(pluginXml)?.groupValues?.get(1)?.trim().orEmpty()
+        val description =
+            Regex(
+                """<description><!\[CDATA\[(.*?)]\]></description>""",
+                RegexOption.DOT_MATCHES_ALL,
+            ).find(pluginXml)?.groupValues?.get(1)?.trim().orEmpty()
 
         assertTrue("插件描述必须至少包含 40 个字符", description.length >= 40)
         assertTrue(

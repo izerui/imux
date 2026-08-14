@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.PiReportEndpoint
+import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -12,7 +13,6 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
-import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.cancel
@@ -26,7 +26,10 @@ fun interface TerminalSessionsListener : EventListener {
 }
 
 fun interface SessionKeyMigratedListener : EventListener {
-    fun sessionKeyMigrated(from: String, to: String)
+    fun sessionKeyMigrated(
+        from: String,
+        to: String,
+    )
 }
 
 /**
@@ -48,11 +51,12 @@ internal fun selectionAfterMigration(
     from: String,
     to: String,
     isActiveTab: Boolean,
-): String? = when {
-    isActiveTab -> to
-    current == from -> to
-    else -> current
-}
+): String? =
+    when {
+        isActiveTab -> to
+        current == from -> to
+        else -> current
+    }
 
 /**
  * 拥有所有活着的终端 view，按 key 索引。
@@ -64,8 +68,9 @@ internal fun selectionAfterMigration(
  * 因此改为关标签页即终止；要接着聊仍可 resume，只是需要重新加载历史。
  */
 @Service(Service.Level.PROJECT)
-class TerminalHost(private val project: Project) : Disposable {
-
+class TerminalHost(
+    private val project: Project,
+) : Disposable {
     private val views = mutableMapOf<String, TerminalView>()
 
     /**
@@ -93,8 +98,13 @@ class TerminalHost(private val project: Project) : Disposable {
      * `--resume` 终端，与仍在运行的原终端抢同一个会话，CLI 会报
      * 「currently running as a background agent」。
      */
-    fun openNew(agentType: AgentType, key: String, tabTitle: String, sessionId: String? = null) {
-        open(key, agentType, newCommand(agentType, sessionId), tabTitle)
+    fun openNew(
+        agentType: AgentType,
+        key: String,
+        tabTitle: String,
+        sessionId: String? = null,
+    ) {
+        open(key, agentType, newCommand(agentType, sessionId), tabTitle, sessionId)
     }
 
     /**
@@ -134,8 +144,12 @@ class TerminalHost(private val project: Project) : Disposable {
     fun openTabKeys(): Set<String> = files.keys.toSet()
 
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */
-    fun openResume(agentType: AgentType, sessionId: String, tabTitle: String) {
-        open(sessionId, agentType, resumeCommand(agentType, sessionId), tabTitle)
+    fun openResume(
+        agentType: AgentType,
+        sessionId: String,
+        tabTitle: String,
+    ) {
+        open(sessionId, agentType, resumeCommand(agentType, sessionId), tabTitle, sessionId)
     }
 
     /**
@@ -144,7 +158,11 @@ class TerminalHost(private val project: Project) : Disposable {
      * 普通列表点击仍保留原滚动位置；通知表达的是「查看刚完成的结果」，
      * 因此选中标签页后要明确滚到底部。
      */
-    fun openResumeAtBottom(agentType: AgentType, sessionId: String, tabTitle: String) {
+    fun openResumeAtBottom(
+        agentType: AgentType,
+        sessionId: String,
+        tabTitle: String,
+    ) {
         openResume(agentType, sessionId, tabTitle)
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed) return@invokeLater
@@ -155,7 +173,11 @@ class TerminalHost(private val project: Project) : Disposable {
     fun turnWatcher(): TurnWatcher = turnWatcher
 
     /** 把会话纳入轮次监控。文件路径来自扫描结果（AgentSession.filePath）。 */
-    fun startWatchingTurn(sessionId: String, agentType: AgentType, file: java.nio.file.Path) {
+    fun startWatchingTurn(
+        sessionId: String,
+        agentType: AgentType,
+        file: java.nio.file.Path,
+    ) {
         turnWatcher.watch(sessionId, agentType, file)
     }
 
@@ -166,7 +188,11 @@ class TerminalHost(private val project: Project) : Disposable {
      *
      * 虚拟文件实例必须沿用同一个——它是标签页的身份，换实例会开出新标签页。
      */
-    fun rebindKey(oldKey: String, newKey: String, newTitle: String): Boolean {
+    fun rebindKey(
+        oldKey: String,
+        newKey: String,
+        newTitle: String,
+    ): Boolean {
         if (oldKey == newKey) return true
 
         val view = views[oldKey]
@@ -192,8 +218,10 @@ class TerminalHost(private val project: Project) : Disposable {
         files[newKey] = file
         turnWatcher.unwatch(oldKey)
 
-        // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉
+        // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉；
+        // 终端正文右键复制则读取真实 sessionId，二者要在同一次迁移中更新。
         file.sessionKey = newKey
+        file.sessionId = newKey
         updateTabTitle(file, newTitle)
         if (activateMigrated) FileEditorManager.getInstance(project).openFile(file, true)
 
@@ -213,8 +241,9 @@ class TerminalHost(private val project: Project) : Disposable {
         if (duplicateFile == null && duplicateView == null) return false
 
         val fileEditorManager = FileEditorManager.getInstance(project)
-        val wasSelected = duplicateFile != null &&
-            fileEditorManager.selectedFiles.any { it === duplicateFile }
+        val wasSelected =
+            duplicateFile != null &&
+                fileEditorManager.selectedFiles.any { it === duplicateFile }
         turnWatcher.unwatch(key)
         if (duplicateFile != null && duplicateFile !== sourceFile) {
             fileEditorManager.closeFile(duplicateFile)
@@ -253,7 +282,10 @@ class TerminalHost(private val project: Project) : Disposable {
      * 不再同步窗口标题：[com.github.izerui.imux.frame.AgentFrameTitleBuilder] 把文件名段
      * 整个抹掉了，窗口标题只剩项目名与会话状态，没有可跟的那一段。
      */
-    private fun updateTabTitle(file: AgentTerminalVirtualFile, newTitle: String) {
+    private fun updateTabTitle(
+        file: AgentTerminalVirtualFile,
+        newTitle: String,
+    ) {
         if (file.tabTitle == newTitle) return
         file.tabTitle = newTitle
         FileEditorManager.getInstance(project).updateFilePresentation(file)
@@ -265,8 +297,7 @@ class TerminalHost(private val project: Project) : Disposable {
      * 供 [com.github.izerui.imux.session.driftOf] 与探测结果比对。tabId 是终端的固有
      * 身份，会话 id 则会随 `/clear`、`/new` 变化，两者必须分开看。
      */
-    fun openTabsByTabId(): Map<String, String> =
-        files.values.associate { it.tabId to it.sessionKey }
+    fun openTabsByTabId(): Map<String, String> = files.values.associate { it.tabId to it.sessionKey }
 
     /**
      * 当前开着标签页的 agent 种类。
@@ -274,24 +305,30 @@ class TerminalHost(private val project: Project) : Disposable {
      * 用来把探测限制在真正需要的范围：codex 那侧要遍历进程表再逐个 `lsof`，
      * 一个 codex 标签页都没开的时候跑这些纯属白费。
      */
-    fun openTabAgentTypes(): Set<AgentType> =
-        files.values.mapTo(mutableSetOf()) { it.agentType }
+    fun openTabAgentTypes(): Set<AgentType> = files.values.mapTo(mutableSetOf()) { it.agentType }
+
+    internal fun sessionIdentityFor(view: TerminalView): Pair<AgentType, String>? =
+        files.values
+            .firstOrNull { it.terminalView === view }
+            ?.let { file -> file.sessionId?.let { file.agentType to it } }
 
     private fun open(
         key: String,
         agentType: AgentType,
         command: List<String>,
         tabTitle: String,
+        sessionId: String?,
     ) {
         discardIfTerminated(key)
-        val file = files.getOrPut(key) {
-            // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
-            // 之后从进程 env 里读回来才认得出这个终端。
-            val tabId = newTabId()
-            val view = views.getOrPut(key) { createView(agentType, command, tabTitle, tabId) }
-            AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId)
-                .also(::closeTabWhenTerminated)
-        }
+        val file =
+            files.getOrPut(key) {
+                // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
+                // 之后从进程 env 里读回来才认得出这个终端。
+                val tabId = newTabId()
+                val view = views.getOrPut(key) { createView(agentType, command, tabTitle, tabId) }
+                AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId, sessionId)
+                    .also(::closeTabWhenTerminated)
+            }
         FileEditorManager.getInstance(project).openFile(file, true)
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedDispatcher.multicaster.sessionsChanged()
@@ -378,29 +415,31 @@ class TerminalHost(private val project: Project) : Disposable {
         tabId: String,
     ): TerminalView {
         val manager = TerminalToolWindowTabsManager.getInstance(project)
-        val tab = manager
-            .createTabBuilder()
-            .workingDirectory(projectPath())
-            .shellCommand(command)
-            .envVariables(
-                launchEnvironment(
-                    agentType,
-                    tabId,
-                    piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
-                ),
-            )
-            .tabName(tabTitle)
-            .requestFocus(false)
-            .deferSessionStartUntilUiShown(false)
-            .createTab()
+        val tab =
+            manager
+                .createTabBuilder()
+                .workingDirectory(projectPath())
+                .shellCommand(command)
+                .envVariables(
+                    launchEnvironment(
+                        agentType,
+                        tabId,
+                        piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
+                    ),
+                ).tabName(tabTitle)
+                .requestFocus(false)
+                .deferSessionStartUntilUiShown(false)
+                .createTab()
 
         return manager.detachTab(tab)
     }
 
-    private fun projectPath(): String =
-        project.basePath ?: System.getProperty("user.home")
+    private fun projectPath(): String = project.basePath ?: System.getProperty("user.home")
 
-    private fun newCommand(agentType: AgentType, sessionId: String?): List<String> =
+    private fun newCommand(
+        agentType: AgentType,
+        sessionId: String?,
+    ): List<String> =
         launchCommand(
             resolveShell(System.getenv("SHELL")),
             agentType,
@@ -408,7 +447,10 @@ class TerminalHost(private val project: Project) : Disposable {
             piExtension = piExtensionFor(agentType),
         )
 
-    private fun resumeCommand(agentType: AgentType, sessionId: String): List<String> =
+    private fun resumeCommand(
+        agentType: AgentType,
+        sessionId: String,
+    ): List<String> =
         launchCommand(
             resolveShell(System.getenv("SHELL")),
             agentType,
@@ -417,8 +459,7 @@ class TerminalHost(private val project: Project) : Disposable {
         )
 
     /** 只有 pi 需要上报扩展，别的 agent 一律不加。 */
-    private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? =
-        if (agentType == AgentType.PI) piReporterScript() else null
+    private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? = if (agentType == AgentType.PI) piReporterScript() else null
 
     /**
      * 项目关闭时终结所有会话。这是唯一该杀进程的地方。
@@ -460,14 +501,15 @@ class TerminalHost(private val project: Project) : Disposable {
 internal fun staleTabTitles(
     current: Map<String, String>,
     latestTitleOf: (String) -> String?,
-): Map<String, String> = current.mapNotNull { (key, title) ->
-    val latest = latestTitleOf(key)
-    if (latest.isNullOrEmpty() || latest == title) null else key to latest
-}.toMap()
+): Map<String, String> =
+    current
+        .mapNotNull { (key, title) ->
+            val latest = latestTitleOf(key)
+            if (latest.isNullOrEmpty() || latest == title) null else key to latest
+        }.toMap()
 
 internal fun isViewportAtBottom(
     visibleTop: Int,
     visibleHeight: Int,
     contentHeight: Int,
-): Boolean =
-    visibleTop.toLong() + visibleHeight >= contentHeight.toLong() - 1L
+): Boolean = visibleTop.toLong() + visibleHeight >= contentHeight.toLong() - 1L
