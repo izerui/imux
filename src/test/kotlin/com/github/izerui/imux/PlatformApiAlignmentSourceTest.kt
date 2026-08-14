@@ -220,8 +220,8 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(tree.contains("opened = entry.pending.key in openTabs"))
         assertTrue(
             Regex(
-                """is NodeData\.PendingSession ->\s+""" +
-                    """sessionStatusIcon\(running = false, unread = false, opened = data\.opened\)""",
+                """is NodeData\.PendingSession ->\s*\{?\s*""" +
+                    """sessionStatusIcon\(\s*running = false,\s*unread = false,\s*opened = data\.opened,?\s*\)""",
             ).containsMatchIn(tree),
         )
     }
@@ -493,9 +493,10 @@ class PlatformApiAlignmentSourceTest {
         // 顶层函数（无缩进声明）才没有捕获；挪进类里就成了带 this 的方法引用
         assertTrue(
             "打开动作必须是顶层函数，否则函数引用会捕获宿主实例",
-            monitor.contains(
-                "internal fun openSessionFromNotification(project: Project, sessionId: String)",
-            ),
+            Regex(
+                """(?m)^internal fun openSessionFromNotification\(\s*""" +
+                    """project: Project,\s*sessionId: String,?\s*\)""",
+            ).containsMatchIn(monitor),
         )
         assertTrue(monitor.contains("::openSessionFromNotification"))
     }

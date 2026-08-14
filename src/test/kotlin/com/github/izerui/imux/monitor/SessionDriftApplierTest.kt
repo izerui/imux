@@ -17,15 +17,15 @@ import java.time.Instant
  * 迁过去了却没挂上监控，界面看着一切正常，提醒却永远不来，而且是静默的。
  */
 class SessionDriftApplierTest {
-
-    private val session = AgentSession(
-        id = "新会话id",
-        title = "重构登录流程",
-        agentType = AgentType.PI,
-        lastActiveAt = Instant.EPOCH,
-        createdAt = Instant.EPOCH,
-        filePath = Paths.get("/tmp/新会话id.jsonl"),
-    )
+    private val session =
+        AgentSession(
+            id = "新会话id",
+            title = "重构登录流程",
+            agentType = AgentType.PI,
+            lastActiveAt = Instant.EPOCH,
+            createdAt = Instant.EPOCH,
+            filePath = Paths.get("/tmp/新会话id.jsonl"),
+        )
 
     @Test
     fun `扫描已经见过新会话时迁移并纳入监控`() {
@@ -156,7 +156,9 @@ class SessionDriftApplierTest {
         assertEquals(listOf(session.id), recorder.watched)
     }
 
-    private class Recorder(var known: Map<String, AgentSession>) {
+    private class Recorder(
+        var known: Map<String, AgentSession>,
+    ) {
         var openTabs: Map<String, String> = emptyMap()
         var rebindSucceeds = true
         val rebound = mutableListOf<Pair<String, String>>()
@@ -183,10 +185,11 @@ class SessionDriftApplierTest {
  * 纯逻辑再对，没被接上也是白搭。这些是 C1 的接线守卫。
  */
 class SessionDriftApplierWiringTest {
-
-    private val monitor = java.io.File(
-        "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-    ).readText()
+    private val monitor =
+        java.io
+            .File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            ).readText()
 
     @Test
     fun `落地器必须长期持有而不是每次现造`() {
@@ -194,7 +197,7 @@ class SessionDriftApplierWiringTest {
         // pi 的会话会因此永远进不了轮次监控——而界面上完全看不出来
         assertTrue(
             "落地器要作为字段活着",
-            Regex("""private val driftApplier = SessionDriftApplier\(""").containsMatchIn(monitor),
+            Regex("""private val driftApplier\s*=\s*SessionDriftApplier\(""").containsMatchIn(monitor),
         )
         assertFalse(
             "不能在 applyDrifts 里现造",
