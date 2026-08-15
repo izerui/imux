@@ -83,6 +83,9 @@ class TerminalHost(
      */
     private val files = java.util.concurrent.ConcurrentHashMap<String, AgentTerminalVirtualFile>()
 
+    /** 最近由用户关闭的会话。再次打开时不能从被强杀留下的半轮恢复为 WORKING。 */
+    private val recentlyClosedSessions = LinkedHashSet<String>()
+
     /** 轮次监控。只有经本插件打开过的会话才纳入，见设计文档的监控范围决策。 */
     private val turnWatcher = TurnWatcher()
 
@@ -120,6 +123,7 @@ class TerminalHost(
         // VirtualFile，才允许清掉 key 对应的 view 与 watcher；否则只结束自身的 view。
         if (files.remove(key, file)) {
             turnWatcher.unwatch(key)
+            rememberClosedSession(key)
             if (views[key] === file.terminalView) views.remove(key)
             sessionsChangedDispatcher.multicaster.sessionsChanged()
         }
@@ -178,7 +182,15 @@ class TerminalHost(
         agentType: AgentType,
         file: java.nio.file.Path,
     ) {
-        turnWatcher.watch(sessionId, agentType, file)
+        val reopenedAfterClose = recentlyClosedSessions.remove(sessionId)
+        turnWatcher.watch(sessionId, agentType, file, inferInitialState = !reopenedAfterClose)
+    }
+
+    private fun rememberClosedSession(sessionId: String) {
+        recentlyClosedSessions += sessionId
+        while (recentlyClosedSessions.size > RECENTLY_CLOSED_LIMIT) {
+            recentlyClosedSessions.remove(recentlyClosedSessions.first())
+        }
     }
 
     /**
@@ -482,6 +494,7 @@ class TerminalHost(
     private fun newTabId(): String = "imux-" + java.util.UUID.randomUUID()
 
     companion object {
+        private const val RECENTLY_CLOSED_LIMIT = 64
         private val LOG = logger<TerminalHost>()
 
         fun getInstance(project: Project): TerminalHost = project.getService(TerminalHost::class.java)

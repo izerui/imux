@@ -13,7 +13,6 @@ import java.time.Duration
 import java.time.Instant
 
 class TurnWatcherTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -21,8 +20,10 @@ class TurnWatcherTest {
     private val done = """{"type":"event_msg","payload":{"type":"task_complete"}}"""
     private val aborted = """{"type":"event_msg","payload":{"type":"turn_aborted"}}"""
 
-    private fun newFile(name: String, content: String = ""): File =
-        File(tmp.root, name).apply { writeText(content) }
+    private fun newFile(
+        name: String,
+        content: String = "",
+    ): File = File(tmp.root, name).apply { writeText(content) }
 
     private fun File.append(line: String) = appendText("$line\n")
 
@@ -196,9 +197,14 @@ class TurnWatcherTest {
     // 那正是双通知的来源，已被上面「claude 会话的完成信号不产生提醒」取代。
     // 解析 claude 信号的能力本身仍由 TurnSignalParserTest 覆盖。
 
-    private class FakeClock(var now: Instant = Instant.parse("2026-08-04T10:00:00Z")) : () -> Instant {
+    private class FakeClock(
+        var now: Instant = Instant.parse("2026-08-04T10:00:00Z"),
+    ) : () -> Instant {
         override fun invoke(): Instant = now
-        fun advance(seconds: Long) { now = now.plusSeconds(seconds) }
+
+        fun advance(seconds: Long) {
+            now = now.plusSeconds(seconds)
+        }
     }
 
     @Test
@@ -209,10 +215,10 @@ class TurnWatcherTest {
         watcher.watch("s1", AgentType.CODEX, file.toPath())
 
         file.append(started)
-        watcher.poll()          // 进入执行态，记下起点
+        watcher.poll() // 进入执行态，记下起点
         clock.advance(42)
         file.append(done)
-        watcher.poll()          // 完成，结算耗时
+        watcher.poll() // 完成，结算耗时
 
         assertEquals(Duration.ofSeconds(42), watcher.lastDuration("s1"))
     }
@@ -227,7 +233,7 @@ class TurnWatcherTest {
         file.append(started)
         watcher.poll()
         clock.advance(10)
-        watcher.poll()          // 无新内容，不该重置起点
+        watcher.poll() // 无新内容，不该重置起点
         clock.advance(10)
         file.append(done)
         watcher.poll()
@@ -341,12 +347,12 @@ class TurnWatcherTest {
         watcher.poll()
         clock.advance(10)
 
-        file.append(done)       // 第一轮完成
-        file.append(started)    // 紧接着第二轮开始
+        file.append(done) // 第一轮完成
+        file.append(started) // 紧接着第二轮开始
         watcher.poll()
 
         clock.advance(30)
-        file.append(done)       // 第二轮完成
+        file.append(done) // 第二轮完成
         watcher.poll()
 
         assertEquals(Duration.ofSeconds(30), watcher.lastDuration("s1"))
@@ -417,6 +423,21 @@ class TurnWatcherTest {
         file.append(piUser)
         watcher.poll()
 
+        assertEquals(setOf("p1"), watcher.workingIds(AgentType.PI))
+    }
+
+    @Test
+    fun `重开被关闭的 pi 会话不继承上次被强杀的忙碌状态`() {
+        val file = newFile("pi-reopened.jsonl", "$piUser\n")
+        val watcher = TurnWatcher()
+
+        watcher.watch("p1", AgentType.PI, file.toPath(), inferInitialState = false)
+
+        assertTrue(watcher.workingIds(AgentType.PI).isEmpty())
+        file.append(
+            """{"type":"message","id":"u2","message":{"role":"user","content":"继续"}}""",
+        )
+        watcher.poll()
         assertEquals(setOf("p1"), watcher.workingIds(AgentType.PI))
     }
 

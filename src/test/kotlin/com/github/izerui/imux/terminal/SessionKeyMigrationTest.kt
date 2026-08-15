@@ -14,7 +14,6 @@ import java.io.File
  * 已经不属于这个终端的旧会话上。
  */
 class SessionKeyMigrationTest {
-
     @Test
     fun `正在看这个终端时一定跟随到新会话`() {
         // 用户就在这个终端里敲的 /clear，列表理应指向他此刻在用的会话。
@@ -102,9 +101,10 @@ class SessionKeyMigrationTest {
     @Test
     fun `关闭标签页必须按虚拟文件实例清理`() {
         val host = File("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt").readText()
-        val editor = File(
-            "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-        ).readText()
+        val editor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            ).readText()
 
         assertTrue(
             "重复目标的 editor 可能在源终端迁移完成后才 dispose；只按 key 清理会误杀迁移后的源终端",
@@ -118,13 +118,23 @@ class SessionKeyMigrationTest {
             "editor dispose 必须把自身实例交给宿主做身份校验",
             editor.contains("closeSession(virtualFile)"),
         )
+        assertTrue(
+            "关闭过的会话再次监控时必须跳过上次被强杀留下的半轮状态",
+            host.contains("rememberClosedSession(key)") &&
+                host.contains("inferInitialState = !reopenedAfterClose"),
+        )
+        assertTrue(
+            "关闭标签后必须立即清掉窗口标题中的 running 计数",
+            editor.contains(".sessionClosed(sessionKey)"),
+        )
     }
 
     @Test
     fun `迁移失败时不启动轮次监控`() {
-        val applier = File(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionDriftApplier.kt",
-        ).readText()
+        val applier =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionDriftApplier.kt",
+            ).readText()
 
         // 行为本身由 SessionDriftApplierTest 直接断言（迁移失败时既不挂监控也不清未读），
         // 这里只守住「失败分支必须提前返回，不往下做收尾动作」这个源码形态
@@ -138,9 +148,10 @@ class SessionKeyMigrationTest {
 
     @Test
     fun `探测失败时保留重试次数`() {
-        val monitor = File(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        ).readText()
+        val monitor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            ).readText()
 
         assertTrue(
             "/clear 只产生一次无主会话，触发器被一次性消费掉就再没有下一次了，" +
@@ -159,12 +170,14 @@ class SessionKeyMigrationTest {
 
     @Test
     fun `探测只认交互式进程并在应用前复核`() {
-        val monitor = File(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
-        ).readText()
-        val applier = File(
-            "src/main/kotlin/com/github/izerui/imux/monitor/SessionDriftApplier.kt",
-        ).readText()
+        val monitor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            ).readText()
+        val applier =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionDriftApplier.kt",
+            ).readText()
 
         assertTrue(
             "后台 agent 继承了父进程的 IMUX_TAB 却有独立的会话 id，必须排除",
@@ -178,9 +191,10 @@ class SessionKeyMigrationTest {
 
     @Test
     fun `工具窗口必须订阅迁移事件并迁移选中`() {
-        val factory = File(
-            "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
-        ).readText()
+        val factory =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            ).readText()
 
         assertTrue(
             "订阅了才谈得上跟随",

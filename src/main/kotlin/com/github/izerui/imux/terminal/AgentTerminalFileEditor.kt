@@ -5,6 +5,7 @@ import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
@@ -31,9 +32,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JLayeredPane
+import javax.swing.KeyStroke
 
 /**
  * 把终端 view 的组件挂到 editor tab 上，并在标签页关闭时结束会话。
@@ -69,6 +73,21 @@ class AgentTerminalFileEditor(
 
     /** 已挂上转发器的面板。用它保证只挂一次，也用于 [dispose] 时摘除。 */
     private var focusHost: JComponent? = null
+    private var interruptShortcutHost: JComponent? = null
+
+    /**
+     * FileEditor 外壳也会参与 IDEA 的快捷键分发。把 Ctrl+C 注册到整个 editor 范围，
+     * 保证焦点短暂落在外壳或浮动工具栏时，pi 仍能收到终端中断字符。
+     */
+    private val interruptPiAction =
+        object : DumbAwareAction("Interrupt Pi") {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun actionPerformed(event: AnActionEvent) {
+                virtualFile.terminalView.sendText("\u0003")
+                clearUnread()
+            }
+        }
 
     private var scrollToolbar: ActionToolbar? = null
     private var scrollToolbarComponent: JComponent? = null
@@ -136,32 +155,41 @@ class AgentTerminalFileEditor(
         startScrollTracking()
         startInputTracking()
 
-        return object : JBLayeredPane() {
-            init {
-                isOpaque = false
-                add(terminal)
-                setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
-                add(toolbarComponent)
-                setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)
-            }
+        val pane =
+            object : JBLayeredPane() {
+                init {
+                    isOpaque = false
+                    add(terminal)
+                    setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
+                    add(toolbarComponent)
+                    setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)
+                }
 
-            override fun addNotify() {
-                super.addNotify()
-                scheduleScrollButtonRefresh()
-            }
+                override fun addNotify() {
+                    super.addNotify()
+                    scheduleScrollButtonRefresh()
+                }
 
-            override fun doLayout() {
-                terminal.setBounds(0, 0, width, height)
+                override fun doLayout() {
+                    terminal.setBounds(0, 0, width, height)
 
-                val preferred = toolbarComponent.preferredSize
-                val buttonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE
-                val toolbarWidth = maxOf(preferred.width, buttonSize.width)
-                val toolbarHeight = maxOf(preferred.height, buttonSize.height)
-                val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)
-                val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
-                toolbarComponent.setBounds(x, y, toolbarWidth, toolbarHeight)
+                    val preferred = toolbarComponent.preferredSize
+                    val buttonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE
+                    val toolbarWidth = maxOf(preferred.width, buttonSize.width)
+                    val toolbarHeight = maxOf(preferred.height, buttonSize.height)
+                    val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)
+                    val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
+                    toolbarComponent.setBounds(x, y, toolbarWidth, toolbarHeight)
+                }
             }
+        if (virtualFile.agentType == com.github.izerui.imux.model.AgentType.PI) {
+            interruptPiAction.registerCustomShortcutSet(
+                CustomShortcutSet(KeyStroke.getKeyStroke(KeyEvent.VK_C, InputEvent.CTRL_DOWN_MASK)),
+                pane,
+            )
+            interruptShortcutHost = pane
         }
+        return pane
     }
 
     private fun startScrollTracking() {
@@ -259,6 +287,8 @@ class AgentTerminalFileEditor(
 
         // 摘监听器必须在下面的早退之前：拖动标签页会销毁本实例再建一个新的，
         // 早退时不摘就会把已死实例的转发器留在面板上，拖几次叠一串。
+        interruptShortcutHost?.let(interruptPiAction::unregisterCustomShortcutSet)
+        interruptShortcutHost = null
         focusHost?.removeFocusListener(focusForwarder)
         focusHost = null
 
@@ -266,9 +296,10 @@ class AgentTerminalFileEditor(
         // 漏判会导致拖一下标签页就把会话杀了。
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
 
+        val sessionKey = virtualFile.sessionKey
         TerminalHost.getInstance(project).closeSession(virtualFile)
         com.github.izerui.imux.monitor.SessionMonitor
             .getInstance(project)
-            .cancelPendingSession(virtualFile.sessionKey)
+            .sessionClosed(sessionKey)
     }
 }

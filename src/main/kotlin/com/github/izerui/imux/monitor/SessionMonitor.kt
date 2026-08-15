@@ -387,8 +387,14 @@ class SessionMonitor(
         }
     }
 
-    fun cancelPendingSession(key: String) {
+    /** 标签关闭后立即撤销运行态，不能让窗口标题再等下一轮文件轮询。 */
+    fun sessionClosed(key: String) {
         model.cancelPending(key)
+        if (key !in runningIds) return
+        runningIds = runningIds - key
+        updateOpenTabIcons(setOf(key))
+        updateFrameTitle()
+        notifyListeners()
     }
 
     /**
