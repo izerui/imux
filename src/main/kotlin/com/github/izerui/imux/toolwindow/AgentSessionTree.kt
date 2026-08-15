@@ -1,5 +1,6 @@
 package com.github.izerui.imux.toolwindow
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
@@ -142,13 +143,13 @@ private sealed interface NodeData {
         val key: String,
         val opened: Boolean,
     ) : NodeData {
-        override fun toString(): String = "New session (waiting for first message)"
+        override fun toString(): String = ImuxBundle.message("session.pending")
     }
 
     data class ShowMore(
         val agentType: AgentType,
     ) : NodeData {
-        override fun toString(): String = "Show More…"
+        override fun toString(): String = ImuxBundle.message("session.show.more")
     }
 }
 
@@ -348,8 +349,8 @@ class AgentSessionTree(
 
                     val copyAction =
                         object : DumbAwareAction(
-                            "Copy Session Type and ID",
-                            "Copy the session type and ID to the clipboard",
+                            ImuxBundle.message("action.copy.identity.text"),
+                            ImuxBundle.message("action.copy.identity.description"),
                             AllIcons.Actions.Copy,
                         ) {
                             override fun actionPerformed(event: AnActionEvent) {
@@ -392,6 +393,10 @@ class AgentSessionTree(
         )
 
         monitor.addListener(parentDisposable) { reload() }
+        ImuxSettings.getInstance().addLanguageListener(parentDisposable) {
+            renderedContent = null
+            reload()
+        }
     }
 
     private fun groupOf(path: TreePath): AgentType? =
@@ -602,7 +607,11 @@ class AgentSessionTree(
                 if (boundId != null) {
                     TerminalHost
                         .getInstance(project)
-                        .openResume(data.agentType, boundId, "Session ${boundId.take(8)}")
+                        .openResume(
+                            data.agentType,
+                            boundId,
+                            ImuxBundle.message("session.default", boundId.take(8)),
+                        )
                 }
                 // 未绑定时无操作：终端已在新建时打开，双击无额外语义
             }

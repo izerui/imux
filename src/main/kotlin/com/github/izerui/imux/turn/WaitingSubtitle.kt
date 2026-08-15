@@ -1,6 +1,8 @@
 package com.github.izerui.imux.turn
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
 
 /**
  * 等待用户操作提醒的副标题：`Claude · 等待权限确认`。
@@ -14,10 +16,11 @@ import com.github.izerui.imux.model.AgentType
 internal fun waitingSubtitle(
     agentType: AgentType?,
     waitingFor: String?,
+    language: PluginLanguage = ImuxBundle.currentLanguage(),
 ): String =
     listOfNotNull(
         agentType?.shortName,
-        waitingReason(waitingFor),
+        waitingReason(waitingFor, language),
     ).joinToString(" · ")
 
 /**
@@ -43,10 +46,16 @@ internal fun waitingNotificationWanted(
     selectedSessionKeys: Set<String>,
 ): Boolean = sessionId !in selectedSessionKeys
 
-private fun waitingReason(waitingFor: String?): String =
-    when (waitingFor) {
-        "permission prompt" -> "Waiting for permission"
-        "dialog open" -> "Waiting for your selection"
-        "input needed" -> "Waiting for input"
-        else -> "Waiting for your confirmation"
-    }
+private fun waitingReason(
+    waitingFor: String?,
+    language: PluginLanguage,
+): String =
+    ImuxBundle.message(
+        language,
+        when (waitingFor) {
+            "permission prompt" -> "waiting.permission"
+            "dialog open" -> "waiting.selection"
+            "input needed" -> "waiting.input"
+            else -> "waiting.confirmation"
+        },
+    )

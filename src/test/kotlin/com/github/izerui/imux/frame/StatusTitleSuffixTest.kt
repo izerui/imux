@@ -1,5 +1,6 @@
 package com.github.izerui.imux.frame
 
+import com.github.izerui.imux.settings.PluginLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -70,6 +71,40 @@ class StatusTitleSuffixTest {
         assertEquals(
             "imux",
             AgentFrameTitleBuilder.decorate(before, unreadCount = 0, runningCount = 0),
+        )
+    }
+
+    @Test
+    fun `简体中文状态使用插件语言而不是 IDE 语言`() {
+        assertEquals(
+            "imux (1 个未读 · 2 个运行中)",
+            AgentFrameTitleBuilder.decorate(
+                "imux",
+                unreadCount = 1,
+                runningCount = 2,
+                PluginLanguage.SIMPLIFIED_CHINESE,
+            ),
+        )
+    }
+
+    @Test
+    fun `切换语言时移除上一种语言的状态后缀`() {
+        val chinese =
+            AgentFrameTitleBuilder.decorate(
+                "imux",
+                unreadCount = 1,
+                runningCount = 2,
+                PluginLanguage.SIMPLIFIED_CHINESE,
+            )
+
+        assertEquals(
+            "imux (3 unread)",
+            AgentFrameTitleBuilder.decorate(
+                chinese,
+                unreadCount = 3,
+                runningCount = 0,
+                PluginLanguage.ENGLISH,
+            ),
         )
     }
 

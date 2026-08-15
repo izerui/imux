@@ -1,5 +1,6 @@
 package com.github.izerui.imux.monitor
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
@@ -18,6 +19,7 @@ import com.github.izerui.imux.session.interactivePids
 import com.github.izerui.imux.session.readHeldRollouts
 import com.github.izerui.imux.session.readTabId
 import com.github.izerui.imux.session.stillApplicable
+import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.RunningSessions
@@ -143,6 +145,7 @@ class SessionMonitor(
     private val listenerDispatcher = EventDispatcher.create(SessionMonitorListener::class.java)
     private val started = AtomicBoolean(false)
     private val scanning = AtomicBoolean(false)
+    private val refreshRequested = AtomicBoolean(false)
     private val checkingCompletedTurns = AtomicBoolean(false)
     private val probing = AtomicBoolean(false)
 
@@ -174,6 +177,10 @@ class SessionMonitor(
         // 扫描结果、新建 pending、pending 绑定真实 id 都由 model 产出。
         // monitor 必须透传这些变化，否则界面只能等下一次运行态轮询才刷新。
         model.addListener(::notifyListeners)
+        ImuxSettings.getInstanceOrNull()?.addLanguageListener(this) {
+            refresh()
+            updateFrameTitle()
+        }
     }
 
     /**
@@ -434,21 +441,30 @@ class SessionMonitor(
      * 扫描必须离开 EDT：本机实测 620 个 codex 会话文件，一次扫描 60–250ms，
      * 而刷新由轮询、工具窗口状态变化等多处触发，放在 EDT 上就是周期性卡顿。
      *
-     * 用 in-flight 标志避免扫描堆积：若上一次尚未结束，本次直接跳过——
-     * 反正结果会被下一轮覆盖，排队只会加剧拥堵。
+     * 用 in-flight 标志避免扫描堆积，但扫描期间到达的刷新不能直接丢掉：语言切换不会
+     * 改变会话库文件指纹，若恰好撞上旧语言扫描，之后就没有事件再把兜底标题刷新过来。
+     * 因此并发请求只合并成一轮补扫，不按调用次数排队。
      */
     fun refresh() {
-        if (!scanning.compareAndSet(false, true)) return
+        if (project.isDisposed) return
+        refreshRequested.set(true)
+        startRefreshWorker()
+    }
 
+    private fun startRefreshWorker() {
+        if (!scanning.compareAndSet(false, true)) return
         coroutineScope.launch(Dispatchers.IO) {
-            val scanned =
-                try {
-                    runCatching { repository.scan(projectPath) }.getOrNull()
-                } finally {
-                    scanning.set(false)
+            try {
+                while (!project.isDisposed && refreshRequested.getAndSet(false)) {
+                    val scanned = runCatching { repository.scan(projectPath) }.getOrNull()
+                    if (scanned != null && !project.isDisposed) {
+                        withContext(Dispatchers.EDT) { model.applyScan(scanned) }
+                    }
                 }
-            if (scanned != null && !project.isDisposed) {
-                withContext(Dispatchers.EDT) { model.applyScan(scanned) }
+            } finally {
+                scanning.set(false)
+                // 请求可能在 while 判空后、scanning 复位前到达；这里补接这一窄窗。
+                if (refreshRequested.get() && !project.isDisposed) startRefreshWorker()
             }
         }
     }
@@ -503,7 +519,8 @@ class SessionMonitor(
                         // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
                         // 标记由终端官方输入事件在用户真正交互时消除。
                         val session = model.sessionOf(sessionId)
-                        val title = session?.title ?: "Session ${sessionId.take(8)}"
+                        val title =
+                            session?.title ?: ImuxBundle.message("session.default", sessionId.take(8))
                         // 两个来源各记各的：claude 走运行态跃迁，codex 走会话文件信号
                         val duration =
                             statusTracker.lastDuration(sessionId) ?: watcher.lastDuration(sessionId)
@@ -532,7 +549,8 @@ class SessionMonitor(
                             TurnNotifier.notifyWaiting(
                                 project,
                                 waiting.sessionId,
-                                session?.title ?: "Session ${waiting.sessionId.take(8)}",
+                                session?.title
+                                    ?: ImuxBundle.message("session.default", waiting.sessionId.take(8)),
                                 session?.agentType,
                                 waiting.reason,
                                 ::openSessionFromNotification,

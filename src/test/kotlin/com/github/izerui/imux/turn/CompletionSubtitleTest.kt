@@ -1,6 +1,7 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.Duration
@@ -11,6 +12,18 @@ class CompletionSubtitleTest {
         assertEquals(
             "Claude · Elapsed: 2 minutes 13 seconds",
             completionSubtitle(AgentType.CLAUDE, Duration.ofSeconds(133)),
+        )
+    }
+
+    @Test
+    fun `formats simplified Chinese subtitle and duration`() {
+        assertEquals(
+            "Claude · 耗时：2 分钟 13 秒",
+            completionSubtitle(
+                AgentType.CLAUDE,
+                Duration.ofSeconds(133),
+                PluginLanguage.SIMPLIFIED_CHINESE,
+            ),
         )
     }
 

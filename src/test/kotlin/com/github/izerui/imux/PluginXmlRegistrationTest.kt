@@ -130,6 +130,17 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了应用级 Imux 设置页`() {
+        assertTrue(
+            "独立语言偏好必须能从 Settings | Tools | Imux 修改",
+            pluginXml.contains("<applicationConfigurable") &&
+                pluginXml.contains("com.github.izerui.imux.settings.ImuxSettingsConfigurable") &&
+                pluginXml.contains("parentId=\"tools\"") &&
+                pluginXml.contains("displayName=\"Imux\""),
+        )
+    }
+
+    @Test
     fun `注册了 pi 会话上报的 HTTP 接收端`() {
         assertTrue(
             "缺了注册，pi 扩展报上来的会话切换没人接收，标签页不会跟随",

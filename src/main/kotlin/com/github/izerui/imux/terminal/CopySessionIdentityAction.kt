@@ -1,6 +1,8 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.ide.CopyPasteManager
@@ -10,13 +12,16 @@ import com.intellij.terminal.frontend.view.TerminalView
 internal fun sessionClipboardText(
     agentType: AgentType,
     sessionId: String,
-): String = "Session type: ${agentType.displayName}\nSession ID: $sessionId"
+    language: PluginLanguage = ImuxBundle.currentLanguage(),
+): String = ImuxBundle.message(language, "session.clipboard", agentType.displayName, sessionId)
 
 /** Adds the imux session identity to the terminal content context menu. */
 class CopySessionIdentityAction : DumbAwareAction() {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun update(event: AnActionEvent) {
+        event.presentation.text = ImuxBundle.message("action.copy.identity.text")
+        event.presentation.description = ImuxBundle.message("action.copy.identity.description")
         event.presentation.isEnabledAndVisible = sessionIdentity(event) != null
     }
 

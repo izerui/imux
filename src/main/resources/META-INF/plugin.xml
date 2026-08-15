@@ -42,6 +42,12 @@
     <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.github.izerui.imux.settings.ImuxSettingsConfigurable"
+                id="com.github.izerui.imux.settings"
+                displayName="Imux"/>
+
         <toolWindow
                 id="imux"
                 anchor="left"

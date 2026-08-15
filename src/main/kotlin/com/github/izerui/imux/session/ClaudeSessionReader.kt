@@ -1,5 +1,6 @@
 package com.github.izerui.imux.session
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
@@ -90,7 +91,7 @@ class ClaudeSessionReader(
         return title
     }
 
-    private fun fallbackTitle(id: String) = "Session ${id.take(8)}"
+    private fun fallbackTitle(id: String) = ImuxBundle.message("session.default", id.take(8))
 
     /**
      * 没有 ai-title 时的回退：取首条真实用户消息。

@@ -1,5 +1,6 @@
 package com.github.izerui.imux.toolwindow
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.SessionListModel
@@ -41,7 +42,10 @@ class AgentToolWindowFactory :
     DumbAware {
     // 展示名与注册 id（imux）解耦：改 id 会让用户已保存的工具窗口布局状态失效。
     override fun init(toolWindow: ToolWindow) {
-        toolWindow.stripeTitle = "AI Agents"
+        toolWindow.stripeTitle = ImuxBundle.message("toolwindow.title")
+        ImuxSettings.getInstance().addLanguageListener(toolWindow.disposable) {
+            toolWindow.stripeTitle = ImuxBundle.message("toolwindow.title")
+        }
     }
 
     override fun createToolWindowContent(
@@ -75,23 +79,30 @@ class AgentToolWindowFactory :
         // ide.always.show.tool.window.header.icons，但只作用于本窗口，不动别人。
         toolWindow.component.putClientProperty(ToolWindowContentUi.DONT_HIDE_TOOLBAR_IN_HEADER, true)
 
+        val newSessionAction = NewSessionAction()
+        val refreshAction = RefreshAction()
         toolWindow.setTitleActions(
             listOf(
-                NewSessionAction(),
-                RefreshAction(),
+                newSessionAction,
+                refreshAction,
             ),
         )
 
         // 挂在工具窗口自带的 ⋮ 齿轮菜单上，套一层 Behavior 与 IDEA 项目视图同构。
-        // 这个菜单里并排着平台自带的 Move to / Resize / Remove from Sidebar 等英文项，
-        // 中文项夹在其中最扎眼，所以此处文案跟着容器走，用英文。
-        toolWindow.setAdditionalGearActions(
-            DefaultActionGroup(
-                DefaultActionGroup("Behavior", true).apply {
-                    add(ToggleSingleClickAction())
-                },
-            ),
-        )
+        val singleClickAction = ToggleSingleClickAction()
+        val behaviorGroup =
+            DefaultActionGroup(ImuxBundle.message("group.behavior"), true).apply {
+                add(singleClickAction)
+            }
+        toolWindow.setAdditionalGearActions(DefaultActionGroup(behaviorGroup))
+
+        ImuxSettings.getInstance().addLanguageListener(contentDisposable) {
+            behaviorGroup.templatePresentation.text = ImuxBundle.message("group.behavior")
+            newSessionAction.refreshPresentation()
+            refreshAction.refreshPresentation()
+            singleClickAction.refreshPresentation()
+            toolWindow.component.repaint()
+        }
 
         // 标签页开或关时立即重绘，不必等下一轮轮询。
         TerminalHost.getInstance(project).addSessionsChangedListener(contentDisposable) {
@@ -181,8 +192,23 @@ class AgentToolWindowFactory :
     }
 }
 
-private class NewSessionAction : DumbAwareAction("New Session", "Start a new AI agent session", AllIcons.General.Add) {
+private class NewSessionAction :
+    DumbAwareAction(
+        ImuxBundle.message("action.new.session.text"),
+        ImuxBundle.message("action.new.session.description"),
+        AllIcons.General.Add,
+    ) {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        event.presentation.text = ImuxBundle.message("action.new.session.text")
+        event.presentation.description = ImuxBundle.message("action.new.session.description")
+    }
+
+    fun refreshPresentation() {
+        templatePresentation.text = ImuxBundle.message("action.new.session.text")
+        templatePresentation.description = ImuxBundle.message("action.new.session.description")
+    }
 
     override fun actionPerformed(event: AnActionEvent) {
         val project = event.project ?: return
@@ -202,21 +228,47 @@ private class NewSessionAction : DumbAwareAction("New Session", "Start a new AI 
         // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
         val pending = model.registerPending(agentType, sessionId)
         // 终端必须以 pending.key 记录：会话落盘后要靠这个 key 把终端迁到真实 id 下
-        TerminalHost.getInstance(project).openNew(agentType, pending.key, "New Session", sessionId)
+        TerminalHost
+            .getInstance(project)
+            .openNew(agentType, pending.key, ImuxBundle.message("action.new.session.text"), sessionId)
         monitor.refresh()
     }
 }
 
-private class RefreshAction : DumbAwareAction("Refresh", "Rescan session stores", AllIcons.Actions.Refresh) {
+private class RefreshAction :
+    DumbAwareAction(
+        ImuxBundle.message("action.refresh.text"),
+        ImuxBundle.message("action.refresh.description"),
+        AllIcons.Actions.Refresh,
+    ) {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        event.presentation.text = ImuxBundle.message("action.refresh.text")
+        event.presentation.description = ImuxBundle.message("action.refresh.description")
+    }
+
+    fun refreshPresentation() {
+        templatePresentation.text = ImuxBundle.message("action.refresh.text")
+        templatePresentation.description = ImuxBundle.message("action.refresh.description")
+    }
 
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { SessionMonitor.getInstance(it).refresh() }
     }
 }
 
-private class ToggleSingleClickAction : DumbAwareToggleAction("Open Sessions with Single Click") {
+private class ToggleSingleClickAction : DumbAwareToggleAction(ImuxBundle.message("action.single.click.text")) {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        super.update(event)
+        event.presentation.text = ImuxBundle.message("action.single.click.text")
+    }
+
+    fun refreshPresentation() {
+        templatePresentation.text = ImuxBundle.message("action.single.click.text")
+    }
 
     override fun isSelected(event: AnActionEvent): Boolean = ImuxSettings.getInstance().state.openWithSingleClick
 

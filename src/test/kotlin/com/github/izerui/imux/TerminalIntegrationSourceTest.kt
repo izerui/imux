@@ -84,8 +84,8 @@ class TerminalIntegrationSourceTest {
                 fileEditor.contains(""""imuxTerminalEditor""""),
         )
         assertTrue(
-            "按钮必须使用接近 OpenAI 样式的简洁向下箭头并提供明确 tooltip",
-            fileEditor.contains("\"Scroll to the latest terminal output\"") &&
+            "按钮必须使用接近 OpenAI 样式的简洁向下箭头并提供本地化 tooltip",
+            fileEditor.contains("action.scroll.bottom.description") &&
                 fileEditor.contains("AllIcons.General.ArrowDown"),
         )
         assertTrue(

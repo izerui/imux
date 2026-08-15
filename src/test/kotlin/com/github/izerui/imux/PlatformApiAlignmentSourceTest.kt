@@ -357,6 +357,59 @@ class PlatformApiAlignmentSourceTest {
 
         assertTrue(factory.contains("setAdditionalGearActions("))
         assertTrue(factory.contains("ToggleSingleClickAction()"))
+        assertTrue(
+            "ToggleAction.update 必须保留平台的 selected 状态同步",
+            Regex(
+                """override fun update\(event: AnActionEvent\) \{\s*""" +
+                    """super\.update\(event\)\s*""" +
+                    """event\.presentation\.text = ImuxBundle\.message\("action\.single\.click\.text"\)""",
+            ).containsMatchIn(factory),
+        )
+    }
+
+    /**
+     * 工具窗口内容直到首次展开才创建。标题监听若绑在 contentDisposable 上，用户在首次
+     * 展开前切换语言时，侧边栏标题收不到事件；之后展开也不会重放已经发生的变化。
+     */
+    @Test
+    fun `工具窗口标题监听不依赖内容懒加载`() {
+        val factory =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentToolWindowFactory.kt",
+            )
+
+        assertTrue(factory.contains("addLanguageListener(toolWindow.disposable)"))
+        assertTrue(
+            Regex(
+                """override fun init\(toolWindow: ToolWindow\) \{[\s\S]*?""" +
+                    """toolWindow\.stripeTitle = ImuxBundle\.message\("toolwindow\.title"\)[\s\S]*?""" +
+                    """addLanguageListener\(toolWindow\.disposable\)""",
+            ).containsMatchIn(factory),
+        )
+    }
+
+    /**
+     * 会话默认标题在扫描时已经物化为字符串。语言切换若只刷新窗口标题，树和已打开标签页
+     * 会继续使用旧字符串；而扫描中的刷新请求若直接丢弃，这次切换可能永远没有补扫机会。
+     */
+    @Test
+    fun `语言切换可靠重扫会话默认标题`() {
+        val monitor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+            )
+
+        assertTrue(
+            Regex(
+                """addLanguageListener\(this\) \{\s*refresh\(\)\s*updateFrameTitle\(\)\s*}""",
+            ).containsMatchIn(monitor),
+        )
+        assertTrue(monitor.contains("refreshRequested.set(true)"))
+        assertTrue(monitor.contains("refreshRequested.getAndSet(false)"))
+        assertTrue(
+            "扫描结束前到达的刷新必须在 worker 复位后补接",
+            monitor.contains("if (refreshRequested.get() && !project.isDisposed) startRefreshWorker()"),
+        )
     }
 
     /**
@@ -502,7 +555,7 @@ class PlatformApiAlignmentSourceTest {
     }
 
     @Test
-    fun `relative time and duration use fixed English formatting`() {
+    fun `relative time and duration use plugin message bundles`() {
         val relativeTime =
             source(
                 "src/main/kotlin/com/github/izerui/imux/toolwindow/RelativeTime.kt",
@@ -514,7 +567,8 @@ class PlatformApiAlignmentSourceTest {
 
         assertFalse(relativeTime.contains("DateFormatUtil.formatBetweenDates"))
         assertFalse(completionSubtitle.contains("NlsMessages.formatDuration"))
-        assertTrue(relativeTime.contains("ago"))
-        assertTrue(completionSubtitle.contains("Elapsed:"))
+        assertTrue(relativeTime.contains("ImuxBundle.message"))
+        assertTrue(completionSubtitle.contains("ImuxBundle.message"))
+        assertTrue(completionSubtitle.contains("duration.elapsed"))
     }
 }

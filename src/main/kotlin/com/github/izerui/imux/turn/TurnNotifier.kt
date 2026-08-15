@@ -1,5 +1,6 @@
 package com.github.izerui.imux.turn
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
 import com.intellij.ide.impl.ProjectUtil
 import com.intellij.notification.Notification
@@ -82,7 +83,7 @@ object TurnNotifier {
         // 普通的 AnAction 不会——点了之后气泡仍然挂着。
         // 气泡这边捕获 project 无妨：Notification 的生命周期本就跟着项目走
         notification.addAction(
-            NotificationAction.createSimpleExpiring("Open Session") {
+            NotificationAction.createSimpleExpiring(ImuxBundle.message("action.open.session.text")) {
                 active.remove(sessionId)
                 openSession(project, sessionId)
             },
@@ -203,8 +204,8 @@ object TurnNotifier {
             .getInstance()
             .getNotificationGroup(GROUP_ID)
             .createNotification(
-                "Session Is Running in the Background",
-                "\"$title\" is running as a background agent. Open it after it becomes idle.",
+                ImuxBundle.message("notification.busy.title"),
+                ImuxBundle.message("notification.busy.content", title),
                 NotificationType.WARNING,
             ).notify(project)
     }

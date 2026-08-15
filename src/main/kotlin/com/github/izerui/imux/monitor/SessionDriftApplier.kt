@@ -1,5 +1,6 @@
 package com.github.izerui.imux.monitor
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.session.KeyDrift
 import com.github.izerui.imux.session.stillApplicable
@@ -140,4 +141,4 @@ internal class SessionDriftApplier(
 }
 
 /** Fallback title used until a session appears in the scanned session list. */
-internal fun defaultTitle(sessionId: String): String = "Session ${sessionId.take(8)}"
+internal fun defaultTitle(sessionId: String): String = ImuxBundle.message("session.default", sessionId.take(8))

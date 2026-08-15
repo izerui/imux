@@ -1,6 +1,7 @@
 package com.github.izerui.imux.turn
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -8,6 +9,18 @@ class WaitingSubtitleTest {
     @Test
     fun `formats permission prompt`() {
         assertEquals("Claude · Waiting for permission", waitingSubtitle(AgentType.CLAUDE, "permission prompt"))
+    }
+
+    @Test
+    fun `formats simplified Chinese independently`() {
+        assertEquals(
+            "Claude · 等待权限确认",
+            waitingSubtitle(
+                AgentType.CLAUDE,
+                "permission prompt",
+                PluginLanguage.SIMPLIFIED_CHINESE,
+            ),
+        )
     }
 
     @Test

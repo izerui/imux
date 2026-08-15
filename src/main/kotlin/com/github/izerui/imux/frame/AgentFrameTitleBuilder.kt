@@ -1,6 +1,8 @@
 package com.github.izerui.imux.frame
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.settings.PluginLanguage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.impl.PlatformFrameTitleBuilder
@@ -56,7 +58,11 @@ class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
          * 只能先剥离再追加。正常路径下 `base` 来自平台的 `getProjectTitle` 本就干净，
          * 这里永远空转；但标题会被反复重算，这份保险省不得。
          */
-        private val STATUS_SUFFIX = Regex(" \\(\\d+ (?:unread|running)(?: · \\d+ running)?\\)$")
+        private val STATUS_SUFFIX =
+            Regex(
+                " \\((?:\\d+ (?:unread|running)(?: · \\d+ running)?|" +
+                    "\\d+ 个(?:未读|运行中)(?: · \\d+ 个运行中)?)\\)$",
+            )
 
         /**
          * 未读排在运行中之前：未读是「要你去看」的强提示，运行中是「还在跑、不用管」
@@ -66,12 +72,17 @@ class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
             base: String,
             unreadCount: Int,
             runningCount: Int,
+            language: PluginLanguage = ImuxBundle.currentLanguage(),
         ): String {
             val stripped = base.replace(STATUS_SUFFIX, "")
             val parts =
                 buildList {
-                    if (unreadCount > 0) add("$unreadCount unread")
-                    if (runningCount > 0) add("$runningCount running")
+                    if (unreadCount > 0) {
+                        add(ImuxBundle.message(language, "frame.status.unread", unreadCount))
+                    }
+                    if (runningCount > 0) {
+                        add(ImuxBundle.message(language, "frame.status.running", runningCount))
+                    }
                 }
             return if (parts.isEmpty()) stripped else "$stripped (${parts.joinToString(" · ")})"
         }

@@ -1,5 +1,6 @@
 package com.github.izerui.imux.session
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
@@ -67,7 +68,7 @@ class CodexSessionReader(
                 title =
                     titles[id]?.let(::truncate)
                         ?: firstUserMessage(file)?.let(::truncate)
-                        ?: "Session ${id.take(8)}",
+                        ?: ImuxBundle.message("session.default", id.take(8)),
                 agentType = AgentType.CODEX,
                 // 优先用记录自带的时刻，与 claude 侧同一口径。mtime 反映的是「文件何时被写」，
                 // 任何不含对话的追加、乃至外部工具 touch 都会把它推到当下。

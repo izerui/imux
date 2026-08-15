@@ -1,5 +1,7 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -88,13 +90,15 @@ class AgentTerminalFileEditor(
 
     private val scrollToBottomAction =
         object : DumbAwareAction(
-            "Scroll to Bottom",
-            "Scroll to the latest terminal output",
+            ImuxBundle.message("action.scroll.bottom.text"),
+            ImuxBundle.message("action.scroll.bottom.description"),
             AllIcons.General.ArrowDown,
         ) {
             override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
             override fun update(event: AnActionEvent) {
+                event.presentation.text = ImuxBundle.message("action.scroll.bottom.text")
+                event.presentation.description = ImuxBundle.message("action.scroll.bottom.description")
                 event.presentation.isEnabledAndVisible = scrollButtonVisible
             }
 
@@ -105,6 +109,15 @@ class AgentTerminalFileEditor(
                 scrollToolbar?.updateActionsAsync()
             }
         }
+
+    init {
+        ImuxSettings.getInstance().addLanguageListener(this) {
+            scrollToBottomAction.templatePresentation.text = ImuxBundle.message("action.scroll.bottom.text")
+            scrollToBottomAction.templatePresentation.description =
+                ImuxBundle.message("action.scroll.bottom.description")
+            scrollToolbar?.updateActionsAsync()
+        }
+    }
 
     private val editorComponent: JComponent by lazy(::createEditorComponent)
 

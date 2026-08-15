@@ -1,6 +1,7 @@
 package com.github.izerui.imux.toolwindow
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.sessionClipboardText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +37,18 @@ class ClickActivationTest {
         assertEquals(
             "Session type: Claude Code\nSession ID: session-abc-123",
             sessionClipboardText(AgentType.CLAUDE, "session-abc-123"),
+        )
+    }
+
+    @Test
+    fun `复制文本按插件语言本地化`() {
+        assertEquals(
+            "会话类型：Claude Code\n会话 ID：session-abc-123",
+            sessionClipboardText(
+                AgentType.CLAUDE,
+                "session-abc-123",
+                PluginLanguage.SIMPLIFIED_CHINESE,
+            ),
         )
     }
 }
