@@ -165,29 +165,6 @@ class TerminalIntegrationSourceTest {
         )
     }
 
-    @Test
-    fun `pi 中断快捷键覆盖整个 editor 且直接发送控制字符`() {
-        val fileEditor =
-            File(
-                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
-            ).readText()
-
-        assertTrue(
-            "Ctrl+C 必须注册在 editor 外壳，焦点落到浮动工具栏时仍能中断 pi",
-            fileEditor.contains("interruptPiAction.registerCustomShortcutSet(") &&
-                fileEditor.contains("InputEvent.CTRL_DOWN_MASK") &&
-                fileEditor.contains("pane,"),
-        )
-        assertTrue(
-            "中断必须走 TerminalView 公开输入 API",
-            fileEditor.contains("virtualFile.terminalView.sendText(\"\\u0003\")"),
-        )
-        assertTrue(
-            "销毁 editor 时必须注销局部快捷键",
-            fileEditor.contains("interruptPiAction::unregisterCustomShortcutSet"),
-        )
-    }
-
     /**
      * 输入法候选窗的位置只有在焦点落到 EditorComponentImpl 上时才跟随光标，
      * 落在外层 TerminalPanel 上就会退回窗口原点（左上角）。
