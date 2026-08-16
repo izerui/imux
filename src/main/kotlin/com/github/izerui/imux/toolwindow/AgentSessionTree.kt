@@ -422,14 +422,15 @@ class AgentSessionTree(
 
         // 用数据类的结构相等比对，标题、时间、标记任一变化都算变化，
         // 拼字符串容易漏字段
-        val content = AgentType.entries.associateWith { nodesFor(it) }
+        val agentTypes = ImuxSettings.getInstance().enabledAgentTypes
+        val content = agentTypes.associateWith { nodesFor(it) }
         if (content == renderedContent) return
         renderedContent = content
 
         val selected = selectedSessionId()
 
         root.removeAllChildren()
-        AgentType.entries.forEach { type -> addGroup(type, content.getValue(type)) }
+        agentTypes.forEach { type -> addGroup(type, content.getValue(type)) }
         treeModel.reload()
 
         restoreExpansion()
@@ -506,7 +507,7 @@ class AgentSessionTree(
 
     /** 找出 [key] 属于哪个分组、在该分组条目里排第几。找不到返回 null。 */
     private fun locate(key: String): Pair<AgentType, Int>? {
-        AgentType.entries.forEach { agentType ->
+        ImuxSettings.getInstance().enabledAgentTypes.forEach { agentType ->
             val index =
                 model.entries(agentType).indexOfFirst { entry ->
                     when (entry) {

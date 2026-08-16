@@ -1,5 +1,6 @@
 package com.github.izerui.imux.settings
 
+import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.BaseState
@@ -25,6 +26,7 @@ import java.util.EventListener
 )
 class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State()) {
     private val languageListeners = EventDispatcher.create(LanguageListener::class.java)
+    private val enabledAgentsListeners = EventDispatcher.create(EnabledAgentsListener::class.java)
 
     class State : BaseState() {
         /** 单击即打开会话；false 表示需要双击。 */
@@ -32,15 +34,39 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
 
         /** 插件界面语言；使用稳定 id，避免枚举重命名破坏已有配置。 */
         var languageId: String? by string(PluginLanguage.ENGLISH.id)
+
+        /** Agent 开关使用显式字段持久化；枚举名不是配置文件契约。 */
+        var claudeEnabled: Boolean by property(true)
+        var codexEnabled: Boolean by property(true)
+        var piEnabled: Boolean by property(true)
     }
 
     val language: PluginLanguage
         get() = PluginLanguage.fromId(state.languageId)
 
+    val enabledAgentTypes: List<AgentType>
+        get() =
+            AgentType.entries.filter { agentType ->
+                when (agentType) {
+                    AgentType.CLAUDE -> state.claudeEnabled
+                    AgentType.CODEX -> state.codexEnabled
+                    AgentType.PI -> state.piEnabled
+                }
+            }
+
     fun setLanguage(language: PluginLanguage) {
         if (this.language == language) return
         state.languageId = language.id
         languageListeners.multicaster.languageChanged()
+    }
+
+    fun setEnabledAgentTypes(agentTypes: Set<AgentType>) {
+        require(agentTypes.isNotEmpty()) { "At least one agent must be enabled" }
+        if (enabledAgentTypes.toSet() == agentTypes) return
+        state.claudeEnabled = AgentType.CLAUDE in agentTypes
+        state.codexEnabled = AgentType.CODEX in agentTypes
+        state.piEnabled = AgentType.PI in agentTypes
+        enabledAgentsListeners.multicaster.enabledAgentsChanged()
     }
 
     fun addLanguageListener(
@@ -50,8 +76,19 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         languageListeners.addListener(LanguageListener(listener), parentDisposable)
     }
 
+    fun addEnabledAgentsListener(
+        parentDisposable: Disposable,
+        listener: () -> Unit,
+    ) {
+        enabledAgentsListeners.addListener(EnabledAgentsListener(listener), parentDisposable)
+    }
+
     fun interface LanguageListener : EventListener {
         fun languageChanged()
+    }
+
+    fun interface EnabledAgentsListener : EventListener {
+        fun enabledAgentsChanged()
     }
 
     companion object {

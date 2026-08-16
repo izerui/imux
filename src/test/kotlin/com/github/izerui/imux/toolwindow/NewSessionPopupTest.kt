@@ -7,6 +7,15 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class NewSessionPopupTest {
+    @Test
+    fun `菜单只生成已启用的 Agent`() {
+        val enabled = listOf(AgentType.CLAUDE, AgentType.PI)
+        val group = agentActionGroup(onChosen = {}, agentTypes = enabled)
+
+        val names = group.childActionsOrStubs.map { it.templatePresentation.text }
+
+        assertEquals(enabled.map(AgentType::displayName), names)
+    }
 
     @Test
     fun `菜单为每个 Agent 生成一项并带品牌图标`() {

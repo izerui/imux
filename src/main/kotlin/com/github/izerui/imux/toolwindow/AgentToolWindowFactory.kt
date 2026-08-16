@@ -103,6 +103,9 @@ class AgentToolWindowFactory :
             singleClickAction.refreshPresentation()
             toolWindow.component.repaint()
         }
+        ImuxSettings.getInstance().addEnabledAgentsListener(contentDisposable) {
+            sessionTree.reload()
+        }
 
         // 标签页开或关时立即重绘，不必等下一轮轮询。
         TerminalHost.getInstance(project).addSessionsChangedListener(contentDisposable) {
