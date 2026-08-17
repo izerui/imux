@@ -238,7 +238,7 @@ class AgentTerminalFileEditor(
     /** 只在标签页首次打开时被平台咨询，之后的焦点由 [focusForwarder] 兜住。 */
     override fun getPreferredFocusedComponent(): JComponent = virtualFile.terminalView.preferredFocusableComponent
 
-    override fun getName(): String = virtualFile.name
+    override fun getName(): String = virtualFile.displayName
 
     override fun getFile(): VirtualFile = virtualFile
 

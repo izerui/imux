@@ -47,6 +47,15 @@ class AgentTerminalVirtualFile(
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
 
+    val displayName: String
+        get() = "${agentType.cli}: $tabTitle"
+
+    /**
+     * 编辑器标签左下角的状态栏提示直接读取 VirtualFile.name，而不是
+     * EditorTabTitleProvider，因此这里用 Agent 类型前缀标明这是哪一种会话。
+     */
+    override fun getName(): String = displayName
+
     override fun getFileType(): FileType = AgentTerminalFileType
 
     override fun isWritable(): Boolean = false

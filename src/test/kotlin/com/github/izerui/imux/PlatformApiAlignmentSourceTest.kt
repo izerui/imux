@@ -25,13 +25,35 @@ class PlatformApiAlignmentSourceTest {
             source(
                 "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalTabTitleProvider.kt",
             )
+        val virtualFile =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalVirtualFile.kt",
+            )
         val pluginXml = source("src/main/resources/META-INF/plugin.xml")
 
         assertFalse(terminalHost.contains("WriteAction"))
         assertFalse(terminalHost.contains("file.rename("))
         assertTrue(terminalHost.contains("updateFilePresentation(file)"))
+        assertTrue(terminalHost.contains("terminalView.title.change"))
+        assertTrue(virtualFile.contains("""get() = "${'$'}{agentType.cli}: ${'$'}tabTitle""""))
+        assertTrue(virtualFile.contains("override fun getName(): String = displayName"))
         assertTrue(titleProvider.contains("EditorTabTitleProvider"))
+        assertTrue(titleProvider.contains("getEditorTabTooltipHtml"))
+        assertTrue(titleProvider.contains("HtmlChunk.text(it.tabTitle)"))
         assertTrue(pluginXml.contains("<editorTabTitleProvider"))
+    }
+
+    @Test
+    fun `终端各处展示名读取同一份当前标题`() {
+        val editor =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            )
+
+        assertTrue(
+            "FileEditor 名称应与虚拟文件一样带 Agent 类型前缀",
+            editor.contains("override fun getName(): String = virtualFile.displayName"),
+        )
     }
 
     /**

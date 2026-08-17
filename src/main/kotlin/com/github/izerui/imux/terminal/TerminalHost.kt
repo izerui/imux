@@ -300,6 +300,9 @@ class TerminalHost(
     ) {
         if (file.tabTitle == newTitle) return
         file.tabTitle = newTitle
+        // detached 后 backend tab 仍持有同一个 TerminalTitle。只更新 EditorTabTitleProvider
+        // 会让终端状态栏等平台位置继续显示创建时名称，因此同步写入公开标题模型。
+        file.terminalView.title.change { userDefinedTitle = newTitle }
         FileEditorManager.getInstance(project).updateFilePresentation(file)
     }
 

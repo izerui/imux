@@ -2,12 +2,21 @@ package com.github.izerui.imux.terminal
 
 import com.intellij.openapi.fileEditor.impl.EditorTabTitleProvider
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.HtmlChunk
 import com.intellij.openapi.vfs.VirtualFile
 
 class AgentTerminalTabTitleProvider : EditorTabTitleProvider {
 
     override fun getEditorTabTitle(project: Project, file: VirtualFile): String? =
         (file as? AgentTerminalVirtualFile)?.let { ellipsizeTabTitle(it.tabTitle) }
+
+    override fun getEditorTabTooltipHtml(
+        project: Project,
+        virtualFile: VirtualFile,
+    ): HtmlChunk? =
+        (virtualFile as? AgentTerminalVirtualFile)?.let {
+            HtmlChunk.text(it.tabTitle)
+        }
 }
 
 /** 标签页上最多显示多少个字符，超出的截掉。 */

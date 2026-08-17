@@ -1,8 +1,10 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.lang.reflect.Proxy
 
 /**
  * 标签页标题原先只在「新建会话绑定到真实 id」那一刻写一次，此后再也不更新。
@@ -10,6 +12,40 @@ import org.junit.Test
  * 标签页一直挂着最初那个——常常是 `# AGENTS.md instructions for …` 这类注入内容。
  */
 class TabTitleSyncTest {
+
+    @Test
+    fun `虚拟文件展示名带类型前缀而标签标题与 hover 保持简洁`() {
+        val file =
+            AgentTerminalVirtualFile(
+                name = "创建时标题",
+                terminalView = proxy(),
+                sessionKey = "s1",
+                agentType = AgentType.CODEX,
+                tabId = "tab-1",
+            )
+        file.tabTitle = "更新后的标题"
+        val provider = AgentTerminalTabTitleProvider()
+
+        assertEquals("codex: 更新后的标题", file.name)
+        assertEquals("更新后的标题", provider.getEditorTabTitle(proxy(), file))
+        assertEquals("更新后的标题", provider.getEditorTabTooltipHtml(proxy(), file)?.toString())
+    }
+
+    @Test
+    fun `三种 Agent 使用各自的 CLI 名称作为展示前缀`() {
+        AgentType.entries.forEach { agentType ->
+            val file =
+                AgentTerminalVirtualFile(
+                    name = "会话标题",
+                    terminalView = proxy(),
+                    sessionKey = agentType.cli,
+                    agentType = agentType,
+                    tabId = "tab-${agentType.cli}",
+                )
+
+            assertEquals("${agentType.cli}: 会话标题", file.name)
+        }
+    }
 
     @Test
     fun `标题变了的标签页要更新`() {
@@ -64,4 +100,17 @@ class TabTitleSyncTest {
 
         assertTrue(stale.isEmpty())
     }
+
+    private inline fun <reified T> proxy(): T =
+        Proxy.newProxyInstance(
+            T::class.java.classLoader,
+            arrayOf(T::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "toString" -> "test ${T::class.java.simpleName}"
+                "hashCode" -> System.identityHashCode(this)
+                "equals" -> false
+                else -> error("Unexpected ${T::class.java.simpleName}.${method.name}")
+            }
+        } as T
 }
