@@ -294,10 +294,16 @@ class PlatformApiAlignmentSourceTest {
             source(
                 "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
             )
+        val reporterScript =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/terminal/PiReporterScript.kt",
+            )
 
         assertFalse(terminalHost.contains("shouldAddToToolWindow("))
         assertTrue(terminalHost.contains("requestFocus(false)"))
         assertTrue(terminalHost.contains("deferSessionStartUntilUiShown(false)"))
+        assertFalse(reporterScript.contains("PluginManagerCore"))
+        assertFalse(reporterScript.contains("PluginManager.getPlugin("))
     }
 
     @Test

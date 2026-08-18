@@ -8,7 +8,6 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class PiReporterScriptTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -18,6 +17,26 @@ class PiReporterScriptTest {
         val script = File(scripts, "pi-imux-reporter.js").apply { writeText("// x") }
 
         assertEquals(script.toPath(), piReporterScriptIn(tmp.root.toPath()))
+    }
+
+    @Test
+    fun `从打包 jar 位置定位上报脚本`() {
+        val pluginRoot = File(tmp.root, "imux")
+        val lib = File(pluginRoot, "lib").apply { mkdirs() }
+        val jar = File(lib, "imux.jar").apply { writeText("") }
+        val scripts = File(pluginRoot, "scripts").apply { mkdirs() }
+        val script = File(scripts, "pi-imux-reporter.js").apply { writeText("// x") }
+
+        assertEquals(script.toPath(), piReporterScriptNear(jar.toPath()))
+    }
+
+    @Test
+    fun `classpath 附近没有脚本时返回 null`() {
+        val lib = File(tmp.root, "imux/lib").apply { mkdirs() }
+        val jar = File(lib, "imux.jar").apply { writeText("") }
+
+        assertNull(piReporterScriptNear(jar.toPath()))
+        assertNull(piReporterScriptNear(null))
     }
 
     /**

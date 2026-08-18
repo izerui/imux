@@ -7,14 +7,14 @@
 两条现有路径各自的依赖，以及 pi 的实测结果：
 
 | 需要知道 | Claude 怎么做 | Codex 怎么做 | pi |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 这个进程在跑哪个会话 | 读 `~/.claude/sessions/<pid>.json` 运行态文件 | `lsof` 看它长期持有的 rollout 文件 | **都不行**：没有运行态文件；`lsof` 里一个 jsonl 都没有（open-append-close 写法） |
 | 这个进程属于哪个标签页 | `ps eww` 读进程环境里的 `IMUX_TAB` | 同左 | **不行**：见下 |
 
 pi 设置了 `process.title = 'pi'`。macOS 上这会覆写 argv/environ 内存区，`ps` 从此读不到该进程的任何环境变量。同一个 node 二进制实测对比：
 
 | 进程 | `ps -o comm` | `ps eww` 输出 |
-|---|---|---|
+| --- | --- | --- |
 | `node -e "..."` | node | 5952 字节，能读到自定义变量 |
 | `node -e "process.title='pi'; ..."` | pi | **67 字节，一个变量都没有** |
 
@@ -40,7 +40,7 @@ pi 提供官方扩展机制（`-e <路径>` 加载，实测免信任确认，交
 
 ### 数据流
 
-```
+```text
 pi 进程                                  IDE 进程
   │                                        │
   │ session_start                          │
@@ -56,7 +56,7 @@ pi 进程                                  IDE 进程
 
 **整条链零磁盘写入**，状态只存在于 IDE 内存，与 `SessionListModel` 同性质。扩展脚本是安装时就在 `imux/scripts/` 下的只读文件，不是运行时生成的。
 
-已验证打包可行：`prepareSandbox` 里 `from(...) { into("${project.name}/scripts") }`，产出的插件 zip 中 `imux/scripts/` 与 `imux/lib/` 平级。运行时用 `PluginManagerCore.getPlugin(id)?.pluginPath` 定位。
+已验证打包可行：`prepareSandbox` 里 `from(...) { into("${project.name}/scripts") }`，产出的插件 zip 中 `imux/scripts/` 与 `imux/lib/` 平级。运行时从插件自身 class 的 code source（通常是 `imux/lib/imux-*.jar`）向上定位脚本，避免调用 Internal 的插件管理 API。
 
 ## 组件
 

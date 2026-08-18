@@ -1,14 +1,12 @@
 package com.github.izerui.imux.terminal
 
-import com.intellij.ide.plugins.PluginManagerCore
-import com.intellij.openapi.extensions.PluginId
 import java.nio.file.Files
 import java.nio.file.Path
 
 /** 打包时放进插件目录的上报脚本，见 build.gradle.kts 的 prepareSandbox 配置。 */
 private const val SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reporter.js"
 
-private const val PLUGIN_ID = "com.github.izerui.imux"
+private object PiReporterScriptLocation
 
 /**
  * 上报脚本的绝对路径；插件目录未知或文件不存在时返回 null。
@@ -22,6 +20,21 @@ internal fun piReporterScriptIn(pluginPath: Path?): Path? {
     return script.takeIf { Files.isRegularFile(it) }
 }
 
-/** 生产入口：从插件自身的安装目录取。 */
-internal fun piReporterScript(): Path? =
-    piReporterScriptIn(PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))?.pluginPath)
+/** 从插件 classpath 项（通常是 `<plugin>/lib/imux-*.jar`）向上定位脚本。 */
+internal fun piReporterScriptNear(classPathEntry: Path?): Path? =
+    generateSequence(classPathEntry) { it.parent }
+        .take(3)
+        .mapNotNull(::piReporterScriptIn)
+        .firstOrNull()
+
+/** 生产入口：从插件自身 class 的 code source 定位安装目录。 */
+internal fun piReporterScript(): Path? {
+    val classPathEntry =
+        runCatching {
+            val location =
+                PiReporterScriptLocation::class.java.protectionDomain.codeSource
+                    ?.location
+            location?.toURI()?.let(Path::of)
+        }.getOrNull()
+    return piReporterScriptNear(classPathEntry)
+}
