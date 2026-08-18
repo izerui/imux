@@ -2,7 +2,7 @@ import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 
 const CURSOR_MARKER = "\x1b_pi:c\x07";
 const HIDE_CURSOR = "\x1b[?25l";
-const STEADY_BAR_CURSOR = "\x1b[6 q";
+const BLINKING_BAR_CURSOR = "\x1b[5 q";
 const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
 
 /**
@@ -38,7 +38,7 @@ function stabilizeHardwareCursor(tui) {
   const terminal = tui?.terminal;
   if (!terminal || typeof terminal.write !== "function") return;
 
-  terminal.write(STEADY_BAR_CURSOR);
+  terminal.write(BLINKING_BAR_CURSOR);
 
   const wrapperKey = Symbol.for("com.github.izerui.imux.pi-terminal-cursor");
   if (terminal[wrapperKey]) return;

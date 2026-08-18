@@ -67,7 +67,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `默认 editor 强制硬件光标并去掉反色假光标`() {
         assertEquals(
-            "true|<ESC>[6 q|prefix:<ESC>_pi:c<BEL>中:suffix",
+            "true|<ESC>[5 q|prefix:<ESC>_pi:c<BEL>中:suffix",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
@@ -103,7 +103,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `重绘和定位期间隐藏硬件光标直到最终位置`() {
         assertEquals(
-            "<ESC>[6 q|<ESC>[?25lframe|<ESC>[?25lmove|show",
+            "<ESC>[5 q|<ESC>[?25lframe|<ESC>[?25lmove|show",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
