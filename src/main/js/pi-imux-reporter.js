@@ -1,21 +1,9 @@
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
-import { appendFileSync, existsSync } from "node:fs";
 
-const CURSOR_DEBUG_FLAG = "/tmp/imux-pi-cursor-debug";
-const CURSOR_DEBUG_LOG = `/tmp/imux-pi-cursor-${process.pid}.log`;
 const CURSOR_MARKER = "\x1b_pi:c\x07";
 const HIDE_CURSOR = "\x1b[?25l";
 const STEADY_BAR_CURSOR = "\x1b[6 q";
 const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
-
-function cursorDebug(event, details = {}) {
-  try {
-    if (!existsSync(CURSOR_DEBUG_FLAG)) return;
-    appendFileSync(CURSOR_DEBUG_LOG, `${JSON.stringify({ at: Date.now(), event, ...details })}\n`);
-  } catch {
-    // Diagnostics must never affect the terminal.
-  }
-}
 
 /**
  * IDEA 必须看到 pi 的硬件光标，macOS 输入法候选窗才会跟随；pi 默认又会在同一位置
@@ -48,54 +36,19 @@ function isCursorAtLineEnd(editor) {
 
 function stabilizeHardwareCursor(tui) {
   const terminal = tui?.terminal;
-  if (!terminal || typeof terminal.write !== "function") {
-    cursorDebug("terminal-unavailable");
-    return;
-  }
+  if (!terminal || typeof terminal.write !== "function") return;
 
-  cursorDebug("terminal-found", {
-    mode: tui?.mode,
-    extensible: Object.isExtensible(terminal),
-  });
   terminal.write(STEADY_BAR_CURSOR);
 
   const wrapperKey = Symbol.for("com.github.izerui.imux.pi-terminal-cursor");
-  if (terminal[wrapperKey]) {
-    cursorDebug("terminal-already-wrapped");
-    return;
-  }
+  if (terminal[wrapperKey]) return;
 
   // Pi regular TUI writes a frame before moving the hardware cursor back to CURSOR_MARKER.
   // Hide it for every intermediate write; positionHardwareCursor() calls showCursor() only
   // after the final move, so users see one stable position instead of the redraw endpoint.
   const write = terminal.write.bind(terminal);
-  terminal.write = (data) => {
-    cursorDebug("write", {
-      length: typeof data === "string" ? data.length : -1,
-      controls: typeof data === "string"
-        ? (data.match(/\x1b\[[?0-9; ]*[A-Za-z]/g) ?? []).slice(-8)
-        : [],
-    });
-    return write(`${HIDE_CURSOR}${data}`);
-  };
-
-  if (typeof terminal.showCursor === "function") {
-    const showCursor = terminal.showCursor.bind(terminal);
-    terminal.showCursor = () => {
-      cursorDebug("show-cursor");
-      return showCursor();
-    };
-  }
-  if (typeof terminal.hideCursor === "function") {
-    const hideCursor = terminal.hideCursor.bind(terminal);
-    terminal.hideCursor = () => {
-      cursorDebug("hide-cursor");
-      return hideCursor();
-    };
-  }
-
+  terminal.write = (data) => write(`${HIDE_CURSOR}${data}`);
   terminal[wrapperKey] = true;
-  cursorDebug("terminal-wrapped");
 }
 
 function installHardwareCursorEditor(ctx) {
@@ -120,19 +73,7 @@ function installHardwareCursorEditor(ctx) {
     const render = editor.render.bind(editor);
     editor.render = (width) => {
       const cursorAtLineEnd = isCursorAtLineEnd(editor);
-      const cursor = editor.getCursor?.();
-      const rendered = render(width);
-      cursorDebug("editor-render", {
-        width,
-        cursorLine: cursor?.line,
-        cursorCol: cursor?.col,
-        cursorAtLineEnd,
-        markerLines: rendered.filter((line) => line.includes(CURSOR_MARKER)).length,
-        fakeCursorLines: rendered.filter(
-          (line) => line.includes(CURSOR_MARKER) && line.includes("\x1b[7m"),
-        ).length,
-      });
-      return rendered.map((line) => stripFakeCursor(line, cursorAtLineEnd));
+      return render(width).map((line) => stripFakeCursor(line, cursorAtLineEnd));
     };
     return editor;
   };
