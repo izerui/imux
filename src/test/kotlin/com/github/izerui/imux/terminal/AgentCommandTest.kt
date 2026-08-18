@@ -110,6 +110,31 @@ class AgentCommandTest {
     }
 
     @Test
+    fun `新会话可携带安全转义的初始提示`() {
+        assertEquals(
+            "codex 'Read session '\\''abc'",
+            launchCommand(
+                "/bin/zsh",
+                AgentType.CODEX,
+                resumeId = null,
+                initialPrompt = "Read session 'abc",
+            ).last(),
+        )
+        assertEquals(
+            "pi --session-id 'new-id' -e '/tmp/reporter.js' 'Continue the work'",
+            launchCommand(
+                "/bin/zsh",
+                AgentType.PI,
+                resumeId = "new-id",
+                piExtension =
+                    java.nio.file.Paths
+                        .get("/tmp/reporter.js"),
+                initialPrompt = "Continue the work",
+            ).last(),
+        )
+    }
+
+    @Test
     fun `未设置 SHELL 时回退到 zsh`() {
         assertEquals("/bin/zsh", resolveShell(null))
         assertEquals("/bin/zsh", resolveShell(""))

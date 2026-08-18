@@ -3,11 +3,10 @@ package com.github.izerui.imux.toolwindow
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
-import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
-import com.github.izerui.imux.terminal.preassignedSessionId
+import com.github.izerui.imux.terminal.startNewSession
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -224,17 +223,7 @@ private class NewSessionAction :
         project: Project,
         agentType: AgentType,
     ) {
-        val monitor = SessionMonitor.getInstance(project)
-        val model: SessionListModel = monitor.model
-        // pi 的会话 id 可以先定下来（见 preassignedSessionId），其余 agent 为 null
-        val sessionId = preassignedSessionId(agentType)
-        // 先登记再启动：startedAt 必须早于 CLI 可能的首次落盘，否则绑定会漏
-        val pending = model.registerPending(agentType, sessionId)
-        // 终端必须以 pending.key 记录：会话落盘后要靠这个 key 把终端迁到真实 id 下
-        TerminalHost
-            .getInstance(project)
-            .openNew(agentType, pending.key, ImuxBundle.message("action.new.session.text"), sessionId)
-        monitor.refresh()
+        startNewSession(project, agentType)
     }
 }
 

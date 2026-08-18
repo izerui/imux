@@ -130,6 +130,19 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `会话交接动作注册到终端正文右键菜单`() {
+        assertTrue(
+            "终端正文右键菜单必须包含交给其他 Agent 继续工作的动作",
+            pluginXml.contains(
+                """class="com.github.izerui.imux.terminal.HandoffSessionActionGroup"""",
+            ) &&
+                pluginXml.contains(
+                    """group-id="Terminal.ReworkedTerminalContextMenu"""",
+                ),
+        )
+    }
+
+    @Test
     fun `注册了应用级 Imux 设置页`() {
         assertTrue(
             "独立语言偏好必须能从 Settings | Tools | Imux 修改",

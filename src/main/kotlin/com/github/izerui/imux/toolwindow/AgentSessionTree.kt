@@ -8,6 +8,7 @@ import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
+import com.github.izerui.imux.terminal.handoffActions
 import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.terminal.sessionClipboardText
 import com.github.izerui.imux.turn.TurnNotifier
@@ -359,9 +360,14 @@ class AgentSessionTree(
                                 )
                             }
                         }
+                    val actions = DefaultActionGroup(copyAction)
+                    model.sessionOf(session.id)?.let { source ->
+                        actions.addSeparator()
+                        actions.addAll(*handoffActions(project, source))
+                    }
                     ActionManager
                         .getInstance()
-                        .createActionPopupMenu("ImuxSessionTreePopup", DefaultActionGroup(copyAction))
+                        .createActionPopupMenu("ImuxSessionTreePopup", actions)
                         .component
                         .show(tree, x, y)
                 }

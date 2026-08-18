@@ -104,5 +104,11 @@
                 icon="AllIcons.Actions.Copy">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </action>
+        <group
+                id="imux.HandoffSession"
+                class="com.github.izerui.imux.terminal.HandoffSessionActionGroup"
+                popup="false">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </group>
     </actions>
 </idea-plugin>

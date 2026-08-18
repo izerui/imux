@@ -27,6 +27,7 @@ internal fun launchCommand(
     agentType: AgentType,
     resumeId: String?,
     piExtension: java.nio.file.Path? = null,
+    initialPrompt: String? = null,
 ): List<String> {
     val cli = agentType.cli
     val script =
@@ -54,7 +55,12 @@ internal fun launchCommand(
                 "$cli --resume ${singleQuote(resumeId)}"
             }
         }
-    return listOf(shell, "-l", "-i", "-c", script)
+    val command =
+        initialPrompt
+            ?.takeIf { it.isNotBlank() }
+            ?.let { "$script ${singleQuote(it)}" }
+            ?: script
+    return listOf(shell, "-l", "-i", "-c", command)
 }
 
 /**

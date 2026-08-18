@@ -106,8 +106,9 @@ class TerminalHost(
         key: String,
         tabTitle: String,
         sessionId: String? = null,
+        initialPrompt: String? = null,
     ) {
-        open(key, agentType, newCommand(agentType, sessionId), tabTitle, sessionId)
+        open(key, agentType, newCommand(agentType, sessionId, initialPrompt), tabTitle, sessionId)
     }
 
     /**
@@ -454,12 +455,14 @@ class TerminalHost(
     private fun newCommand(
         agentType: AgentType,
         sessionId: String?,
+        initialPrompt: String?,
     ): List<String> =
         launchCommand(
             resolveShell(System.getenv("SHELL")),
             agentType,
             resumeId = sessionId,
             piExtension = piExtensionFor(agentType),
+            initialPrompt = initialPrompt,
         )
 
     private fun resumeCommand(
