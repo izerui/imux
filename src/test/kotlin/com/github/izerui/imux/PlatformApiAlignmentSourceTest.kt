@@ -304,6 +304,8 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(terminalHost.contains("deferSessionStartUntilUiShown(false)"))
         assertFalse(reporterScript.contains("PluginManagerCore"))
         assertFalse(reporterScript.contains("PluginManager.getPlugin("))
+        assertFalse(reporterScript.contains("getPluginByClass("))
+        assertTrue(reporterScript.contains("PathManager.getPluginsDir()"))
     }
 
     @Test

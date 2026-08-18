@@ -1,11 +1,12 @@
 package com.github.izerui.imux.terminal
 
-import com.intellij.ide.plugins.PluginManager
+import com.intellij.openapi.application.PathManager
 import java.nio.file.Files
 import java.nio.file.Path
 
 /** 打包时放进插件目录的上报脚本，见 build.gradle.kts 的 prepareSandbox 配置。 */
 private const val SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reporter.js"
+private const val PLUGIN_DIRECTORY_NAME = "imux"
 
 private object PiReporterScriptLocation
 
@@ -34,17 +35,16 @@ internal fun locatePiReporterScript(
 ): Path? = piReporterScriptIn(pluginPath) ?: piReporterScriptNear(classPathEntry)
 
 /**
- * 生产入口：优先使用平台登记的插件根目录；code source 仅作为非 IDE 环境的降级路径。
+ * 生产入口：优先使用平台公开的插件目录；code source 仅作为非 IDE 环境的降级路径。
  *
  * runIde 会从构建输出加载插件类，class code source 不在 sandbox 插件目录下；只靠它定位
- * 会让脚本明明已被 PrepareSandboxTask 复制，却仍静默漏掉 `-e`。
+ * 会让脚本明明已被 PrepareSandboxTask 复制，却仍静默漏掉 `-e`。Gradle 构建的插件根目录
+ * 名固定为项目名 `imux`，正式安装与 runIde 沙箱均为 `<plugins>/imux`。
  */
 internal fun piReporterScript(): Path? {
     val pluginPath =
         runCatching {
-            PluginManager
-                .getPluginByClass(PiReporterScriptLocation::class.java)
-                ?.pluginPath
+            PathManager.getPluginsDir().resolve(PLUGIN_DIRECTORY_NAME)
         }.getOrNull()
 
     val classPathEntry =
