@@ -67,7 +67,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `默认 editor 强制硬件光标并去掉反色假光标`() {
         assertEquals(
-            "true|prefix:<ESC>_pi:c<BEL>中:suffix",
+            "true|<ESC>[6 q|prefix:<ESC>_pi:c<BEL>中:suffix",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
@@ -75,6 +75,84 @@ class PiReporterBehaviorTest {
                     globalThis.__editorLines = ["prefix:\x1b_pi:c\x07\x1b[7m中\x1b[0m:suffix"];
                     const ui = {
                       factory: undefined,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const editor = ui.factory({
+                      terminal: {
+                        write(value) { globalThis.__cursorStyle = value; },
+                      },
+                      setShowHardwareCursor(value) { globalThis.__hardwareCursor = value; },
+                    }, {}, {});
+                    const rendered = editor.render(80)[0]
+                      .replaceAll("\x1b", "<ESC>")
+                      .replaceAll("\x07", "<BEL>");
+                    const cursorStyle = globalThis.__cursorStyle.replaceAll("\x1b", "<ESC>");
+                    globalThis.__rendered = `${'$'}{globalThis.__hardwareCursor}|${'$'}{cursorStyle}|${'$'}{rendered}`;
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
+    fun `重绘和定位期间隐藏硬件光标直到最终位置`() {
+        assertEquals(
+            "<ESC>[6 q|<ESC>[?25lframe|<ESC>[?25lmove|show",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({ render: () => ["editor"] });
+                    const ui = {
+                      factory: customFactory,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const writes = [];
+                    const terminal = {
+                      write(value) { writes.push(value.replaceAll("\x1b", "<ESC>")); },
+                      showCursor() { writes.push("show"); },
+                    };
+                    ui.factory({
+                      terminal,
+                      setShowHardwareCursor() {},
+                    }, {}, {});
+                    terminal.write("frame");
+                    terminal.write("move");
+                    terminal.showCursor();
+                    globalThis.__rendered = writes.join("|");
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
+    fun `行尾删除合成光标空格只保留硬件光标位置`() {
+        assertEquals(
+            "true|abc<ESC>_pi:c<BEL>",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({
+                      getCursor: () => ({ line: 0, col: 3 }),
+                      getLines: () => ["abc"],
+                      render: () => ["abc\x1b_pi:c\x07\x1b[7m \x1b[0m"],
+                    });
+                    const ui = {
+                      factory: customFactory,
                       getEditorComponent() { return this.factory; },
                       setEditorComponent(factory) { this.factory = factory; },
                     };

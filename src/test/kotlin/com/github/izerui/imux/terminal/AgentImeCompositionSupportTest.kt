@@ -8,7 +8,6 @@ import org.junit.Test
 import java.text.AttributedString
 
 class AgentImeCompositionSupportTest {
-
     /**
      * 谁需要这层覆盖：**流式重绘会不断移动终端光标的 TUI**。平台默认把未提交文字做成
      * inline inlay，光标一动就重建，inlay 参与 soft-wrap 计算，于是输入区在打字期间

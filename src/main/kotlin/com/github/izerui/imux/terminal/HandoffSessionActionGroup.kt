@@ -7,6 +7,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.settings.PluginLanguage
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -35,19 +36,34 @@ internal fun handoffActions(
         .map { target -> HandoffSessionAction(project, session, target) }
         .toTypedArray()
 
+internal fun handoffActionGroup(
+    project: Project,
+    session: AgentSession,
+    targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
+): ActionGroup =
+    object : ActionGroup(ImuxBundle.message("action.handoff.group.text"), true), DumbAware {
+        init {
+            templatePresentation.icon = AllIcons.Actions.MoveTo2
+        }
+
+        private val children = handoffActions(project, session, targetTypes)
+
+        override fun getChildren(event: AnActionEvent?): Array<AnAction> = children
+    }
+
 private class HandoffSessionAction(
     private val project: Project,
     private val source: AgentSession,
     private val target: AgentType,
 ) : DumbAwareAction(
-        ImuxBundle.message("action.handoff.target.text", target.displayName),
+        target.displayName,
         ImuxBundle.message("action.handoff.target.description", target.displayName),
         AgentIcons.forAgent(target),
     ) {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun update(event: AnActionEvent) {
-        event.presentation.text = ImuxBundle.message("action.handoff.target.text", target.displayName)
+        event.presentation.text = target.displayName
         event.presentation.description = ImuxBundle.message("action.handoff.target.description", target.displayName)
     }
 
@@ -63,11 +79,17 @@ private class HandoffSessionAction(
 
 /** Contributes handoff commands for enabled agents to the reworked terminal context menu. */
 class HandoffSessionActionGroup :
-    ActionGroup(),
+    ActionGroup(ImuxBundle.message("action.handoff.group.text"), true),
     DumbAware {
+    init {
+        templatePresentation.icon = AllIcons.Actions.MoveTo2
+    }
+
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun update(event: AnActionEvent) {
+        event.presentation.text = ImuxBundle.message("action.handoff.group.text")
+        event.presentation.icon = AllIcons.Actions.MoveTo2
         event.presentation.isEnabledAndVisible = sourceSession(event) != null
     }
 

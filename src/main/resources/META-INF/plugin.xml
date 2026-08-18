@@ -99,7 +99,7 @@
         <action
                 id="imux.CopySessionIdentity"
                 class="com.github.izerui.imux.terminal.CopySessionIdentityAction"
-                text="Copy Session Type and ID"
+                text="Copy Session Info"
                 description="Copy the imux session type and ID to the clipboard"
                 icon="AllIcons.Actions.Copy">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
@@ -107,7 +107,7 @@
         <group
                 id="imux.HandoffSession"
                 class="com.github.izerui.imux.terminal.HandoffSessionActionGroup"
-                popup="false">
+                popup="true">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
     </actions>

@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.intellij.ide.plugins.PluginManager
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -27,8 +28,25 @@ internal fun piReporterScriptNear(classPathEntry: Path?): Path? =
         .mapNotNull(::piReporterScriptIn)
         .firstOrNull()
 
-/** 生产入口：从插件自身 class 的 code source 定位安装目录。 */
+internal fun locatePiReporterScript(
+    pluginPath: Path?,
+    classPathEntry: Path?,
+): Path? = piReporterScriptIn(pluginPath) ?: piReporterScriptNear(classPathEntry)
+
+/**
+ * 生产入口：优先使用平台登记的插件根目录；code source 仅作为非 IDE 环境的降级路径。
+ *
+ * runIde 会从构建输出加载插件类，class code source 不在 sandbox 插件目录下；只靠它定位
+ * 会让脚本明明已被 PrepareSandboxTask 复制，却仍静默漏掉 `-e`。
+ */
 internal fun piReporterScript(): Path? {
+    val pluginPath =
+        runCatching {
+            PluginManager
+                .getPluginByClass(PiReporterScriptLocation::class.java)
+                ?.pluginPath
+        }.getOrNull()
+
     val classPathEntry =
         runCatching {
             val location =
@@ -36,5 +54,5 @@ internal fun piReporterScript(): Path? {
                     ?.location
             location?.toURI()?.let(Path::of)
         }.getOrNull()
-    return piReporterScriptNear(classPathEntry)
+    return locatePiReporterScript(pluginPath, classPathEntry)
 }

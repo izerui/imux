@@ -1,17 +1,101 @@
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
+import { appendFileSync, existsSync } from "node:fs";
 
+const CURSOR_DEBUG_FLAG = "/tmp/imux-pi-cursor-debug";
+const CURSOR_DEBUG_LOG = `/tmp/imux-pi-cursor-${process.pid}.log`;
 const CURSOR_MARKER = "\x1b_pi:c\x07";
+const HIDE_CURSOR = "\x1b[?25l";
+const STEADY_BAR_CURSOR = "\x1b[6 q";
 const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
+
+function cursorDebug(event, details = {}) {
+  try {
+    if (!existsSync(CURSOR_DEBUG_FLAG)) return;
+    appendFileSync(CURSOR_DEBUG_LOG, `${JSON.stringify({ at: Date.now(), event, ...details })}\n`);
+  } catch {
+    // Diagnostics must never affect the terminal.
+  }
+}
 
 /**
  * IDEA 必须看到 pi 的硬件光标，macOS 输入法候选窗才会跟随；pi 默认又会在同一位置
  * 画一个反色假光标。中文双宽字符间移动后，两套 painter 还可能错开。
  *
- * 只移除 marker 后紧邻的反色段，marker 和被反色的字符都保留。硬件光标因此仍由 pi
- * 定位并交给 IDEA 绘制，输入与已有自定义 editor 的其余行为不变。
+ * 光标压在真实字符上时只移除反色样式并保留字符；光标在行尾时，pi 会人为追加一个
+ * 反色空格作为假光标，必须连这个合成单元一起移除。marker 保留给 TUI 定位硬件光标，
+ * 输入与已有自定义 editor 的其余行为不变。
  */
-function stripFakeCursor(line) {
-  return line.replace(FAKE_CURSOR_AFTER_MARKER, `${CURSOR_MARKER}$1`);
+function stripFakeCursor(line, cursorAtLineEnd = false) {
+  return line.replace(
+    FAKE_CURSOR_AFTER_MARKER,
+    (_match, cursorCell) => `${CURSOR_MARKER}${cursorAtLineEnd ? "" : cursorCell}`,
+  );
+}
+
+function isCursorAtLineEnd(editor) {
+  try {
+    const cursor = editor.getCursor?.();
+    const lines = editor.getLines?.();
+    if (!cursor || !Array.isArray(lines) || typeof cursor.line !== "number" || typeof cursor.col !== "number") {
+      return false;
+    }
+    const line = lines[cursor.line];
+    return typeof line === "string" && cursor.col >= line.length;
+  } catch {
+    return false;
+  }
+}
+
+function stabilizeHardwareCursor(tui) {
+  const terminal = tui?.terminal;
+  if (!terminal || typeof terminal.write !== "function") {
+    cursorDebug("terminal-unavailable");
+    return;
+  }
+
+  cursorDebug("terminal-found", {
+    mode: tui?.mode,
+    extensible: Object.isExtensible(terminal),
+  });
+  terminal.write(STEADY_BAR_CURSOR);
+
+  const wrapperKey = Symbol.for("com.github.izerui.imux.pi-terminal-cursor");
+  if (terminal[wrapperKey]) {
+    cursorDebug("terminal-already-wrapped");
+    return;
+  }
+
+  // Pi regular TUI writes a frame before moving the hardware cursor back to CURSOR_MARKER.
+  // Hide it for every intermediate write; positionHardwareCursor() calls showCursor() only
+  // after the final move, so users see one stable position instead of the redraw endpoint.
+  const write = terminal.write.bind(terminal);
+  terminal.write = (data) => {
+    cursorDebug("write", {
+      length: typeof data === "string" ? data.length : -1,
+      controls: typeof data === "string"
+        ? (data.match(/\x1b\[[?0-9; ]*[A-Za-z]/g) ?? []).slice(-8)
+        : [],
+    });
+    return write(`${HIDE_CURSOR}${data}`);
+  };
+
+  if (typeof terminal.showCursor === "function") {
+    const showCursor = terminal.showCursor.bind(terminal);
+    terminal.showCursor = () => {
+      cursorDebug("show-cursor");
+      return showCursor();
+    };
+  }
+  if (typeof terminal.hideCursor === "function") {
+    const hideCursor = terminal.hideCursor.bind(terminal);
+    terminal.hideCursor = () => {
+      cursorDebug("hide-cursor");
+      return hideCursor();
+    };
+  }
+
+  terminal[wrapperKey] = true;
+  cursorDebug("terminal-wrapped");
 }
 
 function installHardwareCursorEditor(ctx) {
@@ -26,6 +110,7 @@ function installHardwareCursorEditor(ctx) {
   if (!previousFactory && typeof CustomEditor !== "function") return;
 
   const factory = (tui, theme, keybindings) => {
+    stabilizeHardwareCursor(tui);
     // settings.showHardwareCursor=false 会覆盖环境变量；只在 imux 的 TUI 实例上重新启用，
     // 不改写用户配置文件，也不影响用户从普通终端启动的 pi。
     tui.setShowHardwareCursor?.(true);
@@ -33,7 +118,22 @@ function installHardwareCursorEditor(ctx) {
       ? previousFactory(tui, theme, keybindings)
       : new CustomEditor(tui, theme, keybindings);
     const render = editor.render.bind(editor);
-    editor.render = (width) => render(width).map(stripFakeCursor);
+    editor.render = (width) => {
+      const cursorAtLineEnd = isCursorAtLineEnd(editor);
+      const cursor = editor.getCursor?.();
+      const rendered = render(width);
+      cursorDebug("editor-render", {
+        width,
+        cursorLine: cursor?.line,
+        cursorCol: cursor?.col,
+        cursorAtLineEnd,
+        markerLines: rendered.filter((line) => line.includes(CURSOR_MARKER)).length,
+        fakeCursorLines: rendered.filter(
+          (line) => line.includes(CURSOR_MARKER) && line.includes("\x1b[7m"),
+        ).length,
+      });
+      return rendered.map((line) => stripFakeCursor(line, cursorAtLineEnd));
+    };
     return editor;
   };
   factory[wrapperKey] = true;

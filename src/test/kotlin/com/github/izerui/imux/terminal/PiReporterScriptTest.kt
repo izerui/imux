@@ -20,6 +20,16 @@ class PiReporterScriptTest {
     }
 
     @Test
+    fun `平台插件目录优先于 classpath 降级路径`() {
+        val pluginRoot = File(tmp.root, "plugin")
+        val scripts = File(pluginRoot, "scripts").apply { mkdirs() }
+        val script = File(scripts, "pi-imux-reporter.js").apply { writeText("// platform") }
+        val classpath = File(tmp.root, "classes/kotlin/main").apply { mkdirs() }
+
+        assertEquals(script.toPath(), locatePiReporterScript(pluginRoot.toPath(), classpath.toPath()))
+    }
+
+    @Test
     fun `从打包 jar 位置定位上报脚本`() {
         val pluginRoot = File(tmp.root, "imux")
         val lib = File(pluginRoot, "lib").apply { mkdirs() }

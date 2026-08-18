@@ -136,6 +136,9 @@ class PluginXmlRegistrationTest {
             pluginXml.contains(
                 """class="com.github.izerui.imux.terminal.HandoffSessionActionGroup"""",
             ) &&
+                Regex(
+                    """<group\s+[^>]*id="imux\.HandoffSession"[^>]*popup="true"""",
+                ).containsMatchIn(pluginXml) &&
                 pluginXml.contains(
                     """group-id="Terminal.ReworkedTerminalContextMenu"""",
                 ),
