@@ -24,6 +24,12 @@
 - 选择图标时先确认其实际语义和视觉效果，不要只根据字段名猜测。
 - 官方图标能够自动适配 IDE 明暗主题、缩放和平台视觉规范，应优先于自定义 SVG。
 - 只有 `AllIcons` 和平台已有资源确实无法表达需求时才新增自定义图标，并说明不能复用官方图标的原因。
+- 选择或比较图标时，优先打开本地 `AllIcons` 浏览器：
+  `.reference/icon-gallery/index.html`。该索引覆盖 Platform 262 的全部公开
+  `AllIcons` 常量，支持搜索、分类筛选、明暗主题预览和点击复制常量名。
+- IDEA 版本更新后，运行 `node .reference/icon-gallery/generate.mjs` 重新生成索引；
+  生成器默认读取 `/Applications/IntelliJ IDEA.app/Contents`，也可通过
+  `IDEA_HOME` 指定其他安装目录。详细说明见 `.reference/README.md`。
 
 可通过本机 262 平台 jar 检索可用图标：
 
