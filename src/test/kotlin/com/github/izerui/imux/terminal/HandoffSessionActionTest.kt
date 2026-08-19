@@ -58,7 +58,7 @@ class HandoffSessionActionTest {
     }
 
     @Test
-    fun `交接任务使用弹出子菜单承载 Agent`() {
+    fun `会话转移使用弹出子菜单承载 Agent`() {
         val enabled = AgentType.entries
 
         val group = handoffActionGroup(testProject(), session, enabled)
