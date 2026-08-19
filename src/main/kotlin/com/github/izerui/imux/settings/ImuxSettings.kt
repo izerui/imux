@@ -35,6 +35,9 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         /** 插件界面语言；使用稳定 id，避免枚举重命名破坏已有配置。 */
         var languageId: String? by string(PluginLanguage.ENGLISH.id)
 
+        /** 在 Project 工具窗口的“新建”菜单中显示 AI 智能体入口。 */
+        var showProjectNewAgentMenu: Boolean by property(true)
+
         /** Agent 开关使用显式字段持久化；枚举名不是配置文件契约。 */
         var claudeEnabled: Boolean by property(true)
         var codexEnabled: Boolean by property(true)

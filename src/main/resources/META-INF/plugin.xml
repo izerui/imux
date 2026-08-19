@@ -96,6 +96,13 @@
     </extensions>
 
     <actions>
+        <group
+                id="imux.ProjectNewAgent"
+                class="com.github.izerui.imux.toolwindow.ProjectNewAgentActionGroup"
+                popup="true"
+                icon="/icons/agent.svg">
+            <add-to-group group-id="NewGroup" anchor="first"/>
+        </group>
         <action
                 id="imux.CopySessionIdentity"
                 class="com.github.izerui.imux.terminal.CopySessionIdentityAction"

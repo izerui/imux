@@ -3,9 +3,15 @@ package com.github.izerui.imux.settings
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImuxSettingsTest {
+    @Test
+    fun `project new menu is shown by default`() {
+        assertTrue(ImuxSettings().state.showProjectNewAgentMenu)
+    }
+
     @Test
     fun `all agents are enabled by default`() {
         assertEquals(AgentType.entries, ImuxSettings().enabledAgentTypes)

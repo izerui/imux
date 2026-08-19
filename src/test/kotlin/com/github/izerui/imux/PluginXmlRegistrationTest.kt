@@ -146,6 +146,20 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `项目新建菜单注册了 AI 智能体分组`() {
+        assertTrue(
+            "Project 新建菜单必须包含可展开的 AI 智能体分组",
+            pluginXml.contains(
+                """class="com.github.izerui.imux.toolwindow.ProjectNewAgentActionGroup"""",
+            ) &&
+                Regex(
+                    """<group\s+[^>]*id="imux\.ProjectNewAgent"[^>]*popup="true"""",
+                ).containsMatchIn(pluginXml) &&
+                pluginXml.contains("""group-id="NewGroup"""),
+        )
+    }
+
+    @Test
     fun `注册了应用级 Imux 设置页`() {
         assertTrue(
             "独立语言偏好必须能从 Settings | Tools | Imux 修改",
