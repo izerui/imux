@@ -37,6 +37,11 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     ),
                     Boolean::class.javaObjectType,
                 )
+                row {
+                    checkBox(ImuxBundle.message("settings.confirm.before.closing.session"))
+                        .bindSelected(settings.state::confirmBeforeClosingSession)
+                        .comment(ImuxBundle.message("settings.confirm.before.closing.session.comment"))
+                }
             }
             group(ImuxBundle.message("settings.group.agents")) {
                 AgentType.entries.forEach { agentType ->

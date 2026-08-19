@@ -32,6 +32,9 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         /** 单击即打开会话；false 表示需要双击。 */
         var openWithSingleClick: Boolean by property(false)
 
+        /** 关闭仍在运行的会话标签前显示确认。 */
+        var confirmBeforeClosingSession: Boolean by property(true)
+
         /** 插件界面语言；使用稳定 id，避免枚举重命名破坏已有配置。 */
         var languageId: String? by string(PluginLanguage.ENGLISH.id)
 

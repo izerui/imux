@@ -8,6 +8,11 @@ import org.junit.Test
 
 class ImuxSettingsTest {
     @Test
+    fun `session close confirmation is enabled by default`() {
+        assertTrue(ImuxSettings().state.confirmBeforeClosingSession)
+    }
+
+    @Test
     fun `project new menu is shown by default`() {
         assertTrue(ImuxSettings().state.showProjectNewAgentMenu)
     }

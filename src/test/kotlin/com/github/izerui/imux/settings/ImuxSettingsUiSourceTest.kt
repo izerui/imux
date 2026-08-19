@@ -15,12 +15,15 @@ class ImuxSettingsUiSourceTest {
         assertTrue(source.contains("group(ImuxBundle.message(\"settings.group.agents\"))"))
         assertTrue(source.contains("group(ImuxBundle.message(\"settings.group.project.window\"))"))
         assertTrue("打开方式应使用互斥的单选组", source.contains("buttonsGroup(ImuxBundle.message(\"settings.open.session\"))"))
+        assertTrue("关闭确认应使用原生复选框", source.contains("checkBox(ImuxBundle.message(\"settings.confirm.before.closing.session\"))"))
+        assertTrue("关闭确认必须绑定持久化设置", source.contains("bindSelected(settings.state::confirmBeforeClosingSession)"))
         assertTrue("单选组必须绑定值，否则 UI DSL 会在运行时拒绝创建页面", source.contains("Boolean::class.javaObjectType"))
     }
 
     @Test
     fun `settings page keeps important context inline`() {
         assertTrue(source.contains("settings.interface.language.comment"))
+        assertTrue(source.contains("settings.confirm.before.closing.session.comment"))
         assertTrue(source.contains("settings.available.agents.comment"))
         assertTrue(source.contains("settings.project.new.agent.menu.comment"))
         assertTrue("至少一个智能体的错误应绑定到字段", source.contains("validationOnApply"))

@@ -3,11 +3,14 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
+import com.intellij.ide.actions.CloseAction
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DataSink
 import com.intellij.openapi.actionSystem.DefaultActionGroup
+import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.editor.Editor
@@ -18,6 +21,7 @@ import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
+import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
@@ -88,6 +92,19 @@ class AgentTerminalFileEditor(
     private var keyEventsJob: Job? = null
     private var disposed = false
 
+    /**
+     * macOS 的 CloseContent（Command+W）从组件 DataContext 取 CloseTarget，平台默认目标
+     * 会直接 closeFile、绕过 VirtualFilePreCloseCheck。只在本编辑器组件内覆盖该目标，
+     * 让快捷键与标签关闭按钮共享同一份确认规则，并保持只关闭当前分屏的原生语义。
+     */
+    private val closeTarget =
+        CloseAction.CloseTarget {
+            val fileEditorManager = FileEditorManagerEx.getInstanceEx(project)
+            fileEditorManager.currentWindow?.let { currentWindow ->
+                fileEditorManager.closeFileWithChecks(virtualFile, currentWindow)
+            }
+        }
+
     private val scrollToBottomAction =
         object : DumbAwareAction(
             ImuxBundle.message("action.scroll.bottom.text"),
@@ -149,13 +166,17 @@ class AgentTerminalFileEditor(
         startScrollTracking()
         startInputTracking()
 
-        return object : JBLayeredPane() {
+        return object : JBLayeredPane(), UiDataProvider {
             init {
                 isOpaque = false
                 add(terminal)
                 setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
                 add(toolbarComponent)
                 setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)
+            }
+
+            override fun uiDataSnapshot(sink: DataSink) {
+                sink[CloseAction.CloseTarget.KEY] = closeTarget
             }
 
             override fun addNotify() {

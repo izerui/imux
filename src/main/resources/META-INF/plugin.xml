@@ -69,6 +69,13 @@
                 implementation="com.github.izerui.imux.terminal.AgentTerminalFileIconProvider"/>
 
         <!--
+          只拦截用户通过编辑器关闭链发起的操作；进程自然退出和内部清理使用无检查的
+          closeFile，因此不会在自动关闭时打断用户。
+        -->
+        <virtualFilePreCloseCheck
+                implementation="com.github.izerui.imux.terminal.AgentSessionPreCloseCheck"/>
+
+        <!--
           覆盖平台的窗口标题构建器，给有未读会话的项目名加星号前缀。
           macOS 把多个项目窗口合并成标签栏后，标签上只有 NSWindow title，
           未读状态若不送到这里，切出该项目就完全不可见。

@@ -52,6 +52,18 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了会话关闭前检查器`() {
+        assertTrue(
+            "用户关闭会话标签前必须经过 AgentSessionPreCloseCheck",
+            pluginXml.contains("com.github.izerui.imux.terminal.AgentSessionPreCloseCheck"),
+        )
+        assertTrue(
+            "关闭确认应使用平台的 virtualFilePreCloseCheck 扩展点",
+            pluginXml.contains("<virtualFilePreCloseCheck"),
+        )
+    }
+
+    @Test
     fun `注册了左侧工具窗口`() {
         assertTrue(
             "plugin.xml 未注册 AgentToolWindowFactory",
