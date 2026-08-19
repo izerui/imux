@@ -48,6 +48,10 @@ data class ClaudeRuntimeSession(
     }
 }
 
+/** 后台进程仍占着会话时，Claude CLI 会拒绝另一个 resume。 */
+internal fun ClaudeRuntimeSession?.blocksResume(): Boolean =
+    this != null && isBackground && isOccupied
+
 /**
  * 读取 `~/.claude/sessions/` 下的每个 json——Claude Code 为每个运行中的进程写的运行态文件。
  *

@@ -6,6 +6,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
+import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.handoffActionGroup
@@ -595,8 +596,7 @@ class AgentSessionTree(
                 // 预检：正在后台跑的会话不能 resume，CLI 会拒绝并报
                 // 「currently running as a background agent」。提前拦住并说明原因，
                 // 比让用户在终端里撞一脸报错好。
-                val running = monitor.runtime[data.id]
-                if (running != null && running.isBackground && running.isOccupied) {
+                if (monitor.runtime[data.id].blocksResume()) {
                     TurnNotifier.notifyBusy(project, data.title)
                     return
                 }

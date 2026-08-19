@@ -80,8 +80,7 @@ class ClaudeRuntimeIndexTest {
         writeSession(1001, "s1", kind = "bg", status = "busy")
 
         val entry = index().load()["s1"]!!
-        assertTrue(entry.isBackground)
-        assertTrue(entry.isBusy)
+        assertTrue(entry.blocksResume())
     }
 
     @Test
@@ -89,8 +88,14 @@ class ClaudeRuntimeIndexTest {
         writeSession(1001, "s1", kind = "bg", status = "idle")
 
         val entry = index().load()["s1"]!!
-        assertTrue(entry.isBackground)
-        assertFalse(entry.isBusy)
+        assertFalse(entry.blocksResume())
+    }
+
+    @Test
+    fun `交互式会话不会阻止恢复`() {
+        writeSession(1001, "s1", kind = "interactive", status = "busy")
+
+        assertFalse(index().load()["s1"]!!.blocksResume())
     }
 
     /**
@@ -111,7 +116,9 @@ class ClaudeRuntimeIndexTest {
     fun `只剩后台 shell 时仍算被占用`() {
         writeSession(1001, "s1", kind = "bg", status = "shell")
 
-        assertTrue(index().load()["s1"]!!.isOccupied)
+        val entry = index().load()["s1"]!!
+        assertTrue(entry.isOccupied)
+        assertTrue(entry.blocksResume())
     }
 
     @Test

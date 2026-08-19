@@ -1,7 +1,11 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.PiReportEndpoint
+import com.github.izerui.imux.session.blocksResume
+import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
@@ -10,7 +14,10 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
+import com.intellij.openapi.fileEditor.ex.FileEditorOpenRequest
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
@@ -83,6 +90,9 @@ class TerminalHost(
      */
     private val files = java.util.concurrent.ConcurrentHashMap<String, AgentTerminalVirtualFile>()
 
+    private val restorationState = SessionTabRestorationState()
+    private var projectClosing = false
+
     /** 最近由用户关闭的会话。再次打开时不能从被强杀留下的半轮恢复为 WORKING。 */
     private val recentlyClosedSessions = LinkedHashSet<String>()
 
@@ -91,6 +101,73 @@ class TerminalHost(
 
     private val sessionsChangedDispatcher = EventDispatcher.create(TerminalSessionsListener::class.java)
     private val keyMigratedDispatcher = EventDispatcher.create(SessionKeyMigratedListener::class.java)
+
+    init {
+        project.messageBus.connect(this).subscribe(
+            ProjectCloseListener.TOPIC,
+            object : ProjectCloseListener {
+                override fun projectClosingBeforeSave(project: Project) {
+                    if (project !== this@TerminalHost.project) return
+                    persistRestorableTabs()
+                }
+
+                override fun projectClosing(project: Project) {
+                    if (project !== this@TerminalHost.project) return
+                    projectClosing = true
+                }
+            },
+        )
+    }
+
+    /**
+     * 在离开 EDT 扫描会话库之前，原子地取得恢复快照并开启持久化抑制。
+     */
+    fun beginTabRestoration(): List<RestorableSessionTabs.Tab> {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        return restorationState.capture(
+            RestorableSessionTabs.getInstance(project).tabs(),
+        )
+    }
+
+    /**
+     * 恢复上次项目关闭前仍打开的标签。只恢复有真实 session id 的会话；pending 会话
+     * 没有可传给 CLI 的 resume id，不能可靠重建。
+     */
+    fun restoreTabs(
+        saved: List<RestorableSessionTabs.Tab>,
+        sessions: Map<String, AgentSession>,
+        runtime: Map<String, ClaudeRuntimeSession>,
+    ) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        saved.forEach { tab ->
+            val agentType = AgentType.entries.firstOrNull { it.cli == tab.agentId } ?: return@forEach
+            val session = sessions[tab.sessionId]?.takeIf { it.agentType == agentType } ?: return@forEach
+            if (runtime[tab.sessionId].blocksResume()) {
+                TurnNotifier.notifyBusy(project, session.title)
+                return@forEach
+            }
+            open(
+                key = tab.sessionId,
+                agentType = agentType,
+                command = resumeCommand(agentType, tab.sessionId),
+                tabTitle = session.title,
+                sessionId = tab.sessionId,
+                selectAsCurrent = false,
+            )
+            turnWatcher.watch(
+                tab.sessionId,
+                agentType,
+                session.filePath,
+                inferInitialState = false,
+            )
+        }
+    }
+
+    fun finishTabRestoration(persistCurrentTabs: Boolean) {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        restorationState.finish()
+        if (persistCurrentTabs) persistRestorableTabs()
+    }
 
     /**
      * 启动一个全新会话（不带 resume）。
@@ -126,6 +203,7 @@ class TerminalHost(
             turnWatcher.unwatch(key)
             rememberClosedSession(key)
             if (views[key] === file.terminalView) views.remove(key)
+            persistRestorableTabs()
             sessionsChangedDispatcher.multicaster.sessionsChanged()
         }
         file.terminalView.coroutineScope.cancel()
@@ -236,6 +314,7 @@ class TerminalHost(
         file.sessionKey = newKey
         file.sessionId = newKey
         updateTabTitle(file, newTitle)
+        persistRestorableTabs()
         if (activateMigrated) FileEditorManager.getInstance(project).openFile(file, true)
 
         // 界面得知道 key 变了，否则列表的选中态会一直停在旧会话上——
@@ -305,6 +384,7 @@ class TerminalHost(
         // 会让终端状态栏等平台位置继续显示创建时名称，因此同步写入公开标题模型。
         file.terminalView.title.change { userDefinedTitle = newTitle }
         FileEditorManager.getInstance(project).updateFilePresentation(file)
+        persistRestorableTabs()
     }
 
     /**
@@ -334,6 +414,7 @@ class TerminalHost(
         command: List<String>,
         tabTitle: String,
         sessionId: String?,
+        selectAsCurrent: Boolean = true,
     ) {
         discardIfTerminated(key)
         val file =
@@ -345,7 +426,17 @@ class TerminalHost(
                 AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId, sessionId)
                     .also(::closeTabWhenTerminated)
             }
-        FileEditorManager.getInstance(project).openFile(file, true)
+        if (selectAsCurrent) {
+            FileEditorManager.getInstance(project).openFile(file, true)
+        } else {
+            FileEditorManagerEx.getInstanceEx(project).openFile(
+                file,
+                FileEditorOpenRequest()
+                    .withSelectAsCurrent(false)
+                    .withRequestFocus(false),
+            )
+        }
+        persistRestorableTabs()
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedDispatcher.multicaster.sessionsChanged()
     }
@@ -412,7 +503,10 @@ class TerminalHost(
         if (view.sessionState.value !is TerminalViewSessionState.Terminated) return
 
         views.remove(key)
-        files.remove(key)?.let { FileEditorManager.getInstance(project).closeFile(it) }
+        files.remove(key)?.let { file ->
+            FileEditorManager.getInstance(project).closeFile(file)
+        }
+        persistRestorableTabs()
         view.coroutineScope.cancel()
     }
 
@@ -478,6 +572,22 @@ class TerminalHost(
 
     /** 只有 pi 需要上报扩展，别的 agent 一律不加。 */
     private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? = if (agentType == AgentType.PI) piReporterScript() else null
+
+    private fun persistRestorableTabs() {
+        if (!restorationState.canPersist(projectClosing, project.isDisposed)) return
+        ApplicationManager.getApplication().assertIsDispatchThread()
+
+        val tabs =
+            files.values.mapNotNull { file ->
+                val sessionId = file.sessionId ?: return@mapNotNull null
+                RestorableSessionTabs.Tab(
+                    agentId = file.agentType.cli,
+                    sessionId = sessionId,
+                    title = file.tabTitle,
+                )
+            }
+        RestorableSessionTabs.getInstance(project).replace(tabs)
+    }
 
     /**
      * 项目关闭时终结所有会话。这是唯一该杀进程的地方。

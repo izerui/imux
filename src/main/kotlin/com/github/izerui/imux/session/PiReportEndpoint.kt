@@ -4,8 +4,9 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import org.jetbrains.ide.BuiltInServerManager
 import java.util.UUID
 
@@ -51,28 +52,28 @@ class PiReportEndpointCache(scope: CoroutineScope) {
     /**
      * 算好的端点；还没算好时为 null。
      *
-     * 后台协程写、EDT 读，故必须 volatile。用字段而不是让调用方去 await 一个
-     * Deferred，是为了让「读」这件事在任何线程上都确定不阻塞。
+     * 后台协程写、EDT 读，故必须 volatile。普通打开路径只读这个字段，确保任何线程
+     * 都不阻塞；只有启动恢复 Pi 标签时才显式等待 [computation]。
      */
     @Volatile
     private var cached: PiReportEndpoint? = null
 
-    init {
-        // 服务一被实例化就在后台开算，不等第一次调用。放在 init 里用协程而不是
-        // 直接算：服务的构造发生在谁先碰到它的那个线程上，可能就是 EDT，
-        // 在构造函数里阻塞和在 endpoint() 里阻塞一样糟。
-        scope.launch(Dispatchers.IO) { cached = compute() }
-    }
+    // 服务一被实例化就在后台开算，不等第一次调用。服务构造可能发生在 EDT，
+    // 因此这里只排期；恢复 Pi 标签时可等待同一个 Deferred，而不是重复计算。
+    private val computation: Deferred<PiReportEndpoint?> =
+        scope.async(Dispatchers.IO) {
+            compute().also { cached = it }
+        }
 
     /**
      * 已经算好就返回，还没算好则返回 null——**绝不等待**。
      *
-     * 代价明确且可接受：端点还没算出来时开的 pi 标签页会退回「不上报」
-     * （标签页不自动跟随，会话本身照常启动）。而这个窗口实际上碰不到——
-     * [warmUp] 在项目打开时就把它算好了，远早于用户点开任何会话。
-     * 拿这点换「任何情况下都不卡 EDT」是划算的：卡 UI 是用户能立刻感知的伤害。
+     * 端点还没算出来时，用户手动打开的 pi 标签页仍退回「不上报」；启动恢复则通过
+     * [awaitReady] 在后台等待，保证恢复出的 Pi 进程带上上报凭据。
      */
     fun endpoint(): PiReportEndpoint? = cached
+
+    internal suspend fun awaitEndpoint(): PiReportEndpoint? = computation.await()
 
     private fun compute(): PiReportEndpoint? = runCatching {
         val port = BuiltInServerManager.getInstance().waitForStart().port
@@ -87,8 +88,8 @@ class PiReportEndpointCache(scope: CoroutineScope) {
 
     companion object {
         /**
-         * 触发缓存计算。由项目启动活动调用——那是后台协程，且发生在用户可能点开
-         * 任何会话之前，于是 [endpoint] 在真正被用到的时候总是现成的。
+         * 触发缓存计算但不等待。普通启动用它尽早预热；恢复 Pi 标签必须改用
+         * [awaitReady]，不能假设异步计算已经完成。
          *
          * 服务本身是懒加载的：不主动碰一下，它要等第一次 `current()` 才实例化，
          * 而那时已经在 EDT 上了，等于把整段延迟原样搬到用户点击的那一刻。
@@ -96,6 +97,11 @@ class PiReportEndpointCache(scope: CoroutineScope) {
         fun warmUp() {
             ApplicationManager.getApplication().service<PiReportEndpointCache>()
         }
+
+        suspend fun awaitReady(): PiReportEndpoint? =
+            ApplicationManager.getApplication()
+                .service<PiReportEndpointCache>()
+                .awaitEndpoint()
     }
 }
 

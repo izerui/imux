@@ -8,6 +8,7 @@ import com.github.izerui.imux.session.ClaudeSessionReader
 import com.github.izerui.imux.session.KeyDrift
 import com.github.izerui.imux.session.LiveSessionProbe
 import com.github.izerui.imux.session.LiveTab
+import com.github.izerui.imux.session.PiReportEndpointCache
 import com.github.izerui.imux.session.PiReportType
 import com.github.izerui.imux.session.PiSessionReader
 import com.github.izerui.imux.session.PiSessionReport
@@ -42,6 +43,7 @@ import com.intellij.openapi.wm.impl.ProjectFrameHelper
 import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.file.Paths
@@ -433,6 +435,59 @@ class SessionMonitor(
             requestDriftProbe()
         }
         refresh()
+    }
+
+    /**
+     * 用同一轮会话与运行态快照恢复标签。
+     *
+     * 不能直接依赖 [model] 和 [runtime] 的缓存：启动时 [refresh] 与运行态轮询都在后台，
+     * 恢复若抢在它们前面，会拿不到 TurnWatcher 所需的文件路径，也会绕过后台占用预检。
+     */
+    suspend fun restoreSavedTabs() {
+        val restoration =
+            withContext(Dispatchers.EDT) {
+                if (project.isDisposed) return@withContext null
+                val host = TerminalHost.getInstance(project)
+                val saved = host.beginTabRestoration()
+                if (saved.isEmpty()) null else host to saved
+            }
+        if (restoration == null) {
+            PiReportEndpointCache.warmUp()
+            return
+        }
+        val (host, saved) = restoration
+
+        var applied = false
+        try {
+            // 恢复 Pi 前必须等上报端点真正可用；warmUp 只启动异步计算，不保证完成。
+            if (saved.any { it.agentId == AgentType.PI.cli }) {
+                PiReportEndpointCache.awaitReady()
+            } else {
+                PiReportEndpointCache.warmUp()
+            }
+            val snapshot =
+                withContext(Dispatchers.IO) {
+                    val sessions = runCatching { repository.scan(projectPath) }.getOrNull()
+                        ?: return@withContext null
+                    sessions to runtimeIndex.load(projectPath)
+                } ?: return
+            val (sessions, runtimeSnapshot) = snapshot
+            withContext(Dispatchers.EDT) {
+                if (project.isDisposed) return@withContext
+                runtime = runtimeSnapshot
+                model.applyScan(sessions)
+                host.restoreTabs(
+                    saved = saved,
+                    sessions = sessions.associateBy { it.id },
+                    runtime = runtimeSnapshot,
+                )
+                applied = true
+            }
+        } finally {
+            withContext(NonCancellable + Dispatchers.EDT) {
+                host.finishTabRestoration(persistCurrentTabs = applied)
+            }
+        }
     }
 
     /**
