@@ -1,6 +1,7 @@
 package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.openapi.diagnostic.logger
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -57,10 +58,21 @@ internal class LspDiagnostics(
     private fun isInstalled(located: Map<String, String?>, agentType: AgentType): Boolean =
         !located.containsKey(agentType.cli) || located[agentType.cli] != null
 
-    /** 读不到就是读不到——不存在、无权限、编码坏了，一律降级为「未配置」。 */
+    /**
+     * 读不到就是读不到——不存在、无权限、编码坏了，一律降级为「未配置」。
+     *
+     * 降级不代表可以静默：无权限或编码坏掉的配置在 UI 上与「压根没配过」长得一模一样，
+     * 用户没有任何线索能区分。日志只写相对路径，**不写文件内容**——这几份 settings
+     * 里有用户主目录路径乃至令牌。
+     */
     private fun read(relative: String): String? =
         runCatching {
             val file = userHome.resolve(relative)
             if (Files.isRegularFile(file)) Files.readString(file) else null
-        }.getOrNull()
+        }.onFailure { LOG.warn("读取 $relative 失败，按未配置处理", it) }
+            .getOrNull()
+
+    private companion object {
+        val LOG = logger<LspDiagnostics>()
+    }
 }

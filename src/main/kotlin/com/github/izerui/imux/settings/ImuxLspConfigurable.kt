@@ -137,7 +137,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         cliReport.groupRemedy?.let { remedy ->
             row {
                 icon(AllIcons.General.Warning)
-                label(groupMessage(cliReport))
+                // 与下面 no.findings 同一把尺子：label 产出不折行的 JLabel，preferred width
+                // 直接抬高整页最小宽度。这句是葡语 98 / 德语 90 / 俄语 93 字符，且命中率远高于
+                // no.findings——没装 pi-lens 或没给 Codex 挂 MCP 的用户每次开页都看到它。
+                comment(groupMessage(cliReport))
             }
             renderRemedy(remedy)
             return
@@ -149,10 +152,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         // 装了、没有前置修复、却一条语言结果都没有：Codex 挂了 pi-lens-mcp 但本机没装
         // pi（或 pi 没装 pi-lens）就是这个状态。不兜底的话这里会是个只有标题的空分组。
         //
-        // 用 comment 而不是 label：这是本页最长的一句（德语 122 字符、俄语 118），
-        // 而 UI DSL 的 label 产出不折行的 JLabel，它的 preferred width 会直接抬高
-        // 整页的最小宽度，把设置对话框撑宽或逼出横向滚动条。comment 会在
-        // DEFAULT_COMMENT_WIDTH 处折行，灰色说明文字的语义也更贴。
+        // 用 comment 而不是 label：这是本页最长的几句之一（德语 122 字符、俄语 118，
+        // 与 readySummary 那行同一量级），而 UI DSL 的 label 产出不折行的 JLabel，
+        // 它的 preferred width 会直接抬高整页的最小宽度，把设置对话框撑宽或逼出
+        // 横向滚动条。comment 会在 DEFAULT_COMMENT_WIDTH 处折行，
+        // 而这句是「什么都没查到」的说明，灰色说明文字的语义也更贴。
         if (ready.isEmpty() && gaps.isEmpty()) {
             row {
                 icon(AllIcons.General.Information)
@@ -164,11 +168,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         if (ready.isNotEmpty()) {
             row {
                 icon(AllIcons.General.InspectionsOK)
-                // 已就绪的折叠成一行：体检表一啰嗦就没人看
-                label(
-                    ImuxBundle.message("settings.lsp.ready", ready.size) + "  " +
-                        ready.joinToString(" · ") { it.language.displayName },
-                )
+                text(readySummary(ready))
             }
         }
 
@@ -191,6 +191,23 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             }
         }
     }
+
+    /**
+     * 已就绪的语言折叠成一行：体检表一啰嗦就没人看。
+     *
+     * 渲染这一行必须用 [com.intellij.ui.dsl.builder.Row.text] 而非 `label`。它是全页最长的
+     * 一行：Claude 组的 ready 上限就是 `claudePlugin != null` 的全集共 13 门，而语言显示名
+     * 不随语言包变化，所以**任何语种下**都是约 116 字符——比已被判定「必须折行」的
+     * settings.lsp.no.findings 还长，命中率还高（配置完整的 Claude Code 用户每次都看到）。
+     * UI DSL 的 `label` 产出不折行的 JLabel，preferred width 会直接抬高整页最小宽度，
+     * 把设置对话框撑宽或逼出横向滚动条。
+     *
+     * 用 `text` 而不是 `comment`：两者都在 DEFAULT_COMMENT_WIDTH 处折行，但 `comment`
+     * 渲染成灰色说明文字，会把「已就绪」这条正面结论降级成脚注；`text` 保持正常前景色。
+     */
+    private fun readySummary(ready: List<LanguageFinding>): String =
+        ImuxBundle.message("settings.lsp.ready", ready.size) + "  " +
+            ready.joinToString(" · ") { it.language.displayName }
 
     /** 缩进一级挂在触发它的那条缺口之下，让「命令属于哪门语言」一眼可辨。 */
     private fun Panel.renderRemedy(remedy: Remedy) {

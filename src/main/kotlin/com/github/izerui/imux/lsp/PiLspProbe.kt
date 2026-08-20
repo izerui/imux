@@ -2,6 +2,10 @@ package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
 import com.google.gson.JsonParser
+import com.intellij.openapi.diagnostic.Logger
+
+/** 同 ClaudeCodeLspProbe：本文件只有顶层函数，没有类可以喂给 `logger<T>()`。 */
+private val LOG = Logger.getInstance("com.github.izerui.imux.lsp.PiLspProbe")
 
 /** `pi install` 写进 settings 的包标识；可带 `@版本` 后缀。 */
 private const val PI_LENS_PACKAGE = "npm:pi-lens"
@@ -17,9 +21,14 @@ private const val PI_LENS_PACKAGE = "npm:pi-lens"
  */
 internal fun hasPiLens(settingsJson: String?): Boolean {
     if (settingsJson.isNullOrBlank()) return false
+    // 抛异常才记日志：`packages` 键不存在时 getAsJsonArray 返回 null 而不抛，
+    // 那是「没装扩展」的正常状态，不该刷日志。真抛出来的是 JSON 坏了或形状不对
+    // ——UI 上同样只显示成「未安装 pi-lens」，除了日志没有别的线索。
+    // 只写文件名，不写内容：settings 里有用户主目录路径。
     val packages = runCatching {
         JsonParser.parseString(settingsJson).asJsonObject.getAsJsonArray("packages")
-    }.getOrNull() ?: return false
+    }.onFailure { LOG.warn("解析 ~/.pi/agent/settings.json 失败，按未安装 pi-lens 处理", it) }
+        .getOrNull() ?: return false
 
     return packages.any { element ->
         val value = runCatching { element.asString }.getOrNull() ?: return@any false

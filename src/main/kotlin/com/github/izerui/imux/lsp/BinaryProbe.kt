@@ -51,6 +51,21 @@ internal fun parseProbeOutput(output: String): Map<String, String?> =
  * 那次表现为「点开会话后标签页一片空白」。
  *
  * `-l` 读 profile 拿 PATH，`-i` 读 rc 拿 alias 与 nvm/rbenv 之类的 shim。
+ *
+ * **stderr 必须 DISCARD，不能留独立管道、也不能合并进 stdout。**
+ *
+ * 留独立管道会死锁：这里全程没人读 stderr，而 nvm / rbenv / conda init 之类的 rc
+ * 往 stderr 写超过管道缓冲（约 64KB）时，子进程会阻塞在写 stderr 上，于是永远不关
+ * stdout，`readText()` 永久阻塞，下面那行 `waitFor(timeout)` **根本执行不到**——
+ * 超时机制形同虚设。这个坑格外隐蔽：用户自己的终端把 stderr 直接画到屏幕上、不经
+ * 管道，所以**用户终端一切正常，只有 imux 挂死**。挂死还会连锁：invokeLater 回调
+ * 永不执行 → 页面永久停在「正在检测…」→ 重新检测按钮永久禁用（重新启用就写在那个
+ * 回调里）→ 用户重开设置页触发 `createPanel().also { refresh() }` → 再泄漏一个登录
+ * shell，可无限累积。
+ *
+ * 合并进 stdout（`redirectErrorStream(true)`）确实也能消除死锁，但会把 profile 的
+ * 噪音混进探测结果：[parseProbeOutput] 靠制表符筛行，任何恰好含制表符的告警都会被
+ * 当成一条「名称→路径」，反而更糟。stderr 本来就无人读取，DISCARD 不丢任何信息。
  */
 internal class ShellBinaryProbe(
     private val shell: String = resolveShell(System.getenv("SHELL")),
@@ -61,7 +76,7 @@ internal class ShellBinaryProbe(
         if (binaries.isEmpty()) return emptyMap()
         return runCatching {
             val process = ProcessBuilder(shell, "-l", "-i", "-c", buildProbeScript(binaries.toList()))
-                .redirectErrorStream(false)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start()
             process.outputStream.close()
             val output = process.inputStream.bufferedReader().use { it.readText() }
@@ -69,6 +84,10 @@ internal class ShellBinaryProbe(
                 process.destroyForcibly()
                 // 超时不能退化成「全部未安装」——那会让 UI 谎报一堆缺口。
                 // 返回空映射，上层据此标 UNKNOWN。
+                //
+                // 这是本页最可能发生的失败，必须留痕：UI 上它只表现为一屏「无法确定」，
+                // 而 settings.lsp.failed 的译文正让用户「详情见 IDE 日志」。
+                LOG.warn("LSP 二进制探测超时（${timeoutSeconds}s），全部标记为无法确定")
                 return emptyMap()
             }
             parseProbeOutput(output)

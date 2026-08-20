@@ -126,8 +126,55 @@ class ImuxLspUiSourceTest {
             source.contains("if (ready.isEmpty() && gaps.isEmpty())"),
         )
         assertTrue(
-            "兜底行必须用 comment：这是本页最长的一句，label 不折行会撑宽整个设置对话框",
+            "兜底行必须用 comment：label 不折行会撑宽整个设置对话框",
             source.contains("""comment(ImuxBundle.message("settings.lsp.no.findings"))"""),
+        )
+    }
+
+    /**
+     * 组级提示是没装 pi-lens / 没给 Codex 挂 MCP 的用户每次开页都会看到的一行，
+     * 葡语 98、德语 90、俄语 93 字符。UI DSL 的 `label` 产出不折行的 JLabel，
+     * 其 preferred width 会直接抬高整页最小宽度，把设置对话框撑宽或逼出横向滚动条。
+     *
+     * 断言钉的是**调用本身**而不是 `groupMessage` 这个标识符：只钉标识符的话，
+     * 改回 `label(groupMessage(cliReport))` 断言照样绿，缺陷原样复活。
+     */
+    @Test
+    fun `组级提示必须折行`() {
+        assertTrue(
+            "组级提示必须用 comment：label 不折行，这一行在多数语种下接近 100 字符",
+            source.contains("comment(groupMessage(cliReport))"),
+        )
+        assertFalse(
+            "组级提示不得退回 label",
+            source.contains("label(groupMessage(cliReport))"),
+        )
+    }
+
+    /**
+     * 已就绪汇总是全页最长的一行：Claude 组的 ready 上限是 claudePlugin != null 的全集共
+     * 13 门，语言显示名又不随语言包变化，所以**任何语种下**都是约 116 字符——比已被判定
+     * 「必须折行」的 no.findings 还长，且配置完整的 Claude Code 用户每次都看到。
+     *
+     * 用 `text` 而不是 `comment`：两者都折行，但 comment 是灰色说明文字，
+     * 会把「已就绪」这条正面结论降级成脚注。
+     *
+     * 汇总字符串刻意抽成 readySummary()，好让这条断言能钉住**整个调用**而不是某个
+     * 标识符——只断言源码里出现过 "settings.lsp.ready" 的话，改回 label 断言照样绿。
+     */
+    @Test
+    fun `已就绪汇总行必须折行且不降级成灰字`() {
+        assertTrue(
+            "已就绪汇总必须折行：全页最长的一行，label 会撑宽整个设置对话框",
+            source.contains("text(readySummary(ready))"),
+        )
+        assertFalse(
+            "已就绪汇总不得退回 label",
+            source.contains("label(readySummary(ready))"),
+        )
+        assertFalse(
+            "已就绪是正面结论，comment 的灰字会把它降级成脚注",
+            source.contains("comment(readySummary(ready))"),
         )
     }
 
