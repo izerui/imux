@@ -137,4 +137,4 @@ internal fun resolveShell(shellEnv: String?): String = shellEnv?.takeIf { it.isN
  * 会话 id 来自文件名，不该假定它的内容安全——凡是拼进 shell 命令行的东西一律当作不可信。
  * 单引号内除单引号本身外一切都是字面量，所以只需把 `'` 换成 `'\''`（闭合、转义、重开）。
  */
-private fun singleQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+internal fun singleQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
