@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.text.MessageFormat
 import java.util.Locale
 import java.util.Properties
 
@@ -79,6 +80,47 @@ class ImuxBundleTest {
                 )
             }
         }
+    }
+
+    /**
+     * MessageFormat 把 `'` 当引用字符：带占位符的译文若写单个 `'`，会吞掉后续文本甚至整个 {0}。
+     * 法语这类语言极易踩到，所以用真实格式化做往返校验，而不是只比对占位符集合。
+     */
+    @Test
+    fun `parameterized translations survive message formatting`() {
+        PluginLanguage.entries.forEach { language ->
+            val bundle = properties(bundleFile(language))
+            bundle.stringPropertyNames().forEach { key ->
+                val value = bundle.getProperty(key)
+                val placeholders = placeholders(value)
+                if (placeholders.isEmpty()) {
+                    // 无参消息不走 MessageFormat，写 '' 会原样显示两个撇号。
+                    assertTrue("${language.id} 的 $key 没有占位符，不该转义单引号", !value.contains("''"))
+                    return@forEach
+                }
+                val arguments = Array<Any>(placeholders.size) { "<arg$it>" }
+                val formatted = MessageFormat(value, language.locale).format(arguments)
+                arguments.forEach { argument ->
+                    assertTrue(
+                        "${language.id} 的 $key 格式化后丢失 $argument，通常是未转义的单引号：$formatted",
+                        formatted.contains(argument.toString()),
+                    )
+                }
+            }
+        }
+    }
+
+    /** 无参消息保留原文撇号；带参消息格式化后也只能剩一个撇号。 */
+    @Test
+    fun `apostrophes render as a single character`() {
+        assertEquals(
+            "Langue de l'interface :",
+            ImuxBundle.message(PluginLanguage.FRENCH, "settings.interface.language"),
+        )
+        assertEquals(
+            "« Build » s'exécute en tant qu'agent en arrière-plan. Ouvrez-la lorsqu'elle sera inactive.",
+            ImuxBundle.message(PluginLanguage.FRENCH, "notification.busy.content", "Build"),
+        )
     }
 
     @Test

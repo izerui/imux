@@ -13,8 +13,8 @@ enum class PluginLanguage(
     val locale: Locale,
     private val nativeName: String,
 ) {
-    /** 英文用基础包（无后缀），因此绑定 ROOT，避免 JVM 默认语言把它兜底到别的翻译。 */
-    ENGLISH("en", Locale.ROOT, "English"),
+    /** 英文落在无后缀的基础包；平台的 ResourceBundle control 不做默认语言兜底，日语系统上也不会误取到别的译文。 */
+    ENGLISH("en", Locale.ENGLISH, "English"),
     SIMPLIFIED_CHINESE("zh-CN", Locale.SIMPLIFIED_CHINESE, "简体中文"),
     TRADITIONAL_CHINESE("zh-TW", Locale.TRADITIONAL_CHINESE, "繁體中文"),
     JAPANESE("ja", Locale.JAPANESE, "日本語"),

@@ -53,8 +53,19 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         var piEnabled: Boolean by property(true)
     }
 
+    /**
+     * IDE 语言优先于 JVM 默认语言：用户在 IDE 里装了语言包时 [Locale.getDefault] 仍是系统语言。
+     * [DynamicBundle.getLocale] 依赖应用服务，单元测试等无应用环境下退回系统语言。
+     *
+     * 缓存结果：IDE 切换语言需要重启，而 [ImuxBundle.message] 是渲染路径上的高频调用。
+     */
+    private val detectedLanguage: PluginLanguage by lazy {
+        val locale = runCatching { DynamicBundle.getLocale() }.getOrNull() ?: Locale.getDefault()
+        PluginLanguage.fromLocale(locale)
+    }
+
     val language: PluginLanguage
-        get() = state.languageId?.let(PluginLanguage::fromId) ?: detectedLanguage()
+        get() = state.languageId?.let(PluginLanguage::fromId) ?: detectedLanguage
 
     val enabledAgentTypes: List<AgentType>
         get() =
@@ -94,15 +105,6 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         listener: () -> Unit,
     ) {
         enabledAgentsListeners.addListener(EnabledAgentsListener(listener), parentDisposable)
-    }
-
-    /**
-     * IDE 语言优先于 JVM 默认语言：用户在 IDE 里装了语言包时 [Locale.getDefault] 仍是系统语言。
-     * [DynamicBundle.getLocale] 依赖应用服务，单元测试等无应用环境下退回系统语言。
-     */
-    private fun detectedLanguage(): PluginLanguage {
-        val locale = runCatching { DynamicBundle.getLocale() }.getOrNull() ?: Locale.getDefault()
-        return PluginLanguage.fromLocale(locale)
     }
 
     fun interface LanguageListener : EventListener {
