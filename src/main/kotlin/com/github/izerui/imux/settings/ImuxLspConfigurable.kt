@@ -148,10 +148,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
 
         // 装了、没有前置修复、却一条语言结果都没有：Codex 挂了 pi-lens-mcp 但本机没装
         // pi（或 pi 没装 pi-lens）就是这个状态。不兜底的话这里会是个只有标题的空分组。
+        //
+        // 用 comment 而不是 label：这是本页最长的一句（德语 122 字符、俄语 118），
+        // 而 UI DSL 的 label 产出不折行的 JLabel，它的 preferred width 会直接抬高
+        // 整页的最小宽度，把设置对话框撑宽或逼出横向滚动条。comment 会在
+        // DEFAULT_COMMENT_WIDTH 处折行，灰色说明文字的语义也更贴。
         if (ready.isEmpty() && gaps.isEmpty()) {
             row {
                 icon(AllIcons.General.Information)
-                label(ImuxBundle.message("settings.lsp.no.findings"))
+                comment(ImuxBundle.message("settings.lsp.no.findings"))
             }
             return
         }

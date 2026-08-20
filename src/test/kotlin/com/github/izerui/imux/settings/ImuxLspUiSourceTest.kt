@@ -82,11 +82,20 @@ class ImuxLspUiSourceTest {
         )
     }
 
-    /** 体检失败不能与「进行中」长得一样，也不能把异常吞得连日志都没有。 */
+    /**
+     * 体检失败不能与「进行中」长得一样，也不能把异常吞得连日志都没有。
+     *
+     * 断言钉的是**分派那一行**而不是 `settings.lsp.failed` 这个标识符：把分派改回
+     * `showChecking()` 而把 `showFailed()` 的定义留在原地，缺陷就复活了，
+     * 而 Kotlin 对没人调用的 private 函数只报 warning，拦不住。
+     */
     @Test
     fun `体检失败要留日志并显示错误态`() {
         assertTrue("异常必须落到 idea.log", source.contains("LOG.warn"))
-        assertTrue("失败要有独立文案，不能复用「正在检测」", source.contains("settings.lsp.failed"))
+        assertTrue(
+            "失败必须分派到独立的错误态，不能复用「正在检测」",
+            source.contains("if (report == null) showFailed() else showReport(report)"),
+        )
     }
 
     /**
@@ -96,7 +105,12 @@ class ImuxLspUiSourceTest {
     @Test
     fun `连点重新检测不会叠起多个登录 shell`() {
         assertTrue("探测期间必须禁用按钮", source.contains("refreshButton?.isEnabled = false"))
-        assertTrue("过期结果不得覆盖最新结果", source.contains("AtomicInteger"))
+        // 钉回调里的比对本身：只断言 AtomicInteger 字段声明的话，
+        // 把这行守卫删掉、字段留着，竞态就复活了而断言照样绿。
+        assertTrue(
+            "过期结果不得覆盖最新结果",
+            source.contains("if (token == generation.get())"),
+        )
     }
 
     /**
@@ -105,7 +119,16 @@ class ImuxLspUiSourceTest {
      */
     @Test
     fun `没有逐语言结果时也不留空分组`() {
-        assertTrue(source.contains("settings.lsp.no.findings"))
+        // 同样钉守卫条件而不是文案键：把条件退化成 `ready.isEmpty()`（gaps 非空时
+        // 就再也进不来）或干脆改成永假，兜底行就没了而文案键还在源码里。
+        assertTrue(
+            "ready 与 gaps 双空时必须走兜底分支",
+            source.contains("if (ready.isEmpty() && gaps.isEmpty())"),
+        )
+        assertTrue(
+            "兜底行必须用 comment：这是本页最长的一句，label 不折行会撑宽整个设置对话框",
+            source.contains("""comment(ImuxBundle.message("settings.lsp.no.findings"))"""),
+        )
     }
 
     /** 图标必须用官方语义图标，不自绘。 */
