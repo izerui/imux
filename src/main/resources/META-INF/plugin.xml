@@ -48,6 +48,16 @@
                 id="com.github.izerui.imux.settings"
                 displayName="Imux"/>
 
+        <!--
+          LSP 体检子页。挂在 Imux 之下而不是 tools 根，避免在 Tools 里再多出一个
+          与 imux 无关联的顶层条目。
+        -->
+        <applicationConfigurable
+                parentId="com.github.izerui.imux.settings"
+                instance="com.github.izerui.imux.settings.ImuxLspConfigurable"
+                id="com.github.izerui.imux.settings.lsp"
+                displayName="LSP"/>
+
         <toolWindow
                 id="imux"
                 anchor="left"

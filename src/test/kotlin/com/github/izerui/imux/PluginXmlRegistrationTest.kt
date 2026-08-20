@@ -183,6 +183,16 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了 LSP 体检子页`() {
+        assertTrue(
+            "LSP 体检必须挂在 Imux 设置页下，否则用户找不到入口",
+            pluginXml.contains("com.github.izerui.imux.settings.ImuxLspConfigurable") &&
+                pluginXml.contains("parentId=\"com.github.izerui.imux.settings\"") &&
+                pluginXml.contains("displayName=\"LSP\""),
+        )
+    }
+
+    @Test
     fun `注册了 pi 会话上报的 HTTP 接收端`() {
         assertTrue(
             "缺了注册，pi 扩展报上来的会话切换没人接收，标签页不会跟随",
