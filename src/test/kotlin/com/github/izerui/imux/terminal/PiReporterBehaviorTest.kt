@@ -101,9 +101,9 @@ class PiReporterBehaviorTest {
     }
 
     @Test
-    fun `重绘和定位期间隐藏硬件光标直到最终位置`() {
+    fun `配置光标样式不改写后续终端输出`() {
         assertEquals(
-            "<ESC>[5 q|<ESC>[?25lframe|<ESC>[?25lmove|show",
+            "<ESC>[5 q|frame|move|show",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =

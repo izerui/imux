@@ -467,15 +467,19 @@ class SessionMonitor(
             }
             val snapshot =
                 withContext(Dispatchers.IO) {
-                    val sessions = runCatching { repository.scan(projectPath) }.getOrNull()
-                        ?: return@withContext null
+                    val sessions =
+                        runCatching { repository.scan(projectPath) }.getOrNull()
+                            ?: return@withContext null
                     sessions to runtimeIndex.load(projectPath)
                 } ?: return
             val (sessions, runtimeSnapshot) = snapshot
             withContext(Dispatchers.EDT) {
                 if (project.isDisposed) return@withContext
                 runtime = runtimeSnapshot
-                model.applyScan(sessions)
+                model.applyScan(
+                    sessions,
+                    detectUnclaimedSessions = false,
+                )
                 host.restoreTabs(
                     saved = saved,
                     sessions = sessions.associateBy { it.id },

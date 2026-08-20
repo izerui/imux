@@ -15,8 +15,13 @@ data class PendingSession(
 )
 
 sealed interface ListEntry {
-    data class Existing(val session: AgentSession) : ListEntry
-    data class Pending(val pending: PendingSession) : ListEntry
+    data class Existing(
+        val session: AgentSession,
+    ) : ListEntry
+
+    data class Pending(
+        val pending: PendingSession,
+    ) : ListEntry
 }
 
 /**
@@ -35,7 +40,6 @@ class SessionListModel(
     private val scan: () -> List<AgentSession>,
     private val clock: () -> Instant,
 ) {
-
     private var sessions: List<AgentSession> = emptyList()
     private val pendings = mutableListOf<PendingSession>()
     private val bindings = mutableMapOf<String, String>()
@@ -65,13 +69,17 @@ class SessionListModel(
         listeners.add(listener)
     }
 
-    fun registerPending(agentType: AgentType, sessionId: String? = null): PendingSession {
-        val pending = PendingSession(
-            key = "pending-${pendingSeq++}",
-            agentType = agentType,
-            startedAt = clock(),
-            sessionId = sessionId,
-        )
+    fun registerPending(
+        agentType: AgentType,
+        sessionId: String? = null,
+    ): PendingSession {
+        val pending =
+            PendingSession(
+                key = "pending-${pendingSeq++}",
+                agentType = agentType,
+                startedAt = clock(),
+                sessionId = sessionId,
+            )
         pendings.add(pending)
         notifyListeners()
         return pending
@@ -118,10 +126,13 @@ class SessionListModel(
      * 一次扫描 60–250ms，放在 EDT 上每 3 秒来一次会有明显卡顿。
      * 本方法只做内存里的合并与通知，必须在 EDT 调用。
      */
-    fun applyScan(scanned: List<AgentSession>) {
+    fun applyScan(
+        scanned: List<AgentSession>,
+        detectUnclaimedSessions: Boolean = true,
+    ) {
         val pendingsBefore = visiblePendingKeys()
 
-        bindNewSessions(scanned)
+        bindNewSessions(scanned, detectUnclaimedSessions)
         expirePendings()
 
         val changed = scanned != sessions || visiblePendingKeys() != pendingsBefore
@@ -134,35 +145,42 @@ class SessionListModel(
         if (changed) notifyListeners()
     }
 
-    private fun visiblePendingKeys(): List<String> =
-        pendings.filter { it.key !in bindings }.map { it.key }
+    private fun visiblePendingKeys(): List<String> = pendings.filter { it.key !in bindings }.map { it.key }
 
     fun sessionOf(id: String): AgentSession? = sessions.firstOrNull { it.id == id }
 
     fun entries(agentType: AgentType): List<ListEntry> {
-        val existing = sessions
-            .filter { it.agentType == agentType }
-            .map { ListEntry.Existing(it) }
+        val existing =
+            sessions
+                .filter { it.agentType == agentType }
+                .map { ListEntry.Existing(it) }
         // pending 放前面：新建的会话应出现在分组顶部，与「最近活动优先」的排序意图一致
-        val stillPending = pendings
-            .filter { it.agentType == agentType && it.key !in bindings }
-            .map { ListEntry.Pending(it) }
+        val stillPending =
+            pendings
+                .filter { it.agentType == agentType && it.key !in bindings }
+                .map { ListEntry.Pending(it) }
         return stillPending + existing
     }
 
-    private fun bindNewSessions(scanned: List<AgentSession>) {
+    private fun bindNewSessions(
+        scanned: List<AgentSession>,
+        detectUnclaimedSessions: Boolean,
+    ) {
         val fresh = scanned.filter { it.id !in knownIds }
         for (session in fresh.sortedBy { it.lastActiveAt }) {
             val free = pendings.filter { it.key !in bindings }
             // 预知 id 的 pending（pi）走精确匹配，不参与下面的时间窗竞争：
             // id 在启动前就定了，没有可猜的余地，也不该被别的会话抢走。
-            val candidate = free.firstOrNull { it.sessionId == session.id }
-                ?: free
-                    .filter { it.sessionId == null }
-                    .filter { it.agentType == session.agentType }
-                    .filter { !it.startedAt.isAfter(session.lastActiveAt) }
-                    .maxByOrNull { it.startedAt }
+            val candidate =
+                free.firstOrNull { it.sessionId == session.id }
+                    ?: free
+                        .filter { it.sessionId == null }
+                        .filter { it.agentType == session.agentType }
+                        .filter { !it.startedAt.isAfter(session.lastActiveAt) }
+                        .maxByOrNull { it.startedAt }
             if (candidate == null) {
+                // 恢复阶段的首次扫描只是在建立基线，历史会话不能触发漂移探测。
+                if (!detectUnclaimedSessions) continue
                 // 没人在等这个会话。两种可能：某个已打开的终端在 /clear、/new 之后
                 // 换了会话 id（进程没变），或者用户在 IDE 外面自己开了一个。
                 // 分辨要靠进程探测，这里只负责报告。

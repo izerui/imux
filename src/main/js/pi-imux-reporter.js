@@ -1,7 +1,6 @@
 import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 
 const CURSOR_MARKER = "\x1b_pi:c\x07";
-const HIDE_CURSOR = "\x1b[?25l";
 const BLINKING_BAR_CURSOR = "\x1b[5 q";
 const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
 
@@ -34,21 +33,11 @@ function isCursorAtLineEnd(editor) {
   }
 }
 
-function stabilizeHardwareCursor(tui) {
+function configureHardwareCursor(tui) {
   const terminal = tui?.terminal;
   if (!terminal || typeof terminal.write !== "function") return;
 
   terminal.write(BLINKING_BAR_CURSOR);
-
-  const wrapperKey = Symbol.for("com.github.izerui.imux.pi-terminal-cursor");
-  if (terminal[wrapperKey]) return;
-
-  // Pi regular TUI writes a frame before moving the hardware cursor back to CURSOR_MARKER.
-  // Hide it for every intermediate write; positionHardwareCursor() calls showCursor() only
-  // after the final move, so users see one stable position instead of the redraw endpoint.
-  const write = terminal.write.bind(terminal);
-  terminal.write = (data) => write(`${HIDE_CURSOR}${data}`);
-  terminal[wrapperKey] = true;
 }
 
 function installHardwareCursorEditor(ctx) {
@@ -63,7 +52,7 @@ function installHardwareCursorEditor(ctx) {
   if (!previousFactory && typeof CustomEditor !== "function") return;
 
   const factory = (tui, theme, keybindings) => {
-    stabilizeHardwareCursor(tui);
+    configureHardwareCursor(tui);
     // settings.showHardwareCursor=false 会覆盖环境变量；只在 imux 的 TUI 实例上重新启用，
     // 不改写用户配置文件，也不影响用户从普通终端启动的 pi。
     tui.setShowHardwareCursor?.(true);
