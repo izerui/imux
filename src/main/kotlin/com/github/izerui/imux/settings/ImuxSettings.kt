@@ -1,6 +1,7 @@
 package com.github.izerui.imux.settings
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.DynamicBundle
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.BaseState
@@ -12,6 +13,7 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.util.EventDispatcher
 import java.util.EventListener
+import java.util.Locale
 
 /**
  * 插件的全局偏好。
@@ -35,8 +37,12 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         /** 关闭仍在运行的会话标签前显示确认。 */
         var confirmBeforeClosingSession: Boolean by property(true)
 
-        /** 插件界面语言；使用稳定 id，避免枚举重命名破坏已有配置。 */
-        var languageId: String? by string(PluginLanguage.ENGLISH.id)
+        /**
+         * 插件界面语言；使用稳定 id，避免枚举重命名破坏已有配置。
+         *
+         * 默认 null 表示「尚未显式选择」，此时跟随 IDE 语言，装完插件不必先去设置里改语言。
+         */
+        var languageId: String? by string(null)
 
         /** 在 Project 工具窗口的“新建”菜单中显示 AI 智能体入口。 */
         var showProjectNewAgentMenu: Boolean by property(true)
@@ -48,7 +54,7 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
     }
 
     val language: PluginLanguage
-        get() = PluginLanguage.fromId(state.languageId)
+        get() = state.languageId?.let(PluginLanguage::fromId) ?: detectedLanguage()
 
     val enabledAgentTypes: List<AgentType>
         get() =
@@ -61,9 +67,10 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
             }
 
     fun setLanguage(language: PluginLanguage) {
-        if (this.language == language) return
+        val changed = this.language != language
+        // 即使与自动推断结果一致也要落盘：显式选择后不应再跟随 IDE 语言变化。
         state.languageId = language.id
-        languageListeners.multicaster.languageChanged()
+        if (changed) languageListeners.multicaster.languageChanged()
     }
 
     fun setEnabledAgentTypes(agentTypes: Set<AgentType>) {
@@ -87,6 +94,15 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         listener: () -> Unit,
     ) {
         enabledAgentsListeners.addListener(EnabledAgentsListener(listener), parentDisposable)
+    }
+
+    /**
+     * IDE 语言优先于 JVM 默认语言：用户在 IDE 里装了语言包时 [Locale.getDefault] 仍是系统语言。
+     * [DynamicBundle.getLocale] 依赖应用服务，单元测试等无应用环境下退回系统语言。
+     */
+    private fun detectedLanguage(): PluginLanguage {
+        val locale = runCatching { DynamicBundle.getLocale() }.getOrNull() ?: Locale.getDefault()
+        return PluginLanguage.fromLocale(locale)
     }
 
     fun interface LanguageListener : EventListener {
