@@ -1342,7 +1342,9 @@ EOF
 
 **Interfaces:**
 - Consumes: `parseConfiguredCommands`、`claudeReport`、`hasPiLens`、`piReport`、`mountsPiLensMcp`、`codexReport`、`BinaryProbe`、`LspCatalog.allBinaries`
-- Produces: `class LspDiagnostics(userHome: Path, binaryProbe: BinaryProbe, cliPresence: (AgentType) -> Boolean)`，方法 `fun run(): LspReport`
+- Produces: `class LspDiagnostics(userHome: Path, binaryProbe: BinaryProbe)`，方法 `fun run(): LspReport`
+
+**CLI 是否安装也走同一次批量探测。** `claude` / `codex` / `pi` 只是另外三个要查的二进制，没有理由为它们各起一个登录 shell——那与 Task 2 「一次问完」的理由完全相同（读 profile 的开销是每次都要付的）。全流程只起 1 次登录 shell。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -1371,15 +1373,18 @@ class LspDiagnosticsTest {
         Files.writeString(file, content)
     }
 
+    /** [installed] 里的 CLI 会在探测结果中带上一个路径，其余带 null（= 确认未安装）。 */
     private fun diagnostics(
         binaries: Map<String, String?> = emptyMap(),
         installed: Set<AgentType> = AgentType.entries.toSet(),
     ) = LspDiagnostics(
         userHome = temp.root.toPath(),
         binaryProbe = object : BinaryProbe {
-            override fun locate(binaries2: Set<String>) = binaries
+            override fun locate(wanted: Set<String>): Map<String, String?> =
+                binaries + AgentType.entries.associate { type ->
+                    type.cli to if (type in installed) "/usr/local/bin/${type.cli}" else null
+                }
         },
-        cliPresence = { it in installed },
     )
 
     private fun LspReport.of(type: AgentType) = cliReports.single { it.agentType == type }
@@ -1429,22 +1434,38 @@ class LspDiagnosticsTest {
         assertTrue(report.of(AgentType.PI).installed)
     }
 
-    /** 只探测目录表里真正用到的二进制，不多问。 */
+    /** 语言服务器与三个 CLI 必须在同一次调用里问完——登录 shell 只该起一次。 */
     @Test
-    fun `探测的二进制集合等于目录表声明的集合`() {
-        var asked: Set<String>? = null
+    fun `一次探测同时覆盖语言服务器与三个 CLI`() {
+        val calls = mutableListOf<Set<String>>()
         LspDiagnostics(
             userHome = temp.root.toPath(),
             binaryProbe = object : BinaryProbe {
-                override fun locate(binaries: Set<String>): Map<String, String?> {
-                    asked = binaries
+                override fun locate(wanted: Set<String>): Map<String, String?> {
+                    calls += wanted
                     return emptyMap()
                 }
             },
-            cliPresence = { true },
         ).run()
 
-        assertEquals(LspCatalog.allBinaries, asked)
+        assertEquals("只允许探测一次", 1, calls.size)
+        assertEquals(LspCatalog.allBinaries + AgentType.entries.map { it.cli }, calls.single())
+    }
+
+    /**
+     * 探测超时会返回空映射。此时不能把「没查到」说成「CLI 没装」——
+     * 那会让整个页面变成三行「未安装」，而真实情况只是探测失败。
+     */
+    @Test
+    fun `探测结果里没有 CLI 键时视为已安装并逐项标记无法确定`() {
+        val report = LspDiagnostics(
+            userHome = temp.root.toPath(),
+            binaryProbe = object : BinaryProbe {
+                override fun locate(wanted: Set<String>): Map<String, String?> = emptyMap()
+            },
+        ).run()
+
+        assertTrue("不得因探测失败而谎报未安装", report.of(AgentType.CLAUDE).installed)
     }
 }
 ```
@@ -1469,44 +1490,54 @@ import java.nio.file.Path
  * 编排三个探针，产出一次完整体检。
  *
  * [userHome] 参数化是为了测试能指向临时目录，与 `SessionRepository.forUserHome()`
- * 的做法一致。[cliPresence] 与 [binaryProbe] 同理注入，单测不碰真实 shell。
+ * 的做法一致。[binaryProbe] 同理注入，单测不碰真实 shell。
  *
  * 全程只读：只 `Files.readString`，不创建、不写入、不执行安装。
  */
 internal class LspDiagnostics(
     private val userHome: Path,
     private val binaryProbe: BinaryProbe,
-    private val cliPresence: (AgentType) -> Boolean,
 ) {
 
     fun run(): LspReport {
-        // 一次问完所有二进制：三个探针共用这一份结果，登录 shell 只起一次
-        val binaries = binaryProbe.locate(LspCatalog.allBinaries)
+        // 一次问完：语言服务器 + 三个 CLI 自身。登录 shell 要读 profile，
+        // 那份开销每次都要付，没有理由为查三个 CLI 名字再起三次。
+        val located = binaryProbe.locate(LspCatalog.allBinaries + AgentType.entries.map { it.cli })
 
         val claude = claudeReport(
             configuredCommands = parseConfiguredCommands(
                 read(".claude/settings.json"),
                 read(".claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"),
             ),
-            binaries = binaries,
-            cliInstalled = cliPresence(AgentType.CLAUDE),
+            binaries = located,
+            cliInstalled = isInstalled(located, AgentType.CLAUDE),
         )
 
         val pi = piReport(
             piLensInstalled = hasPiLens(read(".pi/agent/settings.json")),
-            binaries = binaries,
-            cliInstalled = cliPresence(AgentType.PI),
+            binaries = located,
+            cliInstalled = isInstalled(located, AgentType.PI),
         )
 
         val codex = codexReport(
             mounted = mountsPiLensMcp(read(".codex/config.toml")),
             // 挂载后与 pi 是同一套 server，语言结果原样复用
             piFindings = pi.findings,
-            cliInstalled = cliPresence(AgentType.CODEX),
+            cliInstalled = isInstalled(located, AgentType.CODEX),
         )
 
         return LspReport(listOf(claude, pi, codex))
     }
+
+    /**
+     * 只有**确认查过且没查到**才算未安装。
+     *
+     * 探测超时返回空映射，那时键根本不存在——此时报「未安装」会把整页变成三行
+     * 假消息。当作已安装，逐语言自然落到 UNKNOWN，用户看到的是「无法确定」，
+     * 这才是真话。
+     */
+    private fun isInstalled(located: Map<String, String?>, agentType: AgentType): Boolean =
+        !located.containsKey(agentType.cli) || located[agentType.cli] != null
 
     /** 读不到就是读不到——不存在、无权限、编码坏了，一律降级为「未配置」。 */
     private fun read(relative: String): String? =
@@ -1535,11 +1566,14 @@ git add src/main/kotlin/com/github/izerui/imux/lsp/LspDiagnostics.kt \
 git commit -m "$(cat <<'EOF'
 增加 LSP 体检的编排器
 
-三个探针共用一次二进制探测结果，登录 shell 只起一次。Codex 挂载 MCP 后与
-pi 走同一套 server，语言结果直接复用，不重复探测。
+语言服务器与三个 CLI 自身在同一次调用里问完，全流程只起一次登录 shell——
+读 profile 的开销每次都要付，没有理由为查三个 CLI 名字再起三次。
 
-userHome、binaryProbe、cliPresence 全部注入，与 SessionRepository.forUserHome
-的做法一致，单测指向临时目录、不碰真实 shell。全程只读。
+探测超时返回空映射时，CLI 视为已安装、逐语言落到 UNKNOWN：把「没查到」说成
+「没装」会让整页变成三行假消息。
+
+Codex 挂载 MCP 后与 pi 走同一套 server，语言结果直接复用，不重复探测。
+userHome 与 binaryProbe 均注入，与 SessionRepository.forUserHome 的做法一致。
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 EOF
@@ -1590,7 +1624,15 @@ class ImuxLspUiSourceTest {
     fun `体检在后台执行且回到 EDT 刷新`() {
         assertTrue("探测必须放到后台线程", source.contains("executeOnPooledThread"))
         assertTrue("刷新 UI 必须回到 EDT", source.contains("invokeLater"))
-        assertFalse("不得在 EDT 上直接调用 run()", source.contains("LspDiagnostics(").and(source.contains("createPanel().run()")))
+    }
+
+    /**
+     * CLI 是否安装必须并进那一次批量探测。页面里凡是另起 ProcessBuilder 的，
+     * 都是又一个登录 shell——读一遍 profile 的钱要重付一次。
+     */
+    @Test
+    fun `设置页自己不起 shell 进程`() {
+        assertFalse("CLI 探测应并入 BinaryProbe，不在页面里另起进程", source.contains("ProcessBuilder"))
     }
 
     @Test
@@ -1833,13 +1875,10 @@ import com.github.izerui.imux.lsp.LspReport
 import com.github.izerui.imux.lsp.LspStatus
 import com.github.izerui.imux.lsp.Remedy
 import com.github.izerui.imux.lsp.ShellBinaryProbe
-import com.github.izerui.imux.terminal.resolveShell
-import com.github.izerui.imux.terminal.singleQuote
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.ui.DialogPanel
-import com.intellij.openapi.ui.setEmptyState
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.panel
@@ -1896,21 +1935,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     private fun diagnostics() = LspDiagnostics(
         userHome = Path.of(System.getProperty("user.home")),
         binaryProbe = ShellBinaryProbe(),
-        cliPresence = ::isCliInstalled,
     )
-
-    /** CLI 本身在不在，同样只能问登录 shell——理由见 ShellBinaryProbe 的注释。 */
-    private fun isCliInstalled(agentType: com.github.izerui.imux.model.AgentType): Boolean =
-        runCatching {
-            val shell = resolveShell(System.getenv("SHELL"))
-            val quoted = singleQuote(agentType.cli)
-            val process = ProcessBuilder(shell, "-l", "-i", "-c", "command -v $quoted 2>/dev/null")
-                .start()
-            process.outputStream.close()
-            val located = process.inputStream.bufferedReader().use { it.readText() }.isNotBlank()
-            process.waitFor()
-            located
-        }.getOrDefault(false)
 
     private fun showChecking() {
         content.removeAll()
