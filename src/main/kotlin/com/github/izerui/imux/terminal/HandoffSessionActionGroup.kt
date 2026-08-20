@@ -43,7 +43,7 @@ internal fun handoffActionGroup(
 ): ActionGroup =
     object : ActionGroup(ImuxBundle.message("action.handoff.group.text"), true), DumbAware {
         init {
-            templatePresentation.icon = AllIcons.Nodes.Ssh
+            templatePresentation.icon = AllIcons.General.Vcs
         }
 
         private val children = handoffActions(project, session, targetTypes)
@@ -82,14 +82,14 @@ class HandoffSessionActionGroup :
     ActionGroup(ImuxBundle.message("action.handoff.group.text"), true),
     DumbAware {
     init {
-        templatePresentation.icon = AllIcons.Nodes.Ssh
+        templatePresentation.icon = AllIcons.General.Vcs
     }
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun update(event: AnActionEvent) {
         event.presentation.text = ImuxBundle.message("action.handoff.group.text")
-        event.presentation.icon = AllIcons.Nodes.Ssh
+        event.presentation.icon = AllIcons.General.Vcs
         event.presentation.isEnabledAndVisible = sourceSession(event) != null
     }
 

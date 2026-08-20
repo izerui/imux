@@ -64,7 +64,7 @@ class HandoffSessionActionTest {
         val group = handoffActionGroup(testProject(), session, enabled)
 
         assertTrue(group.isPopup)
-        assertSame(AllIcons.Nodes.Ssh, group.templatePresentation.icon)
+        assertSame(AllIcons.General.Vcs, group.templatePresentation.icon)
         assertEquals(ImuxBundle.message("action.handoff.group.text"), group.templatePresentation.text)
         assertEquals(enabled.map(AgentType::displayName), group.getChildren(null).map { it.templatePresentation.text })
     }
