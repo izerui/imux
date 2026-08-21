@@ -95,3 +95,24 @@ intellijPlatform {
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
 }
+
+// 本项目有一批「源码级」测试：ImuxLspUiSourceTest、PluginXmlRegistrationTest、
+// ImuxBundleTest、SessionTabRestoreSourceTest 等等，都在运行期用
+// `File("src/main/kotlin/…").readText()` 直接读源文件做结构断言。
+//
+// 而 `:test` 的默认输入只有 **classpath**（编译产物）。于是任何字节码等价的源码改动
+// ——删一个尾逗号、改一句注释、重排格式——都不会改变 classpath 的哈希，Gradle 判定
+// `:test` UP-TO-DATE / FROM-CACHE 直接跳过。实测：删掉 ImuxLspConfigurable.kt 里
+// `ShellBinaryProbe(),` 的尾逗号再跑 `./gradlew test`，输出是 `> Task :test FROM-CACHE`,
+// 测试**根本没有对着改动后的源码跑过**。这类「假绿」比测试没写还危险：
+// 它让「我改了源码、测试还是绿的」看起来像一条通过的验证。
+//
+// 把这三个源码目录显式声明成 `:test` 的输入，源文件一变（哪怕只变注释）就重跑。
+// 代价是注释改动也会触发一次测试，相对于假绿是划算的。
+tasks.test {
+    listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
+        inputs.dir(dir)
+            .withPropertyName("sourceReadAtRuntime-${dir.replace('/', '-')}")
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    }
+}

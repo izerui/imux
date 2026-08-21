@@ -124,4 +124,36 @@ class LspStatusPresentationTest {
         assertNull(serverBinaryFor(typescript, AgentType.PI))
         assertEquals("typescript-language-server", serverBinaryFor(typescript, AgentType.CLAUDE))
     }
+
+    /**
+     * 就绪那一列**显示出来的那串字**——这是用户直接看见的东西，不是一个可空的内部值。
+     *
+     * 设置页那一侧只能做源码文本断言，而「让这一列变成一整列空白」的改法不止一种：
+     * 把 `?: ""` 写成恒空、在设置页里补一句 `private fun String?.orEmpty(): String = ""`
+     * 遮蔽默认导入……被钉死的函数体一个字节都不用改。这条用例直接**调用**它，
+     * 返回值一变就红。
+     */
+    @Test
+    fun `就绪那一列显示的是供能的 server 二进制名`() {
+        val kotlin = LspCatalog.languages.single { it.id == "kotlin" }
+
+        assertEquals("kotlin-language-server", readyServerText(kotlin, AgentType.PI))
+        assertEquals("kotlin-language-server", readyServerText(kotlin, AgentType.CODEX))
+        assertEquals("kotlin-lsp", readyServerText(kotlin, AgentType.CLAUDE))
+    }
+
+    /**
+     * 目录表里的每一门语言，在**任何**一个 CLI 下都至少有一边能说出 server 名字。
+     *
+     * 这一条挡的是「整列空白」：把 [readyServerText] 改成恒返回空串，上一条只会红在
+     * kotlin 一行，这一条会把 18 门语言一次性摊开——失败信息直接列出哪几门变哑了。
+     */
+    @Test
+    fun `没有哪门语言在所有 CLI 下都说不出 server 名字`() {
+        val mute = LspCatalog.languages.filter { language ->
+            AgentType.entries.all { readyServerText(language, it).isEmpty() }
+        }
+
+        assertEquals("这些语言的「就绪」列在任何 CLI 下都是空白：${mute.map { it.id }}", emptyList<String>(), mute.map { it.id })
+    }
 }

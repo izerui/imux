@@ -9,7 +9,7 @@ import com.github.izerui.imux.lsp.LspStatus
 import com.github.izerui.imux.lsp.Remedy
 import com.github.izerui.imux.lsp.ShellBinaryProbe
 import com.github.izerui.imux.lsp.StatusIconKind
-import com.github.izerui.imux.lsp.serverBinaryFor
+import com.github.izerui.imux.lsp.readyServerText
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
 import com.github.izerui.imux.model.AgentType
@@ -276,7 +276,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      */
     private fun statusText(finding: LanguageFinding, agentType: AgentType): String {
         val key = statusMessageKey(finding.status)
-            ?: return serverBinaryFor(finding.language, agentType).orEmpty()
+            ?: return readyServerText(finding.language, agentType)
         return ImuxBundle.message(key)
     }
 

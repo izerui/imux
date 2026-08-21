@@ -85,3 +85,21 @@ internal fun serverBinaryFor(language: LspLanguage, agentType: AgentType): Strin
     AgentType.PI, AgentType.CODEX -> language.piLensBinary
     else -> language.claudeBinary
 }
+
+/**
+ * 「就绪」那一列**显示出来的那串字**。
+ *
+ * 绿勾已经说了「就绪」，这一栏回答的是**是谁在供能**，所以显示 server 二进制名。
+ * 取不到名字时是空串——那只发生在 pi 侧按需安装的语言上，而那些语言从不是
+ * [LspStatus.READY]，界面上落不到这一栏。
+ *
+ * 连这一句兜底都搬进来，是因为设置页那一侧只能做源码文本断言，而
+ * `serverBinaryFor(…).orEmpty()` 里的 `orEmpty` 来自 `kotlin.text` 的**默认导入**：
+ * 在设置页里加一句 `private fun String?.orEmpty(): String = ""`，成员扩展的优先级
+ * 高于默认导入，被钉死的函数体一个字节都不用改，就绪那一列却会变成整整 18 行空白。
+ * 搬到这里之后它能被真正调用着测——改成恒空当场变红，没有藏身的地方。
+ *
+ * 内部写成 `?: ""` 而不是 `.orEmpty()`，是不让同一个把柄在这边重新长出来。
+ */
+internal fun readyServerText(language: LspLanguage, agentType: AgentType): String =
+    serverBinaryFor(language, agentType) ?: ""
