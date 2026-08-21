@@ -217,7 +217,13 @@ class ImuxLspUiSourceTest {
      */
     @Test
     fun `体检失败要留日志并显示错误态`() {
-        assertTrue("异常必须落到 idea.log", normalized.contains("LOG.warn"))
+        // 钉的是「runCatching 的失败分支里确实记了一笔」，不是 `LOG` 这个属性名：
+        // 只写 contains("LOG.warn") 的话，把伴生里的 `val LOG` 改名成 `val logger`
+        //（IDEA 插件里很常见的写法）就会红，而那是纯重构、日志一条没少。
+        assertTrue(
+            "异常必须落到 idea.log——这一页唯一的诊断入口就是它",
+            Regex("""\.onFailure\s*\{\s*\w+\.warn\(""").containsMatchIn(normalized),
+        )
         assertTrue(
             "失败必须分派到独立的错误态，不能复用「正在检测」",
             normalized.contains("if (report == null) showFailed() else showReport(report)"),
@@ -336,64 +342,92 @@ class ImuxLspUiSourceTest {
             "com.intellij.icons.AllIcons",
             "com.intellij.openapi.ide.CopyPasteManager",
         ).forEach { fqn ->
+            val name = fqn.substringAfterLast('.')
             assertTrue(
                 "必须 import $fqn；删掉 import 再在本文件补一个同名声明，被钉死的函数体一字不用改就能换掉语义",
                 normalized.contains("import $fqn "),
+            )
+            // 留着 import、同时在本文件补一个同名声明也一样能赢，代价只有一条
+            // 「import 未使用」的 warning。这里对这 7 个符号连 val 一起禁——
+            // `private val readyServerText: (LspLanguage, AgentType) -> String = { _, _ -> "" }`
+            // 是能通过编译的写法，而属性优先于 import 进来的顶层函数。
+            //
+            // 刻意**只**对这 7 个符号说，不对全部 import 说：后者会把
+            // 「伴生里 val LOG 改名 val logger」「showReport 里抽出 val panel = panel { … }」
+            // 这类语义零变化的重构一起判死，而报错却说「语义已经换了」。
+            assertFalse(
+                "本文件里不得再声明一个叫 $name 的东西——本地声明会赢，被钉死的函数体一字不用改，语义已经换了",
+                Regex(
+                    """\b(?:fun|val|var|class|object|interface|typealias)\s+""" +
+                        """(?:<[^>]*>\s*)?(?:[\w.?<>, ]+?\s*\.\s*)?\Q$name\E\b""",
+                ).containsMatchIn(normalized),
             )
         }
     }
 
     /**
-     * 同文件里的同名声明会**静默**遮蔽 import 进来的符号。
+     * 本文件只允许声明这些函数。**任何**多出来的 `fun` 都会让这条红。
      *
-     * Kotlin 的解析顺序里本文件的声明优先于显式 import，唯一的代价是一条
-     * 「import 未使用」的 warning。于是留着 import、在类里补一句同名的 private fun，
-     * 所有钉住函数体的断言全绿，调用点却已经换了实现（javap 可证）。
+     * 它一次盖住三类「函数体一字节不改、语义整个换掉」的写法，实测（`@Deprecated(ERROR)`
+     * 探针确认编译器确实选中了本地那一份）：
      *
-     * 这里把两边的名字集合取交集，一条断言覆盖全部 import——将来新增的 import
-     * 自动进入保护范围，不用记得回来补名单。
+     * 1. **同名遮蔽显式 import**：补一句 `private fun readyServerText(…): String = ""`，
+     *    就绪那一列 18 行全空；
+     * 2. **成员扩展遮蔽默认导入**：`private fun String?.orEmpty(): String = ""` 同样后果，
+     *    而默认导入（`kotlin.text` / `kotlin.collections`）的名字**不在 import 列表里**，
+     *    任何基于 import 的检查都看不见它；
+     * 3. **非扩展成员遮蔽顶层函数**：在 `CappedHeightView` 里补一句
+     *    `private fun minOf(a: Int, b: Int): Int = a`，高度封顶当场失效、设置页撑到上千像素，
+     *    而钉住那行文本的断言原样全绿。这一类既不是扩展、名字也不在 import 列表，
+     *    是前两道网**都**看不见的平行类。
+     *
+     * 受体写成 `([\w.?<>, ]+?)\s*\.\s*` 并把结果去空白：受体与点之间只要有一个空格
+     *（`fun <T> T .also(…)`）或受体是 `Map<K, V>` 这种带逗号加空格的泛型，
+     * 收紧的写法就整条匹配不上——**一个都不进集合、白名单静默失效**，实测过。
+     *
+     * 一条已验证的反例，记在这里免得下一轮又被推断成事实：**`List<T>.forEach` 遮蔽不了
+     * stdlib 的那一份**。本文件里 `findings.forEach` 的调用点嵌在 `panel { }` 这个
+     * DSL lambda 里，`@Deprecated(DeprecationLevel.ERROR)` 探针证实编译器仍然选中
+     * `kotlin.collections` 的版本。同样的探针下 `String?.orEmpty`、`T.also`、
+     * 以及非扩展的顶层 `minOf` **都会**被本地那一份接管。所以那三类是真攻击，
+     * `forEach` 那条只是白名单尽职，不是攻击奏效。
+     *
+     * 白名单而不是黑名单：新增或改名一个函数就要来这里点头一次。这是刻意的成本——
+     * 这份名单是本层唯一挡得住「默认导入 / 顶层函数被遮蔽」的东西。
      */
     @Test
-    fun `壳里不得用同名声明遮蔽 import 进来的符号`() {
-        val imported = Regex("""^import\s+([\w.]+)""", RegexOption.MULTILINE)
-            .findAll(source)
-            .map { it.groupValues[1].substringAfterLast('.') }
-            .toSet()
-        val declared = Regex("""\b(?:fun|val|var|class|object|interface)\s+(?:<[^>]*>\s*)?(?:[\w.?<>]+\.)?(\w+)\b""")
+    fun `本文件只允许声明这些函数`() {
+        val declared = Regex("""\bfun\b\s*(?:<[^>]*>\s*)?(?:([\w.?<>, ]+?)\s*\.\s*)?(\w+)\s*\(""")
             .findAll(normalized)
-            .map { it.groupValues[1] }
+            .map { match ->
+                val receiver = match.groupValues[1].filterNot(Char::isWhitespace)
+                if (receiver.isEmpty()) match.groupValues[2] else "$receiver.${match.groupValues[2]}"
+            }
             .toSet()
 
-        assertEquals(
-            "这些名字既 import 进来又在本文件里声明了一遍，本地声明会赢——被钉死的函数体一字不用改，语义已经换了",
-            emptySet<String>(),
-            imported intersect declared,
+        val allowed = setOf(
+            "createPanel", "isModified", "apply", "refresh", "diagnostics",
+            "showChecking", "showFailed", "showReport", "replaceContent",
+            "Panel.renderCli", "summaryText", "findingsPanel", "Panel.renderRemedy",
+            "groupMessage", "statusText", "statusIcon",
+            "getPreferredScrollableViewportSize", "getScrollableUnitIncrement",
+            "getScrollableBlockIncrement", "getScrollableTracksViewportWidth",
+            "getScrollableTracksViewportHeight",
         )
-    }
 
-    /**
-     * 本文件只允许存在这两个扩展函数。
-     *
-     * 成员扩展的优先级**高于默认导入**，而默认导入（`kotlin.text` / `kotlin.collections`）
-     * 里的名字不出现在 import 列表中，上一条的交集看不见它们。实测：在类里加一句
-     * `private fun String?.orEmpty(): String = ""`，`statusText` 的函数体一字未改，
-     * 就绪那一列整列空白（javap 里 `orEmpty` 从内联变成 invokespecial）。
-     * 同样的手法对 `List<T>.forEach` 一样成立——那会让逐语言列表整段消失。
-     *
-     * 写成白名单而不是黑名单：新增一个扩展函数就要来这里点头一次，这正是想要的效果。
-     */
-    @Test
-    fun `壳里不得声明白名单之外的扩展函数`() {
-        val extensions = Regex("""\bfun\s+(?:<[^>]*>\s*)?([\w.?<>]+)\.(\w+)\s*\(""")
-            .findAll(normalized)
-            .map { "${it.groupValues[1]}.${it.groupValues[2]}" }
-            .toSet()
-
+        // 两个方向分开断言：JUnit 的集合比对会把两份名单整个打印出来，
+        // 而维护者只想知道**多了哪一个**。分开之后失败信息第一行就点名。
         assertEquals(
-            "多出来的扩展函数会遮蔽同名的默认导入（String?.orEmpty、List.forEach 等），" +
-                "让被钉死的函数体在一字未改的情况下换掉语义。确有必要的话把它加进这个白名单",
-            setOf("Panel.renderCli", "Panel.renderRemedy"),
-            extensions,
+            "本文件多声明了这些函数。它们可能正在遮蔽 import 进来的符号、默认导入的扩展" +
+                "（String?.orEmpty 等）或顶层函数（minOf 等），让被钉死的函数体在一字未改的" +
+                "情况下换掉语义。确认无害的话把它加进本用例的 allowed 名单",
+            emptySet<String>(),
+            declared - allowed,
+        )
+        assertEquals(
+            "白名单里有本文件已经不存在的函数——多半是删掉或改名了，请同步本用例的 allowed 名单",
+            emptySet<String>(),
+            allowed - declared,
         )
     }
 
@@ -428,9 +462,13 @@ class ImuxLspUiSourceTest {
 
         val body = findingsPanelBody()
 
-        listOf("return@forEach", "continue", ".filter", ".take", ".drop").forEach { escape ->
-            assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", body.contains(escape))
-        }
+        // `.visible` / `.enabled` 覆盖 UI DSL 的 visible / visibleIf / enabled / enabledIf：
+        // `}.layout(RowLayout.PARENT_GRID).visible(finding.status != LspStatus.READY)`
+        // 里没有一个 if、没有一个 filter，整组语言照样重新消失——正是本 epic 的起因缺陷。
+        listOf("return@forEach", "continue", ".filter", ".take", ".drop", ".visible", ".enabled")
+            .forEach { escape ->
+                assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", body.contains(escape))
+            }
 
         val item = Regex("""^CappedHeightView\(\s*panel\s*\{\s*findings\.forEach\s*\{\s*(\w+)\s*->""")
             .find(body)
@@ -452,13 +490,19 @@ class ImuxLspUiSourceTest {
             "第二列必须是语言显示名，否则用户认不出这一行说的是哪门语言：$loop",
             loop.contains("label($item.language.displayName)"),
         )
+        // 这两条必须**封口**。写成前缀（`label(statusText($item,` / `renderRemedy(`）时，
+        // `label(statusText(finding, agentType).let { "" })` 与
+        // `renderRemedy(it.copy(command = null))` 都能满足断言，而后果分别是
+        // 「第三列 18 行全空」和「全部安装命令消失」——与必红清单里的 S9 / S10 同一后果。
+        // 封口不会重新引入格式误报：`compact()` 已经抹掉了尾逗号，IDEA 拆行后正是这个串。
         assertTrue(
-            "第三列必须来自 statusText()：换成常量或空串会让整列失去意义：$loop",
-            loop.contains("label(statusText($item,"),
+            "第三列必须来自 statusText() 且不得再加工：接一句 .let { \"\" } 就是整列空白：$loop",
+            loop.contains("label(statusText($item,agentType))"),
         )
         assertTrue(
-            "每条缺口下面必须挂上它的修复命令，删掉这一句所有安装命令都会消失：$loop",
-            loop.contains("$item.remedy?.let{renderRemedy("),
+            "每条缺口下面必须原样挂上它的修复命令：删掉这一句、或给 renderRemedy 喂一个" +
+                "加工过的 remedy，所有安装命令都会消失：$loop",
+            Regex("""\Q$item\E\.remedy\?\.let\{(\w+->)?renderRemedy\(\w+\)\}""").containsMatchIn(loop),
         )
     }
 
@@ -526,26 +570,30 @@ class ImuxLspUiSourceTest {
     fun `有安装命令时必须无条件给出命令与复制按钮`() {
         val body = compact(renderRemedyBody())
 
-        assertTrue(
-            "command 与 let 之间插一句 takeIf，全部安装命令就消失了，而所有字面量原样还在：$body",
-            body.contains("remedy.command?.let{command->"),
-        )
+        // lambda 形参名一并捕获，IDE 把 `command` 改名 `cmd` 是纯重构，不该红。
+        val cmd = Regex("""remedy\.command\?\.let\{(\w+)->""").find(body)?.groupValues?.get(1)
+            ?: throw AssertionError(
+                "command 与 let 之间插一句 takeIf，全部安装命令就消失了，而所有字面量原样还在：$body",
+            )
 
         val commandBlock = compact(bodyAfter("remedy.command?.let", '{'))
 
         assertFalse(
             "命令行不得再被条件挡住：$commandBlock",
-            Regex("""\bif[({]|\bwhen[({]""").containsMatchIn(commandBlock),
+            Regex("""\bif[({]|\bwhen[({]|\.visible|\.enabled""").containsMatchIn(commandBlock),
         )
-        assertTrue("命令本身必须显示出来，否则只剩一个复制按钮：$commandBlock", commandBlock.contains("label(command)"))
         assertTrue(
-            "命令旁必须有复制按钮，且走平台剪贴板：$commandBlock",
-            commandBlock.contains("CopyPasteManager.copyTextToClipboard(command)"),
+            "命令本身必须原样显示出来；接一句 .let { \"\" } 就只剩一个复制按钮：$commandBlock",
+            commandBlock.contains("label($cmd)"),
+        )
+        assertTrue(
+            "命令旁必须有复制按钮，且把原样的命令送进平台剪贴板：$commandBlock",
+            commandBlock.contains("CopyPasteManager.copyTextToClipboard($cmd)"),
         )
 
         assertTrue(
             "没有已知安装命令时至少要给出上游文档，不能让用户卡在「不可用」三个字上：$body",
-            body.contains("remedy.docsUrl?.let{url->") && body.contains("browserLink(url,url)"),
+            Regex("""remedy\.docsUrl\?\.let\{(\w+)->row\{browserLink\(\1,\1\)\}\}""").containsMatchIn(body),
         )
     }
 
@@ -579,8 +627,9 @@ class ImuxLspUiSourceTest {
         // 两条各说一种用户可见的坏结果，再由整体比对兜住剩下的——
         // 否则「就绪列整列空白」和「文案被改写」会共用同一条失败消息。
         assertTrue(
-            "没有文案键的（只有 READY）必须显示 server 二进制名；改成空串就是就绪那一列 18 行全空：$text",
-            compact(text).contains("?:returnreadyServerText(finding.language,agentType)"),
+            "没有文案键的（只有 READY）必须原样显示 server 二进制名；改成空串、或者接一句" +
+                " .let { \"\" }，都是就绪那一列 18 行全空：$text",
+            compact(text).contains("?:returnreadyServerText(finding.language,agentType)return"),
         )
         assertTrue(
             "取到键之后必须原样交给 ImuxBundle；后面接一句 .replace(…) 就能把任何一条状态说反：$text",
