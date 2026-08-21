@@ -41,16 +41,15 @@ class LspStatusPresentationTest {
     }
 
     /**
-     * `AUTO_MANAGED` 与 `NOT_AVAILABLE` 是这轮改造新加的两个状态，也是最容易被
-     * 「顺手复用一条现成文案」毁掉的两个：说成「服务器不在 PATH 中」就是假消息，
+     * 任意两个状态都不得共用一条文案——最容易踩的是这轮改造新加的
+     * `AUTO_MANAGED` 与 `NOT_AVAILABLE`：说成「服务器不在 PATH 中」就是假消息，
      * 说成「插件未启用」是让用户去做一件根本不存在的事。
      */
     @Test
-    fun `新增的两个状态不得复用别的状态的文案`() {
-        val byStatus = LspStatus.entries.associateWith(::statusMessageKey)
-        val keys = byStatus.values.filterNotNull()
+    fun `每个状态的文案键互不相同`() {
+        val keys = LspStatus.entries.mapNotNull(::statusMessageKey)
 
-        assertEquals("每个状态的文案键必须互不相同", keys.size, keys.toSet().size)
+        assertEquals("每个状态的文案键必须互不相同：$keys", keys.size, keys.toSet().size)
     }
 
     /**

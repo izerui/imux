@@ -284,8 +284,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 状态图标——**薄壳**：语义类别由 [statusIconKind] 决定，这里只负责把类别换成
      * [AllIcons] 的常量，不自绘、也不再按 [LspStatus] 判断（理由同 [statusText]）。
      *
-     * 这几个常量都是「AllIcons 里语义最接近的那个」，属于可微调的取舍；
-     * 真正不该变的「哪些状态算警告」在 [statusIconKind] 那边由行为测试守着。
+     * 下面这五条对应关系**同样被测试钉住**，改动前请想清楚。[statusIconKind] 那边的
+     * 「哪些状态算警告」约束的是枚举值的归属，管不到这一层：把 `INFO` 这一行改成
+     * `Warning`，那条不变量原封不动全绿，而 pi 组的 TypeScript / Python / Ruby / Rust /
+     * PHP / C# 在界面上集体挂起黄色警告牌——用户看见的是图标，不是枚举常量。
      */
     private fun statusIcon(status: LspStatus): Icon = when (statusIconKind(status)) {
         StatusIconKind.OK -> AllIcons.General.InspectionsOK

@@ -2,18 +2,19 @@ package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
 
-/**
- * 「状态 → 怎么显示」的纯映射。
- *
- * 单独成文件、且**一行平台 API 都不碰**（不引 `ImuxBundle`、不引 `AllIcons`）是刻意的。
- * 本项目没有引入平台 test-framework（见 build.gradle.kts），设置页只能做源码文本断言，
- * 而源码文本断言天然可以被「原有字面量一个字不改、在它前面加一句守卫」绕开——
- * 这一条已经让同一类缺陷在 `ImuxLspConfigurable` 上反复复活。
- *
- * 把映射搬到这里之后，它可以被普通 JUnit 4 **真正调用**：改一个字，
- * `LspStatusPresentationTest` 当场变红，前置守卫没有藏身的地方。
- * 设置页那一侧只剩两个薄壳（拿键去查 bundle、拿类别去查图标），壳里不许再有任何判断。
- */
+// 「状态 → 怎么显示」的纯映射。
+//
+// 单独成文件、且**一行平台 API 都不碰**（不引 ImuxBundle、不引 AllIcons）是刻意的。
+// 本项目没有引入平台 test-framework（见 build.gradle.kts），设置页只能做源码文本断言，
+// 而源码文本断言天然可以被「原有字面量一个字不改、在它前面加一句守卫」绕开——
+// 这一条已经让同一类缺陷在 ImuxLspConfigurable 上反复复活。
+//
+// 把映射搬到这里之后，它可以被普通 JUnit 4 **真正调用**：改一个字，
+// LspStatusPresentationTest 当场变红，前置守卫没有藏身的地方。
+// 设置页那一侧只剩两个薄壳（拿键去查 bundle、拿类别去查图标），壳里不许再有任何判断。
+//
+// 用行注释而不是 KDoc：这段说的是文件用途，不挂在任何声明上，
+// 写成 /** */ 会变成悬空 KDoc，被 Dokka 与 IDE 当成孤儿注释。
 
 /**
  * 图标的**语义类别**，而不是某个具体的 `AllIcons` 常量。

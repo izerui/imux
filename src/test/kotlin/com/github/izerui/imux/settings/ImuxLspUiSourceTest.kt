@@ -36,6 +36,26 @@ class ImuxLspUiSourceTest {
     }
 
     /**
+     * 把空白**全部**去掉，供整段代码的等价比对使用。
+     *
+     * [normalized] 只把连续空白压成一个空格，于是「这里必须有一个空格」变成了隐含要求：
+     * `CappedHeightView(panel {` 与 `CappedHeightView( panel {` 行为完全一样，
+     * 前者却会让「归一后不在意排成几行」的断言变红。彻底去空白之后这类改写不再误报，
+     * 而任何真正的结构改动（多一个 if、少一行渲染、换一个常量）仍然会改变结果。
+     *
+     * 失败信息里打印的仍是 [normalized] 版本——那个是人能读的。
+     */
+    private fun compact(code: String): String = code.replace(Regex("""\s+"""), "")
+
+    /** 忽略空白差异地比对整段代码。 */
+    private fun assertSameCode(message: String, expected: String, actual: String) {
+        assertTrue(
+            "$message\n期望（忽略空白）：${expected.replace(Regex("""\s+"""), " ").trim()}\n实际：$actual",
+            compact(expected) == compact(actual),
+        )
+    }
+
+    /**
      * 取出 [anchor] **之后**、直到与第一个 [open] 配对的定界符为止的整段源码。
      *
      * 返回值从 anchor 末尾算起而不是从 [open] 算起，这样表达式体函数的分派表达式
@@ -211,10 +231,19 @@ class ImuxLspUiSourceTest {
      * 断言钉的是**整个传参调用**而不是 `findingsPanel` 这个标识符：只钉标识符的话，
      * 改成 `findingsPanel(cliReport.gaps, …)` 断言照样绿，缺陷原样复活。
      *
-     * 后面几条挡的是同一个缺陷的其它入口。钉子从**函数签名**起，一路连到 `panel {` 与
-     * `forEach`——中间但凡插一句加工（`val findings = all.filter { … }`），或者把形参
-     * 遮蔽掉（`val findings = findings.filter { … }`），这条链就断了。
-     * 只钉「循环体里没有 filter」是不够的：过滤挪到循环**之前**，循环体一字未动。
+     * 三道网并存，各挡一类入口，缺一不可：
+     *
+     * 1. **否定断言**挡最常见的跳过写法，失败信息直接点名是哪一种；
+     * 2. **前缀链**从函数签名一路连到 `panel {` 与 `forEach`，挡「过滤挪到循环之前」
+     *    与「形参遮蔽」——这两种写法循环体一字未动，否定断言看不见；
+     * 3. **整个函数体钉死**挡剩下的全部：循环体内套一层 `if`（不用 return、不用 filter、
+     *    前缀链完好）能让整组语言重新消失；把 `icon(statusIcon(...))` 换成写死的
+     *    `icon(AllIcons.General.Warning)` 能绕开整套映射；删掉
+     *    `finding.remedy?.let { renderRemedy(it) }` 能让所有安装命令消失。
+     *    前两道网对这三种改法全是绿的。
+     *
+     * 第 3 条比对时把空白**全部**去掉（见 [compact]），所以换行、缩进乃至
+     * `CappedHeightView(panel {` 这种等价改写都不会误红。
      */
     @Test
     fun `逐语言列表必须无条件渲染每一条 finding`() {
@@ -223,20 +252,43 @@ class ImuxLspUiSourceTest {
             source.contains("scrollCell(findingsPanel(cliReport.findings, cliReport.agentType))"),
         )
 
-        val body = bodyAfter(
-            "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =",
-            '(',
-        )
-        assertTrue(
-            "形参 findings 必须直接进 panel 的 forEach，中间不得有任何加工或遮蔽：$body",
-            body.startsWith("CappedHeightView( panel { findings.forEach { finding -> "),
-        )
+        val body = findingsPanelBody()
 
-        // 拆成独立的否定断言，好让失败信息对得上原因——上面那条只会说「链断了」。
         listOf("return@forEach", "continue", ".filter", ".take", ".drop").forEach { escape ->
             assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", body.contains(escape))
         }
+
+        assertTrue(
+            "形参 findings 必须直接进 panel 的 forEach，中间不得有任何加工或遮蔽：$body",
+            Regex("""^CappedHeightView\(\s*panel\s*\{\s*findings\.forEach\s*\{\s*finding\s*->""")
+                .containsMatchIn(body),
+        )
+
+        assertSameCode(
+            "逐语言渲染必须是「一条 finding 一行、无条件」——多一层 if、换一个写死的图标、" +
+                "少一句 renderRemedy，都会让用户看到错的东西",
+            """
+            CappedHeightView(
+                panel {
+                    findings.forEach { finding ->
+                        row {
+                            icon(statusIcon(finding.status))
+                            label(finding.language.displayName)
+                            label(statusText(finding, agentType))
+                        }.layout(RowLayout.PARENT_GRID)
+                        finding.remedy?.let { renderRemedy(it) }
+                    }
+                },
+            )
+            """,
+            body,
+        )
     }
+
+    private fun findingsPanelBody(): String = bodyAfter(
+        "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =",
+        '(',
+    )
 
     /**
      * 上一条的兜底：整份源码里都不该出现 `findings.filter`。
@@ -272,10 +324,7 @@ class ImuxLspUiSourceTest {
     fun `语言行必须共享列宽而命令行必须独立`() {
         assertTrue(
             "语言行必须进父网格，默认的 INDEPENDENT 每行各占一个子网格、列宽不共享",
-            bodyAfter(
-                "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =",
-                '(',
-            ).contains("PARENT_GRID"),
+            findingsPanelBody().contains("PARENT_GRID"),
         )
         assertFalse(
             "命令行进父网格会把图标列撑成整条安装命令的宽度",
@@ -284,28 +333,76 @@ class ImuxLspUiSourceTest {
     }
 
     /**
-     * 状态 → 文案 / 图标的对应**不在这里断言**，它由 `LspStatusPresentationTest`
-     * 真正调用着测。这里只守一件事：设置页两个薄壳里不得有自己的判断。
+     * 状态 → 文案的对应由 `LspStatusPresentationTest` 真正调用着测；这里守的是**壳**。
      *
-     * 这一条是那组行为测试的前提。壳里补一句
+     * 壳里补一句
      * `if (finding.status == LspStatus.AUTO_MANAGED) return ImuxBundle.message("…binary")`，
      * 纯映射再正确也没用——pi 组的 TypeScript / Python / Ruby / Rust / PHP / C# 照样会
-     * 显示成「服务器不在 PATH 中」，而那组行为测试全绿。所以壳里禁止出现 `LspStatus.`
-     * 分支，也禁止写死文案键。
+     * 显示成「服务器不在 PATH 中」，而那组行为测试全绿。
+     *
+     * 前两条否定断言挡最典型的两种写法并给出准确的失败原因；最后整体钉死则挡剩下的：
+     * 把 `?: return serverBinaryFor(…)` 改成 `?: return ""`，就绪那一列当场变成一整列
+     * 空白（那正是 D2 决策要避免的形态）；在 `ImuxBundle.message(key)` 后面接一句
+     * `.replace(…)`，文案照样可以被改写——两种都不含 `LspStatus.`、也不含写死的键。
      */
     @Test
-    fun `文案与图标必须全部来自纯映射，壳里不得自己判断`() {
+    fun `状态文案必须全部来自纯映射，壳里不得自己判断`() {
         val text = bodyAfter(
             "private fun statusText(finding: LanguageFinding, agentType: AgentType): String",
             '{',
         )
-        assertTrue("statusText 必须向纯映射取键：$text", text.contains("statusMessageKey(finding.status)"))
         assertFalse("壳里不得再按状态分支，那正是绕过行为测试的路：$text", text.contains("LspStatus."))
         assertFalse("文案键只能来自 statusMessageKey，壳里不得写死：$text", text.contains("\"settings.lsp.status."))
 
+        assertSameCode(
+            "statusText 必须是取键 → 查 bundle 的薄壳；没有键的（只有 READY）显示 server 二进制名",
+            """
+            {
+                val key = statusMessageKey(finding.status)
+                    ?: return serverBinaryFor(finding.language, agentType).orEmpty()
+                return ImuxBundle.message(key)
+            }
+            """,
+            text,
+        )
+    }
+
+    /**
+     * 用户看见的是**图标**，不是枚举常量——所以这五条必须钉在壳里。
+     *
+     * `LspStatusPresentationTest` 那条「只有可行动的缺口才配警告图标」约束的其实是
+     * `StatusIconKind.WARNING` 这个**枚举值**的归属，不是界面上那个黄色感叹号：
+     * 把壳里的 `StatusIconKind.INFO -> AllIcons.General.Information` 改成
+     * `-> AllIcons.General.Warning`，WARNING 集合原封不动仍是
+     * {MISSING_CONFIG, MISSING_BINARY}，行为测试全绿，而 pi 组的 TypeScript / Python /
+     * Ruby / Rust / PHP / C# 在界面上集体挂起黄色警告牌——正是这轮改造要消灭的那条误解。
+     * `OK -> Warning` 更狠，18 行一起变黄。用户可见的不变量住在这一层。
+     *
+     * 断言必须**限定在 statusIcon 的函数体内**：`AllIcons.General.Warning` 在组级提示
+     * 和顶部汇总那两行都有合法用法，在整份源码上数没有意义。
+     *
+     * 代价是「换一个语义更贴的 AllIcons 常量」要同时改这里。那是刻意的：
+     * 这一层的每一次改动都直接改变用户看到的东西，值得被要求确认一次。
+     */
+    @Test
+    fun `每个语义类别映到的图标必须钉在壳里`() {
         val icon = bodyAfter("private fun statusIcon(status: LspStatus): Icon", '{')
-        assertTrue("statusIcon 必须按语义类别分派：$icon", icon.contains("when (statusIconKind(status))"))
+
         assertFalse("壳里不得再按状态分支：$icon", icon.contains("LspStatus."))
+
+        assertSameCode(
+            "语义类别与图标的对应变了，界面上看到的图标就变了",
+            """
+            = when (statusIconKind(status)) {
+                StatusIconKind.OK -> AllIcons.General.InspectionsOK
+                StatusIconKind.WARNING -> AllIcons.General.Warning
+                StatusIconKind.INFO -> AllIcons.General.Information
+                StatusIconKind.NEUTRAL -> AllIcons.General.Note
+                StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
+            }
+            """,
+            icon,
+        )
     }
 
     /**
