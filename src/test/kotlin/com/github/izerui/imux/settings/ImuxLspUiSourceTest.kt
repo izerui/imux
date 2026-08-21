@@ -62,11 +62,30 @@ class ImuxLspUiSourceTest {
     private fun compact(code: String): String =
         code.replace(Regex("""\s+"""), "").replace(Regex(""",(?=[)\]}>])"""), "")
 
+    /**
+     * 在 [compact] 之上再抹掉**具名实参的名字**——`f(a, b = x)` 与 `f(a, x)` 等价。
+     *
+     * IDEA 的「Add name to argument」意图是一次按键的纯重构，语义零变化。
+     * 不抹的话 `label(statusText(finding, agentType = agentType))` 会让
+     * 「第三列必须来自 statusText()」变红，而报错说的是「接一句 .let { "" } 就是整列空白」
+     *——又一次「敏感面比不变量大一圈」，与尾逗号是同一类装饰。
+     *
+     * 只抹 `(` 或 `,` 紧跟着的 `名字=`，且用 `(?![=])` 排除 `==` / `!=` / `>=` / `<=`。
+     * **实参的先后顺序仍然被检查**：具名重排（`f(b = b, a = a)`）抹完是 `f(b,a)`，
+     * 与 `f(a,b)` 仍然不等——那本来也不是纯格式改动。
+     *
+     * 刻意不并进 [compact]：[compactIndex] 为了做下标映射复刻了 [compact] 的规则，
+     * 两处必须逐条对齐，多一条就多一处走样的机会。而锚点是函数**签名**
+     *（`(finding: LanguageFinding, …)`），里面根本没有具名实参，用不到这一条。
+     */
+    private fun compactArgs(code: String): String =
+        compact(code).replace(Regex("""(?<=[(,])\w+=(?![=])"""), "")
+
     /** 忽略空白差异地比对整段代码。 */
     private fun assertSameCode(message: String, expected: String, actual: String) {
         assertTrue(
             "$message\n期望（忽略空白）：${expected.replace(Regex("""\s+"""), " ").trim()}\n实际：$actual",
-            compact(expected) == compact(actual),
+            compactArgs(expected) == compactArgs(actual),
         )
     }
 
@@ -295,7 +314,7 @@ class ImuxLspUiSourceTest {
         assertTrue(
             "分组必须逐个 cliReport 渲染、标题用 agentType.displayName，且中途不得换掉数据",
             Regex("""cliReports\.forEach\{(\w+)->group\(\1\.agentType\.displayName\)\{renderCli\(\1\)\}\}""")
-                .containsMatchIn(compact(normalized)),
+                .containsMatchIn(compactArgs(normalized)),
         )
     }
 
@@ -348,13 +367,13 @@ class ImuxLspUiSourceTest {
                 normalized.contains("import $fqn "),
             )
             // 留着 import、同时在本文件补一个同名声明也一样能赢，代价只有一条
-            // 「import 未使用」的 warning。这里对这 7 个符号连 val 一起禁——
+            // 「import 未使用」的 warning。这 7 个符号连 val 一起禁——
             // `private val readyServerText: (LspLanguage, AgentType) -> String = { _, _ -> "" }`
             // 是能通过编译的写法，而属性优先于 import 进来的顶层函数。
             //
-            // 刻意**只**对这 7 个符号说，不对全部 import 说：后者会把
-            // 「伴生里 val LOG 改名 val logger」「showReport 里抽出 val panel = panel { … }」
-            // 这类语义零变化的重构一起判死，而报错却说「语义已经换了」。
+            // 与 [壳里不得用同名声明遮蔽 import 进来的符号] 并存而不是二选一：那条覆盖
+            // **全部** import 但为了避开「自初始化绑定」留了一个 carve-out，这条对这 7 个
+            // 语义受保护的符号连 carve-out 都不给，且失败信息直接点名是哪一个符号。
             assertFalse(
                 "本文件里不得再声明一个叫 $name 的东西——本地声明会赢，被钉死的函数体一字不用改，语义已经换了",
                 Regex(
@@ -363,6 +382,48 @@ class ImuxLspUiSourceTest {
                 ).containsMatchIn(normalized),
             )
         }
+    }
+
+    /**
+     * 同文件里的同名声明会**静默**遮蔽 import 进来的符号，**任何**一个 import 都算。
+     *
+     * 上一条只盯着 7 个符号，漏掉的都是能直接把页面打空的：
+     *
+     * ```
+     * private val panel: (Panel.() -> Unit) -> DialogPanel = { … }   // 整张体检页渲染成空白
+     * private object JBUI { val scale: (Int) -> Int = { it * 1000 } } // 设置页撑到上千像素
+     * private typealias RowLayout = …                                 // 三列不再对齐
+     * ```
+     *
+     * 三条都是 2～3 行、不删任何 import、不碰任何被钉死的函数体，`@Deprecated(ERROR)`
+     * 探针确认调用点全部选中本地那一份。所以覆盖面必须是**全部 import**。
+     *
+     * 唯一的 carve-out 是**自初始化绑定**——`val logger = logger<…>()`、
+     * `val panel = panel { … }`：右边调用的正是左边那个名字，它在自己的初始化式里
+     * 什么都没遮蔽，是 IDEA 插件里极常见的写法。曾经因为分不清「哪些绑定无害」与
+     * 「哪些符号值得保护」，把整条断言按符号收窄，结果连上面三条一起放走了——
+     * 正确的切法是按**绑定形状**开一个口子，而不是按符号缩小范围。
+     */
+    @Test
+    fun `壳里不得用同名声明遮蔽 import 进来的符号`() {
+        val imported = Regex("""^import\s+([\w.]+)""", RegexOption.MULTILINE)
+            .findAll(source)
+            .map { it.groupValues[1].substringAfterLast('.') }
+            .toSet()
+        val declared = Regex(
+            """\b(?:fun|val|var|class|object|interface|typealias)\s+""" +
+                """(?:<[^>]*>\s*)?(?:[\w.?<>, ]+?\s*\.\s*)?(\w+)\b""",
+        ).findAll(normalized).map { it.groupValues[1] }.toSet()
+        val selfInitialised = Regex("""\b(?:val|var)\s+(\w+)\s*=\s*\1\s*[({<]""")
+            .findAll(normalized).map { it.groupValues[1] }.toSet()
+
+        assertEquals(
+            "这些名字既 import 进来、又在本文件里声明了一遍。本地声明会赢（代价只有一条" +
+                "「import 未使用」warning），于是被钉死的函数体一字不用改，语义已经换了。" +
+                "确实需要一个同名的局部绑定时，写成 `val x = x(…)` 这种自初始化形式即可",
+            emptySet<String>(),
+            (imported intersect declared) - selfInitialised,
+        )
     }
 
     /**
@@ -465,18 +526,25 @@ class ImuxLspUiSourceTest {
         // `.visible` / `.enabled` 覆盖 UI DSL 的 visible / visibleIf / enabled / enabledIf：
         // `}.layout(RowLayout.PARENT_GRID).visible(finding.status != LspStatus.READY)`
         // 里没有一个 if、没有一个 filter，整组语言照样重新消失——正是本 epic 的起因缺陷。
+        //
+        // 必须跑在 **compactArgs** 上而不是 body 上。body 来自 normalized，空白只被压成
+        // 单空格而不是抹掉，于是**点后面加一个空格**就整条绕过：
+        // `.layout(RowLayout.PARENT_GRID). visible(…)` 让整组语言消失而全部断言照绿。
+        // 同一个空格对 .filter / .take / .drop / .enabled 一样有效。
+        // renderRemedy 那边的姊妹断言一开始就跑在压缩串上，只有这边漏了。
+        val dense = compactArgs(body)
         listOf("return@forEach", "continue", ".filter", ".take", ".drop", ".visible", ".enabled")
             .forEach { escape ->
-                assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", body.contains(escape))
+                assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", dense.contains(escape))
             }
 
-        val item = Regex("""^CappedHeightView\(\s*panel\s*\{\s*findings\.forEach\s*\{\s*(\w+)\s*->""")
+        val item = Regex("""^CappedHeightView\(\s*panel\s*\{\s*findings\s*\.\s*forEach\s*\{\s*(\w+)\s*->""")
             .find(body)
             ?.groupValues
             ?.get(1)
             ?: throw AssertionError("形参 findings 必须直接进 panel 的 forEach，中间不得有任何加工或遮蔽：$body")
 
-        val loop = compact(bodyAfter("findings.forEach", '{'))
+        val loop = compactArgs(bodyAfter("findings.forEach", '{'))
 
         assertFalse(
             "循环体内套一层条件分支，就能让整组语言重新消失，而调用点与前缀链一字未改：$loop",
@@ -568,7 +636,7 @@ class ImuxLspUiSourceTest {
      */
     @Test
     fun `有安装命令时必须无条件给出命令与复制按钮`() {
-        val body = compact(renderRemedyBody())
+        val body = compactArgs(renderRemedyBody())
 
         // lambda 形参名一并捕获，IDE 把 `command` 改名 `cmd` 是纯重构，不该红。
         val cmd = Regex("""remedy\.command\?\.let\{(\w+)->""").find(body)?.groupValues?.get(1)
@@ -576,7 +644,7 @@ class ImuxLspUiSourceTest {
                 "command 与 let 之间插一句 takeIf，全部安装命令就消失了，而所有字面量原样还在：$body",
             )
 
-        val commandBlock = compact(bodyAfter("remedy.command?.let", '{'))
+        val commandBlock = compactArgs(bodyAfter("remedy.command?.let", '{'))
 
         assertFalse(
             "命令行不得再被条件挡住：$commandBlock",
@@ -629,11 +697,11 @@ class ImuxLspUiSourceTest {
         assertTrue(
             "没有文案键的（只有 READY）必须原样显示 server 二进制名；改成空串、或者接一句" +
                 " .let { \"\" }，都是就绪那一列 18 行全空：$text",
-            compact(text).contains("?:returnreadyServerText(finding.language,agentType)return"),
+            compactArgs(text).contains("?:returnreadyServerText(finding.language,agentType)return"),
         )
         assertTrue(
             "取到键之后必须原样交给 ImuxBundle；后面接一句 .replace(…) 就能把任何一条状态说反：$text",
-            compact(text).contains("returnImuxBundle.message(key)}"),
+            compactArgs(text).contains("returnImuxBundle.message(key)}"),
         )
 
         assertSameCode(
