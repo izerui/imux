@@ -248,3 +248,77 @@ Windows 上 `SHELL` 通常没有值 → 退回 `/bin/zsh` → 拿它去 `Process
 这次改造里实现者两次把「我修了什么」当成覆盖边界，共同点是**改完没在父提交上做反向对照**。第六轮起 harness 把上一轮的必红集整体作为回归集重跑，建议之后动这个文件的人保留这个习惯。
 
 另一条来自实现者的启发式：**写完一条断言先问——这条断言失败时，用户看到的是什么？答不上来，它守的多半不是用户在乎的东西。**
+
+---
+
+# 单行重设计 + 执行按钮的遗留（`f8e0cd4`..`b5511de`）
+
+体检页改成每门语言一行、命令进 tooltip、删复制按钮、点击后开终端跑命令并在命令结束时自动重新探测。以下四条经裁定不阻塞交付——**它们都是「未来某次编辑可能溜过去」的测试覆盖问题，不是当前代码里的缺陷**（三条逃逸都需要有人主动改源码才成立）。
+
+## 1. `groupAction` 未整段钉死，一行就能重开已修的 C1 洞（最该先做）
+
+`ImuxLspConfigurable.kt:366-373`，测试侧 `ImuxLspUiSourceTest.kt:834-852`。
+
+实测全绿的攻击：
+```kotlin
+} ?: false
+if (remedy.docsUrl == null) return      // ← 只加这一行
+if (!placed) { fallbackCell(remedy) }
+```
+三条 `contains` 全部照常命中；全文件那两条否定只禁 `SystemInfo.` 与 `RemedyKind.`，本轮新加的 `LspStatus.` 否定只活在 `rowAction` 体内——**没有一条看得见 `docsUrl`**。
+
+后果精确落在 C1 靶心：Codex 组的 `groupRemedy.docsUrl` 由 `CodexLspProbe.kt:39` 构造为 null，闸门关掉时（欢迎页，或任何非 macOS）整组退回「一句警告 + 什么也没有」。
+
+这是重设计**自己制造**的不对称：`rowAction` 升级成 `assertSameCode` 整段钉死，而它形状相同、退路相同、KDoc 明写「与语言行走同一套闸门、同一套退路」的孪生兄弟 `groupAction` 仍停在三条 `contains` 上。
+
+**修法：照抄 `rowAction`，加一个 `assertSameCode`。**
+
+## 2. 整段比对排在针对性 `contains` 之后，纯改名会得到一句说反话的诊断
+
+`ImuxLspUiSourceTest.kt:745` / `:1027` / `:1110` 分别先于 `:755` / `:1041` / `:1139` 触发。
+
+纯做一次 Rename（`command` → `cmd`，不加任何东西）会红在 `:745`，失败信息是「**写死一个常量**，三个分组的同名语言会一起变成进行中」——维护者做的是重命名，拿到的诊断是「你写死了常量」。
+
+而 `assertSameCode` 的失败信息**是**对的（「对大括号与形参名敏感……照下面的期望抄回去即可」），但 JUnit 在第一条失败处就停了，那句话永远不会被打印。
+
+**修法：把三处 `assertSameCode` 提到各自用例的最前面。** 那几条 `contains` 全部被整段比对严格蕴含（M1/M3/N2b 三次实测确认整段比对同样会红），提前之后覆盖一条不丢，失败信息第一行就换成写好的那句。改动量近乎为零。
+
+## 3. `.visible` / `.enabled` 的 token 否定只覆盖 `findingsPanel`
+
+`renderCli` 与 `createPanel` 两处渲染点裸奔。实测全绿：
+```kotlin
+row { groupAction(cliReport.agentType, remedy) }.visible(false)
+row { scrollCell(findingsPanel(...)).align(AlignX.FILL) }.visible(false)
+```
+18 门语言那张表整个消失（本 epic 起因缺陷原样复活），且 pi/Codex 前置条件那一行连同它的 `fallbackCell` 一起消失。
+
+既有问题，但它是绕过 C1 保证最省事的一条路。
+
+## 4. 两处决定功能成败的取值完全未钉
+
+`ImuxLspConfigurable.kt:468-469` 与 `:753`：
+
+- **`hasProjectWindow()` 函数体**：`any` 改成 `none`（一个词）→ 正常项目窗口下全页执行按钮消失、全部退化成退路；从欢迎页反而长出一堆点了只写日志的按钮。这是 KDoc 亲口称为「第二道闸门」的判据
+- **`REFRESH_DEBOUNCE_MS` 的量级**：`300L` → `3_000_000L` → 头号卖点「跑完自动重探」静默变成「50 分钟后重探」，而 `running.remove(key)` 在 `delay` **之前**执行，那一行会立刻弹回旧状态——比不刷新更假
+
+## Minor
+
+- `scrollCell(findingsPanel(…))` 那条断言跑在 `normalized` 而非 `compactArgs` 上，改用具名实参会红且信息误导（`:592`，重设计前同样存在）
+- `LspRemedyRunTest` 的 KDoc 写「短目标名**与**上游文档链接」读起来像两样总是都有，而 ACTIVATE 类恒无链接；主源码措辞是准的
+- `runInTerminal` 的 `runCatching` 捕 `Throwable`，连 PCE / Error 一起吞（EDT 无进度指示器，实际不可达，且有日志）
+- `AllIcons.Process.Step_4` 换掉 `Step_1` 的唯一理由是真机观感，未经真机确认
+- 每条命令跑完走完整 `refresh()`，整页先闪回「正在检测…」再重画。既然留了 `lastReport`，可以先重画再探测
+- `hasProjectWindow()` 在渲染时求值：开着设置页再打开一个项目，要手动「重新检测」才长出按钮
+
+## 一条已被证实、不再是假设的前提
+
+`closeOnProcessTermination(false)` **只**关掉平台那个自动关标签的协程，**不影响 `sessionState` 何时翻转**。两位审查者独立用 `javap` 走过证据链：
+
+1. `TerminalViewImpl.<init>` 注册 `addTerminationCallback`，回调把状态置为 `Terminated`
+2. `fireSessionTerminated()` 在整个 `TerminalSessionController` 里只有一个调用点，守卫是后端事件流的 `TerminalSessionTerminatedEvent`——**进程**事件，与标签开关无关
+3. 反向铁证：`doCreateTab` 里 `iload_2; ifeq`——只有 `closeOnProcessTermination == true` 才起协程收这个状态并据此关标签。**平台自己拿它当「进程结束了」的信号**
+4. 补强：`doCreateTab$lambda$1` 在关标签时确实会 cancel `view.coroutineScope`（所以「用户中途关标签」那条边界不是推断），而 `TAB_DETACHED_KEY` 的 carve-out 意味着「把标签拖成独立窗口」不会误取消等待
+5. 回调注册用 `scope.asDisposable()`，控制的是**监听器存活期**而非「被调用」，所以 view scope 取消不会伪造一次 `Terminated`
+6. `first {}` 作用在 `StateFlow` 上会重放当前值，「Terminated 早于开始收集」不会漏
+
+本项目 `TerminalHost.closeTabWhenTerminated` 早已依赖同一性质并在生产工作。
