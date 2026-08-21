@@ -84,13 +84,19 @@ class LspStatusPresentationTest {
      * 前一半挡的是打错的键（`ImuxBundle` 取不到只会显示成 `!key!`，跑起来才看得见）；
      * 后一半挡的是「改了映射、忘了删旧键」——`ImuxBundleTest` 只比对十个语言文件
      * 的键集合是否一致，十个文件一起留着同一个没人用的键，它照样全绿。
+     *
+     * `settings.lsp.status.*` 这个命名空间有**两个**生产者：静态状态走
+     * [statusMessageKey]，命令跑起来之后那一句「正在激活…」走 [runningStatusKey]。
+     * 孤儿检查必须两个一起算——只算一个的话，另一个生产的键全都会被判成孤儿，
+     * 失败信息还会把维护者往「删掉它」的方向指，而那正是页面上唯一会动的一列。
      */
     @Test
     fun `文案键与资源包双向对齐`() {
         val bundle = Properties().apply {
             File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
         }
-        val used = LspStatus.entries.mapNotNull(::statusMessageKey).toSet()
+        val used = LspStatus.entries.mapNotNull(::statusMessageKey).toSet() +
+            RemedyKind.entries.map(::runningStatusKey).toSet()
 
         used.forEach { key ->
             assertTrue("资源包里没有 $key，界面上会显示成 !$key!", bundle.containsKey(key))

@@ -13,7 +13,9 @@ import com.github.izerui.imux.lsp.canRun
 import com.github.izerui.imux.lsp.readyServerText
 import com.github.izerui.imux.lsp.runActionKey
 import com.github.izerui.imux.lsp.runCommandLine
+import com.github.izerui.imux.lsp.runRowKey
 import com.github.izerui.imux.lsp.runTabName
+import com.github.izerui.imux.lsp.runningStatusKey
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
 import com.github.izerui.imux.model.AgentType
@@ -24,13 +26,14 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
+import com.intellij.terminal.frontend.view.TerminalView
+import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
@@ -38,12 +41,21 @@ import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.Rectangle
 import java.awt.event.ActionEvent
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.Icon
 import javax.swing.JButton
@@ -56,7 +68,13 @@ import javax.swing.Scrollable
  * Tools | Imux | LSP —— 三个 CLI 的 LSP 覆盖体检。
  *
  * 纯只读页：没有任何可保存的状态，[isModified] 恒为 false。它只回答一个问题——
- * 「我的 CLI 现在能不能用 LSP，不能的话该敲哪条命令」。
+ * 「我的 CLI 现在能不能用 LSP，不能的话点哪个按钮」。
+ *
+ * **每门语言只占一行**：图标 · 语言名 · 状态 · 操作。命令不再铺在页面上，
+ * 它收进了操作按钮的 tooltip。这一版是照用户原话改的——「体验感不好，激活后，
+ * 就状态应该变了啊，而且也不需要复制了吧」。三句话指向同一个根因：那一整行原始命令
+ * 是噪音，它占掉一整行、把按钮挤到右边，18 门语言 × 3 组之后整页密不透风；
+ * 而按钮点下去之后页面纹丝不动，用户无从判断到底有没有发生什么。
  *
  * 不做启动扫描、不弹通知：imux 已经有轮次完成提醒，再加一类噪音不划算。
  */
@@ -73,23 +91,81 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      */
     private val generation = AtomicInteger()
 
+    /**
+     * 「命令跑完了，该重新探测一次」这类请求的代次，与 [generation] 各管一段。
+     *
+     * [generation] 防的是**已经发起**的探测互相盖；这一个防的是**还没发起**的探测扎堆：
+     * 用户完全可能一口气点四五个「激活」，四五个终端标签各自跑完、各自要求重新探测，
+     * 而一次探测就是一个登录 shell。让最后到达的那一个去跑，前面的静静作废。
+     */
+    private val refreshRequest = AtomicInteger()
+
     private var refreshButton: JButton? = null
 
-    override fun createPanel(): DialogPanel = panel {
-        row {
-            comment(ImuxBundle.message("settings.lsp.scope.note"))
-        }
-        row {
-            refreshButton = button(ImuxBundle.message("settings.lsp.refresh")) { refresh() }.component
-        }
-        row {
-            cell(content).align(AlignX.FILL)
-        }
-    }.also { refresh() }
+    /**
+     * 最近一份体检结果。
+     *
+     * 点击按钮那一刻要立刻把那一行改成「正在激活…」，而重新渲染需要原始数据。
+     * 留一份比在点击时现场探测便宜得多——探测是登录 shell，而这一步要的只是重画。
+     */
+    private var lastReport: LspReport? = null
+
+    /**
+     * 正在跑的行：[runRowKey] 给的行标识 &#8594; 那一行状态列此刻该显示的 bundle 键。
+     *
+     * 存**键**而不是存 `RemedyKind`，是为了让「性质 &#8594; 文案」这个判断只存在于
+     * [runningStatusKey] 那个被真调用测试钉住的纯函数里；壳里连 `RemedyKind` 都不必 import，
+     * 也就没有第二处按性质分支的地方。
+     *
+     * 用 [ConcurrentHashMap]：写入发生在 EDT（点击）与协程线程（跑完清除）两侧。
+     */
+    private val running = ConcurrentHashMap<String, String>()
+
+    /**
+     * 页面自己的协程作用域，**刻意不复用终端 view 的那一个**。
+     *
+     * 等命令跑完要收 `TerminalView.sessionState`，而 `TerminalView.coroutineScope` 会随
+     * 标签页关闭一起取消：把收集协程挂上去的话，用户中途关掉终端标签，协程当场没了，
+     * 那一行就永远停在「正在激活…」——恰恰是这次要修的那个毛病换了个形状复发。
+     *
+     * 反过来，页面被关掉（[disposeUIResources]）时这个作用域必须取消：否则几分钟后
+     * `brew install` 跑完，一个早已 dispose 的页面还会白起一个登录 shell 去探测。
+     */
+    private var scope: CoroutineScope? = null
+
+    override fun createPanel(): DialogPanel {
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        return panel {
+            row {
+                comment(ImuxBundle.message("settings.lsp.scope.note"))
+            }
+            row {
+                refreshButton = button(ImuxBundle.message("settings.lsp.refresh")) { refresh() }.component
+            }
+            row {
+                cell(content).align(AlignX.FILL)
+            }
+        }.also { refresh() }
+    }
 
     override fun isModified(): Boolean = false
 
     override fun apply() = Unit
+
+    /**
+     * 页面关掉之后不许再有任何后台动作。
+     *
+     * 等待中的收集协程随作用域一起取消，[running] 一并清空——同一个 Configurable 实例
+     * 被再次 `createComponent` 时，界面上不该凭空出现几行「正在激活…」，
+     * 它们对应的终端标签早就是上一次会话的事了。
+     */
+    override fun disposeUIResources() {
+        scope?.cancel()
+        scope = null
+        running.clear()
+        lastReport = null
+        super.disposeUIResources()
+    }
 
     /**
      * 体检要起登录 shell 读 profile，绝不能落在 EDT 上。
@@ -135,13 +211,16 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /** 失败必须与「进行中」长得不一样，否则用户只会以为很慢，反复点重新检测。 */
     private fun showFailed() = replaceContent(JBLabel(ImuxBundle.message("settings.lsp.failed")))
 
-    private fun showReport(report: LspReport) = replaceContent(
-        panel {
-            report.cliReports.forEach { cliReport ->
-                group(cliReport.agentType.displayName) { renderCli(cliReport) }
-            }
-        },
-    )
+    private fun showReport(report: LspReport) {
+        lastReport = report
+        replaceContent(
+            panel {
+                report.cliReports.forEach { cliReport ->
+                    group(cliReport.agentType.displayName) { renderCli(cliReport) }
+                }
+            },
+        )
+    }
 
     private fun replaceContent(component: JComponent) {
         content.removeAll()
@@ -167,7 +246,9 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
                 // no.findings——没装 pi-lens 或没给 Codex 挂 MCP 的用户每次开页都看到它。
                 comment(groupMessage(cliReport))
             }
-            renderRemedy(remedy)
+            row {
+                groupAction(cliReport.agentType, remedy)
+            }
             return
         }
 
@@ -212,11 +293,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             ImuxBundle.message("settings.lsp.gaps", cliReport.gaps.size)
 
     /**
-     * 逐语言列表：目录表里的 **18 门语言一门不少**，每门一句状态。
+     * 逐语言列表：目录表里的 **18 门语言一门不少**，每门**只占一行**。
      *
      * 这里绝不能再按状态过滤。此前只列「有问题的」语言，pi 组因此没有 TypeScript，
      * 真实用户据此得出「pi 不支持 TypeScript LSP」——而 pi-lens 恰恰会自动装它。
      * 对体检工具来说「没什么可查」和「不显示」差别极大：前者是好消息，后者是信息缺失。
+     *
+     * 四列固定：状态图标 · 语言名 · 状态一句话 · 操作。**命令不在这里出现**——
+     * 它进了操作按钮的 tooltip。从前它单独占一行，18 门语言里但凡有五六处缺口，
+     * 这张表就被撑成两倍高，而那些命令用户十有八九一条都不会读。
      *
      * 语言行必须显式声明 [RowLayout.PARENT_GRID]。`Panel.row` 在不带 label 时构造的是
      * `RowLayout.INDEPENDENT`，而 `PanelBuilder` 对 INDEPENDENT 的处理是给每行开一个
@@ -224,59 +309,83 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `TypeScript/JavaScript | installed on demand by pi-lens` 的第三列起点会差出上百像素，
      * 18 行是一份参差的清单而不是一张对得齐的表。
      *
-     * 但 [renderRemedy] 的命令行**保持默认的 INDEPENDENT**：把
-     * `npm install -g typescript-language-server typescript` 拉进同一个网格，
-     * 会把第一列（图标）撑到那条命令的宽度，整张表当场散架。
+     * 现在第四列也进同一个网格，而这只有在**第四列很窄**时才成立：那里放的是一个按钮
+     * （「激活」/「安装」）或一个短链接（「文档 ↗」）。之所以敢这么做，正是因为
+     * `npm install -g typescript-language-server typescript` 这种长度的东西已经搬进
+     * tooltip；把它放回单元格里，第一列（图标）会被撑成那条命令的宽度，整张表当场散架。
      */
     private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =
         CappedHeightView(
             panel {
                 findings.forEach { finding ->
                     row {
-                        icon(statusIcon(finding.status))
+                        icon(rowIcon(finding, agentType))
                         label(finding.language.displayName)
                         label(statusText(finding, agentType))
+                        rowAction(finding, agentType)
                     }.layout(RowLayout.PARENT_GRID)
-                    finding.remedy?.let { renderRemedy(it) }
                 }
             },
         )
 
-    /** 缩进一级挂在触发它的那条缺口之下，让「命令属于哪门语言」一眼可辨。 */
-    private fun Panel.renderRemedy(remedy: Remedy) {
-        indent {
-            remedy.command?.let { command ->
-                row {
-                    label(command)
-                    button(ImuxBundle.message("settings.lsp.copy")) {
-                        CopyPasteManager.copyTextToClipboard(command)
-                    }
-                    runRemedyButton(remedy, command)
-                }
-            }
-            // 没有已知安装命令时至少给出上游文档，不让用户卡在「不可用」三个字上
-            if (remedy.command == null) {
-                remedy.docsUrl?.let { url ->
-                    row { browserLink(url, url) }
-                }
-            }
+    /**
+     * 一行末尾那一格：能跑的给按钮，跑不了的退回上游文档。
+     *
+     * 顺序不能反。按钮是**这一页唯一可执行的产出**，有它就不需要别的；
+     * 而 [runRemedyButton] 会在闸门不放行时什么都不放（非 macOS 的安装命令、
+     * 没有 POSIX shell、当前没开着项目窗口），此时这一格若也空着，
+     * 用户就只剩「服务器不在 PATH 中」六个字，没有任何下一步——那正是删掉
+     * `[复制]` 之后最容易掉进去的坑：命令收进了 tooltip，而 tooltip 依附于
+     * 一个根本没被渲染出来的按钮。所以这里按**有没有真的放上按钮**来决定退路，
+     * 而不是自己再判一次平台或命令有无（那就是第二处闸门了）。
+     *
+     * 没有 remedy 的行（就绪、pi-lens 自动管理、官方无对应插件、没查出来）
+     * 这一格是空的：它们本来就没有下一步可做，摆个链接只会让人以为有事要办。
+     */
+    private fun Row.rowAction(finding: LanguageFinding, agentType: AgentType) {
+        val remedy = finding.remedy ?: return
+        val placed = remedy.command?.let { command ->
+            runRemedyButton(runRowKey(agentType, finding.language), remedy, command)
+        } ?: false
+        if (!placed) {
+            docsLink(remedy)
         }
     }
 
     /**
-     * `[复制]` 旁边那个执行按钮——点一下开个终端标签，把命令跑起来。
+     * 组级修复（pi 未装 pi-lens、Codex 未挂 MCP）的那个按钮。
+     *
+     * 与语言行走同一套闸门和同一套「跑完自动重新探测」，只是行标识不来自语言：
+     * 它是整组的前置条件，用 CLI 名加一个不可能与语言 id 相撞的后缀。
+     */
+    private fun Row.groupAction(agentType: AgentType, remedy: Remedy) {
+        val placed = remedy.command?.let { command ->
+            runRemedyButton(agentType.name + GROUP_ROW, remedy, command)
+        } ?: false
+        if (!placed) {
+            docsLink(remedy)
+        }
+    }
+
+    /** 上游文档链接。链接文字是短词，不是 URL——URL 有五十来个字符，会把这一列撑爆。 */
+    private fun Row.docsLink(remedy: Remedy) {
+        remedy.docsUrl?.let { url ->
+            browserLink(ImuxBundle.message("settings.lsp.docs"), url)
+        }
+    }
+
+    /**
+     * 执行按钮——点一下开个终端标签，把命令跑起来。返回**是否真的放上了按钮**。
      *
      * **平台与性质的取舍完全交给 [canRun]，壳里一个平台判断都不许有。** 目录表里的
      * 安装命令只在 macOS 上核实过（`brew install llvm`、`gem install ruby-lsp`、
      * `opam install ocaml-lsp-server`），从前它们只是显示出来给人复制，平台不对用户
-     * 自己一眼就看出来；现在按钮点下去是**直接执行**。这条闸门是本次改动里唯一
-     * 「点错了就在用户机器上跑错东西」的地方，所以它住在纯函数里、被真调用测试钉着，
-     * 这里只剩一个调用点。
+     * 自己一眼就看出来；现在按钮点下去是**直接执行**。这条闸门是「点错了就在用户机器上
+     * 跑错东西」的唯一入口，所以它住在纯函数里、被真调用测试钉着，这里只剩一个调用点。
      *
      * 第二道闸门 [hasProjectWindow] 挡的是另一种「按钮在、点下去却什么都不发生」：
      * 终端标签是**项目级**的，而这一页是应用级设置，天生就会从欢迎页被打开。
-     * 那时一个项目都没开，没有地方开标签——留一个点了没反应的按钮，比不给按钮更糟，
-     * 而这一页在没有项目时**本来是完整的**：`[复制]` 加文档链接，信息一样不少。
+     * 那时一个项目都没开，没有地方开标签——留一个点了没反应的按钮，比不给按钮更糟。
      * 它刻意**不**并进 `canRun`：那是平台与命令性质的取舍，是纯的、可测的；
      * 「现在有没有项目窗口」是运行期环境，两者会各自变化。
      *
@@ -284,21 +393,33 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 都还留在源码里的前提下把「激活」和「安装」对调——用户点一个写着「激活」的按钮，
      * 等来的是几百兆下载。
      *
+     * `toolTipText` 是命令**唯一**的去处。用户原话「也不需要复制了吧」删掉的是复制按钮，
+     * 不是知情权：鼠标停在按钮上就看得到马上要执行的整条命令，比原先把它铺在页面上
+     * 更省地方，信息一点没少。
+     *
+     * `.enabled` 挡的是连点：命令在终端里异步跑，按钮不禁用的话用户会以为没反应而再点
+     * 一次，于是同一条 `brew install` 开出两个标签抢同一把锁。它和守卫一样被逐字节钉住
+     *——从前这个 `.enabled` 是被测试明令禁止的攻击写法（`.enabled(false)` 让按钮全灭），
+     * 现在它有了正当语义，那就必须连**它的实参**一起钉死，否则等于把那扇门重新打开。
+     *
      * 整段函数体被 `ImuxLspUiSourceTest` 逐字节钉住。这不是洁癖：它是本页唯一一个
      * **职责就是可见性**的函数，而 `.visible(false)` / 守卫后面再补一句 `return` /
      * 按 `kind.ordinal` 分支，都是「加法」——逐条列举被禁 token 的黑名单永远漏得掉，
-     * 整段比对漏不掉。代价是改动这四行要来测试里点头一次。
+     * 整段比对漏不掉。代价是改动这几行要来测试里点头一次。
      */
-    private fun Row.runRemedyButton(remedy: Remedy, command: String) {
+    private fun Row.runRemedyButton(key: String, remedy: Remedy, command: String): Boolean {
         if (!canRun(remedy, SystemInfo.isMac, !SystemInfo.isWindows)) {
-            return
+            return false
         }
         if (!hasProjectWindow()) {
-            return
+            return false
         }
         button(ImuxBundle.message(runActionKey(remedy.kind))) { event ->
-            runInTerminal(remedy, command, event)
+            runInTerminal(key, remedy, command, event)
         }
+            .enabled(!running.containsKey(key))
+            .applyToComponent { toolTipText = command }
+        return true
     }
 
     /**
@@ -331,10 +452,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `~/.claude/settings.json`，但改它的是 claude 这个 CLI，imux 只是替用户敲了那行字
      * ——敲在一个用户看得见、随时能打断的终端里。README 那句承诺因此继续成立。
      *
-     * 跑完**不自动刷新**报告：命令在终端里异步跑，我们不知道它什么时候结束，
-     * 猜一个时机只会给出更假的信息。页面顶部就有「重新检测」，用户装完自己点。
+     * 开标签**之前**先把这一行标成「进行中」并立刻重画：新标签会抢焦点，页面这一刻
+     * 已经不在用户眼前了；等回来时它必须已经变了样，而不是和点之前一模一样。
      */
-    private fun runInTerminal(remedy: Remedy, command: String, event: ActionEvent) {
+    private fun runInTerminal(key: String, remedy: Remedy, command: String, event: ActionEvent) {
         // 渲染时 hasProjectWindow() 已经确认过有项目开着，这里再判一次是因为 262 的设置
         // 窗口是**非模态**的：从渲染到点击之间，用户完全可以把那个项目关掉。
         val project = targetProject(event)
@@ -342,7 +463,9 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             LOG.warn("没有可用的项目窗口，无法执行：$command")
             return
         }
-        TerminalToolWindowTabsManager.getInstance(project)
+        running[key] = runningStatusKey(remedy.kind)
+        lastReport?.let(::showReport)
+        val tab = TerminalToolWindowTabsManager.getInstance(project)
             .createTabBuilder()
             .workingDirectory(project.basePath ?: System.getProperty("user.home"))
             .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
@@ -350,6 +473,54 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             .requestFocus(true)
             .closeOnProcessTermination(false)
             .createTab()
+        refreshWhenFinished(key, tab.view)
+    }
+
+    /**
+     * 等这条命令跑完，再整体重新探测一次。
+     *
+     * 这是用户那句「激活后，就状态应该变了啊」的正面回答。从前这里什么都不做，理由是
+     * 「命令在终端里异步跑，我们不知道它什么时候结束，猜一个时机只会给出更假的信息」
+     * ——理由本身没错，错在结论：262 的 `TerminalView.sessionState` **不用猜**，
+     * 它会明确走到 [TerminalViewSessionState.Terminated]。
+     *
+     * 三条边界，每一条都能让那一行永远停在「正在激活…」：
+     *
+     * 1. **用户中途关掉终端标签**。关标签会取消 `view.coroutineScope`，`sessionState`
+     *    从此再也不会变——只等 `Terminated` 的话就是干等到天荒地老。所以那个 scope 的
+     *    Job 一结束就把等待协程取消掉，两条路汇到同一个出口（`join` 对正常完成与被取消
+     *    一视同仁地返回）。**收集协程本身绝不能挂在 `view.coroutineScope` 上**，
+     *    否则连「被取消了」这件事都没人来处理。
+     * 2. **连点多个按钮**。多个标签并行跑完，多个重新探测请求扎堆，而一次探测是一个
+     *    登录 shell。[refreshRequest] 代次号加一小段延时把它们合并成一次。
+     * 3. **页面已经关闭**。作用域随 [disposeUIResources] 取消，协程在 `delay` 处就断了；
+     *    `invokeLater` 那一刻再确认一次，挡住「刚好排在取消之前」的那一发。
+     *
+     * 重新探测走**完整**的一遍而不是只查这一条：探测本来就是一次批量 shell 调用，
+     * 单独查一条既不更快，还要多写一条只在这里用到的窄路径。
+     */
+    private fun refreshWhenFinished(key: String, view: TerminalView) {
+        val pageScope = scope ?: return
+        pageScope.launch {
+            val terminated = launch {
+                view.sessionState.first { it is TerminalViewSessionState.Terminated }
+            }
+            val closed = view.coroutineScope.coroutineContext.job.invokeOnCompletion { terminated.cancel() }
+            try {
+                terminated.join()
+            } finally {
+                closed.dispose()
+            }
+            running.remove(key)
+            val ticket = refreshRequest.incrementAndGet()
+            delay(REFRESH_DEBOUNCE_MS)
+            if (ticket == refreshRequest.get()) {
+                ApplicationManager.getApplication().invokeLater(
+                    { if (scope != null) refresh() },
+                    ModalityState.any(),
+                )
+            }
+        }
     }
 
     /**
@@ -394,6 +565,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 每门语言那一句状态——**薄壳**：向 [statusMessageKey] 取键、交给 [ImuxBundle]，
      * 没有键的（只有 READY）显示 server 二进制名。
      *
+     * [running] 排在最前面：这一行正在跑命令时，说的必须是「正在激活…」，而不是那条
+     * 还没被推翻的旧状态。用户点下按钮之后盯着的就是这一列——它不动，用户就认为点击
+     * 没生效，然后再点一次。查表而不是 `if`，是为了让「性质 &#8594; 文案」的判断留在
+     * [runningStatusKey] 那个能被真正调用测的纯函数里。
+     *
      * 壳里不得再出现任何按 [LspStatus] 的判断。这不是洁癖：状态与文案的对应搬进
      * `LspStatusPresentation` 正是为了让它能被真正调用、被行为测试钉住；只要这里
      * 补一句 `if (status == X) return message(Y)`，那些行为测试就全部失效，
@@ -404,9 +580,27 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 若将来有译文明显变长，这一列必须改用 `comment` 或 `text`——见类顶部的折行教训。
      */
     private fun statusText(finding: LanguageFinding, agentType: AgentType): String {
-        val key = statusMessageKey(finding.status)
+        val key = running[runRowKey(agentType, finding.language)]
+            ?: statusMessageKey(finding.status)
             ?: return readyServerText(finding.language, agentType)
         return ImuxBundle.message(key)
+    }
+
+    /**
+     * 一行最左边那个图标。
+     *
+     * 正在跑命令时换成进行中的图标，理由与 [statusText] 完全相同：那一行必须整体改变
+     * 面貌，只换文字不换图标的话，一列绿勾/黄叹号里混着一句「正在激活…」，
+     * 反而像是显示出错了。
+     *
+     * 用 [AllIcons.Process.Step_1] 这个**静态**帧，不用 `AnimatedIcon.Default`：
+     * 后者不在 [AllIcons] 里（项目约定图标只取 AllIcons），而且它靠计时器重绘，
+     * 挂在一张随时会被整体重建的表上只是白烧 EDT。这一行本来就会在几秒到几分钟内
+     * 被一次完整重新探测覆盖掉，静态帧足够表达「这一格和别人不一样」。
+     */
+    private fun rowIcon(finding: LanguageFinding, agentType: AgentType): Icon {
+        val inProgress = running.containsKey(runRowKey(agentType, finding.language))
+        return if (inProgress) AllIcons.Process.Step_1 else statusIcon(finding.status)
     }
 
     /**
@@ -429,9 +623,9 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 滚动区的视图：把可视高度封顶，超出部分交给滚动条。
      *
-     * 三个分组各 18 门语言，光语言行就 54 行，再加上缺口下面的命令行——不封顶的话
-     * 设置页会被撑到上千像素，「重新检测」按钮以外的一切都得靠滚，而 `Row.scrollCell`
-     * 包出来的 `JBScrollPane` 会原样跟着视图的 preferred height 长，等于白包一层。
+     * 三个分组各 18 门语言，光语言行就 54 行——不封顶的话设置页会被撑到上千像素，
+     * 「重新检测」按钮以外的一切都得靠滚，而 `Row.scrollCell` 包出来的 `JBScrollPane`
+     * 会原样跟着视图的 preferred height 长，等于白包一层。
      *
      * 封顶必须走 [Scrollable]：`JViewport` 的布局器（`ViewportLayout`）在视图实现
      * 该接口时取 [getPreferredScrollableViewportSize] 决定滚动面板的 preferred size，
@@ -457,8 +651,8 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
          * 视口够宽就把内容拉满宽度，不够宽时交还横向滚动条。
          *
          * 恒返回 true 会让「宽度不足」直接表现为**截断**：本页最长的行是
-         * `npm install -g typescript-language-server typescript` 加一个复制按钮，
-         * 用户会看到一条读不全、复制得到却不知道全貌的命令。宁可出横向滚动条。
+         * `TypeScript/JavaScript` 加上俄语那句状态说明再加一个按钮，用户会看到一行
+         * 读不全的状态。宁可出横向滚动条。
          */
         override fun getScrollableTracksViewportWidth(): Boolean {
             val viewport = parent as? JViewport ?: return true
@@ -476,5 +670,22 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
 
     private companion object {
         val LOG = logger<ImuxLspConfigurable>()
+
+        /**
+         * 组级修复那一行的行标识后缀，接在 `AgentType.name` 后面。
+         *
+         * 带空格，与 [runRowKey] 拼出来的任何一行都不可能相撞（目录表里的语言 id
+         * 全是 `c` / `cpp` 这类标识符）。撞上的话，用户点一次「安装 pi-lens」，
+         * 某门语言会跟着假装自己在跑。
+         */
+        const val GROUP_ROW = "/group remedy"
+
+        /**
+         * 合并「跑完了要重新探测」请求的时间窗，毫秒。
+         *
+         * 只需要盖住「几个标签几乎同时结束」这一种情况，不是给用户看的延迟——
+         * 取到秒级的话，用户会先看见一行已经不再「正在激活…」、状态却还是旧的表。
+         */
+        const val REFRESH_DEBOUNCE_MS = 300L
     }
 }
