@@ -1,6 +1,5 @@
 package com.github.izerui.imux.settings
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,6 +8,12 @@ import java.io.File
 /**
  * UI 无法在本项目里跑起来做行为测试（未引入平台 test-framework，见 build.gradle.kts），
  * 因此对源码做结构断言，守住几条一旦破坏就只能在真机上才发现的约定。
+ *
+ * **这里刻意不再断言「状态 → 文案 / 图标」的对应**。源码文本断言可以被
+ * 「原有字面量一个字不改、在它前面加一句守卫」整个绕过，这一类缺陷在本文件上
+ * 反复复活过。那组映射已经搬到 `lsp/LspStatusPresentation.kt`——它不碰任何平台 API，
+ * 因此能被 `LspStatusPresentationTest` 真正调用着测。本文件只负责守住
+ * 「设置页确实走了那套映射、而且壳里没有自己的判断」。
  */
 class ImuxLspUiSourceTest {
     private val source: String by lazy {
@@ -16,12 +21,45 @@ class ImuxLspUiSourceTest {
     }
 
     /**
-     * 空白归一后的源码，供需要钉住**整段结构**（而不是单行）的断言使用。
+     * 剥掉注释、再把空白归一后的源码，供需要钉住**整段结构**（而不是单行）的断言使用。
      *
-     * 断言一旦跨行，就会连缩进和换行位置一起钉死，重新格式化一次就误报。
-     * 归一后既能钉住整个循环体，又不在意它排成几行。
+     * 两步缺一不可。不归一空白，断言会连缩进和换行位置一起钉死，重新格式化一次就误报；
+     * 不剥注释，在被钉住的那段代码里补一行说明就会红——而本代码库的注释密度极高，
+     * 那是大概率发生的误报，报错信息还会把维护者往「你改坏了逻辑」的方向指。
+     *
+     * 行注释用 `(?<!:)` 排除 `https://`，免得把字符串里的 URL 当成注释吃掉。
      */
-    private val normalized: String by lazy { source.replace(Regex("""\s+"""), " ") }
+    private val normalized: String by lazy {
+        source.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), " ")
+            .replace(Regex("""(?<!:)//[^\n]*"""), " ")
+            .replace(Regex("""\s+"""), " ")
+    }
+
+    /**
+     * 取出 [anchor] **之后**、直到与第一个 [open] 配对的定界符为止的整段源码。
+     *
+     * 返回值从 anchor 末尾算起而不是从 [open] 算起，这样表达式体函数的分派表达式
+     *（`= when (statusIconKind(status)) {`）也在结果里——它恰恰是最该被断言的那部分。
+     *
+     * 在 [normalized] 上做，所以不必担心注释里的括号打乱配平。
+     * 用它把断言限定在**某个函数体内**：「renderRemedy 里不得出现 X」这种话，
+     * 在整份源码上说会被别处的合法用法搅黄，在函数体内说才是准的。
+     */
+    private fun bodyAfter(anchor: String, open: Char): String {
+        val start = normalized.indexOf(anchor)
+        assertTrue("源码里找不到锚点：$anchor", start >= 0)
+        val from = normalized.indexOf(open, start + anchor.length)
+        assertTrue("锚点 $anchor 之后找不到 $open", from >= 0)
+        val close = if (open == '{') '}' else ')'
+        var depth = 0
+        for (i in from until normalized.length) {
+            when (normalized[i]) {
+                open -> depth++
+                close -> if (--depth == 0) return normalized.substring(start + anchor.length, i + 1).trim()
+            }
+        }
+        throw AssertionError("锚点 $anchor 之后的 $open 没有配对")
+    }
 
     /**
      * shell 探测要起登录 shell 读 profile，绝不能落在 EDT 上——
@@ -172,30 +210,46 @@ class ImuxLspUiSourceTest {
      *
      * 断言钉的是**整个传参调用**而不是 `findingsPanel` 这个标识符：只钉标识符的话，
      * 改成 `findingsPanel(cliReport.gaps, …)` 断言照样绿，缺陷原样复活。
-     * 第二条挡的是另一条回头路——把过滤挪进 findingsPanel 内部。
+     *
+     * 后面几条挡的是同一个缺陷的其它入口。钉子从**函数签名**起，一路连到 `panel {` 与
+     * `forEach`——中间但凡插一句加工（`val findings = all.filter { … }`），或者把形参
+     * 遮蔽掉（`val findings = findings.filter { … }`），这条链就断了。
+     * 只钉「循环体里没有 filter」是不够的：过滤挪到循环**之前**，循环体一字未动。
      */
     @Test
-    fun `逐语言列表必须传入完整的 findings`() {
+    fun `逐语言列表必须无条件渲染每一条 finding`() {
         assertTrue(
             "列表必须拿到完整的 findings，不能退回 gaps 或 ready",
             source.contains("scrollCell(findingsPanel(cliReport.findings, cliReport.agentType))"),
         )
-        // 钉住**整个循环体**而不只是「有没有 filter」。只挡链式过滤的话，
-        // 在循环体里写一句 `if (finding.status == LspStatus.READY) return@forEach`
-        // 就能让整组语言重新消失，而断言照样绿——省略哪一门都是同一个缺陷。
-        // 比对前把空白归一，这样重新格式化不会误伤。
+
+        val body = bodyAfter(
+            "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =",
+            '(',
+        )
         assertTrue(
-            "语言行的渲染必须是「一条 finding 一行、无条件」，中间不得插入任何跳过逻辑",
-            normalized.contains(
-                "findings.forEach { finding -> " +
-                    "row { " +
-                    "icon(statusIcon(finding.status)) " +
-                    "label(finding.language.displayName) " +
-                    "label(statusText(finding, agentType)) " +
-                    "}.layout(RowLayout.PARENT_GRID) " +
-                    "finding.remedy?.let { renderRemedy(it) } " +
-                    "}",
-            ),
+            "形参 findings 必须直接进 panel 的 forEach，中间不得有任何加工或遮蔽：$body",
+            body.startsWith("CappedHeightView( panel { findings.forEach { finding -> "),
+        )
+
+        // 拆成独立的否定断言，好让失败信息对得上原因——上面那条只会说「链断了」。
+        listOf("return@forEach", "continue", ".filter", ".take", ".drop").forEach { escape ->
+            assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", body.contains(escape))
+        }
+    }
+
+    /**
+     * 上一条的兜底：整份源码里都不该出现 `findings.filter`。
+     *
+     * 与函数体内那条并存而不是二选一。它挡的是形参遮蔽写法
+     *（`val findings = findings.filter { … }`）——那种写法下 `blockAfter` 的链式匹配
+     * 也会断，但两道网各自还能挡住对方漏掉的变体，成本又只有一行。
+     */
+    @Test
+    fun `源码里不得对 findings 做过滤`() {
+        assertFalse(
+            "全量列表是这轮改造的全部意义，findings 不得被过滤",
+            Regex("""findings\s*\.\s*filter""").containsMatchIn(normalized),
         )
     }
 
@@ -210,41 +264,48 @@ class ImuxLspUiSourceTest {
      * 第二条断言同样重要：只有语言行该进父网格。把 renderRemedy 的命令行也拉进去，
      * 第一列（图标）会被 `npm install -g typescript-language-server typescript`
      * 撑成那条命令的宽度，整张表当场散架——那是「修对齐」时最顺手的一个错解法。
+     * 它写成**在 renderRemedy 函数体内的否定断言**：数整份源码里 PARENT_GRID 出现几次
+     * 两个方向都会失效——`import RowLayout.PARENT_GRID` 之后写 `.layout(PARENT_GRID)`
+     * 数不到，而按本文件的风格在 KDoc 里提一句 PARENT_GRID 就会误红。
      */
     @Test
     fun `语言行必须共享列宽而命令行必须独立`() {
         assertTrue(
-            "语言行必须显式 PARENT_GRID，默认的 INDEPENDENT 每行各占一个子网格、列宽不共享",
-            source.contains(".layout(RowLayout.PARENT_GRID)"),
+            "语言行必须进父网格，默认的 INDEPENDENT 每行各占一个子网格、列宽不共享",
+            bodyAfter(
+                "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =",
+                '(',
+            ).contains("PARENT_GRID"),
         )
-        // 数的是**调用**而不是标识符：KDoc 里也会出现 RowLayout.PARENT_GRID。
-        assertEquals(
-            "只有语言行该进父网格；命令行进去会把图标列撑到整条安装命令的宽度",
-            1,
-            Regex("""\.layout\(RowLayout\.PARENT_GRID\)""").findAll(source).count(),
+        assertFalse(
+            "命令行进父网格会把图标列撑成整条安装命令的宽度",
+            bodyAfter("private fun Panel.renderRemedy(remedy: Remedy)", '{').contains("PARENT_GRID"),
         )
     }
 
     /**
-     * 状态 → 文案的对应逐条钉死。
+     * 状态 → 文案 / 图标的对应**不在这里断言**，它由 `LspStatusPresentationTest`
+     * 真正调用着测。这里只守一件事：设置页两个薄壳里不得有自己的判断。
      *
-     * 只钉图标是不够的：把 `AUTO_MANAGED -> settings.lsp.status.auto` 改成
-     * `settings.lsp.status.binary`，pi 组的 TypeScript / Python / Ruby / Rust / PHP / C#
-     * 就会显示成「服务器不在 PATH 中」——这次改动要消灭的那条假消息换个壳原样复活，
-     * 而图标断言、探针测试、资源包一致性测试**全都发现不了**（键还在，只是没人用了）。
+     * 这一条是那组行为测试的前提。壳里补一句
+     * `if (finding.status == LspStatus.AUTO_MANAGED) return ImuxBundle.message("…binary")`，
+     * 纯映射再正确也没用——pi 组的 TypeScript / Python / Ruby / Rust / PHP / C# 照样会
+     * 显示成「服务器不在 PATH 中」，而那组行为测试全绿。所以壳里禁止出现 `LspStatus.`
+     * 分支，也禁止写死文案键。
      */
     @Test
-    fun `每个状态的文案必须逐条钉死`() {
-        listOf(
-            """LspStatus.READY -> serverBinary(finding.language, agentType).orEmpty()""",
-            """LspStatus.MISSING_CONFIG -> ImuxBundle.message("settings.lsp.status.config")""",
-            """LspStatus.MISSING_BINARY -> ImuxBundle.message("settings.lsp.status.binary")""",
-            """LspStatus.UNKNOWN -> ImuxBundle.message("settings.lsp.status.unknown")""",
-            """LspStatus.AUTO_MANAGED -> ImuxBundle.message("settings.lsp.status.auto")""",
-            """LspStatus.NOT_AVAILABLE -> ImuxBundle.message("settings.lsp.status.unavailable")""",
-        ).forEach { branch ->
-            assertTrue("状态与文案的对应被改动：$branch", source.contains(branch))
-        }
+    fun `文案与图标必须全部来自纯映射，壳里不得自己判断`() {
+        val text = bodyAfter(
+            "private fun statusText(finding: LanguageFinding, agentType: AgentType): String",
+            '{',
+        )
+        assertTrue("statusText 必须向纯映射取键：$text", text.contains("statusMessageKey(finding.status)"))
+        assertFalse("壳里不得再按状态分支，那正是绕过行为测试的路：$text", text.contains("LspStatus."))
+        assertFalse("文案键只能来自 statusMessageKey，壳里不得写死：$text", text.contains("\"settings.lsp.status."))
+
+        val icon = bodyAfter("private fun statusIcon(status: LspStatus): Icon", '{')
+        assertTrue("statusIcon 必须按语义类别分派：$icon", icon.contains("when (statusIconKind(status))"))
+        assertFalse("壳里不得再按状态分支：$icon", icon.contains("LspStatus."))
     }
 
     /**
@@ -320,27 +381,4 @@ class ImuxLspUiSourceTest {
         assertFalse("不得引用自定义 svg", source.contains(".svg"))
     }
 
-    /**
-     * 状态 → 图标的对应逐条钉死，与「每个状态的文案必须逐条钉死」同一把尺子。
-     *
-     * 最要紧的两条：「pi-lens 会自动装」是**好消息**，挂个警告牌等于把这次改动要纠正的
-     * 误解换个形式又说了一遍；「官方无对应插件」用户做什么都改变不了，同样不该是警告。
-     * 但另外三条也得钉——把 READY 改成 Warning，18 行会集体变成一片黄色感叹号，
-     * 而「图标取自 AllIcons」那条断言只看有没有出现过 `AllIcons.`，一点都拦不住。
-     *
-     * 钉的是整条分支而不是图标标识符：`AllIcons.General.Information`
-     * 在「CLI 未安装」那一行也在用，只断言它出现过等于没断言。
-     */
-    @Test
-    fun `每个状态的图标必须逐条钉死`() {
-        listOf(
-            "LspStatus.READY -> AllIcons.General.InspectionsOK",
-            "LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY -> AllIcons.General.Warning",
-            "LspStatus.AUTO_MANAGED -> AllIcons.General.Information",
-            "LspStatus.NOT_AVAILABLE -> AllIcons.General.Note",
-            "LspStatus.UNKNOWN -> AllIcons.General.QuestionDialog",
-        ).forEach { branch ->
-            assertTrue("状态与图标的对应被改动：$branch", source.contains(branch))
-        }
-    }
 }

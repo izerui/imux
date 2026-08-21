@@ -4,11 +4,14 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.lsp.CliReport
 import com.github.izerui.imux.lsp.LanguageFinding
 import com.github.izerui.imux.lsp.LspDiagnostics
-import com.github.izerui.imux.lsp.LspLanguage
 import com.github.izerui.imux.lsp.LspReport
 import com.github.izerui.imux.lsp.LspStatus
 import com.github.izerui.imux.lsp.Remedy
 import com.github.izerui.imux.lsp.ShellBinaryProbe
+import com.github.izerui.imux.lsp.StatusIconKind
+import com.github.izerui.imux.lsp.serverBinaryFor
+import com.github.izerui.imux.lsp.statusIconKind
+import com.github.izerui.imux.lsp.statusMessageKey
 import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
@@ -246,20 +249,6 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     }
 
     /**
-     * 语言覆盖是否来自 pi-lens。pi 与挂了 `pi-lens-mcp` 的 Codex 走的是同一套 server，
-     * 所以两组的 server 二进制取 [LspLanguage.piLensBinary]；Claude Code 用的是自己的
-     * 官方插件，取 [LspLanguage.claudeBinary]——Kotlin 上这两者是不同的两个程序。
-     */
-    private fun coveredByPiLens(agentType: AgentType): Boolean = when (agentType) {
-        AgentType.PI, AgentType.CODEX -> true
-        else -> false
-    }
-
-    /** 就绪时显示的是**哪个** server 在供能：Kotlin 一门就有 kotlin-lsp 与 kotlin-language-server 两种。 */
-    private fun serverBinary(language: LspLanguage, agentType: AgentType): String? =
-        if (coveredByPiLens(agentType)) language.piLensBinary else language.claudeBinary
-
-    /**
      * 组级修复的说明文案。
      *
      * 两个分支都只在「前置条件没满足」时才走得到：Codex 是没挂 MCP，pi 是没装 pi-lens
@@ -273,38 +262,37 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         }
 
     /**
-     * 每门语言那一句状态。
+     * 每门语言那一句状态——**薄壳**：向 [statusMessageKey] 取键、交给 [ImuxBundle]，
+     * 没有键的（只有 READY）显示 server 二进制名。
      *
-     * 全都短到可以用 `label`：最长的是俄语的 AUTO_MANAGED（45 字符），
-     * 加上最长的语言名 `TypeScript/JavaScript`（21 字符）也远在会撑宽对话框的量级之下。
-     * 若将来有译文明显变长，这一列必须改用 `comment` 或 `text` —— 见类顶部的折行教训。
+     * 壳里不得再出现任何按 [LspStatus] 的判断。这不是洁癖：状态与文案的对应搬进
+     * `LspStatusPresentation` 正是为了让它能被真正调用、被行为测试钉住；只要这里
+     * 补一句 `if (status == X) return message(Y)`，那些行为测试就全部失效，
+     * 而「文案字面量还在源码里」的文本断言一条都拦不住——这一类缺陷已经复活过两次。
      *
-     * READY 显示 server 二进制名而不是「已就绪」：绿勾已经说了「就绪」，
-     * 这一栏用来回答「是谁在供能」，恰好把 Kotlin 那种两边 server 不同的情况说清楚。
+     * 文字长度：最长的是俄语的 AUTO_MANAGED（45 字符），加上最长的语言名
+     * `TypeScript/JavaScript`（21 字符）仍远在会撑宽对话框的量级之下，用 `label` 安全。
+     * 若将来有译文明显变长，这一列必须改用 `comment` 或 `text`——见类顶部的折行教训。
      */
-    private fun statusText(finding: LanguageFinding, agentType: AgentType): String = when (finding.status) {
-        LspStatus.READY -> serverBinary(finding.language, agentType).orEmpty()
-        LspStatus.MISSING_CONFIG -> ImuxBundle.message("settings.lsp.status.config")
-        LspStatus.MISSING_BINARY -> ImuxBundle.message("settings.lsp.status.binary")
-        LspStatus.UNKNOWN -> ImuxBundle.message("settings.lsp.status.unknown")
-        LspStatus.AUTO_MANAGED -> ImuxBundle.message("settings.lsp.status.auto")
-        LspStatus.NOT_AVAILABLE -> ImuxBundle.message("settings.lsp.status.unavailable")
+    private fun statusText(finding: LanguageFinding, agentType: AgentType): String {
+        val key = statusMessageKey(finding.status)
+            ?: return serverBinaryFor(finding.language, agentType).orEmpty()
+        return ImuxBundle.message(key)
     }
 
     /**
-     * 状态图标。只用 [AllIcons] 的语义图标，不自绘。
+     * 状态图标——**薄壳**：语义类别由 [statusIconKind] 决定，这里只负责把类别换成
+     * [AllIcons] 的常量，不自绘、也不再按 [LspStatus] 判断（理由同 [statusText]）。
      *
-     * AUTO_MANAGED 用 Information 而不是 Warning：pi-lens 自动装是**好消息**，
-     * 挂个警告牌等于把这次改动想纠正的误解换个形式又说了一遍。
-     * NOT_AVAILABLE 用 Note——它既不是警告也不是「一切正常」，是一条中性注记：
-     * 用户对它做不了任何事，AllIcons.General 里语义最接近的中性图标就是它。
+     * 这几个常量都是「AllIcons 里语义最接近的那个」，属于可微调的取舍；
+     * 真正不该变的「哪些状态算警告」在 [statusIconKind] 那边由行为测试守着。
      */
-    private fun statusIcon(status: LspStatus): Icon = when (status) {
-        LspStatus.READY -> AllIcons.General.InspectionsOK
-        LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY -> AllIcons.General.Warning
-        LspStatus.AUTO_MANAGED -> AllIcons.General.Information
-        LspStatus.NOT_AVAILABLE -> AllIcons.General.Note
-        LspStatus.UNKNOWN -> AllIcons.General.QuestionDialog
+    private fun statusIcon(status: LspStatus): Icon = when (statusIconKind(status)) {
+        StatusIconKind.OK -> AllIcons.General.InspectionsOK
+        StatusIconKind.WARNING -> AllIcons.General.Warning
+        StatusIconKind.INFO -> AllIcons.General.Information
+        StatusIconKind.NEUTRAL -> AllIcons.General.Note
+        StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
     }
 
     /**
