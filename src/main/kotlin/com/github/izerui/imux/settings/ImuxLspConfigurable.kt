@@ -20,6 +20,7 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
+import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -199,6 +200,16 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 这里绝不能再按状态过滤。此前只列「有问题的」语言，pi 组因此没有 TypeScript，
      * 真实用户据此得出「pi 不支持 TypeScript LSP」——而 pi-lens 恰恰会自动装它。
      * 对体检工具来说「没什么可查」和「不显示」差别极大：前者是好消息，后者是信息缺失。
+     *
+     * 语言行必须显式声明 [RowLayout.PARENT_GRID]。`Panel.row` 在不带 label 时构造的是
+     * `RowLayout.INDEPENDENT`，而 `PanelBuilder` 对 INDEPENDENT 的处理是给每行开一个
+     * 子网格——**列宽跨行不共享**。默认值下 `C | clangd` 与
+     * `TypeScript/JavaScript | installed on demand by pi-lens` 的第三列起点会差出上百像素，
+     * 18 行是一份参差的清单而不是一张对得齐的表。
+     *
+     * 但 [renderRemedy] 的命令行**保持默认的 INDEPENDENT**：把
+     * `npm install -g typescript-language-server typescript` 拉进同一个网格，
+     * 会把第一列（图标）撑到那条命令的宽度，整张表当场散架。
      */
     private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =
         CappedHeightView(
@@ -208,7 +219,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
                         icon(statusIcon(finding.status))
                         label(finding.language.displayName)
                         label(statusText(finding, agentType))
-                    }
+                    }.layout(RowLayout.PARENT_GRID)
                     finding.remedy?.let { renderRemedy(it) }
                 }
             },

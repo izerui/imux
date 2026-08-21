@@ -1,5 +1,6 @@
 package com.github.izerui.imux.settings
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,6 +14,14 @@ class ImuxLspUiSourceTest {
     private val source: String by lazy {
         File("src/main/kotlin/com/github/izerui/imux/settings/ImuxLspConfigurable.kt").readText()
     }
+
+    /**
+     * 空白归一后的源码，供需要钉住**整段结构**（而不是单行）的断言使用。
+     *
+     * 断言一旦跨行，就会连缩进和换行位置一起钉死，重新格式化一次就误报。
+     * 归一后既能钉住整个循环体，又不在意它排成几行。
+     */
+    private val normalized: String by lazy { source.replace(Regex("""\s+"""), " ") }
 
     /**
      * shell 探测要起登录 shell 读 profile，绝不能落在 EDT 上——
@@ -171,14 +180,71 @@ class ImuxLspUiSourceTest {
             "列表必须拿到完整的 findings，不能退回 gaps 或 ready",
             source.contains("scrollCell(findingsPanel(cliReport.findings, cliReport.agentType))"),
         )
+        // 钉住**整个循环体**而不只是「有没有 filter」。只挡链式过滤的话，
+        // 在循环体里写一句 `if (finding.status == LspStatus.READY) return@forEach`
+        // 就能让整组语言重新消失，而断言照样绿——省略哪一门都是同一个缺陷。
+        // 比对前把空白归一，这样重新格式化不会误伤。
         assertTrue(
-            "列表内部必须逐条渲染全部 findings",
-            source.contains("findings.forEach { finding ->"),
+            "语言行的渲染必须是「一条 finding 一行、无条件」，中间不得插入任何跳过逻辑",
+            normalized.contains(
+                "findings.forEach { finding -> " +
+                    "row { " +
+                    "icon(statusIcon(finding.status)) " +
+                    "label(finding.language.displayName) " +
+                    "label(statusText(finding, agentType)) " +
+                    "}.layout(RowLayout.PARENT_GRID) " +
+                    "finding.remedy?.let { renderRemedy(it) } " +
+                    "}",
+            ),
         )
-        assertFalse(
-            "逐语言渲染里不得再出现按状态过滤",
-            Regex("""findings\s*\n?\s*\.\s*filter""").containsMatchIn(source),
+    }
+
+    /**
+     * 三列必须对得齐。
+     *
+     * `Panel.row` 不带 label 时构造的是 `RowLayout.INDEPENDENT`，而 `PanelBuilder`
+     * 对 INDEPENDENT 的处理是给每行开一个子网格——**列宽跨行不共享**。默认值下
+     * `C | clangd` 与 `TypeScript/JavaScript | installed on demand by pi-lens`
+     * 的第三列起点差出上百像素，18 行是一份参差的清单而不是一张表。
+     *
+     * 第二条断言同样重要：只有语言行该进父网格。把 renderRemedy 的命令行也拉进去，
+     * 第一列（图标）会被 `npm install -g typescript-language-server typescript`
+     * 撑成那条命令的宽度，整张表当场散架——那是「修对齐」时最顺手的一个错解法。
+     */
+    @Test
+    fun `语言行必须共享列宽而命令行必须独立`() {
+        assertTrue(
+            "语言行必须显式 PARENT_GRID，默认的 INDEPENDENT 每行各占一个子网格、列宽不共享",
+            source.contains(".layout(RowLayout.PARENT_GRID)"),
         )
+        // 数的是**调用**而不是标识符：KDoc 里也会出现 RowLayout.PARENT_GRID。
+        assertEquals(
+            "只有语言行该进父网格；命令行进去会把图标列撑到整条安装命令的宽度",
+            1,
+            Regex("""\.layout\(RowLayout\.PARENT_GRID\)""").findAll(source).count(),
+        )
+    }
+
+    /**
+     * 状态 → 文案的对应逐条钉死。
+     *
+     * 只钉图标是不够的：把 `AUTO_MANAGED -> settings.lsp.status.auto` 改成
+     * `settings.lsp.status.binary`，pi 组的 TypeScript / Python / Ruby / Rust / PHP / C#
+     * 就会显示成「服务器不在 PATH 中」——这次改动要消灭的那条假消息换个壳原样复活，
+     * 而图标断言、探针测试、资源包一致性测试**全都发现不了**（键还在，只是没人用了）。
+     */
+    @Test
+    fun `每个状态的文案必须逐条钉死`() {
+        listOf(
+            """LspStatus.READY -> serverBinary(finding.language, agentType).orEmpty()""",
+            """LspStatus.MISSING_CONFIG -> ImuxBundle.message("settings.lsp.status.config")""",
+            """LspStatus.MISSING_BINARY -> ImuxBundle.message("settings.lsp.status.binary")""",
+            """LspStatus.UNKNOWN -> ImuxBundle.message("settings.lsp.status.unknown")""",
+            """LspStatus.AUTO_MANAGED -> ImuxBundle.message("settings.lsp.status.auto")""",
+            """LspStatus.NOT_AVAILABLE -> ImuxBundle.message("settings.lsp.status.unavailable")""",
+        ).forEach { branch ->
+            assertTrue("状态与文案的对应被改动：$branch", source.contains(branch))
+        }
     }
 
     /**
@@ -200,6 +266,13 @@ class ImuxLspUiSourceTest {
         assertTrue(
             "可视高度必须封顶，否则 Scrollable 也拦不住",
             source.contains("minOf(preferredSize.height, JBUI.scale(MAX_VISIBLE_HEIGHT))"),
+        )
+        // 封顶只是一半。tracksViewportHeight 为 true 时 JViewport 会把视图高度直接压成
+        // 视口高度：内容被挤扁、纵向再也滚不动——与「去掉封顶」是同一个终局，
+        // 而上面三条断言一条都拦不住它。
+        assertTrue(
+            "视图高度不得跟随视口，否则 18 行被压扁且滚不动",
+            source.contains("override fun getScrollableTracksViewportHeight(): Boolean = false"),
         )
     }
 
@@ -248,24 +321,26 @@ class ImuxLspUiSourceTest {
     }
 
     /**
-     * 「pi-lens 会自动装」是**好消息**，挂个警告牌等于把这次改动要纠正的误解换个形式
-     * 又说了一遍；「官方无对应插件」用户做什么都改变不了，同样不该是警告。
-     * 断言钉整条分支，只钉 `AllIcons.General.Information` 出现过是拦不住的
-     * ——它在「CLI 未安装」那行也在用。
+     * 状态 → 图标的对应逐条钉死，与「每个状态的文案必须逐条钉死」同一把尺子。
+     *
+     * 最要紧的两条：「pi-lens 会自动装」是**好消息**，挂个警告牌等于把这次改动要纠正的
+     * 误解换个形式又说了一遍；「官方无对应插件」用户做什么都改变不了，同样不该是警告。
+     * 但另外三条也得钉——把 READY 改成 Warning，18 行会集体变成一片黄色感叹号，
+     * 而「图标取自 AllIcons」那条断言只看有没有出现过 `AllIcons.`，一点都拦不住。
+     *
+     * 钉的是整条分支而不是图标标识符：`AllIcons.General.Information`
+     * 在「CLI 未安装」那一行也在用，只断言它出现过等于没断言。
      */
     @Test
-    fun `自动安装与不可用不得显示成警告`() {
-        assertTrue(
-            "AUTO_MANAGED 是好消息，不能挂警告图标",
-            source.contains("LspStatus.AUTO_MANAGED -> AllIcons.General.Information"),
-        )
-        assertTrue(
-            "NOT_AVAILABLE 用户无从处理，是中性注记而不是警告",
-            source.contains("LspStatus.NOT_AVAILABLE -> AllIcons.General.Note"),
-        )
-        assertTrue(
-            "只有用户真能采取行动的两种状态才配警告图标",
-            source.contains("LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY -> AllIcons.General.Warning"),
-        )
+    fun `每个状态的图标必须逐条钉死`() {
+        listOf(
+            "LspStatus.READY -> AllIcons.General.InspectionsOK",
+            "LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY -> AllIcons.General.Warning",
+            "LspStatus.AUTO_MANAGED -> AllIcons.General.Information",
+            "LspStatus.NOT_AVAILABLE -> AllIcons.General.Note",
+            "LspStatus.UNKNOWN -> AllIcons.General.QuestionDialog",
+        ).forEach { branch ->
+            assertTrue("状态与图标的对应被改动：$branch", source.contains(branch))
+        }
     }
 }
