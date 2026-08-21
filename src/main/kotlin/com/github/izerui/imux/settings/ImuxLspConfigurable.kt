@@ -13,7 +13,7 @@ import com.github.izerui.imux.lsp.canRun
 import com.github.izerui.imux.lsp.readyServerText
 import com.github.izerui.imux.lsp.runActionKey
 import com.github.izerui.imux.lsp.runCommandLine
-import com.github.izerui.imux.lsp.runTabTarget
+import com.github.izerui.imux.lsp.runTabName
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
 import com.github.izerui.imux.model.AgentType
@@ -266,23 +266,52 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * `[复制]` 旁边那个执行按钮——点一下开个终端标签，把命令跑起来。
      *
-     * **可见性完全交给 [canRun]，壳里一个平台判断都不许有。** 目录表里的安装命令只在
-     * macOS 上核实过（`brew install llvm`、`gem install ruby-lsp`、
+     * **平台与性质的取舍完全交给 [canRun]，壳里一个平台判断都不许有。** 目录表里的
+     * 安装命令只在 macOS 上核实过（`brew install llvm`、`gem install ruby-lsp`、
      * `opam install ocaml-lsp-server`），从前它们只是显示出来给人复制，平台不对用户
      * 自己一眼就看出来；现在按钮点下去是**直接执行**。这条闸门是本次改动里唯一
      * 「点错了就在用户机器上跑错东西」的地方，所以它住在纯函数里、被真调用测试钉着，
      * 这里只剩一个调用点。
      *
+     * 第二道闸门 [hasProjectWindow] 挡的是另一种「按钮在、点下去却什么都不发生」：
+     * 终端标签是**项目级**的，而这一页是应用级设置，天生就会从欢迎页被打开。
+     * 那时一个项目都没开，没有地方开标签——留一个点了没反应的按钮，比不给按钮更糟，
+     * 而这一页在没有项目时**本来是完整的**：`[复制]` 加文档链接，信息一样不少。
+     * 它刻意**不**并进 `canRun`：那是平台与命令性质的取舍，是纯的、可测的；
+     * 「现在有没有项目窗口」是运行期环境，两者会各自变化。
+     *
      * 按钮上的词同理走 [runActionKey]：壳里出现 `when (remedy.kind)` 就能在两个字面量
      * 都还留在源码里的前提下把「激活」和「安装」对调——用户点一个写着「激活」的按钮，
      * 等来的是几百兆下载。
+     *
+     * 整段函数体被 `ImuxLspUiSourceTest` 逐字节钉住。这不是洁癖：它是本页唯一一个
+     * **职责就是可见性**的函数，而 `.visible(false)` / 守卫后面再补一句 `return` /
+     * 按 `kind.ordinal` 分支，都是「加法」——逐条列举被禁 token 的黑名单永远漏得掉，
+     * 整段比对漏不掉。代价是改动这四行要来测试里点头一次。
      */
     private fun Row.runRemedyButton(remedy: Remedy, command: String) {
-        if (!canRun(remedy, SystemInfo.isMac)) return
+        if (!canRun(remedy, SystemInfo.isMac, !SystemInfo.isWindows)) {
+            return
+        }
+        if (!hasProjectWindow()) {
+            return
+        }
         button(ImuxBundle.message(runActionKey(remedy.kind))) { event ->
             runInTerminal(remedy, command, event)
         }
     }
+
+    /**
+     * 现在有没有一个能开终端标签的项目窗口。
+     *
+     * 262 上从欢迎页打开设置时，`CommonDataKeys.PROJECT` **取得到**东西——
+     * `ShowSettingsUtilImplKt.createDialogWrapper` 第一句就是
+     * `ProjectUtil.currentOrDefaultProject(project)`——但取到的是 **default project**，
+     * 它没有窗口、也没有终端工具窗口。所以判据只能是「有没有真项目开着」，
+     * 不能是「问不问得出一个 Project」。
+     */
+    private fun hasProjectWindow(): Boolean =
+        ProjectManager.getInstance().openProjects.any { !it.isDisposed && !it.isDefault }
 
     /**
      * 开一个终端标签把命令跑起来——**不是后台静默执行**。
@@ -291,8 +320,12 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 问 y/n，`npm` 会报权限错，装个 jdtls 要几分钟。后台执行的话用户只能对着一个
      * 转圈的按钮猜，而终端标签里输出可见、能答话、能 Ctrl-C。
      *
-     * 因此 `closeOnProcessTermination` 必须是 false：默认行为是进程一退标签页就关，
-     * 那正好把这个方案唯一的好处抹掉——命令跑完的那一刻，结果闪一下就没了。
+     * 因此 `closeOnProcessTermination` 必须**显式**写 false。它的默认值不是常量：
+     * `TerminalToolWindowTabBuilderImpl` 的构造里读的是用户设置
+     * `TerminalOptionsProvider.closeSessionOnLogout`。也就是说不写这一句的话，
+     * 「命令跑完还看不看得到输出」取决于用户在终端设置里勾了什么——勾上的用户点一次
+     * 「安装」，结果闪一下就没了。显式写 false 消除的是对一项**用户设置**的依赖，
+     * 不只是覆盖一个默认值。
      *
      * **imux 自己仍然一个字节都不往用户文件里写。** `claude plugin install` 会改
      * `~/.claude/settings.json`，但改它的是 claude 这个 CLI，imux 只是替用户敲了那行字
@@ -302,10 +335,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 猜一个时机只会给出更假的信息。页面顶部就有「重新检测」，用户装完自己点。
      */
     private fun runInTerminal(remedy: Remedy, command: String, event: ActionEvent) {
+        // 渲染时 hasProjectWindow() 已经确认过有项目开着，这里再判一次是因为 262 的设置
+        // 窗口是**非模态**的：从渲染到点击之间，用户完全可以把那个项目关掉。
         val project = targetProject(event)
         if (project == null) {
-            // 只有「设置从欢迎页打开、一个项目都没开」才会落到这里：终端工具窗口属于项目，
-            // 没有项目就没有地方开标签。留一笔日志，别静默吞掉一次点击。
             LOG.warn("没有可用的项目窗口，无法执行：$command")
             return
         }
@@ -313,7 +346,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             .createTabBuilder()
             .workingDirectory(project.basePath ?: System.getProperty("user.home"))
             .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
-            .tabName("${ImuxBundle.message(runActionKey(remedy.kind))} ${runTabTarget(command)}")
+            .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
             .requestFocus(true)
             .closeOnProcessTermination(false)
             .createTab()
@@ -323,12 +356,19 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 标签该开在哪个项目窗口里。
      *
      * 这一页是**应用级**设置（`applicationConfigurable`），手里没有 Project，而终端标签
-     * 是项目级的。优先问按钮所在的设置对话框：同时开着两个项目时，用户是在哪个窗口里
-     * 打开的设置，标签就该出现在哪个窗口——退回「随便挑一个」的话，用户点完按钮，
-     * 眼前这个窗口什么都不会发生。
+     * 是项目级的。
      *
-     * 对话框问不出来时才退回已打开的项目。两处都要排掉 default project：
-     * 它没有窗口，也没有终端工具窗口。
+     * 先问按钮所在的窗口：262 从项目窗口打开设置默认走非模态窗口，
+     * `NonModalWindowWrapper.uiDataSnapshot` 无条件塞入当前 project，所以同时开着两个
+     * 项目时，用户在哪个窗口打开的设置，标签就出现在哪个窗口。
+     *
+     * **过滤 default project 不是防御性冗余，它是这条路径的主要失败形态**：从欢迎页
+     * 打开设置时 `CommonDataKeys.PROJECT` 照样答得出来，答的是
+     * `ProjectUtil.currentOrDefaultProject(null)` 给的 default project——它没有窗口，
+     * 也没有终端工具窗口。那种情况下按钮压根不会被渲染出来（见 [hasProjectWindow]），
+     * 这里的过滤只是让「非模态窗口下项目中途被关掉」时也退得干净。
+     *
+     * `openProjects` 那一段是兜底，正常路径到不了。
      */
     private fun targetProject(event: ActionEvent): Project? {
         val fromDialog = (event.source as? Component)

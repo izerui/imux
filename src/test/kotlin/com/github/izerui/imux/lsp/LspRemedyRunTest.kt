@@ -30,9 +30,35 @@ class LspRemedyRunTest {
      * 跟平台没关系。非 macOS 上把它们一起闸掉，等于让 Windows 与 Linux 用户白白多敲一遍。
      */
     @Test
-    fun `激活类命令在所有平台都能跑`() {
-        assertTrue(canRun(activate(), isMac = true))
-        assertTrue("激活是 CLI 的子命令，闸掉它只是白白让非 mac 用户多敲一遍", canRun(activate(), isMac = false))
+    fun `激活类命令在所有有 POSIX shell 的平台都能跑`() {
+        assertTrue(canRun(activate(), isMac = true, hasPosixShell = true))
+        assertTrue(
+            "激活是 CLI 的子命令，在 Linux 上闸掉它只是白白让用户多敲一遍",
+            canRun(activate(), isMac = false, hasPosixShell = true),
+        )
+    }
+
+    /**
+     * 没有 POSIX shell 时**两类都不给**，包括跨平台的激活类。
+     *
+     * 命令跨平台，但起命令的那一层不跨：imux 是用 `shell -l -i -c` 把它交出去的，
+     * 而 shell 来自 `resolveShell(System.getenv("SHELL"))`，Windows 上退回 `/bin/zsh`。
+     *
+     * 这一条红了，用户看到的是：Windows 的体检页上多出一个比 `[复制]` 更显眼的
+     * 「激活」按钮，点下去弹 `Cannot run program /bin/zsh`。而这一页在 Windows 上
+     * **本来是完整可用的**——`[复制]` 加文档链接，信息一样不少。那是拿一个能用的
+     * 东西换了一个不能用的，和别处「一直不能用」不是一回事。
+     */
+    @Test
+    fun `没有 POSIX shell 时两类命令都不给按钮`() {
+        assertFalse(
+            "命令跨平台，但 shell -l -i -c 这一层不跨；Windows 上会退回 /bin/zsh",
+            canRun(activate(), isMac = false, hasPosixShell = false),
+        )
+        assertFalse(canRun(install(), isMac = false, hasPosixShell = false))
+        // isMac 与 hasPosixShell 是两个维度，不许一个盖过另一个
+        assertFalse(canRun(activate(), isMac = true, hasPosixShell = false))
+        assertFalse(canRun(install(), isMac = true, hasPosixShell = false))
     }
 
     /**
@@ -45,10 +71,41 @@ class LspRemedyRunTest {
      */
     @Test
     fun `安装类命令只在 macOS 上能跑`() {
-        assertTrue(canRun(install(), isMac = true))
+        assertTrue(canRun(install(), isMac = true, hasPosixShell = true))
         assertFalse(
             "目录表里的安装命令只在 macOS 上核实过，其它平台按下去就是执行 brew/gem/opam",
-            canRun(install(), isMac = false),
+            canRun(install(), isMac = false, hasPosixShell = true),
+        )
+    }
+
+    /**
+     * 目录表里**每一条**安装命令，在非 macOS 上都必须被闸住——一条都不许漏。
+     *
+     * 上一条只喂了 `brew install llvm` 一个样例，于是「看起来讲得通的一次放宽」能整个
+     * 绕过它。实测这段代码 645 条全绿：
+     *
+     * ```
+     * val portable = listOf("npm ", "dotnet ", "rustup ", "go ", "gem ", "opam ")
+     * if (portable.any { remedy.command?.startsWith(it) == true }) return true
+     * ```
+     *
+     * 它放走的包括 `gem install ruby-lsp` 与 `opam install ocaml-lsp-server`
+     * ——**正是 `canRun` 自己的 KDoc 点名说「只有 macOS 形状」的那两条**。
+     * 这不是恶意变异，是一个改代码的人合理地想「npm/go 明明跨平台」时会写出来的东西。
+     *
+     * 所以判据必须是**目录表的全集**而不是抽样，先例是下面的
+     * [目录表里的安装命令都能认出目标]。失败时直接列出漏了哪几条。
+     */
+    @Test
+    fun `目录表里没有一条安装命令能在非 macOS 上跑`() {
+        val leaked = LspCatalog.servers.values
+            .mapNotNull(LspServer::installCommand)
+            .filter { canRun(Remedy(it, "https://x", RemedyKind.INSTALL), isMac = false, hasPosixShell = true) }
+
+        assertEquals(
+            "这些安装命令在非 macOS 上漏出了执行按钮，点下去就是在没有对应工具链的机器上执行：$leaked",
+            emptyList<String>(),
+            leaked,
         )
     }
 
@@ -59,8 +116,14 @@ class LspRemedyRunTest {
     @Test
     fun `没有命令时任何平台都不显示按钮`() {
         listOf(true, false).forEach { isMac ->
-            assertFalse("isMac=$isMac 时仍给出了按钮，可点击却无事可做", canRun(activate(command = null), isMac))
-            assertFalse("isMac=$isMac 时仍给出了按钮，可点击却无事可做", canRun(install(command = null), isMac))
+            assertFalse(
+                "isMac=$isMac 时仍给出了按钮，可点击却无事可做",
+                canRun(activate(command = null), isMac, hasPosixShell = true),
+            )
+            assertFalse(
+                "isMac=$isMac 时仍给出了按钮，可点击却无事可做",
+                canRun(install(command = null), isMac, hasPosixShell = true),
+            )
         }
     }
 
@@ -152,6 +215,13 @@ class LspRemedyRunTest {
     @Test
     fun `认不出目标时退回整条命令`() {
         assertEquals("brew install llvm/", runTabTarget("brew install llvm/"))
+    }
+
+    /** 标签名是动词加目标：同时开着好几个安装标签时，用户要认得出哪个是哪个。 */
+    @Test
+    fun `标签名是动词加目标`() {
+        assertEquals("安装 kotlin-lsp", runTabName("安装", "brew install --cask kotlin-lsp"))
+        assertEquals("Activate npm:pi-lens", runTabName("Activate", "pi install npm:pi-lens"))
     }
 
     /**

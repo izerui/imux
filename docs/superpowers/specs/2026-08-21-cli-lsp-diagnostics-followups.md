@@ -117,15 +117,30 @@ private val normalized by lazy { source.replace(Regex("\\s+"), " ") }
 
 **「激活 / 安装」按钮上线后，这条的性质变了。** 命令不再只是显示给人复制，而是点一下直接执行，所以 `RemedyKind.INSTALL` 的执行按钮只在 macOS 出现（`lsp/LspRemedyRun.kt` 的 `canRun`）。补齐平台分版之后，`canRun` 里 `|| isMac` 这一半应随之放开——否则 Linux 用户明明有了对的命令，按钮却还是不给。
 
-## 10.1 非 macOS 上的 `ACTIVATE` 按钮会用 `/bin/zsh` 起 shell
+## 10.1 `resolveShell` 在 Windows 上退回 `/bin/zsh`，而只有 LSP 页挡了这一道
 
-`lsp/LspRemedyRun.kt` + `settings/ImuxLspConfigurable.kt`
+`terminal/AgentCommand.kt` 的 `resolveShell`（根），四个调用点
 
-`canRun` 放行 `ACTIVATE` 的理由是「`claude plugin install` / `pi install` / `codex mcp add` 都是 CLI 自己的子命令，跨平台」——命令确实跨平台，但**包住它的那层 shell 不是**：`resolveShell(System.getenv("SHELL"))` 在 Windows 上取不到 `SHELL`，退回 `/bin/zsh`，标签页起不来。
+```kotlin
+internal fun resolveShell(shellEnv: String?): String = shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
+```
 
-Linux 无碍（`SHELL` 有值、`-l -i -c` 语义相同）。Windows 上的表现是：点「激活」→ 开出一个立刻报错的终端标签。比「按钮不存在」略差，比「静默无反应」略好。
+Windows 上 `SHELL` 通常没有值 → 退回 `/bin/zsh` → 拿它去 `ProcessBuilder` / `shellCommand` 一律是 `Cannot run program /bin/zsh`。而 `-l -i -c` 这套参数本身也只有 POSIX shell 认。**这是根，不在 LSP 那一侧。**
 
-修法有两条，选哪条取决于 Windows 上到底要不要支持：要，就给 `resolveShell` 加 Windows 分支（PowerShell / cmd，参数不再是 `-l -i -c`）；不要，就把 `canRun` 的平台维度从 `isMac` 换成「有没有 POSIX shell」。**别只改 `canRun` 的调用点**——闸门语义住在纯函数里是这一层唯一被真调用测试钉住的东西。
+四个调用点，只有最后一个挡了：
+
+| 调用点 | Windows 上的表现 | 挡了吗 |
+| --- | --- | --- |
+| `terminal/TerminalHost.kt:555` `newCommand` | 会话标签起不来 | 否 |
+| `terminal/TerminalHost.kt:567` `resumeCommand` | 同上 | 否 |
+| `lsp/BinaryProbe.kt:71` | 探测失败 → 全部语言落到 `UNKNOWN`（语义上恰好是对的：「没查出来」） | 否，但降级无害 |
+| `settings/ImuxLspConfigurable.kt` 执行按钮 | —— | **是**（`canRun` 的 `hasPosixShell`） |
+
+**这个偏斜本身要记一笔，否则下一个人会以为全项目都挡了。** 只有 LSP 页挡，是因为只有它**在 Windows 上本来是能用的**：`[复制]` 加文档链接是一份完整产出，旁边多一个点下去报错的按钮，是拿能用的换不能用的。会话启动在 Windows 上从来没能用过，多一个坏入口用户什么也没失去——那不是同一件事，所以不该顺手一起「修」成同一个形状。
+
+真正的修法是给 `resolveShell` 加 Windows 分支（PowerShell / cmd，参数不再是 `-l -i -c`，`singleQuote` 的转义规则也要跟着换）。做完之后，`canRun` 的 `hasPosixShell` 维度应随之去掉。
+
+**别只改 `canRun` 的调用点**——闸门语义住在纯函数里，是这一层唯一被真调用测试钉住的东西。同理，`canRun` 的三个维度是分开的：目录表补齐平台分版之后该放开的是 `|| isMac` 那一半，不是 `hasPosixShell`。
 
 ## 11. 缺两处承重契约的测试
 

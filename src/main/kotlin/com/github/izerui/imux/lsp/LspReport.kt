@@ -45,7 +45,15 @@ internal enum class LspStatus {
  */
 internal enum class RemedyKind {
     /**
-     * 装 CLI 插件 / 扩展 / 挂 MCP。是 CLI 自己的子命令，跨平台，快且确定。
+     * 装 CLI 插件 / 扩展 / 挂 MCP。是 CLI 自己的子命令，不依赖任何外部工具链，快且确定。
+     *
+     * **准确说清它跨的是什么、不跨什么**——这句话是下一个人放宽闸门时的依据，写错了
+     * 比代码写错更贵，因为它会被复用：`claude plugin install` / `pi install` /
+     * `codex mcp add` 这三条**命令本身**在三大平台上都成立，所以它们不受
+     * 「目录表的安装命令只在 macOS 核实过」那道闸门限制。但**起这条命令的那一层不跨**
+     * ——imux 是用 `shell -l -i -c` 把它交出去的，而 shell 来自
+     * `resolveShell(System.getenv("SHELL"))`，Windows 上退回 `/bin/zsh`。
+     * 所以 ACTIVATE 仍然受「有没有 POSIX shell」那道闸门限制（见 `canRun`）。
      *
      * 这类命令会写用户的 `~/.claude/settings.json` 之类的文件——但**写的是 CLI，不是
      * imux**。imux 只是替用户敲了那行字，敲完之后文件由谁改、改成什么样，全在 CLI 手里；

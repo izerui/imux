@@ -16,21 +16,34 @@ package com.github.izerui.imux.lsp
 /**
  * 这条修复建议该不该配一个执行按钮。
  *
- * 两个条件缺一不可：
+ * 三个条件缺一不可，每一条挡的都是一种「按钮在，点下去却不对」：
  *
- * 1. **有命令可跑**。只有文档链接的（`kotlin-language-server`、`sourcekit-lsp` 等
+ * 1. **有 POSIX shell**。命令是经 [runCommandLine] 交给 `shell -l -i -c` 跑的，
+ *    而 shell 取自 `resolveShell(System.getenv("SHELL"))`——Windows 上取不到 `SHELL`，
+ *    退回 `/bin/zsh`，标签页当场报 `Cannot run program /bin/zsh`。
+ *    详见下面「为什么这一条要单独存在」。
+ * 2. **有命令可跑**。只有文档链接的（`kotlin-language-server`、`sourcekit-lsp` 等
  *    目录表里 installCommand 为 null 的那几门）跑不了任何东西，给按钮是空头承诺。
- * 2. **这条命令在本平台上验证过**。[RemedyKind.ACTIVATE] 是 CLI 自己的子命令，
- *    跨平台；[RemedyKind.INSTALL] 只在 macOS 上核实过——目录表里有 `brew install llvm`、
- *    `gem install ruby-lsp`、`opam install ocaml-lsp-server` 这样的形状。
+ * 3. **这条命令在本平台上验证过**。[RemedyKind.INSTALL] 走的是目录表里的安装命令，
+ *    只在 macOS 上核实过——`brew install llvm`、`gem install ruby-lsp`、
+ *    `opam install ocaml-lsp-server` 都是 macOS 形状。[RemedyKind.ACTIVATE] 是 CLI
+ *    自己的子命令，不依赖任何外部工具链，因此不受这一条限制（但仍受第 1 条限制）。
  *
- * 第 2 条是这次改动**唯一**真正危险的地方。这些命令从前只是显示出来给人复制，
- * 平台不对用户自己一眼就看出来了；现在按钮点下去是直接执行，Windows 用户点一下
- * 就是在自己机器上跑 `brew`。所以非 macOS 上 INSTALL 一律退回原样——只有
- * `[复制]` 与文档链接，用户仍然拿得到信息，只是不由 imux 代劳。
+ * 第 3 条是这次改动**唯一**真正危险的地方。这些命令从前只是显示出来给人复制，
+ * 平台不对用户自己一眼就看出来了；现在按钮点下去是直接执行。
+ *
+ * **为什么 [hasPosixShell] 要单独占一条，而不是并进 [isMac]。** 别处（会话启动）在
+ * Windows 上本来就没能用过，多一个坏入口用户什么也没失去；而这一页在 Windows 上
+ * **本来是能用的**——`[复制]` 加文档链接是一份完整的产出。旁边多一个更显眼的
+ * 「激活」按钮、点下去报 `Cannot run program /bin/zsh`，用户会合理推断整页坏了：
+ * 那是拿一个能用的东西换了一个不能用的。所以这里宁可不给按钮。
+ *
+ * 三个维度分开而不是揉成一个布尔，是因为它们会**各自**变化：目录表补齐平台分版之后，
+ * 第 3 条里的 `|| isMac` 该放开；`resolveShell` 支持 Windows 之后，第 1 条该去掉。
+ * 揉在一起的话，将来放开其中一个必然会顺手把另一个也放了。
  */
-internal fun canRun(remedy: Remedy, isMac: Boolean): Boolean =
-    remedy.command != null && (remedy.kind == RemedyKind.ACTIVATE || isMac)
+internal fun canRun(remedy: Remedy, isMac: Boolean, hasPosixShell: Boolean): Boolean =
+    hasPosixShell && remedy.command != null && (remedy.kind == RemedyKind.ACTIVATE || isMac)
 
 /**
  * 执行按钮上那个词的 bundle 键。
@@ -85,3 +98,13 @@ internal fun runTabTarget(command: String): String =
         .substringBefore('@')
         .substringAfterLast('/')
         .ifEmpty { command.trim() }
+
+/**
+ * 终端标签的名字：动词 + 目标，例如「安装 kotlin-lsp」。
+ *
+ * [actionText] 由调用方从 [runActionKey] 取键、过一遍 bundle 得到——这一层不碰
+ * bundle（理由见文件顶部）。拼接本身搬进来，是为了让设置页那一侧的整条 builder 链
+ * 能被逐字节钉住：链里留一个 `"${'$'}{…} ${'$'}{…}"` 字符串模板的话，断言要么写不出来，
+ * 要么松到 `.tabName(` 前缀那个量级，而前缀断言拦不住 `.tabName("")`。
+ */
+internal fun runTabName(actionText: String, command: String): String = "$actionText ${runTabTarget(command)}"
