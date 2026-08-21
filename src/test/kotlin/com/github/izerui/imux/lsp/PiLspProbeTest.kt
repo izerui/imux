@@ -3,6 +3,7 @@ package com.github.izerui.imux.lsp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -45,14 +46,61 @@ class PiLspProbeTest {
         assertTrue(report.findings.isEmpty())
     }
 
-    /** 非 gated 语言由 pi-lens 自动安装 server，不需要体检，也不该占版面。 */
+    /**
+     * 全量列表的核心契约：目录表里有多少门语言，这一组就有多少条 findings。
+     *
+     * 曾经这里 `.filter(LspLanguage::piLensGated)`，TypeScript / Python / Ruby / Rust /
+     * PHP / C# 于是从 pi 组里静默消失，真实用户据此得出「pi 不支持 TypeScript LSP」。
+     * 这条断言就是为了让「加回过滤」当场变红——只断言某几门语言在不在的话，
+     * 加回一个只漏掉其它语言的过滤照样能绿。
+     */
     @Test
-    fun `装了 pi-lens 后只列 toolchain-gated 语言`() {
+    fun `列出目录表里的全部语言`() {
         val report = piReport(piLensInstalled = true, binaries = emptyMap(), cliInstalled = true)
 
-        assertTrue(report.findings.all { it.language.piLensGated })
-        assertTrue(report.findings.any { it.language.id == "kotlin" })
-        assertTrue("Python 由 pi-lens 自动安装，不该出现", report.findings.none { it.language.id == "python" })
+        assertEquals(LspCatalog.languages.size, report.findings.size)
+        assertEquals(
+            LspCatalog.languages.map(LspLanguage::id),
+            report.findings.map { it.language.id },
+        )
+    }
+
+    /**
+     * 非 gated 语言由 pi-lens 按需自动安装，标成 AUTO_MANAGED 且**不给建议**。
+     *
+     * 这里刻意不查 PATH：pi-lens 是懒安装的，装在哪也不归 imux 管。在 PATH 里 pi-lens
+     * 直接用、不在 PATH 里 pi-lens 按需装，两种情况最终都可用——所以传进一个明确
+     * 「不在 PATH」的映射，结论也必须还是 AUTO_MANAGED，绝不能退化成「未安装」。
+     */
+    @Test
+    fun `非 gated 语言标记为自动管理且不给建议`() {
+        val report = piReport(
+            piLensInstalled = true,
+            binaries = mapOf("typescript-language-server" to null, "pyright-langserver" to null),
+            cliInstalled = true,
+        )
+
+        listOf("typescript", "python", "ruby", "rust", "php", "csharp").forEach { id ->
+            val finding = report.findings.single { it.language.id == id }
+            assertEquals("$id 由 pi-lens 按需安装，查 PATH 的结果与真相无关", LspStatus.AUTO_MANAGED, finding.status)
+            assertNull("$id 没有任何用户可执行的动作，给建议就是误导", finding.remedy)
+        }
+        // gated 的那些不能被顺手也标成自动管理
+        assertEquals(LspStatus.UNKNOWN, report.findings.single { it.language.id == "kotlin" }.status)
+    }
+
+    /** AUTO_MANAGED 不是「缺口」：它是好消息，计进「待补充 N」等于把好消息说成坏消息。 */
+    @Test
+    fun `自动管理的语言不计入缺口`() {
+        val report = piReport(piLensInstalled = true, binaries = emptyMap(), cliInstalled = true)
+
+        assertTrue(report.gaps.none { it.status == LspStatus.AUTO_MANAGED })
+        assertTrue(
+            "缺口只该是用户真能采取行动的两种状态",
+            report.gaps.all {
+                it.status == LspStatus.MISSING_CONFIG || it.status == LspStatus.MISSING_BINARY
+            },
+        )
     }
 
     @Test

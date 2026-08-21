@@ -67,7 +67,17 @@ class LspDiagnosticsTest {
 
         assertEquals("pi install npm:pi-lens", report.of(AgentType.PI).groupRemedy?.command)
         assertEquals("codex mcp add pi-lens -- pi-lens-mcp", report.of(AgentType.CODEX).groupRemedy?.command)
-        assertTrue(report.of(AgentType.CLAUDE).findings.all { it.status == LspStatus.MISSING_CONFIG })
+        // 全量列表：有官方插件的都是「没配」，官方没插件的（Haskell 等）是「无对应插件」，
+        // 两者加起来必须正好是目录表的全部语言——一门都不能被静默省略。
+        val claude = report.of(AgentType.CLAUDE)
+        assertEquals(LspCatalog.languages.size, claude.findings.size)
+        assertTrue(
+            claude.findings.all { finding ->
+                val expected =
+                    if (finding.language.claudePlugin == null) LspStatus.NOT_AVAILABLE else LspStatus.MISSING_CONFIG
+                finding.status == expected
+            },
+        )
     }
 
     @Test

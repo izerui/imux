@@ -2,6 +2,7 @@ package com.github.izerui.imux.lsp
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -108,13 +109,55 @@ class ClaudeCodeLspProbeTest {
         assertEquals(LspStatus.UNKNOWN, report.findings.single { it.language.id == "java" }.status)
     }
 
-    /** 官方没有对应插件的语言（Haskell 等）不该出现在 Claude Code 这一组。 */
+    /**
+     * 全量列表的核心契约：目录表里有多少门语言，这一组就有多少条 findings。
+     *
+     * 曾经这里 `.filter { it.claudePlugin != null }`，Haskell / Elixir / OCaml / Nix / F#
+     * 于是从 Claude Code 组里静默消失。这条断言就是为了让「加回过滤」当场变红——
+     * 只断言某几门语言在不在，加回一个只漏掉其它语言的过滤照样能绿。
+     */
     @Test
-    fun `没有官方插件的语言不列入`() {
+    fun `列出目录表里的全部语言`() {
         val report = claudeReport(emptySet(), emptyMap(), cliInstalled = true)
 
-        assertTrue(report.findings.none { it.language.id == "haskell" })
-        assertTrue(report.findings.any { it.language.id == "kotlin" })
+        assertEquals(LspCatalog.languages.size, report.findings.size)
+        assertEquals(
+            LspCatalog.languages.map(LspLanguage::id),
+            report.findings.map { it.language.id },
+        )
+    }
+
+    /**
+     * 官方没有对应插件的语言（Haskell 等）照样列出，标成「官方无对应插件」。
+     *
+     * 从前它们被过滤掉，用户看到的是一份没有说明的短名单，只能自己猜省略了什么。
+     * 但**不能给建议**：Claude Code 上不存在「装个插件就能用」的路径，
+     * 给一条无法执行的命令比不给更糟。
+     */
+    @Test
+    fun `没有官方插件的语言标记为不可用且不给建议`() {
+        val report = claudeReport(emptySet(), emptyMap(), cliInstalled = true)
+
+        val haskell = report.findings.single { it.language.id == "haskell" }
+        assertEquals(LspStatus.NOT_AVAILABLE, haskell.status)
+        assertNull("没有可执行的动作时给建议就是误导", haskell.remedy)
+
+        // 官方有插件的语言不能被顺手也标成不可用
+        assertEquals(LspStatus.MISSING_CONFIG, report.findings.single { it.language.id == "kotlin" }.status)
+    }
+
+    /** NOT_AVAILABLE 不是「缺口」：用户对它做不了任何事，计进「待补充 N」只会制造焦虑。 */
+    @Test
+    fun `不可用的语言不计入缺口`() {
+        val report = claudeReport(emptySet(), emptyMap(), cliInstalled = true)
+
+        assertTrue(report.gaps.none { it.status == LspStatus.NOT_AVAILABLE })
+        assertTrue(
+            "缺口只该是用户真能采取行动的两种状态",
+            report.gaps.all {
+                it.status == LspStatus.MISSING_CONFIG || it.status == LspStatus.MISSING_BINARY
+            },
+        )
     }
 
     @Test

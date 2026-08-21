@@ -4,6 +4,7 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.lsp.CliReport
 import com.github.izerui.imux.lsp.LanguageFinding
 import com.github.izerui.imux.lsp.LspDiagnostics
+import com.github.izerui.imux.lsp.LspLanguage
 import com.github.izerui.imux.lsp.LspReport
 import com.github.izerui.imux.lsp.LspStatus
 import com.github.izerui.imux.lsp.Remedy
@@ -20,12 +21,18 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.panel
+import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Dimension
+import java.awt.Rectangle
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
+import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JViewport
+import javax.swing.Scrollable
 
 /**
  * Tools | Imux | LSP —— 三个 CLI 的 LSP 覆盖体检。
@@ -146,18 +153,14 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             return
         }
 
-        val ready = cliReport.ready
-        val gaps = cliReport.gaps
-
         // 装了、没有前置修复、却一条语言结果都没有：Codex 挂了 pi-lens-mcp 但本机没装
         // pi（或 pi 没装 pi-lens）就是这个状态。不兜底的话这里会是个只有标题的空分组。
         //
-        // 用 comment 而不是 label：这是本页最长的几句之一（德语 122 字符、俄语 118，
-        // 与 readySummary 那行同一量级），而 UI DSL 的 label 产出不折行的 JLabel，
-        // 它的 preferred width 会直接抬高整页的最小宽度，把设置对话框撑宽或逼出
-        // 横向滚动条。comment 会在 DEFAULT_COMMENT_WIDTH 处折行，
-        // 而这句是「什么都没查到」的说明，灰色说明文字的语义也更贴。
-        if (ready.isEmpty() && gaps.isEmpty()) {
+        // 用 comment 而不是 label：这是本页最长的几句之一（德语 122 字符、俄语 118），
+        // 而 UI DSL 的 label 产出不折行的 JLabel，它的 preferred width 会直接抬高整页的
+        // 最小宽度，把设置对话框撑宽或逼出横向滚动条。comment 会在 DEFAULT_COMMENT_WIDTH
+        // 处折行，而这句是「什么都没查到」的说明，灰色说明文字的语义也更贴。
+        if (cliReport.findings.isEmpty()) {
             row {
                 icon(AllIcons.General.Information)
                 comment(ImuxBundle.message("settings.lsp.no.findings"))
@@ -165,49 +168,51 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             return
         }
 
-        if (ready.isNotEmpty()) {
-            row {
-                icon(AllIcons.General.InspectionsOK)
-                text(readySummary(ready))
-            }
-        }
-
-        if (gaps.isEmpty()) return
+        // 汇总放在滚动区**外面**：18 行列表滚到哪儿，「有没有事要做」这个结论都还在眼前。
         row {
-            icon(AllIcons.General.Warning)
-            label(ImuxBundle.message("settings.lsp.gaps", gaps.size))
+            icon(if (cliReport.gaps.isEmpty()) AllIcons.General.InspectionsOK else AllIcons.General.Warning)
+            label(summaryText(cliReport))
         }
-        // 只有 pi-lens 供能的两组需要这句：缺口只是那几门 toolchain-gated 语言，
-        // 其余 36 种 pi-lens 会自己装。少了它，用户会把「待补充（5）」读成「只覆盖 5 门」。
-        if (coveredByPiLens(cliReport.agentType)) {
-            row { comment(ImuxBundle.message("settings.lsp.pi.auto")) }
-        }
-        indent {
-            gaps.forEach { finding ->
-                row {
-                    label("${finding.language.displayName}  —  ${statusText(finding)}")
-                }
-                finding.remedy?.let { renderRemedy(it) }
-            }
+        row {
+            scrollCell(findingsPanel(cliReport.findings, cliReport.agentType)).align(AlignX.FILL)
         }
     }
 
     /**
-     * 已就绪的语言折叠成一行：体检表一啰嗦就没人看。
+     * 顶部汇总只给两个计数，**不再把语言名拼成一行**。
      *
-     * 渲染这一行必须用 [com.intellij.ui.dsl.builder.Row.text] 而非 `label`。它是全页最长的
-     * 一行：Claude 组的 ready 上限就是 `claudePlugin != null` 的全集共 13 门，而语言显示名
-     * 不随语言包变化，所以**任何语种下**都是约 116 字符——比已被判定「必须折行」的
-     * settings.lsp.no.findings 还长，命中率还高（配置完整的 Claude Code 用户每次都看到）。
-     * UI DSL 的 `label` 产出不折行的 JLabel，preferred width 会直接抬高整页最小宽度，
-     * 把设置对话框撑宽或逼出横向滚动条。
+     * 曾经这行是「已就绪（13） C · C++ · C# · Go · …」，任何语种下都约 116 字符
+     * ——语言显示名不随语言包变化——不折行的 `label` 会直接把设置对话框撑宽。
+     * 现在语言名各自成行、进了滚动区，汇总退回到纯计数，最长也就
+     * 「Ready (13)  ·  Missing (5)」这个量级，用 `label` 是安全的。
      *
-     * 用 `text` 而不是 `comment`：两者都在 DEFAULT_COMMENT_WIDTH 处折行，但 `comment`
-     * 渲染成灰色说明文字，会把「已就绪」这条正面结论降级成脚注；`text` 保持正常前景色。
+     * 分母刻意不写：`gaps` 已收紧为「用户真能采取行动」的两种状态，
+     * ready + gaps 不等于 18，写成「13/18」反而会让人去找剩下的 5 门去哪了。
      */
-    private fun readySummary(ready: List<LanguageFinding>): String =
-        ImuxBundle.message("settings.lsp.ready", ready.size) + "  " +
-            ready.joinToString(" · ") { it.language.displayName }
+    private fun summaryText(cliReport: CliReport): String =
+        ImuxBundle.message("settings.lsp.ready", cliReport.ready.size) + "   ·   " +
+            ImuxBundle.message("settings.lsp.gaps", cliReport.gaps.size)
+
+    /**
+     * 逐语言列表：目录表里的 **18 门语言一门不少**，每门一句状态。
+     *
+     * 这里绝不能再按状态过滤。此前只列「有问题的」语言，pi 组因此没有 TypeScript，
+     * 真实用户据此得出「pi 不支持 TypeScript LSP」——而 pi-lens 恰恰会自动装它。
+     * 对体检工具来说「没什么可查」和「不显示」差别极大：前者是好消息，后者是信息缺失。
+     */
+    private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =
+        CappedHeightView(
+            panel {
+                findings.forEach { finding ->
+                    row {
+                        icon(statusIcon(finding.status))
+                        label(finding.language.displayName)
+                        label(statusText(finding, agentType))
+                    }
+                    finding.remedy?.let { renderRemedy(it) }
+                }
+            },
+        )
 
     /** 缩进一级挂在触发它的那条缺口之下，让「命令属于哪门语言」一眼可辨。 */
     private fun Panel.renderRemedy(remedy: Remedy) {
@@ -231,12 +236,17 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
 
     /**
      * 语言覆盖是否来自 pi-lens。pi 与挂了 `pi-lens-mcp` 的 Codex 走的是同一套 server，
-     * 所以两组共享同一句说明；Claude Code 用的是自己的官方插件，不适用。
+     * 所以两组的 server 二进制取 [LspLanguage.piLensBinary]；Claude Code 用的是自己的
+     * 官方插件，取 [LspLanguage.claudeBinary]——Kotlin 上这两者是不同的两个程序。
      */
     private fun coveredByPiLens(agentType: AgentType): Boolean = when (agentType) {
         AgentType.PI, AgentType.CODEX -> true
         else -> false
     }
+
+    /** 就绪时显示的是**哪个** server 在供能：Kotlin 一门就有 kotlin-lsp 与 kotlin-language-server 两种。 */
+    private fun serverBinary(language: LspLanguage, agentType: AgentType): String? =
+        if (coveredByPiLens(agentType)) language.piLensBinary else language.claudeBinary
 
     /**
      * 组级修复的说明文案。
@@ -251,11 +261,87 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             else -> ImuxBundle.message("settings.lsp.pi.missing")
         }
 
-    private fun statusText(finding: LanguageFinding): String = when (finding.status) {
+    /**
+     * 每门语言那一句状态。
+     *
+     * 全都短到可以用 `label`：最长的是俄语的 AUTO_MANAGED（45 字符），
+     * 加上最长的语言名 `TypeScript/JavaScript`（21 字符）也远在会撑宽对话框的量级之下。
+     * 若将来有译文明显变长，这一列必须改用 `comment` 或 `text` —— 见类顶部的折行教训。
+     *
+     * READY 显示 server 二进制名而不是「已就绪」：绿勾已经说了「就绪」，
+     * 这一栏用来回答「是谁在供能」，恰好把 Kotlin 那种两边 server 不同的情况说清楚。
+     */
+    private fun statusText(finding: LanguageFinding, agentType: AgentType): String = when (finding.status) {
+        LspStatus.READY -> serverBinary(finding.language, agentType).orEmpty()
         LspStatus.MISSING_CONFIG -> ImuxBundle.message("settings.lsp.status.config")
         LspStatus.MISSING_BINARY -> ImuxBundle.message("settings.lsp.status.binary")
         LspStatus.UNKNOWN -> ImuxBundle.message("settings.lsp.status.unknown")
-        LspStatus.READY -> ""
+        LspStatus.AUTO_MANAGED -> ImuxBundle.message("settings.lsp.status.auto")
+        LspStatus.NOT_AVAILABLE -> ImuxBundle.message("settings.lsp.status.unavailable")
+    }
+
+    /**
+     * 状态图标。只用 [AllIcons] 的语义图标，不自绘。
+     *
+     * AUTO_MANAGED 用 Information 而不是 Warning：pi-lens 自动装是**好消息**，
+     * 挂个警告牌等于把这次改动想纠正的误解换个形式又说了一遍。
+     * NOT_AVAILABLE 用 Note——它既不是警告也不是「一切正常」，是一条中性注记：
+     * 用户对它做不了任何事，AllIcons.General 里语义最接近的中性图标就是它。
+     */
+    private fun statusIcon(status: LspStatus): Icon = when (status) {
+        LspStatus.READY -> AllIcons.General.InspectionsOK
+        LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY -> AllIcons.General.Warning
+        LspStatus.AUTO_MANAGED -> AllIcons.General.Information
+        LspStatus.NOT_AVAILABLE -> AllIcons.General.Note
+        LspStatus.UNKNOWN -> AllIcons.General.QuestionDialog
+    }
+
+    /**
+     * 滚动区的视图：把可视高度封顶，超出部分交给滚动条。
+     *
+     * 三个分组各 18 门语言，光语言行就 54 行，再加上缺口下面的命令行——不封顶的话
+     * 设置页会被撑到上千像素，「重新检测」按钮以外的一切都得靠滚，而 `Row.scrollCell`
+     * 包出来的 `JBScrollPane` 会原样跟着视图的 preferred height 长，等于白包一层。
+     *
+     * 封顶必须走 [Scrollable]：`JViewport` 的布局器（`ViewportLayout`）在视图实现
+     * 该接口时取 [getPreferredScrollableViewportSize] 决定滚动面板的 preferred size，
+     * 而直接改视图的 `preferredSize` 只会把内容压扁、连滚都滚不动。
+     */
+    private class CappedHeightView(view: JComponent) : JPanel(BorderLayout()), Scrollable {
+
+        init {
+            add(view, BorderLayout.CENTER)
+            isOpaque = false
+        }
+
+        override fun getPreferredScrollableViewportSize(): Dimension =
+            Dimension(preferredSize.width, minOf(preferredSize.height, JBUI.scale(MAX_VISIBLE_HEIGHT)))
+
+        override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int =
+            JBUI.scale(UNIT_SCROLL)
+
+        override fun getScrollableBlockIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int =
+            visibleRect.height
+
+        /**
+         * 视口够宽就把内容拉满宽度，不够宽时交还横向滚动条。
+         *
+         * 恒返回 true 会让「宽度不足」直接表现为**截断**：本页最长的行是
+         * `npm install -g typescript-language-server typescript` 加一个复制按钮，
+         * 用户会看到一条读不全、复制得到却不知道全貌的命令。宁可出横向滚动条。
+         */
+        override fun getScrollableTracksViewportWidth(): Boolean {
+            val viewport = parent as? JViewport ?: return true
+            return viewport.width >= minimumSize.width
+        }
+
+        override fun getScrollableTracksViewportHeight(): Boolean = false
+
+        private companion object {
+            /** 未缩放像素，约 12 行——一屏能看到大半张表，又不至于把三个分组顶出可视区。 */
+            const val MAX_VISIBLE_HEIGHT = 300
+            const val UNIT_SCROLL = 24
+        }
     }
 
     private companion object {

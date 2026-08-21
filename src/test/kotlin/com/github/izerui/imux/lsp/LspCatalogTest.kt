@@ -50,6 +50,34 @@ class LspCatalogTest {
         }
     }
 
+    /**
+     * 共用同一个 server 二进制的语言，pi-lens 侧的判定必须一致。
+     *
+     * C 与 C++ 都由 clangd-lsp 这一个插件供能，pi-lens 的 docs/language-coverage.md 里
+     * 也是 `C/C++` 合并的一行——不可能一个自动装、一个要手动装。目录表里曾经把 C 写成
+     * 非 gated，这个矛盾被「只显示有问题的语言」藏住了；改成全量列表后，同一个 clangd
+     * 会在同一张表里一行显示「自动安装」、一行显示「不在 PATH」，当场自相矛盾。
+     */
+    @Test
+    fun `共用同一个 Claude 插件二进制的语言 pi-lens 判定必须一致`() {
+        LspCatalog.languages
+            .filter { it.claudeBinary != null }
+            .groupBy { it.claudeBinary }
+            .forEach { (binary, group) ->
+                val ids = group.map(LspLanguage::id)
+                assertEquals(
+                    "$binary 被 $ids 共用，piLensGated 必须一致",
+                    1,
+                    group.map(LspLanguage::piLensGated).toSet().size,
+                )
+                assertEquals(
+                    "$binary 被 $ids 共用，piLensBinary 必须一致",
+                    1,
+                    group.map(LspLanguage::piLensBinary).toSet().size,
+                )
+            }
+    }
+
     /** 没有已知安装命令时必须给文档链接，否则用户在 UI 上拿不到任何下一步。 */
     @Test
     fun `没有安装命令的服务器必须有文档链接`() {
@@ -64,7 +92,8 @@ class LspCatalogTest {
     @Test
     fun `覆盖 spec 点名的 toolchain-gated 语言`() {
         val gated = LspCatalog.languages.filter(LspLanguage::piLensGated).map(LspLanguage::id).toSet()
-        setOf("go", "java", "kotlin", "swift", "lua", "cpp", "haskell", "elixir", "ocaml", "nix", "fsharp")
+        // `c` 与 `cpp` 同属 spec 的 C/C++ 一行，两个都要在
+        setOf("go", "java", "kotlin", "swift", "lua", "c", "cpp", "haskell", "elixir", "ocaml", "nix", "fsharp")
             .forEach { assertTrue("缺少 pi-lens gated 语言 $it", it in gated) }
     }
 

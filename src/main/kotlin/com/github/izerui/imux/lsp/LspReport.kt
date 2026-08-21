@@ -21,6 +21,19 @@ internal enum class LspStatus {
 
     /** 探测超时或失败，信息不足以判断——不猜。 */
     UNKNOWN,
+
+    /**
+     * pi-lens 会按需自动安装该语言的 server，用户无需干预。
+     *
+     * 刻意**不**退化成查 PATH：pi-lens 是懒安装的，用到才装，装到哪也不归 imux 管
+     * （本机 `~/.pi/agent/npm/node_modules/.bin/` 里只有 pi-lens 自己的工具）。
+     * 对非 gated 语言，PATH 里有就直接用、没有就按需装，两种情况最终都可用——
+     * 查 PATH 的结果与真相无关，标成「未安装」比原先的「不显示」更糟。
+     */
+    AUTO_MANAGED,
+
+    /** 该 CLI 生态里没有这门语言的接入方式（Claude Code 官方无对应 LSP 插件）。 */
+    NOT_AVAILABLE,
 }
 
 /** 一条修复建议：可复制的命令，或（没有已知命令时）一个上游文档链接。 */
@@ -48,7 +61,19 @@ internal data class CliReport(
     val groupRemedy: Remedy? = null,
 ) {
     val ready: List<LanguageFinding> get() = findings.filter { it.status == LspStatus.READY }
-    val gaps: List<LanguageFinding> get() = findings.filter { it.status != LspStatus.READY }
+
+    /**
+     * 「缺口」= 用户**真能采取行动**的那两种状态，而不是「一切非 READY」。
+     *
+     * [LspStatus.AUTO_MANAGED] 与 [LspStatus.NOT_AVAILABLE] 都不是缺口：前者是好消息，
+     * 后者用户做什么都改变不了。[LspStatus.UNKNOWN] 也不算——我们并不知道它缺不缺，
+     * 没有可执行的建议给用户，把它计进「待补充 N」只会制造焦虑。
+     *
+     * 这两个派生属性现在只用于计数与图标选择，逐行渲染走完整的 [findings]。
+     */
+    val gaps: List<LanguageFinding> get() = findings.filter {
+        it.status == LspStatus.MISSING_CONFIG || it.status == LspStatus.MISSING_BINARY
+    }
 }
 
 internal data class LspReport(val cliReports: List<CliReport>)

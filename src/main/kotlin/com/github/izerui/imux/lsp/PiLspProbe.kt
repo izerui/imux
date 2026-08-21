@@ -40,8 +40,10 @@ internal fun hasPiLens(settingsJson: String?): Boolean {
 /**
  * pi 这一组的报告。
  *
- * 只列 toolchain-gated 语言：其余语言 pi-lens 会按 npm/pip/github 策略自动装 server，
- * 没有可体检的缺口（pi-lens `docs/lsp-capability-matrix.md`，issue #241）。
+ * **目录表里的全部语言都出现**：非 toolchain-gated 的那些标成 [LspStatus.AUTO_MANAGED]
+ * ——pi-lens 会按 npm/pip/github 策略按需装 server（pi-lens `docs/lsp-capability-matrix.md`，
+ * issue #241）。此前它们被过滤掉，真实用户因此在 pi 组里找不到 TypeScript，
+ * 得出了「pi 不支持 TypeScript LSP」的结论，而事实恰恰相反。
  */
 internal fun piReport(
     piLensInstalled: Boolean,
@@ -60,21 +62,23 @@ internal fun piReport(
         )
     }
 
-    val findings = LspCatalog.languages
-        .filter(LspLanguage::piLensGated)
-        .map { language ->
-            val binary = language.piLensBinary!!
-            val status = when {
-                !binaries.containsKey(binary) -> LspStatus.UNKNOWN
-                binaries[binary] == null -> LspStatus.MISSING_BINARY
-                else -> LspStatus.READY
-            }
-            val remedy = if (status == LspStatus.MISSING_BINARY) {
-                LspCatalog.server(binary)?.let { Remedy(it.installCommand, it.docsUrl) }
-            } else {
-                null
-            }
-            LanguageFinding(language, status, remedy)
+    val findings = LspCatalog.languages.map { language ->
+        // piLensBinary 非空 ⟺ piLensGated（LspCatalogTest 钉住），判空即「非 gated」。
+        val binary = language.piLensBinary
+        val status = when {
+            binary == null -> LspStatus.AUTO_MANAGED
+            !binaries.containsKey(binary) -> LspStatus.UNKNOWN
+            binaries[binary] == null -> LspStatus.MISSING_BINARY
+            else -> LspStatus.READY
         }
+        // 只有 MISSING_BINARY 有可执行的下一步。AUTO_MANAGED 尤其不能给建议：
+        // pi-lens 会自己装，让用户再手动装一遍是纯粹的噪音。
+        val remedy = if (status == LspStatus.MISSING_BINARY && binary != null) {
+            LspCatalog.server(binary)?.let { Remedy(it.installCommand, it.docsUrl) }
+        } else {
+            null
+        }
+        LanguageFinding(language, status, remedy)
+    }
     return CliReport(AgentType.PI, installed = true, findings = findings)
 }

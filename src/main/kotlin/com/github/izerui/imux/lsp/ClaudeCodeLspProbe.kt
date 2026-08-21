@@ -72,8 +72,9 @@ private fun pluginCommands(settings: JsonObject, marketplaceJson: String?): Set<
 /**
  * 把配置与二进制探测结果合成 Claude Code 这一组的报告。
  *
- * 只列官方有对应插件的语言——Haskell 之类官方没插件的，在 Claude Code 上
- * 不存在「装个插件就能用」的路径，列进来只能显示一条无法执行的建议。
+ * **目录表里的全部语言都出现**，官方没有对应插件的（Haskell 等）标成
+ * [LspStatus.NOT_AVAILABLE]。此前它们被过滤掉，用户看到的是一份没有说明的短名单，
+ * 于是把「没列出来」读成了「不支持」——体检工具最不该做的就是让人自己去猜省略了什么。
  */
 internal fun claudeReport(
     configuredCommands: Set<String>,
@@ -84,20 +85,19 @@ internal fun claudeReport(
         return CliReport(AgentType.CLAUDE, installed = false, findings = emptyList())
     }
 
-    val findings = LspCatalog.languages
-        .filter { it.claudePlugin != null && it.claudeBinary != null }
-        .map { language ->
-            val binary = language.claudeBinary!!
-            val configured = binary in configuredCommands
-            val located = binaries[binary]
-            val status = when {
-                !configured -> LspStatus.MISSING_CONFIG
-                !binaries.containsKey(binary) -> LspStatus.UNKNOWN
-                located == null -> LspStatus.MISSING_BINARY
-                else -> LspStatus.READY
-            }
-            LanguageFinding(language, status, remedyFor(language, status))
+    val findings = LspCatalog.languages.map { language ->
+        // claudePlugin 与 claudeBinary 必定同时存在或同时缺失（LspCatalogTest 钉住），
+        // 所以判 binary 为空就等价于「官方没有这门语言的插件」。
+        val binary = language.claudeBinary
+        val status = when {
+            binary == null -> LspStatus.NOT_AVAILABLE
+            binary !in configuredCommands -> LspStatus.MISSING_CONFIG
+            !binaries.containsKey(binary) -> LspStatus.UNKNOWN
+            binaries[binary] == null -> LspStatus.MISSING_BINARY
+            else -> LspStatus.READY
         }
+        LanguageFinding(language, status, remedyFor(language, status))
+    }
     return CliReport(AgentType.CLAUDE, installed = true, findings = findings)
 }
 
@@ -108,7 +108,9 @@ private fun remedyFor(language: LspLanguage, status: LspStatus): Remedy? = when 
     LspStatus.MISSING_BINARY -> LspCatalog.server(language.claudeBinary.orEmpty())
         ?.let { Remedy(it.installCommand, it.docsUrl) }
 
-    LspStatus.READY, LspStatus.UNKNOWN -> null
+    // NOT_AVAILABLE / AUTO_MANAGED 没有任何用户可执行的动作，给建议就是误导；
+    // UNKNOWN 是「没查出来」，同样编不出下一步。
+    LspStatus.READY, LspStatus.UNKNOWN, LspStatus.AUTO_MANAGED, LspStatus.NOT_AVAILABLE -> null
 }
 
 // —— Gson 便利封装：任何形状不符都返回 null，绝不抛给调用方 ——

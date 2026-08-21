@@ -72,12 +72,18 @@ internal object LspCatalog {
     fun server(binary: String): LspServer? = servers[binary]
 
     /**
-     * 语言集合 = 官方 12 个 Claude Code LSP 插件覆盖的语言 ∪ pi-lens 的 11 个
-     * toolchain-gated 语言。非 gated 的 pi-lens 语言不列——它们由 pi-lens 自动安装，
-     * 没有可体检的缺口，列出来只会把表撑长。
+     * 语言集合 = 官方 12 个 Claude Code LSP 插件覆盖的 13 门语言（clangd-lsp 一个插件
+     * 管 C 与 C++）∪ pi-lens 的 toolchain-gated 语言，共 18 门。
+     *
+     * pi-lens 覆盖 36+ 门，其余那些既不 gated 又没有官方 Claude 插件的语言不进这张表：
+     * 它们在三个 CLI 上都没有可展示的差异，列出来只会把表撑长。表里这 18 门则**每门
+     * 都在每个分组里出现**——「没什么可查」是好消息，得说出来，不能与「不显示」混为一谈。
      */
     val languages: List<LspLanguage> = listOf(
-        LspLanguage("c", "C", "clangd-lsp", "clangd", piLensGated = false, piLensBinary = null),
+        // C 与 C++ 共用同一个 clangd，pi-lens 的 docs/language-coverage.md 里也是
+        // `C/C++` 合并的一行，不可能一个自动装一个要手动装。曾经把 C 写成非 gated，
+        // 这个矛盾被「只显示有问题的语言」藏住了；改成全量列表后会当场露馅。
+        LspLanguage("c", "C", "clangd-lsp", "clangd", piLensGated = true, piLensBinary = "clangd"),
         LspLanguage("cpp", "C++", "clangd-lsp", "clangd", piLensGated = true, piLensBinary = "clangd"),
         LspLanguage("csharp", "C#", "csharp-lsp", "csharp-ls", piLensGated = false, piLensBinary = null),
         LspLanguage("go", "Go", "gopls-lsp", "gopls", piLensGated = true, piLensBinary = "gopls"),
