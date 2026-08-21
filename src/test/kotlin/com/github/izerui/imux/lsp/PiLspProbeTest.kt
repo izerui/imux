@@ -43,6 +43,13 @@ class PiLspProbeTest {
         val report = piReport(piLensInstalled = false, binaries = emptyMap(), cliInstalled = true)
 
         assertEquals("pi install npm:pi-lens", report.groupRemedy?.command)
+        // 标成 INSTALL 的话，这条跨平台的 pi 子命令会在非 macOS 上被闸掉，
+        // 而它恰恰是没装 pi-lens 的用户唯一要做的那件事。
+        assertEquals(
+            "pi 自己的子命令跨平台，必须是 ACTIVATE",
+            RemedyKind.ACTIVATE,
+            report.groupRemedy?.kind,
+        )
         assertTrue(report.findings.isEmpty())
     }
 
@@ -126,6 +133,26 @@ class PiLspProbeTest {
         val kotlin = report.findings.single { it.language.id == "kotlin" }
         assertEquals(LspStatus.MISSING_BINARY, kotlin.status)
         assertNotNull("没有已知安装命令时也要给文档链接", kotlin.remedy?.docsUrl)
+    }
+
+    /**
+     * 二进制缺口的修复走的是目录表里的安装命令，它们只在 macOS 上核实过。
+     *
+     * 用 go 而不是 kotlin：kotlin-language-server 的 installCommand 是 null，
+     * 就算 kind 标错也没有按钮长出来，测不到这条闸门真正要拦的东西。
+     * 标成 ACTIVATE 的话，Windows 用户会看到「安装」按钮，点下去执行 `go install`。
+     */
+    @Test
+    fun `二进制缺口的安装命令是只在 macOS 验证过的那一类`() {
+        val report = piReport(
+            piLensInstalled = true,
+            binaries = mapOf("gopls" to null),
+            cliInstalled = true,
+        )
+
+        val go = report.findings.single { it.language.id == "go" }
+        assertEquals("go install golang.org/x/tools/gopls@latest", go.remedy?.command)
+        assertEquals(RemedyKind.INSTALL, go.remedy?.kind)
     }
 
     @Test

@@ -86,6 +86,13 @@ class ClaudeCodeLspProbeTest {
             "claude plugin install kotlin-lsp@claude-plugins-official",
             kotlin.remedy?.command,
         )
+        // 标成 INSTALL 的话，这条跨平台的 claude 子命令会在非 macOS 上被闸掉，
+        // Windows 用户看到的只剩一条要自己复制的命令——而它本来点一下就能跑。
+        assertEquals(
+            "claude 自己的子命令跨平台，必须是 ACTIVATE",
+            RemedyKind.ACTIVATE,
+            kotlin.remedy?.kind,
+        )
     }
 
     @Test
@@ -99,6 +106,13 @@ class ClaudeCodeLspProbeTest {
         val java = report.findings.single { it.language.id == "java" }
         assertEquals(LspStatus.MISSING_BINARY, java.status)
         assertEquals("brew install jdtls", java.remedy?.command)
+        // 标成 ACTIVATE 的话，`brew install jdtls` 会在 Windows 上也长出一个执行按钮，
+        // 点下去就是在没有 brew 的机器上跑 brew。
+        assertEquals(
+            "目录表里的安装命令只在 macOS 上核实过，必须是 INSTALL",
+            RemedyKind.INSTALL,
+            java.remedy?.kind,
+        )
     }
 
     /** 探测超时时映射为空，不能把「没查到」说成「没安装」。 */

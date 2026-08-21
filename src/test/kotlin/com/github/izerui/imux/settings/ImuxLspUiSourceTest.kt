@@ -355,11 +355,23 @@ class ImuxLspUiSourceTest {
         listOf(
             "com.github.izerui.imux.ImuxBundle",
             "com.github.izerui.imux.lsp.StatusIconKind",
+            // canRun 是这一页唯一「点错了就在用户机器上跑错东西」的守卫：本文件里补一句
+            // `private fun canRun(remedy: Remedy, isMac: Boolean) = true`，被钉死的调用点
+            // 一字不用改，Windows 用户的体检页上就长出 18 个「安装」按钮。
+            "com.github.izerui.imux.lsp.canRun",
             "com.github.izerui.imux.lsp.readyServerText",
+            // 同理：补一句恒返回 activate 键的同名声明，「安装」按钮全部写成「激活」，
+            // 用户点一个说一两秒就完的按钮，等来的是几百兆下载。
+            "com.github.izerui.imux.lsp.runActionKey",
+            // 补一句 `runCommandLine(shell, command) = listOf(shell, "-c", command)`，
+            // 从 Dock 启动的 IDE 上每一条安装命令都变成 command not found。
+            "com.github.izerui.imux.lsp.runCommandLine",
             "com.github.izerui.imux.lsp.statusIconKind",
             "com.github.izerui.imux.lsp.statusMessageKey",
+            "com.github.izerui.imux.terminal.resolveShell",
             "com.intellij.icons.AllIcons",
             "com.intellij.openapi.ide.CopyPasteManager",
+            "com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager",
         ).forEach { fqn ->
             val name = fqn.substringAfterLast('.')
             assertTrue(
@@ -470,6 +482,7 @@ class ImuxLspUiSourceTest {
             "createPanel", "isModified", "apply", "refresh", "diagnostics",
             "showChecking", "showFailed", "showReport", "replaceContent",
             "Panel.renderCli", "summaryText", "findingsPanel", "Panel.renderRemedy",
+            "Row.runRemedyButton", "runInTerminal", "targetProject",
             "groupMessage", "statusText", "statusIcon",
             "getPreferredScrollableViewportSize", "getScrollableUnitIncrement",
             "getScrollableBlockIncrement", "getScrollableTracksViewportWidth",
@@ -666,6 +679,130 @@ class ImuxLspUiSourceTest {
     }
 
     private fun renderRemedyBody(): String = bodyAfter("private fun Panel.renderRemedy(remedy: Remedy)", '{')
+
+    /**
+     * 执行按钮**只能**由 `canRun(remedy, SystemInfo.isMac)` 决定显不显示。
+     *
+     * 这是整次改动唯一「点错了就在用户机器上跑错东西」的地方。目录表里的安装命令只在
+     * macOS 上核实过（`brew install llvm`、`gem install ruby-lsp`、
+     * `opam install ocaml-lsp-server`），从前它们只是显示出来给人复制，平台不对用户
+     * 自己一眼就看出来；现在按钮点下去是**直接执行**。
+     *
+     * 断言钉的是那一整句守卫，而不是 `canRun` 这个标识符：只钉标识符的话，
+     * `if (!canRun(remedy, true)) return`、`if (!canRun(remedy, SystemInfo.isMac) && false) return`
+     * 都能满足，而 Windows 用户的体检页上照样长出「安装」按钮。
+     */
+    @Test
+    fun `执行按钮的可见性只能来自 canRun`() {
+        val body = compactArgs(bodyAfter("private fun Row.runRemedyButton(remedy: Remedy, command: String)", '{'))
+
+        assertTrue(
+            "按钮的可见性必须整句交给 canRun(remedy, SystemInfo.isMac)；写死平台或塞进别的条件，" +
+                "Windows 用户就会看到「安装」按钮，点下去在没有 brew 的机器上跑 brew：$body",
+            body.contains("if(!canRun(remedy,SystemInfo.isMac))return"),
+        )
+        assertTrue(
+            "按钮上的词必须来自 runActionKey；壳里写死键就能把「激活」「安装」对调：$body",
+            body.contains("ImuxBundle.message(runActionKey(remedy.kind))"),
+        )
+    }
+
+    /**
+     * 壳里不得有第二个平台判断，也不得自己按 [com.github.izerui.imux.lsp.RemedyKind] 分支。
+     *
+     * 上一条钉住了守卫那一句，但守卫之外还能再补一句——
+     * `if (remedy.kind == RemedyKind.INSTALL && SystemInfo.isWindows) return`
+     * 是加法，上一条一字不改仍然全绿，而闸门的语义已经不在纯函数手里了。
+     * 平台与性质的取舍只有一个地方：`canRun`，它被真调用测试钉着。
+     */
+    @Test
+    fun `壳里不得有第二处平台或性质判断`() {
+        assertFalse(
+            "平台判断只能是 canRun 收到的那一个 SystemInfo.isMac；壳里再判一次，" +
+                "闸门就不在被真调用测试钉住的纯函数里了",
+            Regex("""SystemInfo\.(?!isMac\b)\w+""").containsMatchIn(normalized),
+        )
+        assertFalse(
+            "壳里不得出现 RemedyKind 常量：按性质分支就能在两个键都还在源码里的前提下" +
+                "把「激活」和「安装」对调，或者干脆藏掉一类按钮",
+            normalized.contains("RemedyKind."),
+        )
+    }
+
+    /**
+     * 终端标签**跑完不许关**。
+     *
+     * 「开终端跑」相对「后台静默执行」的全部优势就是用户看得见结果：`brew` 偶尔问 y/n，
+     * `npm` 会报权限错，装个 jdtls 要几分钟。`closeOnProcessTermination` 的默认行为是
+     * 进程一退就关标签页——命令跑完的那一刻，输出闪一下就没了，用户既不知道成没成功，
+     * 也不知道为什么失败。少了这一句，这个方案就没有存在的理由。
+     */
+    @Test
+    fun `终端标签跑完不关`() {
+        val body = compactArgs(runInTerminalBody())
+
+        assertTrue(
+            "少了 closeOnProcessTermination(false)，命令跑完标签页立刻关闭，" +
+                "用户看不到 brew 问的 y/n、看不到错误、也不知道成没成功：$body",
+            body.contains("closeOnProcessTermination(false)"),
+        )
+        assertTrue(
+            "开完标签要把焦点给用户，否则命令在一个没人看的后台标签里跑，等于静默执行：$body",
+            body.contains("requestFocus(true)"),
+        )
+    }
+
+    /**
+     * 命令必须经**登录且交互**的 shell。
+     *
+     * 这个坑项目里踩过两次（`AgentCommand` 与 `BinaryProbe` 的 KDoc 都记着）：从 Dock
+     * 启动的 IDE 只有系统默认 PATH（`/usr/bin:/bin:/usr/sbin:/sbin`），而 `brew`、`go`、
+     * `npm`、`rustup`、`gem` 一个都不在里面。少了这一层，用户点「安装」得到的是
+     * `command not found`。
+     *
+     * 而从终端 `runIde` 起的沙箱继承了终端的 PATH，所以这个缺陷**在沙箱里永远复现不出来**
+     * ——只有装到正式 IDE 上才暴露。
+     *
+     * `-l` / `-i` 两个参数本身由 `LspRemedyRunTest` 真调用着钉住；这里钉的是**调用点**：
+     * 壳里自己拼一个 `listOf(shell, "-c", command)`，那组行为测试全绿而缺陷已经复活。
+     */
+    @Test
+    fun `终端命令必须经登录且交互的 shell`() {
+        val body = compactArgs(runInTerminalBody())
+
+        assertTrue(
+            "命令行必须整条交给 runCommandLine(resolveShell(...))；壳里自己拼一个 listOf，" +
+                "从 Dock 启动的 IDE 上每一条安装命令都会是 command not found：$body",
+            body.contains("shellCommand(runCommandLine(resolveShell(System.getenv(\"SHELL\")),command))"),
+        )
+    }
+
+    private fun runInTerminalBody(): String =
+        bodyAfter("private fun runInTerminal(remedy: Remedy, command: String, event: ActionEvent)", '{')
+
+    /**
+     * 跑完**不自动刷新**报告。
+     *
+     * 命令在终端里异步跑，插件不知道它什么时候结束——猜一个时机（延时几秒、或者干脆
+     * 点完就刷）只会给出更假的信息：用户看到的是一份在安装完成之前采集的报告，
+     * 上面还写着「未安装」，而终端里正跑得好好的。页面顶部就有「重新检测」。
+     *
+     * 断言写成「执行路径上不得调用 refresh()」：`refresh()` 在 createPanel 与按钮回调里
+     * 都有合法用法，在整份源码上数没有意义。
+     */
+    @Test
+    fun `执行完不自动刷新报告`() {
+        assertFalse(
+            "命令在终端里异步跑，我们不知道它什么时候结束；猜一个时机刷新只会显示一份" +
+                "比现在更假的报告。让用户自己点「重新检测」",
+            compactArgs(runInTerminalBody()).contains("refresh()"),
+        )
+        assertFalse(
+            "同上：按钮回调里也不许顺手刷一下",
+            compactArgs(bodyAfter("private fun Row.runRemedyButton(remedy: Remedy, command: String)", '{'))
+                .contains("refresh()"),
+        )
+    }
 
     /**
      * 状态 → 文案的对应由 `LspStatusPresentationTest` 真正调用着测；这里守的是**壳**。

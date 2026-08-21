@@ -58,7 +58,12 @@ internal fun piReport(
             AgentType.PI,
             installed = true,
             findings = emptyList(),
-            groupRemedy = Remedy("pi install $PI_LENS_PACKAGE", "https://github.com/apmantza/pi-lens"),
+            // pi 自己的子命令，跨平台——所有平台都可以点一下就跑
+            groupRemedy = Remedy(
+                "pi install $PI_LENS_PACKAGE",
+                "https://github.com/apmantza/pi-lens",
+                RemedyKind.ACTIVATE,
+            ),
         )
     }
 
@@ -74,7 +79,8 @@ internal fun piReport(
         // 只有 MISSING_BINARY 有可执行的下一步。AUTO_MANAGED 尤其不能给建议：
         // pi-lens 会自己装，让用户再手动装一遍是纯粹的噪音。
         val remedy = if (status == LspStatus.MISSING_BINARY && binary != null) {
-            LspCatalog.server(binary)?.let { Remedy(it.installCommand, it.docsUrl) }
+            // 目录表里的安装命令，只在 macOS 上核实过（见 RemedyKind.INSTALL）
+            LspCatalog.server(binary)?.let { Remedy(it.installCommand, it.docsUrl, RemedyKind.INSTALL) }
         } else {
             null
         }

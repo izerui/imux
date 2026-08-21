@@ -9,26 +9,40 @@ import com.github.izerui.imux.lsp.LspStatus
 import com.github.izerui.imux.lsp.Remedy
 import com.github.izerui.imux.lsp.ShellBinaryProbe
 import com.github.izerui.imux.lsp.StatusIconKind
+import com.github.izerui.imux.lsp.canRun
 import com.github.izerui.imux.lsp.readyServerText
+import com.github.izerui.imux.lsp.runActionKey
+import com.github.izerui.imux.lsp.runCommandLine
+import com.github.izerui.imux.lsp.runTabTarget
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.terminal.resolveShell
 import com.intellij.icons.AllIcons
+import com.intellij.ide.DataManager
+import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.options.BoundConfigurable
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
+import com.intellij.openapi.util.SystemInfo
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
+import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.Rectangle
+import java.awt.event.ActionEvent
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.Icon
@@ -237,6 +251,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
                     button(ImuxBundle.message("settings.lsp.copy")) {
                         CopyPasteManager.copyTextToClipboard(command)
                     }
+                    runRemedyButton(remedy, command)
                 }
             }
             // 没有已知安装命令时至少给出上游文档，不让用户卡在「不可用」三个字上
@@ -246,6 +261,80 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
                 }
             }
         }
+    }
+
+    /**
+     * `[复制]` 旁边那个执行按钮——点一下开个终端标签，把命令跑起来。
+     *
+     * **可见性完全交给 [canRun]，壳里一个平台判断都不许有。** 目录表里的安装命令只在
+     * macOS 上核实过（`brew install llvm`、`gem install ruby-lsp`、
+     * `opam install ocaml-lsp-server`），从前它们只是显示出来给人复制，平台不对用户
+     * 自己一眼就看出来；现在按钮点下去是**直接执行**。这条闸门是本次改动里唯一
+     * 「点错了就在用户机器上跑错东西」的地方，所以它住在纯函数里、被真调用测试钉着，
+     * 这里只剩一个调用点。
+     *
+     * 按钮上的词同理走 [runActionKey]：壳里出现 `when (remedy.kind)` 就能在两个字面量
+     * 都还留在源码里的前提下把「激活」和「安装」对调——用户点一个写着「激活」的按钮，
+     * 等来的是几百兆下载。
+     */
+    private fun Row.runRemedyButton(remedy: Remedy, command: String) {
+        if (!canRun(remedy, SystemInfo.isMac)) return
+        button(ImuxBundle.message(runActionKey(remedy.kind))) { event ->
+            runInTerminal(remedy, command, event)
+        }
+    }
+
+    /**
+     * 开一个终端标签把命令跑起来——**不是后台静默执行**。
+     *
+     * 选终端而不是 `ProcessBuilder`，全部理由都在「用户看得见」这一条上：`brew` 偶尔要
+     * 问 y/n，`npm` 会报权限错，装个 jdtls 要几分钟。后台执行的话用户只能对着一个
+     * 转圈的按钮猜，而终端标签里输出可见、能答话、能 Ctrl-C。
+     *
+     * 因此 `closeOnProcessTermination` 必须是 false：默认行为是进程一退标签页就关，
+     * 那正好把这个方案唯一的好处抹掉——命令跑完的那一刻，结果闪一下就没了。
+     *
+     * **imux 自己仍然一个字节都不往用户文件里写。** `claude plugin install` 会改
+     * `~/.claude/settings.json`，但改它的是 claude 这个 CLI，imux 只是替用户敲了那行字
+     * ——敲在一个用户看得见、随时能打断的终端里。README 那句承诺因此继续成立。
+     *
+     * 跑完**不自动刷新**报告：命令在终端里异步跑，我们不知道它什么时候结束，
+     * 猜一个时机只会给出更假的信息。页面顶部就有「重新检测」，用户装完自己点。
+     */
+    private fun runInTerminal(remedy: Remedy, command: String, event: ActionEvent) {
+        val project = targetProject(event)
+        if (project == null) {
+            // 只有「设置从欢迎页打开、一个项目都没开」才会落到这里：终端工具窗口属于项目，
+            // 没有项目就没有地方开标签。留一笔日志，别静默吞掉一次点击。
+            LOG.warn("没有可用的项目窗口，无法执行：$command")
+            return
+        }
+        TerminalToolWindowTabsManager.getInstance(project)
+            .createTabBuilder()
+            .workingDirectory(project.basePath ?: System.getProperty("user.home"))
+            .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
+            .tabName("${ImuxBundle.message(runActionKey(remedy.kind))} ${runTabTarget(command)}")
+            .requestFocus(true)
+            .closeOnProcessTermination(false)
+            .createTab()
+    }
+
+    /**
+     * 标签该开在哪个项目窗口里。
+     *
+     * 这一页是**应用级**设置（`applicationConfigurable`），手里没有 Project，而终端标签
+     * 是项目级的。优先问按钮所在的设置对话框：同时开着两个项目时，用户是在哪个窗口里
+     * 打开的设置，标签就该出现在哪个窗口——退回「随便挑一个」的话，用户点完按钮，
+     * 眼前这个窗口什么都不会发生。
+     *
+     * 对话框问不出来时才退回已打开的项目。两处都要排掉 default project：
+     * 它没有窗口，也没有终端工具窗口。
+     */
+    private fun targetProject(event: ActionEvent): Project? {
+        val fromDialog = (event.source as? Component)
+            ?.let { CommonDataKeys.PROJECT.getData(DataManager.getInstance().getDataContext(it)) }
+        val candidates = listOfNotNull(fromDialog) + ProjectManager.getInstance().openProjects
+        return candidates.firstOrNull { !it.isDisposed && !it.isDefault }
     }
 
     /**

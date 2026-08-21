@@ -102,11 +102,17 @@ internal fun claudeReport(
 }
 
 private fun remedyFor(language: LspLanguage, status: LspStatus): Remedy? = when (status) {
+    // claude 自己的子命令，跨平台且几秒就完——所有平台都可以点一下就跑
     LspStatus.MISSING_CONFIG ->
-        Remedy("claude plugin install ${language.claudePlugin}@claude-plugins-official", null)
+        Remedy(
+            "claude plugin install ${language.claudePlugin}@claude-plugins-official",
+            null,
+            RemedyKind.ACTIVATE,
+        )
 
+    // 目录表里的安装命令，只在 macOS 上核实过（见 RemedyKind.INSTALL）
     LspStatus.MISSING_BINARY -> LspCatalog.server(language.claudeBinary.orEmpty())
-        ?.let { Remedy(it.installCommand, it.docsUrl) }
+        ?.let { Remedy(it.installCommand, it.docsUrl, RemedyKind.INSTALL) }
 
     // NOT_AVAILABLE / AUTO_MANAGED 没有任何用户可执行的动作，给建议就是误导；
     // UNKNOWN 是「没查出来」，同样编不出下一步。

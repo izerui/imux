@@ -36,8 +36,41 @@ internal enum class LspStatus {
     NOT_AVAILABLE,
 }
 
-/** 一条修复建议：可复制的命令，或（没有已知命令时）一个上游文档链接。 */
-internal data class Remedy(val command: String?, val docsUrl: String?)
+/**
+ * 一条修复建议的**性质**。
+ *
+ * 它决定按钮上写什么字，更重要的是决定这条命令**能不能让用户点一下就跑**
+ *（见 `canRun`）：两类命令的跨平台程度差着一个量级，而按钮一旦存在就是真执行，
+ * 不再是「复制出来自己看一眼」。
+ */
+internal enum class RemedyKind {
+    /**
+     * 装 CLI 插件 / 扩展 / 挂 MCP。是 CLI 自己的子命令，跨平台，快且确定。
+     *
+     * 这类命令会写用户的 `~/.claude/settings.json` 之类的文件——但**写的是 CLI，不是
+     * imux**。imux 只是替用户敲了那行字，敲完之后文件由谁改、改成什么样，全在 CLI 手里；
+     * 命令跑在一个用户看得见、能答话、能 Ctrl-C 的终端标签里，而不是后台静默执行。
+     * README 那句「一个字节都不往用户文件里写」因此继续成立，这条线不能含糊。
+     */
+    ACTIVATE,
+
+    /**
+     * 装语言服务器二进制。走 brew / go / npm / rustup / gem / opam，慢且依赖外部工具链。
+     *
+     * 目录表里这批命令只在 macOS 上核实过（`brew` / `gem` / `opam` 那几条更是只有
+     * macOS 形状），所以它们的执行按钮**只在 macOS 出现**。
+     */
+    INSTALL,
+}
+
+/**
+ * 一条修复建议：可复制的命令，或（没有已知命令时）一个上游文档链接。
+ *
+ * [kind] 没有默认值是刻意的：默认值意味着新的产出点可以什么都不想就拿到一个 kind，
+ * 而拿错的后果是 Windows 用户在界面上看到一个「安装」按钮、点下去执行 `brew install llvm`。
+ * 让编译器在每个产出点上问一次，是这里唯一可靠的提醒。
+ */
+internal data class Remedy(val command: String?, val docsUrl: String?, val kind: RemedyKind)
 
 internal data class LanguageFinding(
     val language: LspLanguage,

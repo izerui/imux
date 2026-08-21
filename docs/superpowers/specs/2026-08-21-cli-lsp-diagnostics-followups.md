@@ -115,6 +115,18 @@ private val normalized by lazy { source.replace(Regex("\\s+"), " ") }
 
 实现计划里称「这是 spec 认可的取舍」——**核对后 spec 并没有认可**，那是一句失实的追认。`LspCatalog` 的 KDoc 把取舍与迁移路径写清楚了，纯数据改动、调用点不变，实质影响可控。但应在文档上把偏离显式记为决策，别让下一个人以为两边一致。
 
+**「激活 / 安装」按钮上线后，这条的性质变了。** 命令不再只是显示给人复制，而是点一下直接执行，所以 `RemedyKind.INSTALL` 的执行按钮只在 macOS 出现（`lsp/LspRemedyRun.kt` 的 `canRun`）。补齐平台分版之后，`canRun` 里 `|| isMac` 这一半应随之放开——否则 Linux 用户明明有了对的命令，按钮却还是不给。
+
+## 10.1 非 macOS 上的 `ACTIVATE` 按钮会用 `/bin/zsh` 起 shell
+
+`lsp/LspRemedyRun.kt` + `settings/ImuxLspConfigurable.kt`
+
+`canRun` 放行 `ACTIVATE` 的理由是「`claude plugin install` / `pi install` / `codex mcp add` 都是 CLI 自己的子命令，跨平台」——命令确实跨平台，但**包住它的那层 shell 不是**：`resolveShell(System.getenv("SHELL"))` 在 Windows 上取不到 `SHELL`，退回 `/bin/zsh`，标签页起不来。
+
+Linux 无碍（`SHELL` 有值、`-l -i -c` 语义相同）。Windows 上的表现是：点「激活」→ 开出一个立刻报错的终端标签。比「按钮不存在」略差，比「静默无反应」略好。
+
+修法有两条，选哪条取决于 Windows 上到底要不要支持：要，就给 `resolveShell` 加 Windows 分支（PowerShell / cmd，参数不再是 `-l -i -c`）；不要，就把 `canRun` 的平台维度从 `isMac` 换成「有没有 POSIX shell」。**别只改 `canRun` 的调用点**——闸门语义住在纯函数里是这一层唯一被真调用测试钉住的东西。
+
 ## 11. 缺两处承重契约的测试
 
 - **`ShellBinaryProbe.locate()` 的失败分支零测试**。不需要真实 shell 也能测两条：`locate(emptySet())` 应返回空映射；`ShellBinaryProbe(shell = "/nonexistent").locate(setOf("x"))` 应走异常分支返回空映射。各 2 行、确定性、无新依赖。而「失败/超时 → 空映射」正是整条 UNKNOWN 语义的承重契约——现在只测了下游怎么消费空映射，没测上游会不会真的产出空映射。
