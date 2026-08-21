@@ -47,7 +47,8 @@ class LspRemedyRunTest {
      *
      * 这一条红了，用户看到的是：Windows 的体检页上多出一个「激活」按钮，
      * 点下去弹 `Cannot run program /bin/zsh`。而这一页在 Windows 上**本来是完整可用的**
-     * ——每门语言一句状态，缺口那几行退回上游文档链接，信息一样不少。那是拿一个能用的
+     * ——每门语言一句状态，缺口那几行由 `ImuxLspConfigurable.fallbackCell` 给出命令的
+     * 短目标名（完整命令挂 tooltip）与上游文档链接，信息一样不少。那是拿一个能用的
      * 东西换了一个不能用的，和别处「一直不能用」不是一回事。
      */
     @Test

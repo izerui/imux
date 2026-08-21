@@ -15,6 +15,7 @@ import com.github.izerui.imux.lsp.runActionKey
 import com.github.izerui.imux.lsp.runCommandLine
 import com.github.izerui.imux.lsp.runRowKey
 import com.github.izerui.imux.lsp.runTabName
+import com.github.izerui.imux.lsp.runTabTarget
 import com.github.izerui.imux.lsp.runningStatusKey
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
@@ -329,15 +330,19 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         )
 
     /**
-     * 一行末尾那一格：能跑的给按钮，跑不了的退回上游文档。
+     * 一行末尾那一格：能跑的给按钮，跑不了的走 [fallbackCell]。
      *
      * 顺序不能反。按钮是**这一页唯一可执行的产出**，有它就不需要别的；
-     * 而 [runRemedyButton] 会在闸门不放行时什么都不放（非 macOS 的安装命令、
-     * 没有 POSIX shell、当前没开着项目窗口），此时这一格若也空着，
-     * 用户就只剩「服务器不在 PATH 中」六个字，没有任何下一步——那正是删掉
-     * `[复制]` 之后最容易掉进去的坑：命令收进了 tooltip，而 tooltip 依附于
-     * 一个根本没被渲染出来的按钮。所以这里按**有没有真的放上按钮**来决定退路，
-     * 而不是自己再判一次平台或命令有无（那就是第二处闸门了）。
+     * 而 [runRemedyButton] 会在闸门不放行时什么都不放，此时这一格若也空着，
+     * 用户就只剩「未启用插件」四个字，没有任何下一步。所以这里按**有没有真的放上
+     * 按钮**来决定退路，而不是自己再判一次平台或命令有无（那就是第二处闸门了）。
+     *
+     * 函数体被 `ImuxLspUiSourceTest` 逐字节钉住，理由与 [runRemedyButton] 同一条：
+     * 这里的每一种缺陷都是**加法**。实测在第一行前面补一句
+     * `if (finding.status == LspStatus.MISSING_CONFIG) return`，Claude Code 组 13 门语言的
+     * 「激活」按钮全部消失，而「壳里不得有第二处平台或性质判断」只禁 `SystemInfo.` 与
+     * `RemedyKind.`、不禁 `LspStatus.`，整套断言全绿。逐条列举被禁 token 漏得掉下一种，
+     * 整段比对漏不掉。
      *
      * 没有 remedy 的行（就绪、pi-lens 自动管理、官方无对应插件、没查出来）
      * 这一格是空的：它们本来就没有下一步可做，摆个链接只会让人以为有事要办。
@@ -348,27 +353,52 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             runRemedyButton(runRowKey(agentType, finding.language), remedy, command)
         } ?: false
         if (!placed) {
-            docsLink(remedy)
+            fallbackCell(remedy)
         }
     }
 
     /**
      * 组级修复（pi 未装 pi-lens、Codex 未挂 MCP）的那个按钮。
      *
-     * 与语言行走同一套闸门和同一套「跑完自动重新探测」，只是行标识不来自语言：
-     * 它是整组的前置条件，用 CLI 名加一个不可能与语言 id 相撞的后缀。
+     * 与语言行走同一套闸门、同一套退路、同一套「跑完自动重新探测」，只是行标识不来自
+     * 语言：它是整组的前置条件，用 CLI 名加一个不可能与语言 id 相撞的后缀。
      */
     private fun Row.groupAction(agentType: AgentType, remedy: Remedy) {
         val placed = remedy.command?.let { command ->
             runRemedyButton(agentType.name + GROUP_ROW, remedy, command)
         } ?: false
         if (!placed) {
-            docsLink(remedy)
+            fallbackCell(remedy)
         }
     }
 
-    /** 上游文档链接。链接文字是短词，不是 URL——URL 有五十来个字符，会把这一列撑爆。 */
-    private fun Row.docsLink(remedy: Remedy) {
+    /**
+     * 闸门挡下按钮时的退路——**这一格绝不能是空的**。
+     *
+     * 删掉复制按钮之后，命令唯一的去处是按钮的 tooltip；而 tooltip 依附于一个
+     * [runRemedyButton] 可能压根没渲染出来的按钮。空着的后果比想象中大：
+     *
+     * - [hasProjectWindow] 这道闸门在**所有平台**都会关——这一页是 `applicationConfigurable`，
+     *   从欢迎页打开设置是完全正常的路径。macOS 用户一样撞得上。
+     * - 撞上的行不是少数：Claude Code 组 13 门带官方插件的语言只要没启用，
+     *   都是 `MISSING_CONFIG` &#8594; `ACTIVATE`，而 `ACTIVATE` 的 `docsUrl` 恒为 null；
+     *   Codex 组的 `groupRemedy` 同样是 null。只给文档链接的话，那些行、那一整组
+     *   会退化成「一句警告 + 什么也没有」。
+     *
+     * 所以有命令时先摆一个**不可点的短标签**，标签文字取 [runTabTarget]
+     *（`claude plugin install kotlin-lsp@claude-plugins-official` &#8594; `kotlin-lsp`），
+     * 完整命令挂 tooltip。用户缺的恰恰就是那个插件名/包名——CLI 的官方文档只会告诉他
+     * 「有 plugin install 这个子命令」，不会告诉他 Kotlin 对应哪个插件。短标签让这一列
+     * 仍然只有十来个字符，不会退回到「一整行原始命令」那种把表撑爆的形态。
+     *
+     * 命令与文档链接**同时存在时两个都给**，不按平台二选一：那就是第二处闸门了。
+     * 非 macOS 上的 `INSTALL` 正是这种情况——命令是 macOS 形状（所以没有按钮），
+     * 文档链接才是那个平台的正路，而命令本身仍然是有用的线索。
+     */
+    private fun Row.fallbackCell(remedy: Remedy) {
+        remedy.command?.let { command ->
+            label(runTabTarget(command)).applyToComponent { toolTipText = command }
+        }
         remedy.docsUrl?.let { url ->
             browserLink(ImuxBundle.message("settings.lsp.docs"), url)
         }
@@ -401,6 +431,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 一次，于是同一条 `brew install` 开出两个标签抢同一把锁。它和守卫一样被逐字节钉住
      *——从前这个 `.enabled` 是被测试明令禁止的攻击写法（`.enabled(false)` 让按钮全灭），
      * 现在它有了正当语义，那就必须连**它的实参**一起钉死，否则等于把那扇门重新打开。
+     *
+     * 已知代价：Swing 的 `ToolTipManager` 不给 disabled 组件派发鼠标事件，所以**这一行
+     * 正在跑的那几秒里，命令 tooltip 读不到**。转瞬即逝且只影响已经点过的那一行
+     *（命令刚刚才执行过），而闸门挡下按钮那种**持续**读不到的情况由 [fallbackCell] 兜住。
      *
      * 整段函数体被 `ImuxLspUiSourceTest` 逐字节钉住。这不是洁癖：它是本页唯一一个
      * **职责就是可见性**的函数，而 `.visible(false)` / 守卫后面再补一句 `return` /
@@ -454,6 +488,16 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * 开标签**之前**先把这一行标成「进行中」并立刻重画：新标签会抢焦点，页面这一刻
      * 已经不在用户眼前了；等回来时它必须已经变了样，而不是和点之前一模一样。
+     *
+     * 开标签**必须**包在 `runCatching` 里，且失败时把标记撤回来。标记写在建标签之前
+     * （那是对的，否则抢焦点之后才改就晚了），于是一旦 `createTab()` 抛异常，那一行会
+     * 永久停在「正在激活…」、按钮永久禁用——而 [refresh] 从不清 [running]（那是刻意的：
+     * 真在跑的安装不该被一次「重新检测」清掉），用户只能关掉整个设置对话框才能复位。
+     *
+     * 整段函数体被 `ImuxLspUiSourceTest` 逐字节钉住。它和 [runRemedyButton] 一样是
+     * 「一件事」的形状，而这里每一种缺陷都是加法：在标记与开标签之间插一句
+     * `running.remove(key)`，「点下立刻变进行中」当场失效；在末尾之前插一句 `return`，
+     * 自动重新探测整个失效——两种写法下三条 `contains` 断言全部照常命中。
      */
     private fun runInTerminal(key: String, remedy: Remedy, command: String, event: ActionEvent) {
         // 渲染时 hasProjectWindow() 已经确认过有项目开着，这里再判一次是因为 262 的设置
@@ -465,14 +509,20 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         }
         running[key] = runningStatusKey(remedy.kind)
         lastReport?.let(::showReport)
-        val tab = TerminalToolWindowTabsManager.getInstance(project)
-            .createTabBuilder()
-            .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-            .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
-            .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
-            .requestFocus(true)
-            .closeOnProcessTermination(false)
-            .createTab()
+        val tab = runCatching {
+            TerminalToolWindowTabsManager.getInstance(project)
+                .createTabBuilder()
+                .workingDirectory(project.basePath ?: System.getProperty("user.home"))
+                .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
+                .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
+                .requestFocus(true)
+                .closeOnProcessTermination(false)
+                .createTab()
+        }.onFailure {
+            LOG.warn("开终端标签失败，撤回这一行的进行中标记：$command", it)
+            running.remove(key)
+            lastReport?.let(::showReport)
+        }.getOrNull() ?: return
         refreshWhenFinished(key, tab.view)
     }
 
@@ -483,6 +533,18 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 「命令在终端里异步跑，我们不知道它什么时候结束，猜一个时机只会给出更假的信息」
      * ——理由本身没错，错在结论：262 的 `TerminalView.sessionState` **不用猜**，
      * 它会明确走到 [TerminalViewSessionState.Terminated]。
+     *
+     * **这一条是整段逻辑的前提，所以在 262 的字节码上核过，不是推断的**：
+     * `TerminalViewImpl` 的构造里注册了
+     * `controller.addTerminationCallback(scope.asDisposable()) { mutableSessionState.value = Terminated }`，
+     * 而 `TerminalSessionController.fireSessionTerminated()` 只在它从后端事件流里收到
+     * `TerminalSessionTerminatedEvent` 时才触发——那是**会话/进程**事件，与标签页开着还是
+     * 关着无关。反向佐证在同一份字节码里：`TerminalToolWindowTabsManagerImpl.doCreateTab`
+     * 只有当 `closeOnProcessTermination == true` 时才起一个协程收 `sessionState`，
+     * 收到 `Terminated` 就关掉那个 Content。也就是说平台**自己**拿这个状态当「进程结束了」
+     * 的信号；若它只在关标签时才到，那个特性根本无法成立。
+     * 所以本页显式写的 `closeOnProcessTermination(false)` 只是让平台不去自动关标签，
+     * 不影响状态何时翻转。项目里 `TerminalHost.closeTabWhenTerminated` 早就依赖同一条性质。
      *
      * 三条边界，每一条都能让那一行永远停在「正在激活…」：
      *
@@ -593,14 +655,16 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 面貌，只换文字不换图标的话，一列绿勾/黄叹号里混着一句「正在激活…」，
      * 反而像是显示出错了。
      *
-     * 用 [AllIcons.Process.Step_1] 这个**静态**帧，不用 `AnimatedIcon.Default`：
-     * 后者不在 [AllIcons] 里（项目约定图标只取 AllIcons），而且它靠计时器重绘，
-     * 挂在一张随时会被整体重建的表上只是白烧 EDT。这一行本来就会在几秒到几分钟内
-     * 被一次完整重新探测覆盖掉，静态帧足够表达「这一格和别人不一样」。
+     * 用**静态**帧而不是 `AnimatedIcon.Default`，理由只有一条、也只需要一条：
+     * 后者不在 [AllIcons] 里，而本项目约定图标只取 AllIcons。这一行本来就会在几秒到
+     * 几分钟内被一次完整重新探测覆盖掉，静态帧足够表达「这一格和别人不一样」。
+     *
+     * 取 8 帧 spinner 中段的 [AllIcons.Process.Step_4] 而不是首帧 `Step_1`：
+     * 代码评审在真机上看到 `Step_1` 近乎空心圆，静态摆着看不出是「在转」。
      */
     private fun rowIcon(finding: LanguageFinding, agentType: AgentType): Icon {
         val inProgress = running.containsKey(runRowKey(agentType, finding.language))
-        return if (inProgress) AllIcons.Process.Step_1 else statusIcon(finding.status)
+        return if (inProgress) AllIcons.Process.Step_4 else statusIcon(finding.status)
     }
 
     /**

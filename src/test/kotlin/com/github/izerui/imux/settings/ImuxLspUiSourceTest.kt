@@ -130,12 +130,22 @@ class ImuxLspUiSourceTest {
      * **锚点必须唯一**。用 `indexOf` 取第一个匹配，意味着「把原函数原封不动留成死代码、
      * 另写一个真正被调用的同形函数」能让整组断言钉在一段没人执行的代码上——Kotlin 对
      * 没人调用的 private 函数只报 warning，拦不住。这里直接把「出现两次」判为失败。
+     *
+     * 锚点写**完整签名**（含形参名），而返回的切片正是从锚点末尾算起——把锚点截短到
+     * 左括号可以让它对形参改名免疫，但那样切片会连形参表一起带进来，下游的整段比对
+     * 全部要跟着改写，得不偿失。代价是 Rename 一个形参会走到「找不到锚点」这条路上，
+     * 所以那句失败信息必须**自己把这种可能说出来**，别让维护者以为函数被删了。
      */
     private fun bodyAfter(anchor: String, open: Char): String {
         val (packed, map) = compactIndex
         val needle = compact(anchor)
         val at = packed.indexOf(needle)
-        assertTrue("源码里找不到锚点：$anchor", at >= 0)
+        assertTrue(
+            "源码里找不到锚点：$anchor\n" +
+                "锚点写的是完整签名。如果你只是给形参改了个名（纯重构），把这里的签名同步过去即可；" +
+                "只有在函数确实被删掉或拆开时，这条失败才意味着逻辑变了。",
+            at >= 0,
+        )
         assertEquals(
             "锚点出现了不止一次，断言可能钉在一段没人调用的死代码上：$anchor",
             at,
@@ -409,6 +419,9 @@ class ImuxLspUiSourceTest {
             // 补一句恒返回空串的同名声明，标签名全部变空，用户在几个安装标签之间认不出
             // 哪个是哪个；而整条 builder 链的比对一字不变。
             "com.github.izerui.imux.lsp.runTabName",
+            // 闸门挡下按钮时，退路那一格的短标签取自它；补一句恒返回空串的同名声明，
+            // 那一格只剩一个看不见的空 label，ACTIVATE 类的行又变回死路一条。
+            "com.github.izerui.imux.lsp.runTabTarget",
             "com.github.izerui.imux.lsp.statusIconKind",
             "com.github.izerui.imux.lsp.statusMessageKey",
             "com.github.izerui.imux.terminal.resolveShell",
@@ -528,7 +541,7 @@ class ImuxLspUiSourceTest {
             "createPanel", "isModified", "apply", "disposeUIResources", "refresh", "diagnostics",
             "showChecking", "showFailed", "showReport", "replaceContent",
             "Panel.renderCli", "summaryText", "findingsPanel",
-            "Row.rowAction", "Row.groupAction", "Row.docsLink",
+            "Row.rowAction", "Row.groupAction", "Row.fallbackCell",
             "Row.runRemedyButton", "hasProjectWindow", "runInTerminal", "refreshWhenFinished",
             "targetProject", "groupMessage", "statusText", "rowIcon", "statusIcon",
             "getPreferredScrollableViewportSize", "getScrollableUnitIncrement",
@@ -673,79 +686,142 @@ class ImuxLspUiSourceTest {
      * 从前这里还有第二条断言，说的是「renderRemedy 的命令行不得进父网格」：那时命令
      * 单独占一行，拉进同一个网格会把第一列（图标）撑成
      * `npm install -g typescript-language-server typescript` 的宽度，整张表当场散架。
-     * 现在**没有命令行了**——命令收进了按钮的 tooltip，行末只剩一个按钮或一个短链接，
-     * 那条断言守的东西已经不存在。取代它的是下面这条否定断言：网格里不许再长出
-     * 一格宽东西，即整份源码里不得再把命令渲染成任何一种文本单元。
+     * 现在**没有命令行了**——命令收进了按钮的 tooltip，行末只剩一个按钮、一个短目标名
+     * 或一个短链接，那条断言守的东西已经不存在。取代它的是
+     * [行末那一格整段钉死，闸门挡下按钮时必须仍有内容] 里的 token 否定：`rowAction`
+     * 的函数体内不许出现**任何**文本单元。写在那里而不是写成全文件的
+     * `label(command)` 否定，是因为后者**依赖 lambda 形参名**——实测把形参 `command`
+     * 改名 `cmd`（纯重构，全套断言都接受）再补一句 `label(cmd)`，整条安装命令铺回
+     * 语言行、图标列被撑爆，而全部用例全绿。
      */
     @Test
-    fun `语言行必须共享列宽且行内不得再铺开命令`() {
+    fun `语言行必须共享列宽`() {
         assertTrue(
             "语言行必须进父网格，默认的 INDEPENDENT 每行各占一个子网格、列宽不共享",
             findingsPanelBody().contains("PARENT_GRID"),
-        )
-        assertFalse(
-            "命令一旦回到单元格里，第一列（图标）会被整条安装命令撑开，整张表散架；" +
-                "它只能出现在按钮的 tooltip 上",
-            Regex("""\b(label|text|comment)\(command\)""").containsMatchIn(compactArgs(normalized)),
         )
     }
 
     /**
      * 行末那一格是这一页**唯一可执行的产出**——「下一步该干什么」就是它。
      *
-     * 实测把 `remedy.command?.let { command -> … }` 改成
-     * `remedy.command?.takeIf { … }?.let { command -> … }`：整段结构原样留在源码里，
-     * 全部按钮消失，其余用例全绿。所以钉的是**从 command 直接进 let 的那一串**，
-     * 中间插任何东西都会断。
+     * **整段钉死**，理由与 [执行按钮的可见性只能来自 canRun] 完全相同：这里每一种缺陷
+     * 都是加法，而逐条列举被禁 token 永远漏得掉下一种。两条实测过的漏网：
      *
-     * 退路那一条同样重要，而且是这轮改版**新长出来**的风险：命令收进了 tooltip，
-     * 而 tooltip 依附于按钮。闸门（非 macOS 的安装命令、没有 POSIX shell、没开项目窗口）
-     * 挡下按钮时，这一格若也空着，用户就只剩「服务器不在 PATH 中」六个字，
-     * 连命令长什么样都无从得知——那是拿从前一份完整可用的页面换了一份残缺的。
-     * 所以退路必须**按「有没有真的放上按钮」来决定**，而不是壳里再判一次平台。
+     * 1. 第一行前面补一句 `if (finding.status == LspStatus.MISSING_CONFIG) return`——
+     *    Claude Code 组 13 门语言的「激活」按钮全部消失。
+     *    [壳里不得有第二处平台或性质判断] 只禁 `SystemInfo.` 与 `RemedyKind.`，
+     *    **不禁 `LspStatus.`**；调用点、前缀链、退路断言一字未改，全绿。
+     * 2. 把 lambda 形参 `command` 改名 `cmd`（纯重构），再补一句 `label(cmd)`——
+     *    整条安装命令铺回语言行、图标列被撑爆，而按形参名捕获的断言照样满足。
+     *
+     * 下面几条针对性断言与整段比对并存：整段比对给的是「照期望抄回去」，
+     * 这几条给的是「你砸掉的是用户看得见的哪一件事」。
+     *
+     * 退路（[Row.fallbackCell]）是这轮改版**新长出来**的风险，单独一条用例钉住，
+     * 见 [闸门挡下按钮时那一格不得为空]。
      */
     @Test
-    fun `行末必须无条件给出可执行入口，放不上按钮时退回文档`() {
+    fun `行末那一格整段钉死，闸门挡下按钮时必须仍有内容`() {
         val body = compactArgs(rowActionBody())
 
-        // lambda 形参名一并捕获，IDE 把 `command` 改名 `cmd` 是纯重构，不该红。
-        val cmd = Regex("""remedy\.command\?\.let\{(\w+)->""").find(body)?.groupValues?.get(1)
-            ?: throw AssertionError(
-                "command 与 let 之间插一句 takeIf，全部按钮就消失了，而所有字面量原样还在：$body",
+        assertFalse(
+            "rowAction 里不得按 LspStatus 分支：补一句 `if (finding.status == …) return`，" +
+                "Claude Code 组 13 门语言的「激活」按钮全部消失，而全文件那条否定只禁" +
+                "SystemInfo. 与 RemedyKind.，看不见它：$body",
+            body.contains("LspStatus."),
+        )
+        listOf("label(", "text(", "comment(").forEach { cell ->
+            assertFalse(
+                "行末这一格里不得出现文本单元：命令一旦回到单元格，第一列（图标）会被整条" +
+                    "安装命令撑开，整张表散架——它只能进 tooltip。禁的是 token 而不是" +
+                    "`label(command)`，后者依赖 lambda 形参名，改个名就绕过去了：$body",
+                body.contains(cell),
             )
-
+        }
         // 这一行是「激活 / 安装」按钮**唯一**的调用点。删掉它，界面上所有执行按钮当场
         // 消失，而 runRemedyButton 自己那条整段断言读的是一段没人调用的死代码，照样全绿
         //（bodyAfter 的「锚点不得出现两次」只抓重复锚点，抓不到断开的调用链）。
-        // 行标识必须由 runRowKey 现算：写死一个常量，三个分组的同名语言会一起「进行中」。
         assertTrue(
-            "执行按钮必须挂在语言行末尾，且行标识来自 runRowKey；删掉这一句，" +
-                "所有「激活 / 安装」按钮从界面消失，而 runRemedyButton 变成没人调用的死代码：$body",
-            body.contains("runRemedyButton(runRowKey(agentType,finding.language),remedy,$cmd)"),
-        )
-        assertTrue(
-            "闸门挡下按钮时必须退回上游文档：命令已经收进 tooltip，而 tooltip 依附于按钮——" +
-                "按钮没被渲染出来的话，这一格空着就等于用户什么下一步都没有了：$body",
-            body.contains("if(!placed){docsLink(remedy)}"),
+            "执行按钮必须挂在语言行末尾，且行标识由 runRowKey 现算——写死一个常量，" +
+                "三个分组的同名语言会一起变成「进行中」：$body",
+            body.contains("runRemedyButton(runRowKey(agentType,finding.language),remedy,command)"),
         )
         assertTrue(
             "退路必须以「有没有真的放上按钮」为准，不能在壳里再判一次平台或命令有无：$body",
-            body.contains("valplaced=remedy.command?.let{$cmd->"),
+            body.contains("if(!placed){fallbackCell(remedy)}"),
         )
 
-        assertTrue(
-            "文档链接的文字必须是一个短词而不是 URL：URL 有五十来个字符，" +
-                "放进这一格会把整张表撑宽——那正是这轮改版要消灭的东西：${docsLinkBody()}",
-            compactArgs(docsLinkBody()).contains(
-                compactArgs("""remedy.docsUrl?.let { url -> browserLink(ImuxBundle.message("settings.lsp.docs"), url) }"""),
-            ),
+        assertSameCode(
+            "行末这一格决定「这一行还有没有下一步」。开头补一句按 LspStatus 的守卫、" +
+                "command 与 let 之间插一句 takeIf、多补一个 label —— 三种都是加法且都能" +
+                "让整列产出消失或让整张表散架，所以整段比对，不列举被禁写法。" +
+                "\n（整段比对对空白、换行、尾逗号、具名实参都免疫，但对大括号与形参名敏感。" +
+                "若你只是动了排版，照下面的「期望」抄回去即可。）",
+            """
+            {
+                val remedy = finding.remedy ?: return
+                val placed = remedy.command?.let { command ->
+                    runRemedyButton(runRowKey(agentType, finding.language), remedy, command)
+                } ?: false
+                if (!placed) {
+                    fallbackCell(remedy)
+                }
+            }
+            """,
+            rowActionBody(),
+        )
+    }
+
+    /**
+     * 闸门挡下按钮时，那一格**不得为空**。
+     *
+     * 这是删掉复制按钮之后新长出来的死路，而且比「只影响 Windows」严重得多：
+     *
+     * - `hasProjectWindow()` 这道闸门在**所有平台**都会关。这一页是
+     *   `applicationConfigurable`，从欢迎页打开设置是完全正常的路径，macOS 用户一样撞得上。
+     * - 撞上的不是零星几行：Claude Code 组 13 门带官方插件的语言只要没启用，都是
+     *   `MISSING_CONFIG` → `ACTIVATE`，而 `ACTIVATE` 的 `docsUrl` **恒为 null**
+     *   （`ClaudeCodeLspProbe.remedyFor`）；Codex 组的 `groupRemedy` 也是 null
+     *   （`CodexLspProbe`）。只退回文档链接的话，那些行、那一整组就是
+     *   「一句警告 + 什么也没有」。
+     * - `canRun` 的 KDoc 与 `LspRemedyRunTest` 都写着「这一页在 Windows 上本来是完整
+     *   可用的」，followups §10.1 的裁定也建立在这句话上。它必须继续为真，
+     *   而让它为真的就是这个函数。
+     *
+     * 所以：有命令就摆一个不可点的短标签（[runTabTarget] 取出的目标名，用户缺的正是
+     * 那个插件名/包名），完整命令挂 tooltip；有文档就再给一个链接。**两个都有时两个都给**
+     * ——按平台二选一就是第二处闸门。
+     */
+    @Test
+    fun `闸门挡下按钮时那一格不得为空`() {
+        assertSameCode(
+            "ACTIVATE 类修复的 docsUrl 恒为 null。这一格退化成只有文档链接，" +
+                "Claude Code 组 13 门语言与 Codex 整组就再也读不到那条命令——" +
+                "而删掉复制按钮之后，tooltip 是命令唯一的去处",
+            """
+            {
+                remedy.command?.let { command ->
+                    label(runTabTarget(command)).applyToComponent { toolTipText = command }
+                }
+                remedy.docsUrl?.let { url ->
+                    browserLink(ImuxBundle.message("settings.lsp.docs"), url)
+                }
+            }
+            """,
+            fallbackCellBody(),
+        )
+        assertFalse(
+            "退路里也不许按平台或性质再判一次——那就是第二处闸门；两样都有就两样都给：" +
+                fallbackCellBody(),
+            Regex("""\bif[({]|\bwhen[({]""").containsMatchIn(compactArgs(fallbackCellBody())),
         )
     }
 
     private fun rowActionBody(): String =
         bodyAfter("private fun Row.rowAction(finding: LanguageFinding, agentType: AgentType)", '{')
 
-    private fun docsLinkBody(): String = bodyAfter("private fun Row.docsLink(remedy: Remedy)", '{')
+    private fun fallbackCellBody(): String = bodyAfter("private fun Row.fallbackCell(remedy: Remedy)", '{')
 
     /**
      * 组级修复（pi 没装 pi-lens、Codex 没挂 MCP）也得有按钮，而且必须**共用**同一条闸门。
@@ -765,8 +841,9 @@ class ImuxLspUiSourceTest {
             body.contains("runRemedyButton(agentType.name+GROUP_ROW,remedy,command)"),
         )
         assertTrue(
-            "组级修复放不上按钮时同样退回上游文档：$body",
-            body.contains("if(!placed){docsLink(remedy)}"),
+            "组级修复放不上按钮时同样要走退路：Codex 的 groupRemedy 没有 docsUrl，" +
+                "这一格空掉的话整组就是「一句警告 + 什么也没有」：$body",
+            body.contains("if(!placed){fallbackCell(remedy)}"),
         )
         assertTrue(
             "分组里必须真的渲染出这一格，否则 pi 与 Codex 两组只剩一句说明",
@@ -931,6 +1008,17 @@ class ImuxLspUiSourceTest {
      *
      * 两句缺一不可：只标记不重画，界面上什么都不会变；只重画不标记，重画出来的还是旧样子。
      * 顺序也钉住——标记必须在重画**之前**。
+     *
+     * 加上**整段比对**，因为逐条 `contains` 挡不住加法，两条都实测过：
+     *
+     * 1. 在标记与开标签之间补一句 `running.remove(key)`——「点下立刻变进行中」当场失效，
+     *    而上面两条 `contains` 照常命中。
+     * 2. 在末尾之前补一句 `return`——自动重新探测整个失效，同样全绿。
+     *
+     * 开标签那一段还必须包在 `runCatching` 里并在失败时撤回标记：标记写在建标签之前
+     * （那是对的，否则抢焦点之后才改就晚了），于是 `createTab()` 一抛异常，那一行会
+     * 永久停在「正在激活…」、按钮永久禁用，而 `refresh()` 从不清 `running`——
+     * 用户只能关掉整个设置对话框才能复位。
      */
     @Test
     fun `点下按钮那一行立刻变成进行中`() {
@@ -943,6 +1031,44 @@ class ImuxLspUiSourceTest {
         assertTrue(
             "标记完必须立刻重画，否则界面上什么都不会变——正是用户抱怨的那一点：$body",
             body.contains("running[key]=runningStatusKey(remedy.kind)lastReport?.let(::showReport)"),
+        )
+        assertTrue(
+            "开标签失败必须撤回标记，否则那一行永久停在「正在激活…」、按钮永久禁用，" +
+                "而「重新检测」清不掉它：$body",
+            body.contains("running.remove(key)lastReport?.let(::showReport)"),
+        )
+
+        assertSameCode(
+            "点击这条路径上每一种缺陷都是加法：标记与开标签之间插一句 running.remove、" +
+                "末尾之前插一句 return、把 runCatching 的失败分支去掉——三种都让逐条 contains" +
+                "照常命中。所以整段比对。若你只是动了排版或改了形参名，照下面的「期望」抄回去即可。",
+            """
+            {
+                val project = targetProject(event)
+                if (project == null) {
+                    LOG.warn("没有可用的项目窗口，无法执行：${'$'}command")
+                    return
+                }
+                running[key] = runningStatusKey(remedy.kind)
+                lastReport?.let(::showReport)
+                val tab = runCatching {
+                    TerminalToolWindowTabsManager.getInstance(project)
+                        .createTabBuilder()
+                        .workingDirectory(project.basePath ?: System.getProperty("user.home"))
+                        .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
+                        .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
+                        .requestFocus(true)
+                        .closeOnProcessTermination(false)
+                        .createTab()
+                }.onFailure {
+                    LOG.warn("开终端标签失败，撤回这一行的进行中标记：${'$'}command", it)
+                    running.remove(key)
+                    lastReport?.let(::showReport)
+                }.getOrNull() ?: return
+                refreshWhenFinished(key, tab.view)
+            }
+            """,
+            runInTerminalBody(),
         )
     }
 
@@ -962,6 +1088,20 @@ class ImuxLspUiSourceTest {
      *    scope，挂上去的协程当场没了，没有任何人来把这一行从「进行中」放出来。
      * 3. 反过来，关标签这条路必须被显式接住：`sessionState` 在 scope 取消后再也不会
      *    走到 `Terminated`，只等它就是干等到天荒地老。
+     *
+     * 「不得挂在 `view.coroutineScope` 上」**不能写成禁 `.launch` 这一种写法**。实测：
+     *
+     * ```
+     * val pageScope = scope ?: return
+     * pageScope.launch { }                  // 满足所有前缀断言
+     * val tabScope = view.coroutineScope    // 一行局部别名
+     * tabScope.launch { …原样搬过来… }
+     * ```
+     *
+     * 全绿，而用户一关终端标签那一行就永远停在「正在激活…」、按钮永久禁用。
+     * 所以判据改成**出现次数**：`view.coroutineScope` 在这个函数体里只准出现一次，
+     * 而那一次必须是紧跟 `.coroutineContext.job.invokeOnCompletion` 的那一次。
+     * 再加整段比对兜底——它对「换个名字接着用」这类改法一律不敏感也不放过。
      */
     @Test
     fun `执行后必须等终端会话终止再重新探测`() {
@@ -975,23 +1115,57 @@ class ImuxLspUiSourceTest {
             "判据只能是 Terminated：等 Running 等于命令刚起就刷新，报告比不刷新还假：$body",
             body.contains("view.sessionState.first{itisTerminalViewSessionState.Terminated}"),
         )
-        assertFalse(
-            "收集协程绝不能挂在终端 view 的 scope 上：用户一关标签页那个 scope 就被取消，" +
-                "协程当场没了，这一行会永远停在「正在激活…」：$body",
-            Regex("""view\.coroutineScope\.launch|view\.coroutineScope\)\.launch""").containsMatchIn(body),
+        assertEquals(
+            "view.coroutineScope 在这里只准出现一次。留一个局部别名（val tabScope = " +
+                "view.coroutineScope）再拿它 launch，禁 `.launch` 那种写法的断言一条都看不见，" +
+                "而用户一关终端标签，那一行就永远停在「正在激活…」：$body",
+            1,
+            Regex("""view\.coroutineScope""").findAll(body).count(),
+        )
+        assertTrue(
+            "唯一那次 view.coroutineScope 必须用来接住「标签被关掉」——scope 一取消，" +
+                "sessionState 就再也不会走到 Terminated，只等它就是干等到天荒地老：$body",
+            body.contains("view.coroutineScope.coroutineContext.job.invokeOnCompletion{terminated.cancel()}"),
         )
         assertTrue(
             "收集必须挂在页面自己的作用域上：$body",
             body.contains("valpageScope=scope?:returnpageScope.launch{"),
         )
         assertTrue(
-            "关标签这条路必须被显式接住——scope 一取消 sessionState 就再也不会走到 Terminated，" +
-                "只等它就是干等到天荒地老：$body",
-            body.contains("view.coroutineScope.coroutineContext.job.invokeOnCompletion{terminated.cancel()}"),
-        )
-        assertTrue(
             "两条路必须汇到同一个出口：命令跑完与标签被关掉，都要把这一行从「进行中」放出来：$body",
             body.contains("running.remove(key)"),
+        )
+
+        assertSameCode(
+            "这个函数就是「等命令跑完」这一件事，而它的每一种缺陷都是加法：" +
+                "running.remove 之后插一句 return@launch，自动重新探测彻底失效而上面几条" +
+                "contains 全部照常命中。所以整段比对。若你只是动了排版或改了形参名，照下面的「期望」抄回去。",
+            """
+            {
+                val pageScope = scope ?: return
+                pageScope.launch {
+                    val terminated = launch {
+                        view.sessionState.first { it is TerminalViewSessionState.Terminated }
+                    }
+                    val closed = view.coroutineScope.coroutineContext.job.invokeOnCompletion { terminated.cancel() }
+                    try {
+                        terminated.join()
+                    } finally {
+                        closed.dispose()
+                    }
+                    running.remove(key)
+                    val ticket = refreshRequest.incrementAndGet()
+                    delay(REFRESH_DEBOUNCE_MS)
+                    if (ticket == refreshRequest.get()) {
+                        ApplicationManager.getApplication().invokeLater(
+                            { if (scope != null) refresh() },
+                            ModalityState.any(),
+                        )
+                    }
+                }
+            }
+            """,
+            refreshWhenFinishedBody(),
         )
     }
 
@@ -1131,7 +1305,7 @@ class ImuxLspUiSourceTest {
             """
             {
                 val inProgress = running.containsKey(runRowKey(agentType, finding.language))
-                return if (inProgress) AllIcons.Process.Step_1 else statusIcon(finding.status)
+                return if (inProgress) AllIcons.Process.Step_4 else statusIcon(finding.status)
             }
             """,
             icon,

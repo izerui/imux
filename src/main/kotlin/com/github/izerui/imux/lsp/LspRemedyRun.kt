@@ -36,10 +36,13 @@ import com.github.izerui.imux.model.AgentType
  *
  * **为什么 [hasPosixShell] 要单独占一条，而不是并进 [isMac]。** 别处（会话启动）在
  * Windows 上本来就没能用过，多一个坏入口用户什么也没失去；而这一页在 Windows 上
- * **本来是能用的**——每门语言一句状态，缺口那几行还挂着上游文档链接（设置页在闸门
- * 挡下按钮时会退回文档链接，见 `ImuxLspConfigurable.rowAction`）。旁边多一个更显眼的
- * 「激活」按钮、点下去报 `Cannot run program /bin/zsh`，用户会合理推断整页坏了：
- * 那是拿一个能用的东西换了一个不能用的。所以这里宁可不给按钮。
+ * **本来是能用的**——每门语言一句状态，缺口那几行给出命令的短目标名、完整命令挂
+ * tooltip，有上游文档时还多一个链接。这一条不是自然成立的，它由
+ * `ImuxLspConfigurable.fallbackCell` 兜着：闸门挡下按钮时那一格必须仍有内容，
+ * 否则「Windows 上本来能用」这句话当场变成假话（`ACTIVATE` 类的 `docsUrl` 恒为 null，
+ * 只退回文档链接等于什么都不退）。旁边多一个更显眼的「激活」按钮、点下去报
+ * `Cannot run program /bin/zsh`，用户会合理推断整页坏了：那是拿一个能用的东西换了
+ * 一个不能用的。所以这里宁可不给按钮。
  *
  * 三个维度分开而不是揉成一个布尔，是因为它们会**各自**变化：目录表补齐平台分版之后，
  * 第 3 条里的 `|| isMac` 该放开；`resolveShell` 支持 Windows 之后，第 1 条该去掉。
