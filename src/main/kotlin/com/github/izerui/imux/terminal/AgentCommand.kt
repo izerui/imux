@@ -29,6 +29,7 @@ internal fun launchCommand(
     piExtension: java.nio.file.Path? = null,
     initialPrompt: String? = null,
 ): List<String> {
+    val dialect = dialectOf(shell)
     val cli = agentType.cli
     val script =
         when {
@@ -40,27 +41,27 @@ internal fun launchCommand(
             // 所以新建与续聊是同一条命令——新建时 id 由 imux 预先生成传进来。
             agentType == AgentType.PI -> {
                 buildString {
-                    append("$cli --session-id ${singleQuote(resumeId)}")
+                    append("$cli --session-id ${quote(dialect, resumeId)}")
                     // 脚本缺失时**不加** -e：拼出一个加载不了的扩展会让 pi 启动失败，
                     // 那是整个会话起不来；而少了上报只是标签页不自动跟随。
-                    piExtension?.let { append(" -e ${singleQuote(it.toString())}") }
+                    piExtension?.let { append(" -e ${quote(dialect, it.toString())}") }
                 }
             }
 
             agentType == AgentType.CODEX -> {
-                "$cli resume ${singleQuote(resumeId)}"
+                "$cli resume ${quote(dialect, resumeId)}"
             }
 
             else -> {
-                "$cli --resume ${singleQuote(resumeId)}"
+                "$cli --resume ${quote(dialect, resumeId)}"
             }
         }
     val command =
         initialPrompt
             ?.takeIf { it.isNotBlank() }
-            ?.let { "$script ${singleQuote(it)}" }
+            ?.let { "$script ${quote(dialect, it)}" }
             ?: script
-    return listOf(shell, "-l", "-i", "-c", command)
+    return listOf(shell) + shellArgs(dialect) + command
 }
 
 /**
@@ -213,9 +214,13 @@ private val POSIX_SHELL_NAMES = setOf("sh", "bash", "zsh", "fish", "dash", "ksh"
 private const val WINDOWS_FALLBACK_SHELL = "powershell.exe"
 
 /**
- * 包成单引号字符串。
+ * 包成 POSIX 单引号字符串。
  *
- * 会话 id 来自文件名，不该假定它的内容安全——凡是拼进 shell 命令行的东西一律当作不可信。
- * 单引号内除单引号本身外一切都是字面量，所以只需把 `'` 换成 `'\''`（闭合、转义、重开）。
+ * 保留这个名字是因为 `lsp/CodexLspProbe.kt` 用它拼的是**给用户看的命令文本**
+ * （`codex mcp add pi-lens -- '<路径>'`），与终端方言无关。
+ *
+ * 已知取舍：Windows 上那条建议会由 PowerShell 执行，而两种方言只在值里含单引号时
+ * 才产生不同结果——含单引号的可执行文件路径极其罕见，且失败形态是命令报错而非
+ * 执行了别的东西。不为此把方言穿透进探针层（那一层刻意不碰任何平台概念）。
  */
-internal fun singleQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+internal fun singleQuote(value: String): String = quote(ShellDialect.POSIX, value)

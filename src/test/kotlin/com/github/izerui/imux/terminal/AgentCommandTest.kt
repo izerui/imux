@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Path
 
 class AgentCommandTest {
     @Test
@@ -229,6 +230,55 @@ class AgentCommandTest {
         assertEquals("powershell.exe", resolveShell(null, isWindows = true, configuredShell = "  "))
         // Windows 上 SHELL 通常没有值；就算有，也不该拿 POSIX 路径去 ProcessBuilder
         assertEquals("powershell.exe", resolveShell("/bin/zsh", isWindows = true, configuredShell = null))
+    }
+
+    @Test
+    fun `macOS 形态的启动命令逐字节不变`() {
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude"),
+            launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = null),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude --resume 'abc-123'"),
+            launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = "abc-123"),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "codex resume 'abc-123'"),
+            launchCommand("/bin/zsh", AgentType.CODEX, resumeId = "abc-123"),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123'"),
+            launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123"),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123' -e '/tmp/r.js'"),
+            launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", piExtension = Path.of("/tmp/r.js")),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude --resume 'abc-123' 'say hi'"),
+            launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = "abc-123", initialPrompt = "say hi"),
+        )
+    }
+
+    @Test
+    fun `PowerShell 形态用 PowerShell 的参数与引号`() {
+        assertEquals(
+            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "claude --resume 'abc-123'"),
+            launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = "abc-123"),
+        )
+    }
+
+    @Test
+    fun `初始 prompt 里的单引号按方言转义`() {
+        // prompt 是用户自由输入，是整条命令行里最不可信的一段
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude 'it'\\''s'"),
+            launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
+        )
+        assertEquals(
+            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "claude 'it''s'"),
+            launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
+        )
     }
 
     @Test

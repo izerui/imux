@@ -649,6 +649,22 @@ class LspRemedyRunTest {
         )
     }
 
+    @Test
+    fun `macOS 形态的执行命令行逐字节不变`() {
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "brew install jdtls"),
+            runCommandLine("/bin/zsh", "brew install jdtls"),
+        )
+    }
+
+    @Test
+    fun `PowerShell 形态的执行命令行用 PowerShell 参数`() {
+        assertEquals(
+            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "npm install -g pyright"),
+            runCommandLine("pwsh.exe", "npm install -g pyright"),
+        )
+    }
+
     /** 命令原样交给 `-c`，不做任何拼接或转义——它整条就是 shell 的最后一个实参。 */
     @Test
     fun `命令原样作为 shell 的最后一个实参`() {

@@ -1,6 +1,8 @@
 package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.terminal.dialectOf
+import com.github.izerui.imux.terminal.shellArgs
 
 // 「一条修复建议能不能点一下就跑、跑起来长什么样」的纯逻辑。
 //
@@ -306,11 +308,13 @@ internal fun runRowKey(
  *
  * 从终端 `runIde` 起的沙箱继承了终端的 PATH，所以这个缺陷**在沙箱里永远不会出现**，
  * 只有装到正式 IDE 上才暴露。
+ *
+ * PowerShell 反而要 `-NoProfile`，详见 [shellArgs] 的 KDoc。
  */
 internal fun runCommandLine(
     shell: String,
     command: String,
-): List<String> = listOf(shell, "-l", "-i", "-c", command)
+): List<String> = listOf(shell) + shellArgs(dialectOf(shell)) + command
 
 /**
  * 从命令里认出「这一标签在装什么」，用作终端标签名。
