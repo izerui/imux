@@ -117,6 +117,14 @@ private val normalized by lazy { source.replace(Regex("\\s+"), " ") }
 
 **「激活 / 安装」按钮上线后，这条的性质变了。** 命令不再只是显示给人复制，而是点一下直接执行，所以 `RemedyKind.INSTALL` 的执行按钮只在 macOS 出现（`lsp/LspRemedyRun.kt` 的 `canRun`）。补齐平台分版之后，`canRun` 里 `|| isMac` 这一半应随之放开——否则 Linux 用户明明有了对的命令，按钮却还是不给。
 
+> **处置结论（2026-08-22，阶段一实现）**
+>
+> 由 `docs/superpowers/specs/2026-08-22-imux-cross-platform-design.md` 设计、阶段一实现解决。
+>
+> **已解决的部分：** `macOnlyCommands` 从「目录表里所有安装命令」收窄成只挡 `brew` / `opam` 系。`npm` / `go install` / `gem` / `dotnet tool` / `rustup` / `cargo` 这 8 条安装命令在三平台都给「启用」按钮。`canRun` 里 `isMac ||` 那一半已按本条建议放开——非 macOS 平台只要命令不在 `macOnlyCommands` 里，就出按钮。
+>
+> **未全解决的部分：** brew 系 4 门语言（Java / Kotlin / Lua / C 与 C++）以及 3 个前置工具（dotnet-sdk / rustup / opam）的非 macOS 安装命令仍未补。原因是本仓库没有 Linux 或 Windows 环境可以验证 apt / dnf / pacman / winget 的写法——编一条跑不通的命令挂在「启用」按钮上，比不给按钮更糟。这几门语言在非 macOS 上保持既有退路：短目标名 + 完整命令 tooltip + 上游文档链接。Linux 与 Windows 上的实际运行行为按设计应当如此，未经真机验证。
+
 ## 10.1 `resolveShell` 在 Windows 上退回 `/bin/zsh`，而只有 LSP 页挡了这一道
 
 `terminal/AgentCommand.kt` 的 `resolveShell`（根），四个调用点
@@ -141,6 +149,14 @@ Windows 上 `SHELL` 通常没有值 → 退回 `/bin/zsh` → 拿它去 `Process
 真正的修法是给 `resolveShell` 加 Windows 分支（PowerShell / cmd，参数不再是 `-l -i -c`，`singleQuote` 的转义规则也要跟着换）。做完之后，`canRun` 的 `hasPosixShell` 维度应随之去掉。
 
 **别只改 `canRun` 的调用点**——闸门语义住在纯函数里，是这一层唯一被真调用测试钉住的东西。同理，`canRun` 的三个维度是分开的：目录表补齐平台分版之后该放开的是 `|| isMac` 那一半，不是 `hasPosixShell`。
+
+> **处置结论（2026-08-22，阶段一实现）**
+>
+> 由 `docs/superpowers/specs/2026-08-22-imux-cross-platform-design.md` 设计、阶段一实现解决。
+>
+> **已解决的部分：** 根已修——`resolveShell` 现在经 `ShellDialect` 分平台解析：macOS / Linux 取 `SHELL` 环境变量（退回 `/bin/sh`），Windows 取 IDE 配置的终端 shell（`TerminalProjectOptionsProvider.shellPath`），再退回 `cmd.exe`。四个调用点（会话启动 newCommand / resumeCommand、LSP 探测 BinaryProbe、LSP 执行按钮）全部改经 `ShellDialect`，不再有 `/bin/zsh` 硬编码退路。`canRun` 的 `hasPosixShell` 维度已按本条预告删除（原文：「`resolveShell` 支持 Windows 之后，第 1 条该去掉」）。
+>
+> **未全解决的部分：** Linux 与 Windows 上的实际运行行为（会话能否正常起动、LSP 探测是否正确返回、执行按钮是否可用）按设计应当如此，但完全未经真机验证。本仓库没有 Linux 或 Windows 环境，所有行为结论均来自代码审查与 macOS 上的测试。
 
 ## 11. 缺两处承重契约的测试
 
