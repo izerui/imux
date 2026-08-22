@@ -5,6 +5,9 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.PiReportEndpoint
 import com.github.izerui.imux.session.blocksResume
+import com.github.izerui.imux.session.deleteTabPidFile
+import com.github.izerui.imux.session.imuxTabPidDir
+import com.github.izerui.imux.session.tabPidFilePath
 import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.ide.DataManager
@@ -30,6 +33,7 @@ import kotlinx.coroutines.launch
 import com.intellij.openapi.components.service
 import org.jetbrains.plugins.terminal.TerminalOptionsProvider
 import org.jetbrains.plugins.terminal.block.util.TerminalDataContextUtils
+import java.nio.file.Files
 import java.util.EventListener
 
 fun interface TerminalSessionsListener : EventListener {
@@ -153,7 +157,7 @@ class TerminalHost(
             open(
                 key = tab.sessionId,
                 agentType = agentType,
-                command = resumeCommand(agentType, tab.sessionId),
+                command = { tabId -> resumeCommand(agentType, tab.sessionId, tabId) },
                 tabTitle = session.title,
                 sessionId = tab.sessionId,
                 selectAsCurrent = false,
@@ -189,7 +193,13 @@ class TerminalHost(
         sessionId: String? = null,
         initialPrompt: String? = null,
     ) {
-        open(key, agentType, newCommand(agentType, sessionId, initialPrompt), tabTitle, sessionId)
+        open(
+            key,
+            agentType,
+            { tabId -> newCommand(agentType, sessionId, initialPrompt, tabId) },
+            tabTitle,
+            sessionId,
+        )
     }
 
     /**
@@ -210,6 +220,10 @@ class TerminalHost(
             persistRestorableTabs()
             sessionsChangedDispatcher.multicaster.sessionsChanged()
         }
+        // Windows 的 pid 自报文件随标签一起消失。pid 会被系统复用，残留的文件会把一个
+        // 毫不相干的新进程认成这个标签的 shell——那正是「认错比不迁移更糟」的那一类错。
+        // 认 tabId 而不认 key：key 会随会话迁移而变，tabId 全程不变。
+        if (SystemInfo.isWindows) deleteTabPidFile(imuxTabPidDir(), file.tabId)
         file.terminalView.coroutineScope.cancel()
     }
 
@@ -236,7 +250,13 @@ class TerminalHost(
         sessionId: String,
         tabTitle: String,
     ) {
-        open(sessionId, agentType, resumeCommand(agentType, sessionId), tabTitle, sessionId)
+        open(
+            sessionId,
+            agentType,
+            { tabId -> resumeCommand(agentType, sessionId, tabId) },
+            tabTitle,
+            sessionId,
+        )
     }
 
     /**
@@ -412,10 +432,15 @@ class TerminalHost(
             .firstOrNull { it.terminalView === view }
             ?.let { file -> file.sessionId?.let { file.agentType to it } }
 
+    /**
+     * [command] 收的是 tabId 而不是拼好的命令行：Windows 上启动命令里要嵌入
+     * 「把 shell 自己的 pid 写进 `<tabId>.pid`」这一段，而 tabId 恰好在这里才定下。
+     * 用函数而不是提前拼好，也顺带保证复用已有 view 时不会白建一次 pid 文件目录。
+     */
     private fun open(
         key: String,
         agentType: AgentType,
-        command: List<String>,
+        command: (tabId: String) -> List<String>,
         tabTitle: String,
         sessionId: String?,
         selectAsCurrent: Boolean = true,
@@ -426,7 +451,7 @@ class TerminalHost(
                 // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
                 // 之后从进程 env 里读回来才认得出这个终端。
                 val tabId = newTabId()
-                val view = views.getOrPut(key) { createView(agentType, command, tabTitle, tabId) }
+                val view = views.getOrPut(key) { createView(agentType, command(tabId), tabTitle, tabId) }
                 AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId, sessionId)
                     .also(::closeTabWhenTerminated)
             }
@@ -568,6 +593,7 @@ class TerminalHost(
         agentType: AgentType,
         sessionId: String?,
         initialPrompt: String?,
+        tabId: String,
     ): List<String> =
         launchCommand(
             resolveShell(
@@ -579,11 +605,13 @@ class TerminalHost(
             resumeId = sessionId,
             piExtension = piExtensionFor(agentType),
             initialPrompt = initialPrompt,
+            pidFile = tabPidFileFor(tabId),
         )
 
     private fun resumeCommand(
         agentType: AgentType,
         sessionId: String,
+        tabId: String,
     ): List<String> =
         launchCommand(
             resolveShell(
@@ -594,7 +622,30 @@ class TerminalHost(
             agentType,
             resumeId = sessionId,
             piExtension = piExtensionFor(agentType),
+            pidFile = tabPidFileFor(tabId),
         )
+
+    /**
+     * Windows 上让 shell 自报 pid 的文件路径；其它平台返回 null。
+     *
+     * macOS 与 Linux 靠 [launchEnvironment] 注入的 IMUX_TAB 认领，命令行一个字都不加；
+     * Windows 读不到别的进程的环境变量，只能走这条通道，见
+     * [com.github.izerui.imux.session.tabIdByParentChain]。
+     *
+     * **目录必须先建起来**，否则 PowerShell 的 `Set-Content` 会失败——而失败是静默的
+     * （只表现为这个标签认不出会话漂移）。建不起来也不抛：返回 null 退回「不自报」，
+     * 会话照常启动，代价只是这一个标签认不出漂移。
+     */
+    private fun tabPidFileFor(tabId: String): String? {
+        if (!SystemInfo.isWindows) return null
+        return runCatching {
+            val dir = Files.createDirectories(imuxTabPidDir())
+            tabPidFilePath(dir, tabId).toString()
+        }.getOrElse {
+            LOG.warn("建不了 pid 文件目录，本标签不做 pid 自报", it)
+            null
+        }
+    }
 
     /** 只有 pi 需要上报扩展，别的 agent 一律不加。 */
     private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? = if (agentType == AgentType.PI) piReporterScript() else null

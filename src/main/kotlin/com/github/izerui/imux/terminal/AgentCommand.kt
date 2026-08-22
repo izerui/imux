@@ -23,6 +23,9 @@ import com.github.izerui.imux.session.PiReportEndpoint
  *
  * 不用 `exec` 替换进程：多一层 shell 无妨，而 `-c` 执行完即退出，
  * CLI 一结束 shell 也跟着结束，「进程终止即关标签页」的行为不受影响。
+ *
+ * [pidFile] 只在 Windows 上有值（由调用点按平台决定），用来让 shell 自报 pid；
+ * POSIX 方言下 [pidFileRecordCommand] 恒为 null，macOS 与 Linux 的命令行一个字不加。
  */
 internal fun launchCommand(
     shell: String,
@@ -30,6 +33,7 @@ internal fun launchCommand(
     resumeId: String?,
     piExtension: java.nio.file.Path? = null,
     initialPrompt: String? = null,
+    pidFile: String? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = agentType.cli
@@ -63,7 +67,18 @@ internal fun launchCommand(
             ?.takeIf { it.isNotBlank() }
             ?.let { "$script ${quote(dialect, it)}" }
             ?: script
-    return listOf(shell) + shellArgs(dialect) + command
+    // pid 自报只在 Windows 分支生成：POSIX 方言下 pidFileRecordCommand 恒为 null，
+    // macOS 与 Linux 的启动命令因此一个字都不加。
+    //
+    // **分隔符必须是 `;` 而不是 `&&`。** 写 pid 文件失败（目录没建起来、磁盘满、
+    // 杀毒软件挡住）只该让这个标签认不出漂移，绝不能连带让整个会话起不来——
+    // `&&` 会在第一条失败时短路掉 CLI，把一个软失败升级成硬失败。
+    val prefixed =
+        pidFile
+            ?.let { pidFileRecordCommand(dialect, it) }
+            ?.let { "$it; $command" }
+            ?: command
+    return listOf(shell) + shellArgs(dialect) + prefixed
 }
 
 /**

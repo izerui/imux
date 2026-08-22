@@ -4,6 +4,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.IMUX_TAB_ENV
 import com.github.izerui.imux.session.PiReportEndpoint
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -313,6 +314,83 @@ class AgentCommandTest {
 
         assertEquals("claude --resume 'x'", launchCommand("/bin/zsh", AgentType.CLAUDE, "x", script).last())
         assertEquals("codex resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", script).last())
+    }
+
+    @Test
+    fun `POSIX 上传了 pid 文件也不改变启动命令`() {
+        // macOS 与 Linux 靠环境变量认领，命令行必须与改动前逐字节相同
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude"),
+            launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = null, pidFile = "/tmp/x.pid"),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "codex resume 'abc-123'"),
+            launchCommand("/bin/zsh", AgentType.CODEX, resumeId = "abc-123", pidFile = "/tmp/x.pid"),
+        )
+    }
+
+    @Test
+    fun `PowerShell 上 pid 自报排在 CLI 之前`() {
+        assertEquals(
+            listOf(
+                "pwsh.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; claude",
+            ),
+            launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, pidFile = "C:\\t\\x.pid"),
+        )
+    }
+
+    /**
+     * 分隔符必须是 `;` 而不是 `&&`。
+     *
+     * 写 pid 文件失败（目录没建起来、磁盘满、杀毒软件挡住）只该让这个标签认不出漂移，
+     * 绝不能连带让整个会话起不来——`&&` 会在第一条失败时短路掉 CLI，
+     * 把一个软失败升级成硬失败。症状是「点了会话，标签页一闪就没了」。
+     */
+    @Test
+    fun `pid 自报与 CLI 之间用分号而不是与号`() {
+        val script = launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, pidFile = "C:\\t\\x.pid").last()
+
+        assertTrue(
+            "pid 自报写失败不能短路掉 CLI，两条命令之间必须是分号：$script",
+            script.contains("ascii; claude"),
+        )
+        assertFalse(
+            "用 && 会把写 pid 文件的软失败升级成整个会话起不来：$script",
+            script.contains("&&"),
+        )
+    }
+
+    @Test
+    fun `不传 pid 文件时命令与从前一致`() {
+        assertEquals(
+            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "claude"),
+            launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, pidFile = null),
+        )
+    }
+
+    @Test
+    fun `pid 自报排在初始 prompt 之前且整条只有一次`() {
+        assertEquals(
+            listOf(
+                "pwsh.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
+                    "claude --resume 'abc-123' 'say hi'",
+            ),
+            launchCommand(
+                "pwsh.exe",
+                AgentType.CLAUDE,
+                resumeId = "abc-123",
+                initialPrompt = "say hi",
+                pidFile = "C:\\t\\x.pid",
+            ),
+        )
     }
 
     @Test

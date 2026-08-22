@@ -113,3 +113,28 @@ internal fun probeScript(
                 "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \$_ + [char]9 + \$p }"
         }
     }
+
+/**
+ * 让 shell 把自己的 pid 写进 [pidFile] 的那一小段命令；POSIX 方言返回 null。
+ *
+ * **只有 Windows 需要它。** macOS 与 Linux 靠读目标进程的环境变量认领
+ * （`ps eww` / `/proc/&#42;/environ`），启动命令一个字都不加。Windows 上
+ * **读不到别的进程的环境变量**——环境块在目标进程的 PEB 里，要 `ReadProcessMemory`
+ * 加调试权限，`Get-Process` 不给，JDK 也不给（`ProcessHandle.Info.arguments()`
+ * 在 Windows 上恒为空）。于是换一条通道：启动命令本来就由 imux 全权拼接，
+ * 让 shell 把自己的 pid 留下来，之后从 CLI 进程沿父链上溯即可对号入座。
+ *
+ * 写进的是 `PathManager.getSystemPath()` 下 imux 自己的目录，**不碰用户的任何配置**。
+ *
+ * `-Encoding ascii` 是必须的：PowerShell 5 的 `Set-Content` 默认写 UTF-16LE 带 BOM，
+ * 读回来 `"100".toLong()` 会失败，而失败是静默的（该标签认不出来）。
+ */
+internal fun pidFileRecordCommand(
+    dialect: ShellDialect,
+    pidFile: String,
+): String? =
+    when (dialect) {
+        ShellDialect.POSIX -> null
+        ShellDialect.POWERSHELL ->
+            "\$PID | Set-Content -LiteralPath ${quote(dialect, pidFile)} -Encoding ascii"
+    }

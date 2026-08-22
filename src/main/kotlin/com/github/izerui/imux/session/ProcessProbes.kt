@@ -49,19 +49,35 @@ internal fun rolloutPathsFromLsof(output: String): List<String> =
 /**
  * 读一个进程的 [IMUX_TAB_ENV]；读不到（进程已退出、权限不足）返回 null。
  *
- * Linux 走 `/proc`（不起子进程、无需 `ps`）；其余走 `ps eww`。
- * Windows 上**读不到别的进程的环境变量**（环境块在目标进程的 PEB 里，要
- * `ReadProcessMemory` + 调试权限），因此不走这条路——见 [WindowsTabPidFile]。
+ * 三条路，按平台分派：
+ * - Windows：**读不到别的进程的环境变量**（环境块在目标进程的 PEB 里，要
+ *   `ReadProcessMemory` + 调试权限），改从 shell 自报的 pid 文件沿父链上溯认领，
+ *   见 [tabIdByParentChain]
+ * - Linux：读 `/proc`（不起子进程、无需 `ps`）
+ * - 其余（macOS）：`ps eww`
+ *
+ * **Windows 分支必须排在最前**：Windows 上 [SystemInfo.isLinux] 为假会落到 `ps`，
+ * 而那条路在 Windows 上一个标签都认不出来。
+ *
+ * [pidDir] 传的是取目录的函数而不是目录本身：默认值在调用点求值，写成 `Path` 会让
+ * 每一次非 Windows 的调用都白跑一趟 [imuxTabPidDir]。
  */
 internal fun readTabId(
     pid: Long,
     isLinux: Boolean = SystemInfo.isLinux,
+    isWindows: Boolean = SystemInfo.isWindows,
     procRoot: Path = PROC_ROOT,
+    pidDir: () -> Path = ::imuxTabPidDir,
 ): String? =
-    if (isLinux) {
-        readTabIdFromProc(pid, procRoot)
-    } else {
-        tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
+    when {
+        isWindows -> {
+            val shells = tabPidFilesIn(pidDir())
+            tabIdByParentChain(pid, parentOf = ::parentPidOf, tabIdOfShellPid = shells::get)
+        }
+
+        isLinux -> readTabIdFromProc(pid, procRoot)
+
+        else -> tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
     }
 
 /** 读一个进程正持有的 rollout 文件。 */
