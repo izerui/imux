@@ -324,4 +324,30 @@ class LiveSessionProbeTest {
         assertNull(threadIdOfRollout("C:\\Users\\me\\.codex\\history.jsonl"))
         assertNull(threadIdOfRollout("/Users/me/.codex/history.jsonl"))
     }
+
+    @Test
+    fun `fileNameOf 在两种分隔符下都能取到文件名`() {
+        assertEquals("b.jsonl", fileNameOf("C:\\a\\b.jsonl"))
+        assertEquals("b.jsonl", fileNameOf("/a/b.jsonl"))
+        assertEquals("plain.txt", fileNameOf("plain.txt"))
+    }
+
+    @Test
+    fun `Windows 风格路径下新旧 rollout 仍按文件名时间戳而非全路径排序`() {
+        // 目录名 Z > A，但时间戳 14-13-47 > 13-59-47。
+        // 如果 fileNameOf 退化为全路径比较（不切反斜杠），maxByOrNull 会按目录名
+        // 挑到 Z 目录下的旧会话——终端标题、未读、完成通知全停在上一个会话上
+        val probe = probe(
+            codexPids = listOf(31694L),
+            env = mapOf(31694L to "tab-2"),
+            rollouts = mapOf(
+                31694L to listOf(
+                    "C:\\Users\\me\\.codex\\sessions\\Z\\rollout-2026-08-06T13-59-47-$oldThread.jsonl",
+                    "C:\\Users\\me\\.codex\\sessions\\A\\rollout-2026-08-06T14-13-47-$newThread.jsonl",
+                ),
+            ),
+        )
+
+        assertEquals(listOf(LiveTab("tab-2", newThread)), probe.probe())
+    }
 }

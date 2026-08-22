@@ -3,6 +3,7 @@ package com.github.izerui.imux.session
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.util.ExecUtil
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
 
 /**
  * 向操作系统问两件事：某个进程的环境变量、它打开着哪些文件。
@@ -58,19 +59,24 @@ internal fun readHeldRollouts(pid: Long): List<String> =
  * 按**可执行文件名**匹配而不是整条命令行包含——后者会把 `tail -f codex.log`、
  * 乃至本插件自己的 `zsh -c "codex resume ..."` 外壳都算进来。
  *
- * 两种分隔符都要切、`.exe` 后缀要去、比较不分大小写：Windows 上路径是
- * `C:\Users\me\AppData\npm\codex.exe`，只切 `/` 且区分大小写的话**一个进程都
- * 认不出来**，而失败是静默的——漂移探测什么也不报，看起来跟「没有漂移」一样。
+ * 反斜杠切分在两个平台都做——POSIX 路径里不会有 `\`，多切一次是恒等的。
+ * 大小写与 `.exe` 后缀**只在 Windows 上放宽**：Linux 大小写敏感，`/usr/bin/CODEX`
+ * 是**另一个**可执行文件，认成 codex 会把终端迁到别人的会话上——比不迁移更糟。
+ *
+ * [isWindows] 由调用点注入（`SystemInfo.isWindows`），纯函数里不读平台类。
  */
 internal fun executableMatches(
     command: String,
     cli: String,
-): Boolean =
-    command
-        .substringAfterLast('/')
-        .substringAfterLast('\\')
-        .lowercase()
-        .removeSuffix(".exe") == cli.lowercase()
+    isWindows: Boolean,
+): Boolean {
+    val name = command.substringAfterLast('/').substringAfterLast('\\')
+    return if (isWindows) {
+        name.lowercase().removeSuffix(".exe") == cli.lowercase()
+    } else {
+        name == cli
+    }
+}
 
 /**
  * 活着的 codex 进程。
@@ -80,8 +86,9 @@ internal fun executableMatches(
  * `tail -f codex.log`、乃至本插件自己的 `zsh -c "codex resume ..."` 外壳都算进来。
  */
 internal fun codexPids(): List<Long> = runCatching {
+    val isWindows = SystemInfo.isWindows
     ProcessHandle.allProcesses()
-        .filter { handle -> handle.info().command().map { executableMatches(it, "codex") }.orElse(false) }
+        .filter { handle -> handle.info().command().map { executableMatches(it, "codex", isWindows) }.orElse(false) }
         .map { it.pid() }
         .toList()
 }.getOrElse {

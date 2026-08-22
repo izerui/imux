@@ -98,19 +98,27 @@ class ProcessProbesTest {
 
     @Test
     fun `macOS 与 Linux 的可执行文件名匹配不变`() {
-        assertTrue(executableMatches("/opt/homebrew/bin/codex", "codex"))
-        assertTrue(executableMatches("/usr/local/bin/codex", "codex"))
-        assertFalse(executableMatches("/usr/bin/tail", "codex"))
+        assertTrue(executableMatches("/opt/homebrew/bin/codex", "codex", isWindows = false))
+        assertTrue(executableMatches("/usr/local/bin/codex", "codex", isWindows = false))
+        assertFalse(executableMatches("/usr/bin/tail", "codex", isWindows = false))
         // 整条命令行含 codex 不算——那会把 `tail -f codex.log` 也算进来
-        assertFalse(executableMatches("/usr/bin/codex-helper", "codex"))
+        assertFalse(executableMatches("/usr/bin/codex-helper", "codex", isWindows = false))
+    }
+
+    @Test
+    fun `POSIX 上大小写与 exe 后缀都不放宽`() {
+        // Linux 大小写敏感：/usr/bin/CODEX 是另一个可执行文件，
+        // 认成 codex 会把终端迁到别人的会话上——比不迁移更糟
+        assertFalse(executableMatches("/usr/bin/CODEX", "codex", isWindows = false))
+        assertFalse(executableMatches("/usr/bin/codex.exe", "codex", isWindows = false))
     }
 
     @Test
     fun `Windows 的反斜杠路径与 exe 后缀都能认出来`() {
         // 从前用 substringAfterLast('/') 比较，Windows 上两头都不匹配，
         // 结果是一个 codex 进程都认不出来，漂移探测整个静默失效
-        assertTrue(executableMatches("C:\\Users\\me\\AppData\\npm\\codex.exe", "codex"))
-        assertTrue(executableMatches("C:\\bin\\CODEX.EXE", "codex"))
-        assertFalse(executableMatches("C:\\bin\\notcodex.exe", "codex"))
+        assertTrue(executableMatches("C:\\Users\\me\\AppData\\npm\\codex.exe", "codex", isWindows = true))
+        assertTrue(executableMatches("C:\\bin\\CODEX.EXE", "codex", isWindows = true))
+        assertFalse(executableMatches("C:\\bin\\notcodex.exe", "codex", isWindows = true))
     }
 }
