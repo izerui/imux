@@ -247,11 +247,19 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * 「进行中」与「失败」仍然是两副面孔（[showChecking] 与 [showFailed] 各说各的），
      * 这条约定没动——变的只是「进行中」什么时候需要露面。
+     *
+     * 这里的**两个 `if` 都刻意写成带大括号**的形式。`if (…) 单句` 加大括号是一次
+     * IDEA intention、零语义变化，而这个函数体是被逐字节钉住的；先写成带括号的样子，
+     * 那次纯排版操作就成了 no-op，不会有人因为按了一下 Alt+Enter 而收到一条
+     * 「你让整页闪白了」的误报。`report == null` 那个分支从前是不带括号的写法，
+     * 同一次 intention 会让它连红两条用例——顺手一起改成带括号。
      */
     private fun refresh() {
         val token = generation.incrementAndGet()
         refreshButton?.isEnabled = false
-        if (lastReport == null) showChecking()
+        if (lastReport == null) {
+            showChecking()
+        }
         ApplicationManager.getApplication().executeOnPooledThread {
             // 失败必须留痕：这一页唯一的诊断入口就是 idea.log，
             // 与 ShellBinaryProbe.locate() 的处理方式保持一致。
@@ -261,7 +269,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             ApplicationManager.getApplication().invokeLater(
                 {
                     if (token == generation.get()) {
-                        if (report == null) showFailed() else showReport(report)
+                        if (report == null) {
+                            showFailed()
+                        } else {
+                            showReport(report)
+                        }
                         refreshButton?.isEnabled = true
                     }
                 },
@@ -277,8 +289,24 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
 
     private fun showChecking() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.checking")) }
 
-    /** 失败必须与「进行中」长得不一样，否则用户只会以为很慢，反复点重新检测。 */
-    private fun showFailed() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.failed")) }
+    /**
+     * 失败必须与「进行中」长得不一样，否则用户只会以为很慢，反复点重新检测。
+     *
+     * `lastReport = null` 不是清理，是**行为**：[refresh] 拿 [lastReport] 判断
+     * 「这一页有没有拿出过结果」，而探测失败之后**它拿不出结果了**——屏幕上摆的是
+     * 「检测未完成」，不是一张表。不清的话会出现同一个可见状态两种行为：
+     *
+     * - 首探即失败 &#8594; 点重新检测 &#8594; `lastReport` 是 null &#8594; 有「正在检测…」
+     * - 先成功、后失败 &#8594; 点重新检测 &#8594; `lastReport` 还留着 &#8594; 什么都不画，
+     *   内容区在整个探测期间零反馈
+     *
+     * 用户看到的是同一句「检测未完成」，点同一个按钮，结果一个有反馈一个没有。
+     * 清掉之后两条路合并成前者。好路径一概不受影响：[showReport] 每次都会把它设回去。
+     */
+    private fun showFailed() {
+        lastReport = null
+        replaceContent { JBLabel(ImuxBundle.message("settings.lsp.failed")) }
+    }
 
     /** 整页重画——**只在真结果到手那一刻走这里**，见 [refresh]。 */
     private fun showReport(report: LspReport) {

@@ -333,12 +333,10 @@ class ImuxLspUiSourceTest {
      *   屏幕上摆着的正是 `refreshRow` 刚改好的那一行（「正在激活…」+ 转圈图标），
      *   让它摆到真结果回来；反馈由「重新检测」按钮自己禁用给出。
      *
-     * 两条被禁的写法各有各的坏法，且**都是加法**，所以钉的是**前四行的整段前缀**
-     * 而不是一条裸 `contains`：
+     * 两条被禁的写法各有各的坏法，且**都是加法**：
      *
      * 1. 写成无条件的 `showChecking()`——整页闪成空白再重画，用一秒多的空白盖掉一张
-     *    用户正在读的表。这一条**追加**一句就能复活：`if (…) showChecking()` 留在原地，
-     *    后面再补一句裸的 `showChecking()`，逐条 contains 照常命中。
+     *    用户正在读的表。
      * 2. 写成 `showReport(lastReport)`「先用旧数据重画一遍」——看着像省掉了闪白，实际是
      *    把**刚被推翻的数据重新算一遍再当成新鲜的摆出来**：命令跑完那条路上
      *    `running.remove(key)` 已经先执行，拿旧 finding 重跑 rowIcon / statusText 得到的
@@ -346,8 +344,37 @@ class ImuxLspUiSourceTest {
      *    「未启用插件」，比闪白更假。同一条路还会让「检测未完成」之后点重新检测**先弹出
      *    一整张完整的结果表**（看起来像重试成功了）再翻回失败。
      *
-     * 前缀一直钉到 `executeOnPooledThread {` 那一行**开头**，第 1 种追加式复活因此
-     * 被封在里面；下游那半个函数（代次号比对、模态、失败分派）由别的用例各自管。
+     * 所以钉的是**整个函数体**，不是前几行的前缀。前一版正是钉到
+     * `executeOnPooledThread {` 那一行为止，并在这里写着「追加式复活因此被封在里面」
+     * ——**那句话是假的**，往下挪一行就出栏：
+     *
+     * ```
+     *  ApplicationManager.getApplication().executeOnPooledThread {
+     * +    showChecking()
+     *      val report = runCatching { diagnostics().run() }
+     * ```
+     *
+     * 整页闪白原地复活，全量套件 667 全绿；包进 `invokeLater({ showChecking() }, …)`
+     * 的干净变体同样全绿。假承诺比没有承诺更坏——它会让下一位维护者相信这条路被封死了。
+     * 而这个洞与「重探期间内容区没有进行中反馈」是同一件事的两面：想给重探加个反馈，
+     * 最自然的落点就恰好是栅栏下面那一行。
+     *
+     * 整段比对之后，`refresh()` 里**任何位置**的追加都会红。代价说清楚：函数体里那句
+     * `LOG.warn("LSP 体检失败…")` 的措辞也被钉住了，改日志文案要来这里点头一次——
+     * 与 [点下按钮那一行立刻变成进行中] 钉住 `runInTerminal` 里那句 warn 是同一笔账。
+     * 下游几句（代次号比对、模态、失败分派）另有用例各自说明「它红的时候用户看到什么」，
+     * 这里只负责「一个字都不许多」。
+     *
+     * 函数体里的**两个 `if` 都刻意写成带大括号**的形式：`if (…) 单句` 加大括号是一次
+     * IDEA intention、零语义变化，若按不带括号的形式钉，那次纯排版操作会红，而失败信息
+     * 说的是「你让整页闪白了」——正是本文件头部警告过的那种误导。写成已经带括号的形式
+     * 之后，那个 intention 变成 no-op；反方向（去掉括号）会红，失败信息里已经写明这属于
+     * 排版。先例是 [执行按钮的可见性只能来自 canRun] 里的两道守卫。
+     *
+     * `report == null` 那个分支从前是不带括号的写法，而 [体检失败要留日志并显示错误态]
+     * 早就按不带括号的形式钉着它——也就是说「给它加括号」在本轮之前就已经是一次误红，
+     * 只是没人撞上。整段比对会让同一次操作连红两条，所以顺手把它和那条既有断言一起
+     * 改成带括号的形式：守的还是同一件事（失败必须分派到独立的错误态）。
      *
      * 「失败态必须与进行中长得不一样」那条既有约定没有被动到：[showChecking] 与
      * [showFailed] 仍是两句不同的文案、仍由 `if (report == null)` 分派（见
@@ -355,24 +382,78 @@ class ImuxLspUiSourceTest {
      */
     @Test
     fun `重新探测期间不动屏幕，只有首次打开才显示正在检测`() {
-        val body = compactArgs(bodyAfter("private fun refresh()", '{'))
-        val expected = compactArgs(
+        assertSameCode(
+            "手里已经有一份结果时，探测期间屏幕必须原样不动：写成无条件的 showChecking() " +
+                "是整页闪白，写成 showReport(lastReport) 是把刚被推翻的状态重新算出来当新鲜的" +
+                "摆出来（用户刚看着 brew install 成功退出，页面告诉他「未启用插件」）。" +
+                "两种都是加法，而且往 executeOnPooledThread 里面挪一行就能绕过前缀式断言，" +
+                "所以整段比对——这里一个字都不许多。" +
+                "\n（对空白、换行、尾逗号、具名实参免疫，但**对大括号敏感**：守卫刻意写成带括号的" +
+                "形式，「加大括号」那次 intention 因此是 no-op，反方向去掉括号会红。" +
+                "若你只是动了排版或改了日志措辞，照下面的「期望」抄回去即可。）",
             """
             {
                 val token = generation.incrementAndGet()
                 refreshButton?.isEnabled = false
-                if (lastReport == null) showChecking()
+                if (lastReport == null) {
+                    showChecking()
+                }
                 ApplicationManager.getApplication().executeOnPooledThread {
+                    val report = runCatching { diagnostics().run() }
+                        .onFailure { LOG.warn("LSP 体检失败，页面显示为检测未完成", it) }
+                        .getOrNull()
+                    ApplicationManager.getApplication().invokeLater(
+                        {
+                            if (token == generation.get()) {
+                                if (report == null) {
+                                    showFailed()
+                                } else {
+                                    showReport(report)
+                                }
+                                refreshButton?.isEnabled = true
+                            }
+                        },
+                        ModalityState.any(),
+                    )
+                }
+            }
             """,
+            bodyAfter("private fun refresh()", '{'),
         )
+    }
 
-        assertTrue(
-            "手里已经有一份结果时，探测期间屏幕必须原样不动：写成无条件的 showChecking() " +
-                "是整页闪白，写成 showReport(lastReport) 是把刚被推翻的状态重新算出来当新鲜的" +
-                "摆出来（用户刚看着 brew install 成功退出，页面告诉他「未启用插件」）。" +
-                "前缀钉到 executeOnPooledThread 那一行，所以「在后面再追加一句」也复活不了。" +
-                "\n期望前缀：$expected\n实际：$body",
-            body.startsWith(expected),
+    /**
+     * 探测失败必须把 [lastReport] 清掉——这是**行为**，不是清理。
+     *
+     * [refresh] 拿 `lastReport` 判断「这一页有没有拿出过结果」。探测失败之后它拿不出
+     * 结果了：屏幕上摆的是「检测未完成」，不是一张表。不清的话，同一个可见状态会有
+     * 两种行为：
+     *
+     * - 首探即失败 → 点重新检测 → `lastReport` 是 null → 有「正在检测…」
+     * - 先成功、后失败 → 点重新检测 → `lastReport` 还留着 → 什么都不画，
+     *   内容区在整个探测期间零反馈
+     *
+     * 用户看到的是同一句「检测未完成」，点的是同一个按钮，一个有反馈一个没有。
+     *
+     * 这不是回归（改动之前那条路会弹出一整张过期的表，更糟），是
+     * 「探测期间不动屏幕」这个新分支带来的不一致，随它一起修掉。
+     *
+     * 函数体整段钉住是因为它**现在携带状态了**；[showChecking] 那边仍然只是一句文案，
+     * 不在这一轮的范围里。
+     */
+    @Test
+    fun `探测失败后不得再自称手里有结果`() {
+        assertSameCode(
+            "失败必须把 lastReport 清掉，否则「先成功→后失败→再重检」时 refresh() 以为" +
+                "手里还有结果，整个探测期间内容区零反馈；而「首探即失败后重检」是有" +
+                "「正在检测…」的——同一句「检测未完成」、同一个按钮，两种行为",
+            """
+            {
+                lastReport = null
+                replaceContent { JBLabel(ImuxBundle.message("settings.lsp.failed")) }
+            }
+            """,
+            bodyAfter("private fun showFailed()", '{'),
         )
     }
 
@@ -467,9 +548,16 @@ class ImuxLspUiSourceTest {
             "异常必须落到 idea.log——这一页唯一的诊断入口就是它",
             Regex("""\.onFailure\s*\{\s*\w+\.warn\(""").containsMatchIn(normalized),
         )
+        // 分派刻意写成**带大括号**的形式并按这个形式钉住：`if (…) 单句 else 单句`
+        // 加大括号是一次 IDEA intention、零语义变化，若按不带括号的形式钉，那次纯排版
+        // 操作会红，而失败信息说的是「你把失败态复用成了正在检测」——本文件头部警告过的
+        // 那种误导。写成已经带括号的形式之后，那个 intention 变成 no-op。
         assertTrue(
-            "失败必须分派到独立的错误态，不能复用「正在检测」",
-            normalized.contains("if (report == null) showFailed() else showReport(report)"),
+            "失败必须分派到独立的错误态，不能复用「正在检测」。" +
+                "（分派刻意按**带大括号**的形式钉住，「加大括号」那次 intention 因此是 no-op；" +
+                "若你只是把括号去掉了，那是排版，照 " +
+                "`if (report == null) { showFailed() } else { showReport(report) }` 抄回去即可。）",
+            normalized.contains("if (report == null) { showFailed() } else { showReport(report) }"),
         )
     }
 
