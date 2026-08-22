@@ -71,47 +71,80 @@ class ClaudeCodeLspProbeTest {
         assertEquals(LspStatus.READY, go.status)
     }
 
-    /** 本机真实场景：kotlin-lsp 二进制已装，Claude Code 却没启用插件。 */
+    /**
+     * 本机真实场景：kotlin-lsp 二进制已装，Claude Code 却没启用插件。
+     *
+     * 链里**只能有装插件这一步**。多一条 `brew install --cask kotlin-lsp` 的话，
+     * 用户点一下「启用」会被重新下载一遍已经有的 server（那是 1.3GB 量级的东西）。
+     */
     @Test
-    fun `二进制在但插件没启用则是配置缺口并给出装插件的命令`() {
+    fun `二进制在但插件没启用时只跑装插件那一步`() {
         val report = claudeReport(
             configuredCommands = emptySet(),
-            binaries = mapOf("kotlin-lsp" to "/opt/homebrew/bin/kotlin-lsp"),
+            binaries = mapOf("kotlin-lsp" to "/opt/homebrew/bin/kotlin-lsp", "brew" to "/opt/homebrew/bin/brew"),
             cliInstalled = true,
         )
 
         val kotlin = report.findings.single { it.language.id == "kotlin" }
         assertEquals(LspStatus.MISSING_CONFIG, kotlin.status)
         assertEquals(
-            "claude plugin install kotlin-lsp@claude-plugins-official",
-            kotlin.remedy?.command,
+            listOf("claude plugin install kotlin-lsp@claude-plugins-official"),
+            kotlin.remedy?.commands,
         )
-        // 标成 INSTALL 的话，这条跨平台的 claude 子命令会在非 macOS 上被闸掉，
-        // Windows 用户看到的只剩一条要自己复制的命令——而它本来点一下就能跑。
-        assertEquals(
-            "claude 自己的子命令跨平台，必须是 ACTIVATE",
-            RemedyKind.ACTIVATE,
-            kotlin.remedy?.kind,
+        // 这条链只有 claude 自己的子命令，跨平台。判成 macOS-only 的话，Windows 与
+        // Linux 用户看到的只剩一条要自己复制的命令——而它本来点一下就能跑。
+        assertTrue(
+            "claude 自己的子命令跨平台，不该被平台闸门挡下",
+            canRun(kotlin.remedy!!, isMac = false, hasPosixShell = true),
         )
     }
 
+    /**
+     * 插件配好了、二进制不在：链里**只有装 server 这一步**，没有装插件那一步。
+     *
+     * 多跑一条 `claude plugin install` 不会出错，但它是噪音——而这一页刚刚才因为
+     * 「让用户看见与他无关的实现细节」被返工过一轮。
+     */
     @Test
-    fun `配置了但二进制不在则是二进制缺口并给出安装命令`() {
+    fun `配置了但二进制不在时只装 server`() {
         val report = claudeReport(
             configuredCommands = setOf("jdtls"),
-            binaries = mapOf("jdtls" to null),
+            binaries = mapOf("jdtls" to null, "brew" to "/opt/homebrew/bin/brew"),
             cliInstalled = true,
         )
 
         val java = report.findings.single { it.language.id == "java" }
         assertEquals(LspStatus.MISSING_BINARY, java.status)
-        assertEquals("brew install jdtls", java.remedy?.command)
-        // 标成 ACTIVATE 的话，`brew install jdtls` 会在 Windows 上也长出一个执行按钮，
+        assertEquals(listOf("brew install jdtls"), java.remedy?.commands)
+        // 判成跨平台的话，`brew install jdtls` 会在 Windows 上也长出一个执行按钮，
         // 点下去就是在没有 brew 的机器上跑 brew。
+        assertFalse(
+            "目录表里的安装命令只在 macOS 上核实过",
+            canRun(java.remedy!!, isMac = false, hasPosixShell = true),
+        )
+    }
+
+    /**
+     * 三层全缺时链是完整的三步，**顺序固定**。
+     *
+     * 这是简报里 C# 那个例子在探针这一侧的落点：状态只说得出「没配」，
+     * 二进制在不在、工具链在不在都是这一层现问出来的。
+     */
+    @Test
+    fun `三层全缺时给出完整的三步链`() {
+        val report = claudeReport(
+            configuredCommands = emptySet(),
+            binaries = mapOf("csharp-ls" to null, "dotnet" to null, "brew" to "/opt/homebrew/bin/brew"),
+            cliInstalled = true,
+        )
+
         assertEquals(
-            "目录表里的安装命令只在 macOS 上核实过，必须是 INSTALL",
-            RemedyKind.INSTALL,
-            java.remedy?.kind,
+            listOf(
+                "brew install --cask dotnet-sdk",
+                "dotnet tool install --global csharp-ls",
+                "claude plugin install csharp-lsp@claude-plugins-official",
+            ),
+            report.findings.single { it.language.id == "csharp" }.remedy?.commands,
         )
     }
 

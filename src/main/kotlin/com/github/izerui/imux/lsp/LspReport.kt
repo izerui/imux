@@ -37,48 +37,40 @@ internal enum class LspStatus {
 }
 
 /**
- * 一条修复建议的**性质**。
+ * 一条修复建议：**按顺序跑完就能用**的命令链，外加没法跑时的退路。
  *
- * 它决定按钮上写什么字，更重要的是决定这条命令**能不能让用户点一下就跑**
- *（见 `canRun`）：两类命令的跨平台程度差着一个量级，而按钮一旦存在就是真执行，
- * 不再是「复制出来自己看一眼」。
+ * 从前这里有一个 `RemedyKind`（ACTIVATE / INSTALL），按钮上的词跟着它变成「激活」或
+ * 「安装」。那个区分是**按实现分的**——配置层（装 CLI 插件）与二进制层（装 language
+ * server）——而不是按用户心智分的。用户原话：「虽然说我不知道你这两个是啥意思吧，
+ * 你能让用户怎么方便怎么来就行了」。现在一行只有一个按钮、一个词「启用」，点下去把缺的
+ * 每一层按顺序跑完，`kind` 于是没有任何消费者，整个删掉。
+ *
+ * 平台闸门也不再看性质，改看命令本身在不在 [LspCatalog.macOnlyCommands] 里
+ *（见 `canRun`）——一条链里可以同时含 `brew` 与跨平台的 `claude plugin install`，
+ * 按性质根本分不出来。
+ *
+ * [commands] 用 `&&` 串起来交给终端：**哪一步失败就停在哪，用户在终端里看得见**。
+ *
+ * [blockingTool] 是「链根本组不出来」的那种情况：某条命令依赖的工具不在 PATH，而我们
+ * 又没有可靠的安装方式（`brew` 本身、`go`、`npm`、`gem`）。此时 [commands] 必为空，
+ * UI 那一格显示「需要先安装 &lt;工具&gt;」+ 该工具的官网链接（[docsUrl] 换成工具的）。
+ * 编一条 `brew install brew` 出来，坏的是用户的开发环境。
  */
-internal enum class RemedyKind {
+internal data class Remedy(
+    val commands: List<String>,
+    val docsUrl: String?,
+    val blockingTool: String? = null,
+) {
     /**
-     * 装 CLI 插件 / 扩展 / 挂 MCP。是 CLI 自己的子命令，不依赖任何外部工具链，快且确定。
+     * 交给终端的那一整行，`null` 表示没有可跑的东西。
      *
-     * **准确说清它跨的是什么、不跨什么**——这句话是下一个人放宽闸门时的依据，写错了
-     * 比代码写错更贵，因为它会被复用：`claude plugin install` / `pi install` /
-     * `codex mcp add` 这三条**命令本身**在三大平台上都成立，所以它们不受
-     * 「目录表的安装命令只在 macOS 核实过」那道闸门限制。但**起这条命令的那一层不跨**
-     * ——imux 是用 `shell -l -i -c` 把它交出去的，而 shell 来自
-     * `resolveShell(System.getenv("SHELL"))`，Windows 上退回 `/bin/zsh`。
-     * 所以 ACTIVATE 仍然受「有没有 POSIX shell」那道闸门限制（见 `canRun`）。
-     *
-     * 这类命令会写用户的 `~/.claude/settings.json` 之类的文件——但**写的是 CLI，不是
-     * imux**。imux 只是替用户敲了那行字，敲完之后文件由谁改、改成什么样，全在 CLI 手里；
-     * 命令跑在一个用户看得见、能答话、能 Ctrl-C 的终端标签里，而不是后台静默执行。
-     * README 那句「一个字节都不往用户文件里写」因此继续成立，这条线不能含糊。
+     * 拼接住在这里而不是设置页里，理由与 `runTabName` 相同：壳里留一个
+     * `commands.joinToString(" && ")` 的话，把分隔符改成 `;`（哪一步失败都继续往下跑）
+     * 或者改成 `" "`（拼成一条谁也不认识的命令）都只是改一个字面量，而设置页那一侧
+     * 只能做源码文本断言。搬到这里之后它能被真正调用着测。
      */
-    ACTIVATE,
-
-    /**
-     * 装语言服务器二进制。走 brew / go / npm / rustup / gem / opam，慢且依赖外部工具链。
-     *
-     * 目录表里这批命令只在 macOS 上核实过（`brew` / `gem` / `opam` 那几条更是只有
-     * macOS 形状），所以它们的执行按钮**只在 macOS 出现**。
-     */
-    INSTALL,
+    val chain: String? get() = commands.joinToString(" && ").takeIf(String::isNotEmpty)
 }
-
-/**
- * 一条修复建议：点一下就能跑的命令，或（没有已知命令时）一个上游文档链接。
- *
- * [kind] 没有默认值是刻意的：默认值意味着新的产出点可以什么都不想就拿到一个 kind，
- * 而拿错的后果是 Windows 用户在界面上看到一个「安装」按钮、点下去执行 `brew install llvm`。
- * 让编译器在每个产出点上问一次，是这里唯一可靠的提醒。
- */
-internal data class Remedy(val command: String?, val docsUrl: String?, val kind: RemedyKind)
 
 internal data class LanguageFinding(
     val language: LspLanguage,

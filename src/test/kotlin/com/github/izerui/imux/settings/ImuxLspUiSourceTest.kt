@@ -330,7 +330,7 @@ class ImuxLspUiSourceTest {
      *
      * - **首次打开**：手里什么都没有，「正在检测…」是唯一能说的话。
      * - **重新探测**（手动点、或一条安装命令跑完自动来这一趟）：什么都不做。
-     *   屏幕上摆着的正是 `refreshRow` 刚改好的那一行（「正在激活…」+ 转圈图标），
+     *   屏幕上摆着的正是 `refreshRow` 刚改好的那一行（「正在启用…」+ 转圈图标），
      *   让它摆到真结果回来；反馈由「重新检测」按钮自己禁用给出。
      *
      * 两条被禁的写法各有各的坏法，且**都是加法**：
@@ -478,9 +478,10 @@ class ImuxLspUiSourceTest {
     /**
      * 页面上出现的每一个 bundle 键都必须在资源包里真实存在。
      *
-     * 纯函数那一侧（`runActionKey` / `statusMessageKey` / `runningStatusKey`）各自有
-     * 双向对齐的用例，但壳里还有十来个直接写死的键（`settings.lsp.docs`、
-     * `settings.lsp.checking`…）。它们打错一个字母，界面上就是一个 `!key!`，
+     * 纯函数那一侧（`statusMessageKey`、`ENABLE_ACTION_KEY`、`ENABLING_STATUS_KEY`）
+     * 各自有双向对齐的用例，但壳里还有十来个直接写死的键（`settings.lsp.docs`、
+     * `settings.lsp.tool.missing`、`settings.lsp.checking`…）。
+     * 它们打错一个字母，界面上就是一个 `!key!`，
      * 编译期查不出、buildSearchableOptions 查不出，只有真跑起来才看得见。
      */
     @Test
@@ -668,21 +669,21 @@ class ImuxLspUiSourceTest {
             "com.github.izerui.imux.ImuxBundle",
             "com.github.izerui.imux.lsp.StatusIconKind",
             // canRun 是这一页唯一「点错了就在用户机器上跑错东西」的守卫：本文件里补一句
-            // `private fun canRun(remedy: Remedy, isMac: Boolean) = true`，被钉死的调用点
-            // 一字不用改，Windows 用户的体检页上就长出 18 个「安装」按钮。
+            // `private fun canRun(remedy: Remedy, isMac: Boolean, hasPosixShell: Boolean) = true`，
+            // 被钉死的调用点一字不用改，Windows 用户的体检页上就长出 18 个「启用」按钮。
             "com.github.izerui.imux.lsp.canRun",
             "com.github.izerui.imux.lsp.readyServerText",
-            // 同理：补一句恒返回 activate 键的同名声明，「安装」按钮全部写成「激活」，
-            // 用户点一个说一两秒就完的按钮，等来的是几百兆下载。
-            "com.github.izerui.imux.lsp.runActionKey",
+            // 按钮上那个词的键。补一句 `private const val ENABLE_ACTION_KEY = ""`，
+            // 按钮标题变成 `!!`（ImuxBundle 取不到空键），而整条 builder 链一字不变。
+            "com.github.izerui.imux.lsp.ENABLE_ACTION_KEY",
+            // 进行中那一句的键。补一句恒等于某条静态状态键的同名声明，点下按钮之后
+            // 那一列显示的还是「未启用插件」——「点了没用」原地复活。
+            "com.github.izerui.imux.lsp.ENABLING_STATUS_KEY",
             // 补一句 `runCommandLine(shell, command) = listOf(shell, "-c", command)`，
             // 从 Dock 启动的 IDE 上每一条安装命令都变成 command not found。
             "com.github.izerui.imux.lsp.runCommandLine",
-            // 补一句恒返回同一个键的同名声明，「正在安装…」全部写成「正在激活…」，
-            // 用户以为一两秒就完的事其实是几百兆下载。
-            "com.github.izerui.imux.lsp.runningStatusKey",
-            // 补一句 `runRowKey(agentType, language) = language.id`，在一个分组里点激活，
-            // 三个分组的同名语言会一起变成「正在激活…」，而只有一条命令真在跑。
+            // 补一句 `runRowKey(agentType, language) = language.id`，在一个分组里点启用，
+            // 三个分组的同名语言会一起变成「正在启用…」，而只有一条命令真在跑。
             "com.github.izerui.imux.lsp.runRowKey",
             // 补一句恒返回空串的同名声明，标签名全部变空，用户在几个安装标签之间认不出
             // 哪个是哪个；而整条 builder 链的比对一字不变。
@@ -701,7 +702,7 @@ class ImuxLspUiSourceTest {
             "com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager",
             // 「跑完了没有」这个判据只能是平台给的终端会话状态。本文件里补一个同名的
             // 密封类占位，`it is TerminalViewSessionState.Terminated` 会永远为假，
-            // 那一行就永远停在「正在激活…」——正是这一轮要修的毛病。
+            // 那一行就永远停在「正在启用…」——正是这一轮要修的毛病。
             "com.intellij.terminal.frontend.view.TerminalViewSessionState",
             // 工具窗口 ID 必须取平台常量。本文件里补一个
             // `private object TerminalToolWindowFactory { const val TOOL_WINDOW_ID = "" }`，
@@ -916,7 +917,7 @@ class ImuxLspUiSourceTest {
             loop.contains("label(statusText($item,agentType))"),
         )
         // 命令行不再单独占一行，操作按钮直接挂在语言行末尾（见 rowAction）。删掉这一句，
-        // 界面上所有「激活 / 安装」按钮与文档链接一起消失，整页退回一份只能看的清单——
+        // 界面上所有「启用」按钮与文档链接一起消失，整页退回一份只能看的清单——
         // 与从前删掉 renderRemedy 调用点是同一个用户可见后果。
         assertTrue(
             "每一行末尾必须原样挂上它自己的操作入口，且行标识必须由这一行的 finding 与" +
@@ -985,9 +986,9 @@ class ImuxLspUiSourceTest {
      * 都是加法，而逐条列举被禁 token 永远漏得掉下一种。两条实测过的漏网：
      *
      * 1. 第一行前面补一句 `if (finding.status == LspStatus.MISSING_CONFIG) return`——
-     *    Claude Code 组 13 门语言的「激活」按钮全部消失。
-     *    [壳里不得有第二处平台或性质判断] 只禁 `SystemInfo.` 与 `RemedyKind.`，
-     *    **不禁 `LspStatus.`**；调用点、前缀链、退路断言一字未改，全绿。
+     *    Claude Code 组 13 门语言的「启用」按钮全部消失。
+     *    [壳里不得有第二处平台判断，也不得自己拼命令链] 只禁 `SystemInfo.` 与
+     *    `.commands`，**不禁 `LspStatus.`**；调用点、前缀链、退路断言一字未改，全绿。
      * 2. 把 lambda 形参 `command` 改名 `cmd`（纯重构），再补一句 `label(cmd)`——
      *    整条安装命令铺回语言行、图标列被撑爆，而按形参名捕获的断言照样满足。
      *
@@ -1003,8 +1004,8 @@ class ImuxLspUiSourceTest {
 
         assertFalse(
             "rowAction 里不得按 LspStatus 分支：补一句 `if (finding.status == …) return`，" +
-                "Claude Code 组 13 门语言的「激活」按钮全部消失，而全文件那条否定只禁" +
-                "SystemInfo. 与 RemedyKind.，看不见它：$body",
+                "Claude Code 组 13 门语言的「启用」按钮全部消失，而全文件那条否定只禁" +
+                "SystemInfo. 与 .commands，看不见它：$body",
             body.contains("LspStatus."),
         )
         listOf("label(", "text(", "comment(").forEach { cell ->
@@ -1015,13 +1016,13 @@ class ImuxLspUiSourceTest {
                 body.contains(cell),
             )
         }
-        // 这一行是「激活 / 安装」按钮**唯一**的调用点。删掉它，界面上所有执行按钮当场
+        // 这一行是「启用」按钮**唯一**的调用点。删掉它，界面上所有执行按钮当场
         // 消失，而 runRemedyButton 自己那条整段断言读的是一段没人调用的死代码，照样全绿
         //（bodyAfter 的「锚点不得出现两次」只抓重复锚点，抓不到断开的调用链）。
         assertTrue(
             "执行按钮必须挂在语言行末尾，且行标识由 runRowKey 现算——写死一个常量，" +
                 "三个分组的同名语言会一起变成「进行中」：$body",
-            body.contains("runRemedyButton(runRowKey(agentType,finding.language),remedy,command)"),
+            body.contains("runRemedyButton(runRowKey(agentType,finding.language),remedy)"),
         )
         assertTrue(
             "退路必须以「有没有真的放上按钮」为准，不能在壳里再判一次平台或命令有无：$body",
@@ -1037,9 +1038,7 @@ class ImuxLspUiSourceTest {
             """
             {
                 val remedy = finding.remedy ?: return
-                val placed = remedy.command?.let { command ->
-                    runRemedyButton(runRowKey(agentType, finding.language), remedy, command)
-                } ?: false
+                val placed = runRemedyButton(runRowKey(agentType, finding.language), remedy)
                 if (!placed) {
                     fallbackCell(remedy)
                 }
@@ -1056,29 +1055,36 @@ class ImuxLspUiSourceTest {
      *
      * - `hasProjectWindow()` 这道闸门在**所有平台**都会关。这一页是
      *   `applicationConfigurable`，从欢迎页打开设置是完全正常的路径，macOS 用户一样撞得上。
-     * - 撞上的不是零星几行：Claude Code 组 13 门带官方插件的语言只要没启用，都是
-     *   `MISSING_CONFIG` → `ACTIVATE`，而 `ACTIVATE` 的 `docsUrl` **恒为 null**
-     *   （`ClaudeCodeLspProbe.remedyFor`）；Codex 组的 `groupRemedy` 也是 null
-     *   （`CodexLspProbe`）。只退回文档链接的话，那些行、那一整组就是
-     *   「一句警告 + 什么也没有」。
+     * - 撞上的不是零星几行：Claude Code 组 13 门带官方插件的语言只要没启用都算；
+     *   Codex 组的 `groupRemedy` 更是连 `docsUrl` 都没有（`CodexLspProbe`）。
+     *   只退回文档链接的话，那一整组就是「一句警告 + 什么也没有」。
      * - `canRun` 的 KDoc 与 `LspRemedyRunTest` 都写着「这一页在 Windows 上本来是完整
      *   可用的」，followups §10.1 的裁定也建立在这句话上。它必须继续为真，
      *   而让它为真的就是这个函数。
      *
-     * 所以：有命令就摆一个不可点的短标签（[runTabTarget] 取出的目标名，用户缺的正是
-     * 那个插件名/包名），完整命令挂 tooltip；有文档就再给一个链接。**两个都有时两个都给**
-     * ——按平台二选一就是第二处闸门。
+     * 三样东西各答一个问题，**有几样给几样**（按平台或性质二选一就是第二处闸门）：
+     * 卡住整条链的那个前置工具（本轮新增，见 [缺前置工具时那一格要说出是哪个工具]）、
+     * 命令链的短目标名（[runTabTarget] 取整条链的最后一步，用户缺的正是那个插件名/包名，
+     * 完整链挂 tooltip）、上游文档链接。
+     *
+     * 顺序也被这段比对钉住：**前置工具那一句必须排在最前面**。它说的是「你现在什么都
+     * 做不了，先去装 go」，排在一个短目标名后面的话，用户会先读到 `gopls` 再读到
+     * 「需要先安装 go」，把因果顺序反过来。
      */
     @Test
     fun `闸门挡下按钮时那一格不得为空`() {
         assertSameCode(
-            "ACTIVATE 类修复的 docsUrl 恒为 null。这一格退化成只有文档链接，" +
-                "Claude Code 组 13 门语言与 Codex 整组就再也读不到那条命令——" +
-                "而删掉复制按钮之后，tooltip 是命令唯一的去处",
+            "这一格退化成只有文档链接，Claude Code 组 13 门语言与 Codex 整组就再也读不到" +
+                "那条命令——而删掉复制按钮之后，tooltip 是命令链唯一的去处；" +
+                "少了 blockingTool 那一句，被前置工具挡住的行会只剩一个「文档 ↗」，" +
+                "用户读到「这里有篇文档」，读不到「你缺的是 go」",
             """
             {
-                remedy.command?.let { command ->
-                    label(runTabTarget(command)).applyToComponent { toolTipText = command }
+                remedy.blockingTool?.let { tool ->
+                    label(ImuxBundle.message("settings.lsp.tool.missing", tool))
+                }
+                remedy.chain?.let { chain ->
+                    label(runTabTarget(chain)).applyToComponent { toolTipText = chain }
                 }
                 remedy.docsUrl?.let { url ->
                     browserLink(ImuxBundle.message("settings.lsp.docs"), url)
@@ -1105,7 +1111,7 @@ class ImuxLspUiSourceTest {
      * 它是这两个 CLI 的**前置条件**：没补上之前，逐语言列表整个不显示，那一行就是用户
      * 在这一页上唯一能做的事。删掉它，pi 与 Codex 两组退回一句只能看的说明。
      *
-     * 行标识不能与任何语言撞车，否则组级按钮一跑，某门语言会跟着变成「正在激活…」。
+     * 行标识不能与任何语言撞车，否则组级按钮一跑，某门语言会跟着变成「正在启用…」。
      */
     @Test
     fun `组级修复也走同一条执行闸门`() {
@@ -1114,7 +1120,7 @@ class ImuxLspUiSourceTest {
         assertTrue(
             "组级修复必须走同一个 runRemedyButton，不能自己另起一套闸门；" +
                 "行标识也必须带上 CLI 名，否则某门语言会跟着假装在跑：$body",
-            body.contains("runRemedyButton(agentType.name+GROUP_ROW,remedy,command)"),
+            body.contains("runRemedyButton(agentType.name+GROUP_ROW,remedy)"),
         )
         assertTrue(
             "组级修复放不上按钮时同样要走退路：Codex 的 groupRemedy 没有 docsUrl，" +
@@ -1134,10 +1140,10 @@ class ImuxLspUiSourceTest {
      * 一条 `SystemInfo\.(?!isMac)` 的否定），实测三种「加法」全部漏过去：
      *
      * 1. 守卫**后面**补一句 `if (!SystemInfo.isMac) return`——那条否定断言只禁
-     *    `isMac` **以外**的成员，而这句用的正是 `isMac`。后果：Linux 用户的「激活」
+     *    `isMac` **以外**的成员，而这句用的正是 `isMac`。后果：Linux 用户的「启用」
      *    按钮整体消失，那恰恰是这一轮才刚为他们放开的。
-     * 2. `if (remedy.kind.ordinal == 1) return`——不含 `RemedyKind.` 这个字符串。
-     *    后果：所有「安装」按钮消失。
+     * 2. `if (remedy.commands.size > 1) return`——不含任何被点名的 token。
+     *    后果：所有需要装 server 的行（缺口里的大多数）按钮消失，只剩纯配置那几行。
      * 3. `button(…) { … }.visible(false)`——同文件另外两处渲染函数都明令禁了
      *    `.visible` / `.enabled`，偏偏漏在这个函数上。后果：按钮全部消失。
      *
@@ -1152,11 +1158,19 @@ class ImuxLspUiSourceTest {
      * 代价是改动这几行要来这里点头一次。这是刻意的：这几行每一次改动都直接决定
      * 「谁能看到这个按钮、点下去跑什么」。
      *
-     * 本轮多进来两项，两项都必须**连实参一起**被这段比对盖住：
+     * 本轮多进来一行 `val command = remedy.chain ?: return false`。它**不是**第三道闸门
+     *（`canRun` 见空链已经返回 false 了，这里的 `?: return false` 走不到），
+     * 它是把「交给终端的那一整行」从被真调用测试钉着的 [com.github.izerui.imux.lsp.Remedy.chain]
+     * 取出来的唯一入口——分隔符 `&&`（哪一步失败就停在哪）住在那一侧。
+     * 改成 `remedy.commands.joinToString("; ")` 之后按钮照样在、照样能点，
+     * 而第一步红了后面两步照跑，最后把一个指向不存在程序的配置写进用户的 settings.json。
      *
-     * - `.applyToComponent { toolTipText = command }`——删掉复制按钮之后，这是命令
-     *   **唯一**的去处。它没了，用户点下去之前完全不知道要跑什么，而按钮照样在、
-     *   照样能点，别的断言一条都不会红。
+     * 另外两项同样必须**连实参一起**被这段比对盖住：
+     *
+     * - `.applyToComponent { toolTipText = command }`——删掉复制按钮之后，这是命令链
+     *   **唯一**的去处，而它同时承担了从前「安装」那个词的差事：「点下去要不要等」
+     *   现在由看得见的整条链回答。它没了，用户点下去之前完全不知道要跑什么，
+     *   而按钮照样在、照样能点，别的断言一条都不会红。
      * - `.enabled(!running.containsKey(key))`——从前 `.enabled` 是本用例明令列举的
      *   攻击写法（`.enabled(false)` 让按钮全灭）。现在它有了正当语义：命令在终端里
      *   异步跑，不禁用的话用户以为没反应，再点一次就是两个终端抢同一把 brew 锁。
@@ -1181,8 +1195,9 @@ class ImuxLspUiSourceTest {
                 if (!hasProjectWindow()) {
                     return false
                 }
-                button(ImuxBundle.message(runActionKey(remedy.kind))) { event ->
-                    runInTerminal(key, remedy, command, event)
+                val command = remedy.chain ?: return false
+                button(ImuxBundle.message(ENABLE_ACTION_KEY)) { event ->
+                    runInTerminal(key, command, event)
                 }
                     .enabled(!running.containsKey(key))
                     .applyToComponent { toolTipText = command }
@@ -1194,11 +1209,10 @@ class ImuxLspUiSourceTest {
     }
 
     private fun runRemedyButtonBody(): String =
-        bodyAfter("private fun Row.runRemedyButton(key: String, remedy: Remedy, command: String): Boolean", '{')
+        bodyAfter("private fun Row.runRemedyButton(key: String, remedy: Remedy): Boolean", '{')
 
     /**
-     * 整份源码里不得有第二处平台判断，也不得自己按
-     * [com.github.izerui.imux.lsp.RemedyKind] 分支。
+     * 整份源码里不得有第二处平台判断，也不得自己拼那条命令链。
      *
      * 上一条整段钉住了 `runRemedyButton`，但闸门还能在**别的函数**里被架空：
      * 在 `rowAction` 或 `findingsPanel` 里补一句平台判断，上一条一字不改仍然全绿。
@@ -1207,18 +1221,91 @@ class ImuxLspUiSourceTest {
      * 放行 `isMac` 与 `isWindows` 两个成员，因为 `canRun` 的两个实参正是它们；
      * 别的成员（`isLinux`、`isUnix`、`isWin10OrNewer`…）一律禁——出现即意味着壳里
      * 长出了第二套平台逻辑，而闸门语义只该住在被真调用测试钉住的那个纯函数里。
+     *
+     * 第二条是本轮的**翻面重写**，不是把老约束删掉让地方。老约束说的是「壳里不得出现
+     * `RemedyKind.`，否则能在两个键都还在源码里的前提下把「激活」和「安装」对调」——
+     * 那个枚举随本轮一起删掉了（两个词收成了一个「启用」），它守的东西**确实不存在了**，
+     * 而且删掉之后连引用它都编译不过，那条断言只会永远为真。顶上来的是同一层的新风险：
+     * **命令链的拼接**。链住在 [com.github.izerui.imux.lsp.Remedy.chain] 那个被真调用
+     * 测试钉着分隔符是 `&&` 的属性里，壳里只准读它、不准碰
+     * [com.github.izerui.imux.lsp.Remedy.commands]。碰了就能写出
+     * `remedy.commands.joinToString("; ")`：`brew install --cask dotnet-sdk` 失败之后
+     * 后面两步照跑，最后把一个指向不存在程序的配置写进 `~/.claude/settings.json`
+     * ——用户得到一屏红字加一个坏掉的配置，而两处整段比对读的都是 `remedy.chain`、
+     * 一字不变。`joinToString` 已被 [顶部汇总只给计数不再拼接语言名] 全文件禁掉，
+     * 这一条堵的是「换个方式拼」，两条各挡一种写法。
      */
     @Test
-    fun `壳里不得有第二处平台或性质判断`() {
+    fun `壳里不得有第二处平台判断，也不得自己拼命令链`() {
         assertFalse(
             "平台判断只能是喂给 canRun 的那两个实参（SystemInfo.isMac / isWindows）；" +
                 "壳里长出第三个平台成员，闸门就不在被真调用测试钉住的纯函数里了",
             Regex("""SystemInfo\.(?!isMac\b|isWindows\b)\w+""").containsMatchIn(normalized),
         )
         assertFalse(
-            "壳里不得出现 RemedyKind 常量：按性质分支就能在两个键都还在源码里的前提下" +
-                "把「激活」和「安装」对调，或者干脆藏掉一类按钮",
-            normalized.contains("RemedyKind."),
+            "壳里只准读 Remedy.chain（分隔符 `&&` 被真调用测试钉着），不准碰 " +
+                "Remedy.commands——碰了就能自己拼一条，把 && 换成 ; 之后「哪一步失败就停在哪」" +
+                "失效：第一步红了后面照跑，最后把一个指向不存在程序的配置写进用户的 settings.json",
+            Regex("""\.commands\b""").containsMatchIn(normalized),
+        )
+    }
+
+    /**
+     * **一行一个按钮，按钮上只有一个词。**
+     *
+     * 这是本轮改动的全部意义。用户原话：「我的意思就是这个 lsp 语言服务器，你最好就是
+     * 直接让我这面能点击安装，点击激活就可以直接用的那种就是激活安装，**虽然说我不知道
+     * 你这两个是啥意思吧**，你能让用户怎么方便怎么来就行了」。「激活」与「安装」是按
+     * **实现**分的（配置层 vs 二进制层），用户读不出区别，也不该被要求读出来。
+     *
+     * 三条各挡一头：
+     *
+     * 1. 按钮的键必须是 [com.github.izerui.imux.lsp.ENABLE_ACTION_KEY]。
+     * 2. 两个旧的动作键不得复活——它们已从十个语言文件里删掉，再引用就是把按钮标题
+     *    显示成 `!settings.lsp.action.activate!`，而 `ImuxBundleTest` 只比对十个文件
+     *    之间的键集合一致性，源码里引用一个谁都没有的键它看不见。
+     * 3. 两个旧的进行中键同理。
+     *
+     * 否定断言是必须的：只断言新键存在的话，「新键留着、旁边再按状态补一个旧键分支」
+     * 照样能让两个词回来。
+     */
+    @Test
+    fun `按钮上只剩一个词，两个旧键不得复活`() {
+        assertTrue(
+            "按钮的文案键必须来自 ENABLE_ACTION_KEY，壳里不得自己写字面量",
+            compactArgs(normalized).contains("button(ImuxBundle.message(ENABLE_ACTION_KEY))"),
+        )
+        listOf(
+            "settings.lsp.action.activate",
+            "settings.lsp.action.install",
+            "settings.lsp.status.activating",
+            "settings.lsp.status.installing",
+        ).forEach { dead ->
+            assertFalse(
+                "$dead 已从十个语言文件里删除，再引用就是取一条空消息（界面上显示成 !$dead!）",
+                normalized.contains(dead),
+            )
+        }
+    }
+
+    /**
+     * 「需要先安装 &lt;工具&gt;」那一格必须真的把工具名交给 bundle。
+     *
+     * 这是本轮新长出来的一条死路：`brew` / `go` / `npm` / `gem` 不在 PATH 而我们又没有
+     * 可靠的安装方式时，[Row.runRemedyButton] 不给按钮（`canRun` 见空链就返回 false）。
+     * 那一格若只有一个「文档 ↗」，用户读到的是「这里有篇文档」，读不到「你缺的是 go」
+     * ——而后者正是他唯一需要知道的那一句。
+     *
+     * 断言钉的是**带实参的整个调用**：写成 `message("settings.lsp.tool.missing")`
+     * （漏掉实参）在 Kotlin 里完全合法，`MessageFormat` 会原样留下 `{0}`，
+     * 用户看到的是「需要先安装 {0}」。
+     */
+    @Test
+    fun `缺前置工具时那一格要说出是哪个工具`() {
+        assertTrue(
+            "缺工具的那一格必须把工具名喂进去；漏掉实参的话用户看到的是「需要先安装 {0}」",
+            compactArgs(fallbackCellBody())
+                .contains("""label(ImuxBundle.message("settings.lsp.tool.missing",tool))"""),
         )
     }
 
@@ -1282,7 +1369,7 @@ class ImuxLspUiSourceTest {
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
                         .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
-                        .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
+                        .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                         .requestFocus(true)
                         .closeOnProcessTermination(false)
                         .createTab()
@@ -1301,7 +1388,7 @@ class ImuxLspUiSourceTest {
 
     private fun runInTerminalBody(): String =
         bodyAfter(
-            "private fun runInTerminal(key: String, remedy: Remedy, command: String, event: ActionEvent)",
+            "private fun runInTerminal(key: String, command: String, event: ActionEvent)",
             '{',
         )
 
@@ -1331,7 +1418,7 @@ class ImuxLspUiSourceTest {
      *
      * 开标签那一段还必须包在 `runCatching` 里并在失败时撤回标记：标记写在建标签之前
      * （那是对的，否则抢焦点之后才改就晚了），于是 `createTab()` 一抛异常，那一行会
-     * 永久停在「正在激活…」、按钮永久禁用，而 `refresh()` 从不清 `running`——
+     * 永久停在「正在启用…」、按钮永久禁用，而 `refresh()` 从不清 `running`——
      * 用户只能关掉整个设置对话框才能复位。
      */
     @Test
@@ -1339,15 +1426,16 @@ class ImuxLspUiSourceTest {
         val body = compactArgs(runInTerminalBody())
 
         assertTrue(
-            "点击必须把这一行记成「进行中」，文案键由 runningStatusKey 决定（壳里不许自己按性质分支）：$body",
-            body.contains("running[key]=runningStatusKey(remedy.kind)"),
+            "点击必须把这一行记成「进行中」，文案键取自壳外的 ENABLING_STATUS_KEY" +
+                "（壳里不许自己写这个字面量）：$body",
+            body.contains("running[key]=ENABLING_STATUS_KEY"),
         )
         assertTrue(
             "标记完必须立刻把这一行刷成新样子，否则界面上什么都不会变——正是用户抱怨的第一件事：$body",
-            body.contains("running[key]=runningStatusKey(remedy.kind)refreshRow(key,event)"),
+            body.contains("running[key]=ENABLING_STATUS_KEYrefreshRow(key,event)"),
         )
         assertTrue(
-            "开标签失败必须撤回标记并把这一行刷回去，否则那一行永久停在「正在激活…」、" +
+            "开标签失败必须撤回标记并把这一行刷回去，否则那一行永久停在「正在启用…」、" +
                 "按钮永久禁用，而「重新检测」清不掉它：$body",
             body.contains("running.remove(key)refreshRow(key,event)"),
         )
@@ -1369,7 +1457,7 @@ class ImuxLspUiSourceTest {
                     LOG.warn("没有可用的项目窗口，无法执行：${'$'}command")
                     return
                 }
-                running[key] = runningStatusKey(remedy.kind)
+                running[key] = ENABLING_STATUS_KEY
                 refreshRow(key, event)
                 val tab = runCatching {
                     ToolWindowManager.getInstance(project)
@@ -1379,7 +1467,7 @@ class ImuxLspUiSourceTest {
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
                         .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
-                        .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
+                        .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                         .requestFocus(true)
                         .closeOnProcessTermination(false)
                         .createTab()
@@ -1407,7 +1495,7 @@ class ImuxLspUiSourceTest {
      *    [rowCells] 里查不到，正好在下一句退出，按钮已经处理完了）——**这一句必须排在
      *    查表之前**，顺序由整段比对保证；排到后面的话组级按钮永远不会被禁用。
      * 2. 状态文案不变 → 「点了没用」，这正是用户抱怨的原话。
-     * 3. 图标不变 → 一列绿勾黄叹号里夹着一句「正在激活…」，看起来像显示出错。
+     * 3. 图标不变 → 一列绿勾黄叹号里夹着一句「正在启用…」，看起来像显示出错。
      *
      * 值必须回头问 [rowIcon] / [statusText]，不许在这里现算。那两个函数第一件事就是查
      * `running`，于是「切进行中」与「撤回」共用同一段代码；这里若改成
@@ -1563,7 +1651,7 @@ class ImuxLspUiSourceTest {
      * `TerminalView.sessionState` **不用猜**，它会明确走到 `Terminated`。旧的那条断言
      * 守的是「不要瞎猜时机」，而现在没有猜——所以它被这一组取代，而不是被删掉让地方。
      *
-     * 三条各自对应一种「那一行永远停在『正在激活…』」：
+     * 三条各自对应一种「那一行永远停在『正在启用…』」：
      *
      * 1. 判据必须是 `Terminated`。改成 `Running` 就是命令刚起就刷新，报告里还写着
      *    「未安装」——比不刷新更假，正是旧断言警告过的那种后果。
@@ -1581,7 +1669,7 @@ class ImuxLspUiSourceTest {
      * tabScope.launch { …原样搬过来… }
      * ```
      *
-     * 全绿，而用户一关终端标签那一行就永远停在「正在激活…」、按钮永久禁用。
+     * 全绿，而用户一关终端标签那一行就永远停在「正在启用…」、按钮永久禁用。
      * 所以判据改成**出现次数**：`view.coroutineScope` 在这个函数体里只准出现一次，
      * 而那一次必须是紧跟 `.coroutineContext.job.invokeOnCompletion` 的那一次。
      * 再加整段比对兜底——它对「换个名字接着用」这类改法一律不敏感也不放过。
@@ -1601,7 +1689,7 @@ class ImuxLspUiSourceTest {
         assertEquals(
             "view.coroutineScope 在这里只准出现一次。留一个局部别名（val tabScope = " +
                 "view.coroutineScope）再拿它 launch，禁 `.launch` 那种写法的断言一条都看不见，" +
-                "而用户一关终端标签，那一行就永远停在「正在激活…」：$body",
+                "而用户一关终端标签，那一行就永远停在「正在启用…」：$body",
             1,
             Regex("""view\.coroutineScope""").findAll(body).count(),
         )
@@ -1655,7 +1743,7 @@ class ImuxLspUiSourceTest {
     /**
      * 连点多个按钮时，重新探测必须被合并成一次。
      *
-     * 18 门语言、缺口往往不止一处，用户一口气点四五个「激活」是常态。每个标签跑完都要求
+     * 18 门语言、缺口往往不止一处，用户一口气点四五个「启用」是常态。每个标签跑完都要求
      * 重新探测，而**一次探测就是一个 `zsh -l -i`**——五个登录 shell 同时读 profile，
      * 而且先发起的可能后返回，最终显示的会是更旧的结果。这和「连点重新检测」是同一类
      * 缺陷，只是触发点从一个按钮变成了十几个。
@@ -1693,7 +1781,7 @@ class ImuxLspUiSourceTest {
      * 的面板。
      *
      * [running] 也必须清空：同一个实例被再次 createComponent 时，界面上不该凭空出现
-     * 几行「正在激活…」——它们对应的终端标签是上一次会话的事了。
+     * 几行「正在启用…」——它们对应的终端标签是上一次会话的事了。
      */
     @Test
     fun `页面关闭时收干净后台等待`() {
@@ -1740,7 +1828,7 @@ class ImuxLspUiSourceTest {
         // 三条各说一种用户可见的坏结果，再由整体比对兜住剩下的——
         // 否则「就绪列整列空白」「文案被改写」「点了没反应」会共用同一条失败消息。
         assertTrue(
-            "正在跑命令的那一行必须优先说「正在激活…」，否则点下按钮之后这一列一个字都不变：$text",
+            "正在跑命令的那一行必须优先说「正在启用…」，否则点下按钮之后这一列一个字都不变：$text",
             compactArgs(text).contains("valkey=running[runRowKey(agentType,finding.language)]?:statusMessageKey"),
         )
         assertTrue(
@@ -1771,7 +1859,7 @@ class ImuxLspUiSourceTest {
     /**
      * 那一行的图标也必须跟着变。
      *
-     * 只换文字不换图标的话，一列绿勾与黄叹号里夹着一句「正在激活…」，图标还停在
+     * 只换文字不换图标的话，一列绿勾与黄叹号里夹着一句「正在启用…」，图标还停在
      * 「未启用插件」的黄叹号上——看起来更像显示出错，而不是「正在处理」。
      *
      * 顺序同样被整段比对保证：进行中排在 [statusIcon] 之前。反过来的话这一行
@@ -1803,11 +1891,18 @@ class ImuxLspUiSourceTest {
      *
      * `LspStatusPresentationTest` 那条「只有可行动的缺口才配警告图标」约束的其实是
      * `StatusIconKind.WARNING` 这个**枚举值**的归属，不是界面上那个黄色感叹号：
-     * 把壳里的 `StatusIconKind.INFO -> AllIcons.General.Information` 改成
+     * 把壳里的 `StatusIconKind.OK -> AllIcons.General.InspectionsOK` 改成
      * `-> AllIcons.General.Warning`，WARNING 集合原封不动仍是
-     * {MISSING_CONFIG, MISSING_BINARY}，行为测试全绿，而 pi 组的 TypeScript / Python /
-     * Ruby / Rust / PHP / C# 在界面上集体挂起黄色警告牌——正是这轮改造要消灭的那条误解。
-     * `OK -> Warning` 更狠，18 行一起变黄。用户可见的不变量住在这一层。
+     * {MISSING_CONFIG, MISSING_BINARY}，行为测试全绿，而三个分组里所有就绪的语言、
+     * 外加 pi 组那批「由 pi-lens 提供」的，在界面上集体挂起黄色警告牌。
+     * 用户可见的不变量住在这一层。
+     *
+     * 本轮少了一条 `INFO -> Information`：`AUTO_MANAGED` 改判成 `OK` 之后没有任何状态
+     * 映到 `INFO`，枚举值一并删掉。那条对应关系守的东西**确实不存在了**，而不是被让出
+     * 地方——顶上来的是 `LspStatusPresentationTest` 的两条新用例：「pi-lens 自己提供的
+     * 语言与就绪同一个图标」（比原来那条 `INFO` 更强：它要求的是与 READY **相同**，
+     * 退回任何一个自成一档的类别都会红）与「每个语义类别都至少有一个状态用到」
+     *（挡住「留一条没人走的分支，下一位维护者把某个状态挪过去」）。
      *
      * 断言必须**限定在 statusIcon 的函数体内**：`AllIcons.General.Warning` 在组级提示
      * 和顶部汇总那两行都有合法用法，在整份源码上数没有意义。
@@ -1827,7 +1922,6 @@ class ImuxLspUiSourceTest {
             = when (statusIconKind(status)) {
                 StatusIconKind.OK -> AllIcons.General.InspectionsOK
                 StatusIconKind.WARNING -> AllIcons.General.Warning
-                StatusIconKind.INFO -> AllIcons.General.Information
                 StatusIconKind.NEUTRAL -> AllIcons.General.Note
                 StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
             }

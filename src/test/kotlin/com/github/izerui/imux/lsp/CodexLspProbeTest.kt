@@ -73,13 +73,12 @@ class CodexLspProbeTest {
     fun `未挂载时给出挂载命令且不列逐语言缺口`() {
         val report = codexReport(mounted = false, piFindings = emptyList(), cliInstalled = true)
 
-        assertEquals("codex mcp add pi-lens -- pi-lens-mcp", report.groupRemedy?.command)
-        // 标成 INSTALL 的话，这条跨平台的 codex 子命令会在非 macOS 上被闸掉，
+        assertEquals(listOf("codex mcp add pi-lens -- pi-lens-mcp"), report.groupRemedy?.commands)
+        // 判成 macOS-only 的话，这条跨平台的 codex 子命令会在非 macOS 上被闸掉，
         // 而它恰恰是没挂 MCP 的用户唯一要做的那件事。
-        assertEquals(
-            "codex 自己的子命令跨平台，必须是 ACTIVATE",
-            RemedyKind.ACTIVATE,
-            report.groupRemedy?.kind,
+        assertTrue(
+            "codex 自己的子命令跨平台，不该被平台闸门挡下",
+            canRun(report.groupRemedy!!, isMac = false, hasPosixShell = true),
         )
         assertTrue(report.findings.isEmpty())
     }
@@ -89,7 +88,7 @@ class CodexLspProbeTest {
     fun `挂载后复用 pi 的语言结果`() {
         val kotlin = LspCatalog.languages.single { it.id == "kotlin" }
         val piFindings =
-            listOf(LanguageFinding(kotlin, LspStatus.MISSING_BINARY, Remedy(null, "https://x", RemedyKind.INSTALL)))
+            listOf(LanguageFinding(kotlin, LspStatus.MISSING_BINARY, Remedy(emptyList(), "https://x")))
 
         val report = codexReport(mounted = true, piFindings = piFindings, cliInstalled = true)
 

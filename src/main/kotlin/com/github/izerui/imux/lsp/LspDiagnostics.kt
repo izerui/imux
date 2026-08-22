@@ -19,9 +19,10 @@ internal class LspDiagnostics(
 ) {
 
     fun run(): LspReport {
-        // 一次问完：语言服务器 + 三个 CLI 自身。登录 shell 要读 profile，
-        // 那份开销每次都要付，没有理由为查三个 CLI 名字再起三次。
-        val located = binaryProbe.locate(LspCatalog.allBinaries + AgentType.entries.map { it.cli })
+        // 一次问完：语言服务器 + 它们的安装命令依赖的工具链（brew/go/npm/gem/dotnet/
+        // rustup/opam）+ 三个 CLI 自身。登录 shell 要读 profile，那份开销每次都要付，
+        // 没有理由为查几个名字再起第二个 shell。
+        val located = binaryProbe.locate(LspCatalog.allProbeTargets + AgentType.entries.map { it.cli })
 
         val claude = claudeReport(
             configuredCommands = parseConfiguredCommands(

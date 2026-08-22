@@ -42,13 +42,12 @@ class PiLspProbeTest {
     fun `未装 pi-lens 时给出整组修复建议且不列逐语言缺口`() {
         val report = piReport(piLensInstalled = false, binaries = emptyMap(), cliInstalled = true)
 
-        assertEquals("pi install npm:pi-lens", report.groupRemedy?.command)
-        // 标成 INSTALL 的话，这条跨平台的 pi 子命令会在非 macOS 上被闸掉，
+        assertEquals(listOf("pi install npm:pi-lens"), report.groupRemedy?.commands)
+        // 判成 macOS-only 的话，这条跨平台的 pi 子命令会在非 macOS 上被闸掉，
         // 而它恰恰是没装 pi-lens 的用户唯一要做的那件事。
-        assertEquals(
-            "pi 自己的子命令跨平台，必须是 ACTIVATE",
-            RemedyKind.ACTIVATE,
-            report.groupRemedy?.kind,
+        assertTrue(
+            "pi 自己的子命令跨平台，不该被平台闸门挡下",
+            canRun(report.groupRemedy!!, isMac = false, hasPosixShell = true),
         )
         assertTrue(report.findings.isEmpty())
     }
@@ -87,7 +86,11 @@ class PiLspProbeTest {
             cliInstalled = true,
         )
 
-        listOf("typescript", "python", "ruby", "rust", "php", "csharp").forEach { id ->
+        // ruby 与 csharp 曾经也在这份名单里，那是**读错了 pi-lens 的文档**：
+        // `csharp-ls` 是 dotnet 全局工具、`ruby-lsp` 是 gem，pi-lens 的三种自动安装
+        // 策略（npm/pip/github）一种都套不上，它们靠的是 CI 工作流预先提供的工具链。
+        // 见 LspCatalogTest 的「C# 与 Ruby 需要用户自己提供工具链」。
+        listOf("typescript", "python", "rust", "php").forEach { id ->
             val finding = report.findings.single { it.language.id == id }
             assertEquals("$id 由 pi-lens 按需安装，查 PATH 的结果与真相无关", LspStatus.AUTO_MANAGED, finding.status)
             assertNull("$id 没有任何用户可执行的动作，给建议就是误导", finding.remedy)
@@ -139,20 +142,69 @@ class PiLspProbeTest {
      * 二进制缺口的修复走的是目录表里的安装命令，它们只在 macOS 上核实过。
      *
      * 用 go 而不是 kotlin：kotlin-language-server 的 installCommand 是 null，
-     * 就算 kind 标错也没有按钮长出来，测不到这条闸门真正要拦的东西。
-     * 标成 ACTIVATE 的话，Windows 用户会看到「安装」按钮，点下去执行 `go install`。
+     * 就算平台判定错了也没有按钮长出来，测不到这条闸门真正要拦的东西。
+     * 判成跨平台的话，Windows 用户会看到「启用」按钮，点下去执行 `go install`。
      */
     @Test
     fun `二进制缺口的安装命令是只在 macOS 验证过的那一类`() {
         val report = piReport(
             piLensInstalled = true,
-            binaries = mapOf("gopls" to null),
+            binaries = mapOf("gopls" to null, "go" to "/usr/local/bin/go"),
             cliInstalled = true,
         )
 
         val go = report.findings.single { it.language.id == "go" }
-        assertEquals("go install golang.org/x/tools/gopls@latest", go.remedy?.command)
-        assertEquals(RemedyKind.INSTALL, go.remedy?.kind)
+        assertEquals(listOf("go install golang.org/x/tools/gopls@latest"), go.remedy?.commands)
+        assertFalse(
+            "目录表里的安装命令只在 macOS 上核实过",
+            canRun(go.remedy!!, isMac = false, hasPosixShell = true),
+        )
+    }
+
+    /**
+     * 装 server 要用的工具链自己不在时，**不给命令，改说是缺哪个工具**。
+     *
+     * `go install …` 在没装 Go 的机器上得到的是 `command not found: go`。用户看到的
+     * 是一个写着「启用」的按钮点下去报错，而真正缺的东西连提都没提。
+     * 我们又不该替他猜一条装 Go 的命令（nvm / rbenv / asdf / 系统包管理器，猜错了
+     * 坏的是他的开发环境），所以退成一句「需要先安装 go」加官网链接。
+     */
+    @Test
+    fun `工具链不在时报出缺的是哪个工具而不是给命令`() {
+        val report = piReport(
+            piLensInstalled = true,
+            binaries = mapOf("gopls" to null, "go" to null),
+            cliInstalled = true,
+        )
+
+        val go = report.findings.single { it.language.id == "go" }
+        assertEquals(emptyList<String>(), go.remedy?.commands)
+        assertEquals("go", go.remedy?.blockingTool)
+        assertEquals(LspCatalog.tool("go")?.docsUrl, go.remedy?.docsUrl)
+    }
+
+    /**
+     * C# 与 Ruby 在 pi 侧是 toolchain-gated，不能挂绿灯说「由 pi-lens 提供」。
+     *
+     * 依据是 pi-lens 的 `docs/lsp-capability-matrix.md` 第 139 行（详见 LspCatalogTest）。
+     * 写成自动管理的后果是用户可见的假消息：机器上没装 .NET，pi 组的 C# 却挂着绿灯，
+     * 而实际用起来是 LSP Inactive——绿灯是这一页最不该撒谎的地方。
+     */
+    @Test
+    fun `C# 与 Ruby 走的是自己装工具链那条路`() {
+        val report = piReport(
+            piLensInstalled = true,
+            binaries = mapOf("csharp-ls" to null, "ruby-lsp" to null, "dotnet" to null, "gem" to null),
+            cliInstalled = true,
+        )
+
+        listOf("csharp", "ruby").forEach { id ->
+            assertEquals(
+                "$id 的 server 装在工具链上，pi-lens 自己装不了，不能说成「由 pi-lens 提供」",
+                LspStatus.MISSING_BINARY,
+                report.findings.single { it.language.id == id }.status,
+            )
+        }
     }
 
     @Test

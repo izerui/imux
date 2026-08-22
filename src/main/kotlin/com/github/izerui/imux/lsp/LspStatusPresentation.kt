@@ -32,9 +32,6 @@ internal enum class StatusIconKind {
     /** 用户**真能采取行动**的缺口——只有这一类配警告。 */
     WARNING,
 
-    /** 好消息，但值得说一句（pi-lens 会自动装）。 */
-    INFO,
-
     /** 中性注记：用户对它做不了任何事（官方无对应插件）。 */
     NEUTRAL,
 
@@ -63,13 +60,18 @@ internal fun statusMessageKey(status: LspStatus): String? = when (status) {
  *
  * 唯一真正要守住的不变量：**只有 [LspStatus.MISSING_CONFIG] 与
  * [LspStatus.MISSING_BINARY] 配 [StatusIconKind.WARNING]**。
- * 「pi-lens 会自动装」是好消息，挂个警告牌等于把这次改造要纠正的误解换个形式又说一遍；
  * 「官方无对应插件」和「没查出来」用户都无从处理，警告只会制造焦虑。
+ *
+ * **[LspStatus.AUTO_MANAGED] 与 [LspStatus.READY] 同为 [StatusIconKind.OK]**，
+ * 这一条是照用户反馈改的。他看到 pi 组的 C# 写着「由 pi-lens 按需安装」、配一个蓝色
+ * 信息图标，问的是「为什么还要按需安装？」——那一行长得像一件待办，而实际上用户什么
+ * 都不用做。判据是**用户视角**：绿 = 我不用做任何事。这一条在这里成立，所以给绿。
+ * 状态枚举本身保留（探针不该撒谎，我们确实不知道 pi-lens 到底装没装），变的只是它
+ * 在界面上的呈现——文案也一并从「按需安装」改成「由 pi-lens 提供」。
  */
 internal fun statusIconKind(status: LspStatus): StatusIconKind = when (status) {
-    LspStatus.READY -> StatusIconKind.OK
+    LspStatus.READY, LspStatus.AUTO_MANAGED -> StatusIconKind.OK
     LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY -> StatusIconKind.WARNING
-    LspStatus.AUTO_MANAGED -> StatusIconKind.INFO
     LspStatus.NOT_AVAILABLE -> StatusIconKind.NEUTRAL
     LspStatus.UNKNOWN -> StatusIconKind.QUESTION
 }

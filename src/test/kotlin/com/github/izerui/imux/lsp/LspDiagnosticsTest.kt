@@ -65,8 +65,11 @@ class LspDiagnosticsTest {
     fun `配置文件全部缺失时仍产出完整报告`() {
         val report = diagnostics().run()
 
-        assertEquals("pi install npm:pi-lens", report.of(AgentType.PI).groupRemedy?.command)
-        assertEquals("codex mcp add pi-lens -- pi-lens-mcp", report.of(AgentType.CODEX).groupRemedy?.command)
+        assertEquals(listOf("pi install npm:pi-lens"), report.of(AgentType.PI).groupRemedy?.commands)
+        assertEquals(
+            listOf("codex mcp add pi-lens -- pi-lens-mcp"),
+            report.of(AgentType.CODEX).groupRemedy?.commands,
+        )
         // 全量列表：有官方插件的都是「没配」，官方没插件的（Haskell 等）是「无对应插件」，
         // 两者加起来必须正好是目录表的全部语言——一门都不能被静默省略。
         val claude = report.of(AgentType.CLAUDE)
@@ -91,9 +94,17 @@ class LspDiagnosticsTest {
         assertTrue(report.of(AgentType.PI).installed)
     }
 
-    /** 语言服务器与三个 CLI 必须在同一次调用里问完——登录 shell 只该起一次。 */
+    /**
+     * 语言服务器、**它们的安装命令依赖的工具链**、三个 CLI，必须在同一次调用里问完
+     * ——登录 shell 只该起一次。
+     *
+     * 前置工具（brew / go / npm / gem / dotnet / rustup / opam）是这一轮才进探测的。
+     * 为它们另起一次探测就是再付一遍读 profile 的钱；而**漏掉不探测**更糟：
+     * `isToolPresent` 对一个没被问过的名字只会答「不在」，于是每条命令链都会白白多出
+     * 一层 `brew install …`——用户点一下「启用」，先被装一遍已经有的 .NET SDK。
+     */
     @Test
-    fun `一次探测同时覆盖语言服务器与三个 CLI`() {
+    fun `一次探测同时覆盖语言服务器 前置工具链与三个 CLI`() {
         val calls = mutableListOf<Set<String>>()
         LspDiagnostics(
             userHome = temp.root.toPath(),
@@ -106,7 +117,11 @@ class LspDiagnosticsTest {
         ).run()
 
         assertEquals("只允许探测一次", 1, calls.size)
-        assertEquals(LspCatalog.allBinaries + AgentType.entries.map { it.cli }, calls.single())
+        assertEquals(LspCatalog.allProbeTargets + AgentType.entries.map { it.cli }, calls.single())
+        assertTrue(
+            "前置工具链必须在这一次里一起问完：漏掉的话每条链都会白白多出一层安装命令",
+            calls.single().containsAll(LspCatalog.tools.keys),
+        )
     }
 
     /**

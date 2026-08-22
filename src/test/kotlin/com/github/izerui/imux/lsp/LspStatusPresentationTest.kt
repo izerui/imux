@@ -72,10 +72,47 @@ class LspStatusPresentationTest {
         assertEquals(StatusIconKind.OK, statusIconKind(LspStatus.READY))
         assertEquals(StatusIconKind.WARNING, statusIconKind(LspStatus.MISSING_CONFIG))
         assertEquals(StatusIconKind.WARNING, statusIconKind(LspStatus.MISSING_BINARY))
-        // pi-lens 自动装是好消息；官方无对应插件用户无从处理；没查出来就是没查出来。
-        assertEquals(StatusIconKind.INFO, statusIconKind(LspStatus.AUTO_MANAGED))
+        // 官方无对应插件用户无从处理；没查出来就是没查出来。
         assertEquals(StatusIconKind.NEUTRAL, statusIconKind(LspStatus.NOT_AVAILABLE))
         assertEquals(StatusIconKind.QUESTION, statusIconKind(LspStatus.UNKNOWN))
+    }
+
+    /**
+     * **pi-lens 自己提供的那些语言必须与就绪长得一模一样。**
+     *
+     * 这一条是照用户反馈新加的。他看到 pi 组的 C# 写着「由 pi-lens 按需安装」、配一个
+     * 蓝色信息图标，问的是「为什么还要按需安装？」——那一行长得像一件待办，而实际上
+     * 用户什么都不用做。判据是**用户视角**：绿 = 我不用做任何事。
+     *
+     * 只断言「不是 WARNING」是不够的：退回一个自成一档的 INFO/NEUTRAL 也不是 WARNING，
+     * 而界面上仍然是一个「跟绿勾不一样」的牌子，用户仍然会去找自己该做什么。
+     * 所以断言的是**与 READY 同一个类别**——那才是「我不用管」这句话在界面上的形状。
+     */
+    @Test
+    fun `pi-lens 自己提供的语言与就绪同一个图标`() {
+        assertEquals(
+            "AUTO_MANAGED 上用户什么都不用做，它在界面上必须与就绪长得一样",
+            statusIconKind(LspStatus.READY),
+            statusIconKind(LspStatus.AUTO_MANAGED),
+        )
+    }
+
+    /**
+     * 枚举里不许留没人映到的语义类别。
+     *
+     * `INFO` 随 AUTO_MANAGED 改判一起删了。留着的话，设置页那个 `when` 里会有一条永远
+     * 走不到的分支——而下一位维护者会合理地以为「有这一档，那就该有状态用它」，
+     * 于是把某个状态挪过去，界面上凭空多出一种没人想过的牌子。
+     */
+    @Test
+    fun `每个语义类别都至少有一个状态用到`() {
+        val used = LspStatus.entries.map(::statusIconKind).toSet()
+
+        assertEquals(
+            "这些语义类别没有任何状态映到，设置页里对应的分支是死代码：${StatusIconKind.entries - used}",
+            StatusIconKind.entries.toSet(),
+            used,
+        )
     }
 
     /**
@@ -86,7 +123,7 @@ class LspStatusPresentationTest {
      * 的键集合是否一致，十个文件一起留着同一个没人用的键，它照样全绿。
      *
      * `settings.lsp.status.*` 这个命名空间有**两个**生产者：静态状态走
-     * [statusMessageKey]，命令跑起来之后那一句「正在激活…」走 [runningStatusKey]。
+     * [statusMessageKey]，命令跑起来之后那一句「正在启用…」走 [ENABLING_STATUS_KEY]。
      * 孤儿检查必须两个一起算——只算一个的话，另一个生产的键全都会被判成孤儿，
      * 失败信息还会把维护者往「删掉它」的方向指，而那正是页面上唯一会动的一列。
      */
@@ -95,8 +132,7 @@ class LspStatusPresentationTest {
         val bundle = Properties().apply {
             File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
         }
-        val used = LspStatus.entries.mapNotNull(::statusMessageKey).toSet() +
-            RemedyKind.entries.map(::runningStatusKey).toSet()
+        val used = LspStatus.entries.mapNotNull(::statusMessageKey).toSet() + ENABLING_STATUS_KEY
 
         used.forEach { key ->
             assertTrue("资源包里没有 $key，界面上会显示成 !$key!", bundle.containsKey(key))

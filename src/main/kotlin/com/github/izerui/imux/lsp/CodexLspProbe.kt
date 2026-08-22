@@ -36,7 +36,7 @@ internal fun codexReport(
             installed = true,
             findings = emptyList(),
             // codex 自己的子命令，跨平台——所有平台都可以点一下就跑
-            groupRemedy = Remedy("codex mcp add pi-lens -- $PI_LENS_MCP_BIN", null, RemedyKind.ACTIVATE),
+            groupRemedy = Remedy(listOf("codex mcp add pi-lens -- $PI_LENS_MCP_BIN"), null),
         )
     }
     return CliReport(AgentType.CODEX, installed = true, findings = piFindings)

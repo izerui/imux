@@ -85,6 +85,11 @@ internal fun claudeReport(
         return CliReport(AgentType.CLAUDE, installed = false, findings = emptyList())
     }
 
+    // 「这个名字在 PATH 里吗」——键不存在（探测超时）与值为 null（查过没有）都算不在。
+    // 它同时要回答语言服务器与前置工具链两类名字，两者在同一次探测里问完
+    //（见 LspCatalog.allProbeTargets）。
+    val isToolPresent: (String) -> Boolean = { binaries[it] != null }
+
     val findings = LspCatalog.languages.map { language ->
         // claudePlugin 与 claudeBinary 必定同时存在或同时缺失（LspCatalogTest 钉住），
         // 所以判 binary 为空就等价于「官方没有这门语言的插件」。
@@ -96,27 +101,12 @@ internal fun claudeReport(
             binaries[binary] == null -> LspStatus.MISSING_BINARY
             else -> LspStatus.READY
         }
-        LanguageFinding(language, status, remedyFor(language, status))
+        // 建议由 remedyFor 一处算出：它要串的是「缺哪层加哪层」的整条链，而不是
+        // 「这个状态对应哪一条命令」——MISSING_CONFIG 这个状态压根没说过二进制在不在
+        //（上面的 when 里配置层排在二进制层前面，一命中就返回了）。
+        LanguageFinding(language, status, remedyFor(language, AgentType.CLAUDE, status, isToolPresent))
     }
     return CliReport(AgentType.CLAUDE, installed = true, findings = findings)
-}
-
-private fun remedyFor(language: LspLanguage, status: LspStatus): Remedy? = when (status) {
-    // claude 自己的子命令，跨平台且几秒就完——所有平台都可以点一下就跑
-    LspStatus.MISSING_CONFIG ->
-        Remedy(
-            "claude plugin install ${language.claudePlugin}@claude-plugins-official",
-            null,
-            RemedyKind.ACTIVATE,
-        )
-
-    // 目录表里的安装命令，只在 macOS 上核实过（见 RemedyKind.INSTALL）
-    LspStatus.MISSING_BINARY -> LspCatalog.server(language.claudeBinary.orEmpty())
-        ?.let { Remedy(it.installCommand, it.docsUrl, RemedyKind.INSTALL) }
-
-    // NOT_AVAILABLE / AUTO_MANAGED 没有任何用户可执行的动作，给建议就是误导；
-    // UNKNOWN 是「没查出来」，同样编不出下一步。
-    LspStatus.READY, LspStatus.UNKNOWN, LspStatus.AUTO_MANAGED, LspStatus.NOT_AVAILABLE -> null
 }
 
 // —— Gson 便利封装：任何形状不符都返回 null，绝不抛给调用方 ——

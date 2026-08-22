@@ -2,6 +2,8 @@ package com.github.izerui.imux.settings
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.lsp.CliReport
+import com.github.izerui.imux.lsp.ENABLE_ACTION_KEY
+import com.github.izerui.imux.lsp.ENABLING_STATUS_KEY
 import com.github.izerui.imux.lsp.LanguageFinding
 import com.github.izerui.imux.lsp.LspDiagnostics
 import com.github.izerui.imux.lsp.LspReport
@@ -11,12 +13,10 @@ import com.github.izerui.imux.lsp.ShellBinaryProbe
 import com.github.izerui.imux.lsp.StatusIconKind
 import com.github.izerui.imux.lsp.canRun
 import com.github.izerui.imux.lsp.readyServerText
-import com.github.izerui.imux.lsp.runActionKey
 import com.github.izerui.imux.lsp.runCommandLine
 import com.github.izerui.imux.lsp.runRowKey
 import com.github.izerui.imux.lsp.runTabName
 import com.github.izerui.imux.lsp.runTabTarget
-import com.github.izerui.imux.lsp.runningStatusKey
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
 import com.github.izerui.imux.model.AgentType
@@ -99,7 +99,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 「命令跑完了，该重新探测一次」这类请求的代次，与 [generation] 各管一段。
      *
      * [generation] 防的是**已经发起**的探测互相盖；这一个防的是**还没发起**的探测扎堆：
-     * 用户完全可能一口气点四五个「激活」，四五个终端标签各自跑完、各自要求重新探测，
+     * 用户完全可能一口气点四五个「启用」，四五个终端标签各自跑完、各自要求重新探测，
      * 而一次探测就是一个登录 shell。让最后到达的那一个去跑，前面的静静作废。
      */
     private val refreshRequest = AtomicInteger()
@@ -124,9 +124,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 正在跑的行：[runRowKey] 给的行标识 &#8594; 那一行状态列此刻该显示的 bundle 键。
      *
-     * 存**键**而不是存 `RemedyKind`，是为了让「性质 &#8594; 文案」这个判断只存在于
-     * [runningStatusKey] 那个被真调用测试钉住的纯函数里；壳里连 `RemedyKind` 都不必 import，
-     * 也就没有第二处按性质分支的地方。
+     * 存**键**而不是存一个布尔，是为了让 [statusText] 那条「查表 &#8594; 过 bundle」的
+     * 薄壳一个字都不用改：值取自 [ENABLING_STATUS_KEY]（壳外的常量），壳里没有任何一处
+     * 自己拼这个键的地方。从前这里存的是按 `RemedyKind` 映出来的两个键之一，而那个
+     * 「激活 / 安装」的区分已经随本轮一起删掉了——它是按实现分的，不是按用户心智分的。
      *
      * 用 [ConcurrentHashMap]：写入发生在 EDT（点击）与协程线程（跑完清除）两侧。
      */
@@ -159,7 +160,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * 等命令跑完要收 `TerminalView.sessionState`，而 `TerminalView.coroutineScope` 会随
      * 标签页关闭一起取消：把收集协程挂上去的话，用户中途关掉终端标签，协程当场没了，
-     * 那一行就永远停在「正在激活…」——恰恰是这次要修的那个毛病换了个形状复发。
+     * 那一行就永远停在「正在启用…」——恰恰是这次要修的那个毛病换了个形状复发。
      *
      * 反过来，页面被关掉（[disposeUIResources]）时这个作用域必须取消：否则几分钟后
      * `brew install` 跑完，一个早已 dispose 的页面还会白起一个登录 shell 去探测。
@@ -203,7 +204,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 页面关掉之后不许再有任何后台动作。
      *
      * 等待中的收集协程随作用域一起取消，[running] 一并清空——同一个 Configurable 实例
-     * 被再次 `createComponent` 时，界面上不该凭空出现几行「正在激活…」，
+     * 被再次 `createComponent` 时，界面上不该凭空出现几行「正在启用…」，
      * 它们对应的终端标签早就是上一次会话的事了。
      */
     override fun disposeUIResources() {
@@ -233,7 +234,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * - **首次打开**：手里什么都没有，[showChecking] 那句「正在检测…」是唯一能说的话。
      * - **重新探测**：手动点「重新检测」，或者一条安装命令跑完之后自动来这一趟。
      *   这时候什么都不做——屏幕上摆着的正是 [refreshRow] 刚刚改好的那一行
-     *  （「正在激活…」+ 转圈图标），让它一直摆到真结果回来。反馈由「重新检测」按钮
+     *  （「正在启用…」+ 转圈图标），让它一直摆到真结果回来。反馈由「重新检测」按钮
      *   自己禁用给出，不需要动内容区。
      *
      * 这里**绝不能**写成 `showReport(lastReport)`「先用旧数据重画一遍」。看着像是省掉了
@@ -427,7 +428,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 18 行是一份参差的清单而不是一张对得齐的表。
      *
      * 现在第四列也进同一个网格，而这只有在**第四列很窄**时才成立：那里放的是一个按钮
-     * （「激活」/「安装」）或一个短链接（「文档 ↗」）。之所以敢这么做，正是因为
+     * （「启用」）或一个短链接（「文档 ↗」）。之所以敢这么做，正是因为
      * `npm install -g typescript-language-server typescript` 这种长度的东西已经搬进
      * tooltip；把它放回单元格里，第一列（图标）会被撑成那条命令的宽度，整张表当场散架。
      *
@@ -462,18 +463,19 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 函数体被 `ImuxLspUiSourceTest` 逐字节钉住，理由与 [runRemedyButton] 同一条：
      * 这里的每一种缺陷都是**加法**。实测在第一行前面补一句
      * `if (finding.status == LspStatus.MISSING_CONFIG) return`，Claude Code 组 13 门语言的
-     * 「激活」按钮全部消失，而「壳里不得有第二处平台或性质判断」只禁 `SystemInfo.` 与
-     * `RemedyKind.`、不禁 `LspStatus.`，整套断言全绿。逐条列举被禁 token 漏得掉下一种，
+     * 「启用」按钮全部消失，而「壳里不得有第二处平台判断」只禁 `SystemInfo.`、
+     * 不禁 `LspStatus.`，整套断言全绿。逐条列举被禁 token 漏得掉下一种，
      * 整段比对漏不掉。
      *
-     * 没有 remedy 的行（就绪、pi-lens 自动管理、官方无对应插件、没查出来）
+     * 没有 remedy 的行（就绪、pi-lens 自动提供、官方无对应插件、没查出来）
      * 这一格是空的：它们本来就没有下一步可做，摆个链接只会让人以为有事要办。
+     * **`AUTO_MANAGED` 现在正是靠这一条不给按钮**——用户看到「由 pi-lens 提供」加一个
+     * 绿勾、行末什么都没有，读出来的就是「这一行我不用管」。他从前读的是「按需安装」加
+     * 一个信息图标，于是问「为什么还要按需安装？」。
      */
     private fun Row.rowAction(finding: LanguageFinding, agentType: AgentType) {
         val remedy = finding.remedy ?: return
-        val placed = remedy.command?.let { command ->
-            runRemedyButton(runRowKey(agentType, finding.language), remedy, command)
-        } ?: false
+        val placed = runRemedyButton(runRowKey(agentType, finding.language), remedy)
         if (!placed) {
             fallbackCell(remedy)
         }
@@ -486,9 +488,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 语言：它是整组的前置条件，用 CLI 名加一个不可能与语言 id 相撞的后缀。
      */
     private fun Row.groupAction(agentType: AgentType, remedy: Remedy) {
-        val placed = remedy.command?.let { command ->
-            runRemedyButton(agentType.name + GROUP_ROW, remedy, command)
-        } ?: false
+        val placed = runRemedyButton(agentType.name + GROUP_ROW, remedy)
         if (!placed) {
             fallbackCell(remedy)
         }
@@ -502,24 +502,29 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * - [hasProjectWindow] 这道闸门在**所有平台**都会关——这一页是 `applicationConfigurable`，
      *   从欢迎页打开设置是完全正常的路径。macOS 用户一样撞得上。
-     * - 撞上的行不是少数：Claude Code 组 13 门带官方插件的语言只要没启用，
-     *   都是 `MISSING_CONFIG` &#8594; `ACTIVATE`，而 `ACTIVATE` 的 `docsUrl` 恒为 null；
-     *   Codex 组的 `groupRemedy` 同样是 null。只给文档链接的话，那些行、那一整组
-     *   会退化成「一句警告 + 什么也没有」。
+     * - 撞上的行不是少数：Claude Code 组 13 门带官方插件的语言只要没启用都算，
+     *   Codex 组的 `groupRemedy` 更是连 `docsUrl` 都没有。只给文档链接的话，
+     *   那一整组会退化成「一句警告 + 什么也没有」。
      *
-     * 所以有命令时先摆一个**不可点的短标签**，标签文字取 [runTabTarget]
-     *（`claude plugin install kotlin-lsp@claude-plugins-official` &#8594; `kotlin-lsp`），
-     * 完整命令挂 tooltip。用户缺的恰恰就是那个插件名/包名——CLI 的官方文档只会告诉他
-     * 「有 plugin install 这个子命令」，不会告诉他 Kotlin 对应哪个插件。短标签让这一列
-     * 仍然只有十来个字符，不会退回到「一整行原始命令」那种把表撑爆的形态。
+     * 三样东西，各答一个问题，**有几样给几样，绝不二选一**（二选一就是第二处闸门）：
      *
-     * 命令与文档链接**同时存在时两个都给**，不按平台二选一：那就是第二处闸门了。
-     * 非 macOS 上的 `INSTALL` 正是这种情况——命令是 macOS 形状（所以没有按钮），
-     * 文档链接才是那个平台的正路，而命令本身仍然是有用的线索。
+     * 1. [Remedy.blockingTool]——「要先装什么」。链根本组不出来时唯一有用的一句：
+     *    `brew` / `go` / `npm` / `gem` 不在 PATH，而我们没有可靠的安装方式。
+     *    此时 [Remedy.chain] 必为空，[Remedy.docsUrl] 换成的是**那个工具**的官网。
+     * 2. [Remedy.chain]——「会跑什么」。摆一个**不可点的短标签**，文字取 [runTabTarget]
+     *   （整条链取最后一步：`… && claude plugin install kotlin-lsp@…` &#8594; `kotlin-lsp`），
+     *    完整链挂 tooltip。用户缺的恰恰就是那个插件名/包名——CLI 的官方文档只会告诉他
+     *    「有 plugin install 这个子命令」，不会告诉他 Kotlin 对应哪个插件。短标签让这一
+     *    列仍然只有十来个字符，不会退回「一整行原始命令」那种把表撑爆的形态。
+     * 3. [Remedy.docsUrl]——「去哪儿自己动手」。非 macOS 上命令是 macOS 形状（所以没有
+     *    按钮），文档链接才是那个平台的正路，而命令本身仍然是有用的线索。
      */
     private fun Row.fallbackCell(remedy: Remedy) {
-        remedy.command?.let { command ->
-            label(runTabTarget(command)).applyToComponent { toolTipText = command }
+        remedy.blockingTool?.let { tool ->
+            label(ImuxBundle.message("settings.lsp.tool.missing", tool))
+        }
+        remedy.chain?.let { chain ->
+            label(runTabTarget(chain)).applyToComponent { toolTipText = chain }
         }
         remedy.docsUrl?.let { url ->
             browserLink(ImuxBundle.message("settings.lsp.docs"), url)
@@ -541,13 +546,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 它刻意**不**并进 `canRun`：那是平台与命令性质的取舍，是纯的、可测的；
      * 「现在有没有项目窗口」是运行期环境，两者会各自变化。
      *
-     * 按钮上的词同理走 [runActionKey]：壳里出现 `when (remedy.kind)` 就能在两个字面量
-     * 都还留在源码里的前提下把「激活」和「安装」对调——用户点一个写着「激活」的按钮，
-     * 等来的是几百兆下载。
+     * 按钮上**只有一个词「启用」**，不再按修复性质分成「激活」与「安装」。那个区分是
+     * 按实现分的（配置层 vs 二进制层），用户原话：「虽然说我不知道你这两个是啥意思吧，
+     * 你能让用户怎么方便怎么来就行了」。他不需要知道底下有几层、缺的是哪一层——
+     * 点一下，缺的每一层按顺序跑完。
      *
-     * `toolTipText` 是命令**唯一**的去处。用户原话「也不需要复制了吧」删掉的是复制按钮，
-     * 不是知情权：鼠标停在按钮上就看得到马上要执行的整条命令，比原先把它铺在页面上
-     * 更省地方，信息一点没少。
+     * `toolTipText` 是命令链**唯一**的去处，而它同时承担了从前「安装」那个词的差事：
+     * 「点下去要不要等」现在由**看得见的整条链**回答（`brew install --cask dotnet-sdk
+     * && …` 一眼就知道有大件下载），比一个概括的词准确。用户原话「也不需要复制了吧」
+     * 删掉的是复制按钮，不是知情权。
      *
      * `.enabled` 挡的是连点：命令在终端里异步跑，按钮不禁用的话用户会以为没反应而再点
      * 一次，于是同一条 `brew install` 开出两个标签抢同一把锁。它和守卫一样被逐字节钉住
@@ -563,15 +570,16 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 按 `kind.ordinal` 分支，都是「加法」——逐条列举被禁 token 的黑名单永远漏得掉，
      * 整段比对漏不掉。代价是改动这几行要来测试里点头一次。
      */
-    private fun Row.runRemedyButton(key: String, remedy: Remedy, command: String): Boolean {
+    private fun Row.runRemedyButton(key: String, remedy: Remedy): Boolean {
         if (!canRun(remedy, SystemInfo.isMac, !SystemInfo.isWindows)) {
             return false
         }
         if (!hasProjectWindow()) {
             return false
         }
-        button(ImuxBundle.message(runActionKey(remedy.kind))) { event ->
-            runInTerminal(key, remedy, command, event)
+        val command = remedy.chain ?: return false
+        button(ImuxBundle.message(ENABLE_ACTION_KEY)) { event ->
+            runInTerminal(key, command, event)
         }
             .enabled(!running.containsKey(key))
             .applyToComponent { toolTipText = command }
@@ -601,7 +609,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `TerminalToolWindowTabBuilderImpl` 的构造里读的是用户设置
      * `TerminalOptionsProvider.closeSessionOnLogout`。也就是说不写这一句的话，
      * 「命令跑完还看不看得到输出」取决于用户在终端设置里勾了什么——勾上的用户点一次
-     * 「安装」，结果闪一下就没了。显式写 false 消除的是对一项**用户设置**的依赖，
+     * 「启用」，结果闪一下就没了。显式写 false 消除的是对一项**用户设置**的依赖，
      * 不只是覆盖一个默认值。
      *
      * **imux 自己仍然一个字节都不往用户文件里写。** `claude plugin install` 会改
@@ -676,7 +684,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * 开标签**必须**包在 `runCatching` 里，且失败时把标记撤回来。标记写在建标签之前
      * （那是对的，否则抢焦点之后才改就晚了），于是一旦 `createTab()` 抛异常，那一行会
-     * 永久停在「正在激活…」、按钮永久禁用——而 [refresh] 从不清 [running]（那是刻意的：
+     * 永久停在「正在启用…」、按钮永久禁用——而 [refresh] 从不清 [running]（那是刻意的：
      * 真在跑的安装不该被一次「重新检测」清掉），用户只能关掉整个设置对话框才能复位。
      *
      * 整段函数体被 `ImuxLspUiSourceTest` 逐字节钉住。它和 [runRemedyButton] 一样是
@@ -684,7 +692,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `running.remove(key)`，「点下立刻变进行中」当场失效；在末尾之前插一句 `return`，
      * 自动重新探测整个失效——两种写法下三条 `contains` 断言全部照常命中。
      */
-    private fun runInTerminal(key: String, remedy: Remedy, command: String, event: ActionEvent) {
+    private fun runInTerminal(key: String, command: String, event: ActionEvent) {
         // 渲染时 hasProjectWindow() 已经确认过有项目开着，这里再判一次是因为 262 的设置
         // 窗口是**非模态**的：从渲染到点击之间，用户完全可以把那个项目关掉。
         val project = targetProject(event)
@@ -692,7 +700,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             LOG.warn("没有可用的项目窗口，无法执行：$command")
             return
         }
-        running[key] = runningStatusKey(remedy.kind)
+        running[key] = ENABLING_STATUS_KEY
         refreshRow(key, event)
         val tab = runCatching {
             ToolWindowManager.getInstance(project)
@@ -702,7 +710,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
                 .createTabBuilder()
                 .workingDirectory(project.basePath ?: System.getProperty("user.home"))
                 .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
-                .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
+                .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                 .requestFocus(true)
                 .closeOnProcessTermination(false)
                 .createTab()
@@ -769,7 +777,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 所以本页显式写的 `closeOnProcessTermination(false)` 只是让平台不去自动关标签，
      * 不影响状态何时翻转。项目里 `TerminalHost.closeTabWhenTerminated` 早就依赖同一条性质。
      *
-     * 三条边界，每一条都能让那一行永远停在「正在激活…」：
+     * 三条边界，每一条都能让那一行永远停在「正在启用…」：
      *
      * 1. **用户中途关掉终端标签**。关标签会取消 `view.coroutineScope`，`sessionState`
      *    从此再也不会变——只等 `Terminated` 的话就是干等到天荒地老。所以那个 scope 的
@@ -850,17 +858,17 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 每门语言那一句状态——**薄壳**：向 [statusMessageKey] 取键、交给 [ImuxBundle]，
      * 没有键的（只有 READY）显示 server 二进制名。
      *
-     * [running] 排在最前面：这一行正在跑命令时，说的必须是「正在激活…」，而不是那条
+     * [running] 排在最前面：这一行正在跑命令时，说的必须是「正在启用…」，而不是那条
      * 还没被推翻的旧状态。用户点下按钮之后盯着的就是这一列——它不动，用户就认为点击
-     * 没生效，然后再点一次。查表而不是 `if`，是为了让「性质 &#8594; 文案」的判断留在
-     * [runningStatusKey] 那个能被真正调用测的纯函数里。
+     * 没生效，然后再点一次。查表而不是 `if`，是为了让这一列的取值只有一条路：
+     * 「有没有在跑」与「静态状态说什么」共用同一个「取键 &#8594; 过 bundle」。
      *
      * 壳里不得再出现任何按 [LspStatus] 的判断。这不是洁癖：状态与文案的对应搬进
      * `LspStatusPresentation` 正是为了让它能被真正调用、被行为测试钉住；只要这里
      * 补一句 `if (status == X) return message(Y)`，那些行为测试就全部失效，
      * 而「文案字面量还在源码里」的文本断言一条都拦不住——这一类缺陷已经复活过两次。
      *
-     * 文字长度：最长的是俄语的 AUTO_MANAGED（45 字符），加上最长的语言名
+     * 文字长度：最长的是俄语的 MISSING_BINARY（约 30 字符），加上最长的语言名
      * `TypeScript/JavaScript`（21 字符）仍远在会撑宽对话框的量级之下，用 `label` 安全。
      * 若将来有译文明显变长，这一列必须改用 `comment` 或 `text`——见类顶部的折行教训。
      */
@@ -875,7 +883,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 一行最左边那个图标。
      *
      * 正在跑命令时换成进行中的图标，理由与 [statusText] 完全相同：那一行必须整体改变
-     * 面貌，只换文字不换图标的话，一列绿勾/黄叹号里混着一句「正在激活…」，
+     * 面貌，只换文字不换图标的话，一列绿勾/黄叹号里混着一句「正在启用…」，
      * 反而像是显示出错了。
      *
      * 用**静态**帧而不是 `AnimatedIcon.Default`，理由只有一条、也只需要一条：
@@ -894,15 +902,18 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 状态图标——**薄壳**：语义类别由 [statusIconKind] 决定，这里只负责把类别换成
      * [AllIcons] 的常量，不自绘、也不再按 [LspStatus] 判断（理由同 [statusText]）。
      *
-     * 下面这五条对应关系**同样被测试钉住**，改动前请想清楚。[statusIconKind] 那边的
-     * 「哪些状态算警告」约束的是枚举值的归属，管不到这一层：把 `INFO` 这一行改成
-     * `Warning`，那条不变量原封不动全绿，而 pi 组的 TypeScript / Python / Ruby / Rust /
-     * PHP / C# 在界面上集体挂起黄色警告牌——用户看见的是图标，不是枚举常量。
+     * 下面这四条对应关系**同样被测试钉住**，改动前请想清楚。[statusIconKind] 那边的
+     * 「哪些状态算警告」约束的是枚举值的归属，管不到这一层：把 `OK` 这一行改成
+     * `Warning`，那条不变量原封不动全绿，而三个分组里所有就绪的语言、外加 pi 组那批
+     * 「由 pi-lens 提供」的，在界面上集体挂起黄色警告牌——用户看见的是图标，不是枚举常量。
+     *
+     * 从前这里有第五条 `INFO -> Information`，只服务 `AUTO_MANAGED`。那条随本轮一起
+     * 删掉了：`AUTO_MANAGED` 现在与 `READY` 同为 `OK`（判据是用户视角——绿 = 我不用做
+     * 任何事），`INFO` 于是没有任何状态映到它，枚举值一并删除。
      */
     private fun statusIcon(status: LspStatus): Icon = when (statusIconKind(status)) {
         StatusIconKind.OK -> AllIcons.General.InspectionsOK
         StatusIconKind.WARNING -> AllIcons.General.Warning
-        StatusIconKind.INFO -> AllIcons.General.Information
         StatusIconKind.NEUTRAL -> AllIcons.General.Note
         StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
     }
@@ -977,7 +988,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
          * 组级修复那一行的行标识后缀，接在 `AgentType.name` 后面。
          *
          * 带空格，与 [runRowKey] 拼出来的任何一行都不可能相撞（目录表里的语言 id
-         * 全是 `c` / `cpp` 这类标识符）。撞上的话，用户点一次「安装 pi-lens」，
+         * 全是 `c` / `cpp` 这类标识符）。撞上的话，用户点一次 pi 那一组的「启用」，
          * 某门语言会跟着假装自己在跑。
          */
         const val GROUP_ROW = "/group remedy"
@@ -986,7 +997,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
          * 合并「跑完了要重新探测」请求的时间窗，毫秒。
          *
          * 只需要盖住「几个标签几乎同时结束」这一种情况，不是给用户看的延迟——
-         * 取到秒级的话，用户会先看见一行已经不再「正在激活…」、状态却还是旧的表。
+         * 取到秒级的话，用户会先看见一行已经不再「正在启用…」、状态却还是旧的表。
          */
         const val REFRESH_DEBOUNCE_MS = 300L
     }
