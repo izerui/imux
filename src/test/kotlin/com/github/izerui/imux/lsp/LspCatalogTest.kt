@@ -1,6 +1,7 @@
 package com.github.izerui.imux.lsp
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -173,6 +174,46 @@ class LspCatalogTest {
             val language = LspCatalog.languages.single { it.id == id }
             assertTrue("$id 的 server 装在工具链上，pi-lens 自己装不了", language.piLensGated)
             assertNotNull("$id 必须声明 pi 侧的 server 二进制", language.piLensBinary)
+        }
+    }
+
+    @Test
+    fun `只有 brew 与 opam 的命令算作 macOS 专属`() {
+        LspCatalog.macOnlyCommands.forEach { command ->
+            val tool = requiredTool(command)
+            assertTrue("『$command』不该被当作 macOS 专属", tool == "brew" || tool == "opam")
+        }
+    }
+
+    @Test
+    fun `语言自带包管理器的安装命令不算 macOS 专属`() {
+        // 这 7 条在 Linux/Windows 上形态完全相同，把它们挡在 macOS 之外
+        // 等于让非 macOS 用户白白少 7 门语言的一键启用
+        listOf(
+            "go install golang.org/x/tools/gopls@latest",
+            "npm install -g typescript-language-server typescript",
+            "npm install -g pyright",
+            "npm install -g intelephense",
+            "gem install ruby-lsp",
+            "dotnet tool install --global csharp-ls",
+            "dotnet tool install --global fsautocomplete",
+        ).forEach { command ->
+            assertFalse("『$command』是跨平台的", command in LspCatalog.macOnlyCommands)
+        }
+    }
+
+    @Test
+    fun `brew 系命令仍算 macOS 专属`() {
+        listOf(
+            "brew install jdtls",
+            "brew install --cask kotlin-lsp",
+            "brew install lua-language-server",
+            "brew install llvm",
+            "brew install --cask dotnet-sdk",
+            "brew install rustup",
+            "brew install opam",
+        ).forEach { command ->
+            assertTrue("『$command』只在 macOS 上核实过", command in LspCatalog.macOnlyCommands)
         }
     }
 

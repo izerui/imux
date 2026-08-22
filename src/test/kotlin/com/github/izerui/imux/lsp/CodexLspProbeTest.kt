@@ -128,7 +128,7 @@ class CodexLspProbeTest {
             ),
             report.groupRemedy?.commands,
         )
-        assertTrue(canRun(report.groupRemedy!!, isMac = false, hasPosixShell = true))
+        assertTrue(canRun(report.groupRemedy!!, isMac = false))
         assertTrue(report.findings.isEmpty())
     }
 

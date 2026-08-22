@@ -98,7 +98,7 @@ class ClaudeCodeLspProbeTest {
         // Linux 用户看到的只剩一条要自己复制的命令——而它本来点一下就能跑。
         assertTrue(
             "claude 自己的子命令跨平台，不该被平台闸门挡下",
-            canRun(kotlin.remedy!!, isMac = false, hasPosixShell = true),
+            canRun(kotlin.remedy!!, isMac = false),
         )
     }
 
@@ -123,8 +123,8 @@ class ClaudeCodeLspProbeTest {
         // 判成跨平台的话，`brew install jdtls` 会在 Windows 上也长出一个执行按钮，
         // 点下去就是在没有 brew 的机器上跑 brew。
         assertFalse(
-            "目录表里的安装命令只在 macOS 上核实过",
-            canRun(java.remedy!!, isMac = false, hasPosixShell = true),
+            "brew 系安装命令只在 macOS 上核实过",
+            canRun(java.remedy!!, isMac = false),
         )
     }
 

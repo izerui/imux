@@ -47,7 +47,7 @@ class PiLspProbeTest {
         // 而它恰恰是没装 pi-lens 的用户唯一要做的那件事。
         assertTrue(
             "pi 自己的子命令跨平台，不该被平台闸门挡下",
-            canRun(report.groupRemedy!!, isMac = false, hasPosixShell = true),
+            canRun(report.groupRemedy!!, isMac = false),
         )
         assertTrue(report.findings.isEmpty())
     }
@@ -155,9 +155,9 @@ class PiLspProbeTest {
 
         val go = report.findings.single { it.language.id == "go" }
         assertEquals(listOf("go install golang.org/x/tools/gopls@latest"), go.remedy?.commands)
-        assertFalse(
-            "目录表里的安装命令只在 macOS 上核实过",
-            canRun(go.remedy!!, isMac = false, hasPosixShell = true),
+        assertTrue(
+            "go install 是跨平台命令，非 macOS 上也该给按钮",
+            canRun(go.remedy!!, isMac = false),
         )
     }
 

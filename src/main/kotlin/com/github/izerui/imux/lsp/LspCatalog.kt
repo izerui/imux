@@ -55,8 +55,8 @@ internal object LspCatalog {
 
     /**
      * 安装命令按 macOS 给出（imux 的主要用户在 macOS，且本机可核实）。
-     * Linux/Windows 用户看到的是同一条命令——它对 npm/go/dotnet/rustup 这些
-     * 跨平台工具本来就通用；只有 brew 那几条不通用，这是已知取舍，
+     * npm / go / dotnet / rustup / gem 这些跨平台工具的命令三平台形态完全相同，
+     * 已经不再被 [macOnlyCommands] 拦截；只有 brew 与 opam 系的命令仍是 macOS 专属，
      * 后续要分平台时把 String 换成按平台取值即可，调用点不变。
      */
     val servers: Map<String, LspServer> = listOf(
@@ -116,16 +116,24 @@ internal object LspCatalog {
     fun tool(name: String): LspTool? = tools[name]
 
     /**
-     * 只在 macOS 上核实过的命令全集——[com.github.izerui.imux.lsp.canRun] 的判据。
+     * 只在 macOS 上核实过、不可跨平台执行的安装命令。
      *
-     * 从前这条闸门按 `RemedyKind` 划：装二进制的限 macOS、装 CLI 插件的不限。链式命令
-     * 之后这个划法失效了——**一条链里可以同时含 `brew install --cask dotnet-sdk` 与
-     * 跨平台的 `claude plugin install`**，按「性质」根本分不出来。改成按命令本身查表：
-     * 链里只要有一条在这张表里，整条链就按 macOS-only 处理。理由是链是 `&&` 串起来的，
-     * 第一条跑不通后面全都跑不到，「一半能跑」不存在。
+     * 判据是命令的第一个 token 是 `brew` 还是 `opam`——13 个 server 里有 7 个用的是
+     * 语言自带的包管理器（npm / go / gem / dotnet），那些命令在三个平台上形态完全
+     * 相同，把它们挡在 macOS 之外等于让非 macOS 用户白白少 7 门语言的一键启用。
+     *
+     * **为什么不补 Linux / Windows 版的 brew 系命令。** Linux 要分 apt / dnf /
+     * pacman / zypper 四套，Windows 要 winget 包 ID，而本仓库**没有任何办法验证
+     * 它们**（见 docs/superpowers/specs/2026-08-22-imux-cross-platform-design.md
+     * 的「验证边界」）。编一条跑不通的命令挂在「启用」按钮上，比不给按钮更糟：
+     * 剩下那 4 门在非 macOS 上保持退路——短目标名 + 完整命令 tooltip + 上游文档
+     * 链接，那是一份完整产出。
+     *
+     * 将来有人在真机核实过，补数据即可，调用点不用动。
      */
     val macOnlyCommands: Set<String> =
         (servers.values.mapNotNull(LspServer::installCommand) + tools.values.mapNotNull(LspTool::installCommand))
+            .filter { requiredTool(it) in NON_PORTABLE_TOOLS }
             .toSet()
 
     /**
@@ -185,3 +193,6 @@ internal object LspCatalog {
      */
     val allProbeTargets: Set<String> = allBinaries + tools.keys
 }
+
+/** 安装方式因发行版而异、无法跨平台照抄的包管理器。 */
+private val NON_PORTABLE_TOOLS = setOf("brew", "opam")

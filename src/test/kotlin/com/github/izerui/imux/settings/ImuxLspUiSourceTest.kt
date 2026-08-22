@@ -669,7 +669,7 @@ class ImuxLspUiSourceTest {
             "com.github.izerui.imux.ImuxBundle",
             "com.github.izerui.imux.lsp.StatusIconKind",
             // canRun 是这一页唯一「点错了就在用户机器上跑错东西」的守卫：本文件里补一句
-            // `private fun canRun(remedy: Remedy, isMac: Boolean, hasPosixShell: Boolean) = true`，
+            // `private fun canRun(remedy: Remedy, isMac: Boolean) = true`，
             // 被钉死的调用点一字不用改，Windows 用户的体检页上就长出 18 个「启用」按钮。
             "com.github.izerui.imux.lsp.canRun",
             "com.github.izerui.imux.lsp.readyServerText",
@@ -1189,7 +1189,7 @@ class ImuxLspUiSourceTest {
                 "而反方向去掉括号会红。若你只是动了排版，照下面的「期望」抄回去即可。）",
             """
             {
-                if (!canRun(remedy, SystemInfo.isMac, !SystemInfo.isWindows)) {
+                if (!canRun(remedy, SystemInfo.isMac)) {
                     return false
                 }
                 if (!hasProjectWindow()) {
@@ -1218,9 +1218,10 @@ class ImuxLspUiSourceTest {
      * 在 `rowAction` 或 `findingsPanel` 里补一句平台判断，上一条一字不改仍然全绿。
      * 这一条覆盖全文件，两条各管一层。
      *
-     * 放行 `isMac` 与 `isWindows` 两个成员，因为 `canRun` 的两个实参正是它们；
-     * 别的成员（`isLinux`、`isUnix`、`isWin10OrNewer`…）一律禁——出现即意味着壳里
-     * 长出了第二套平台逻辑，而闸门语义只该住在被真调用测试钉住的那个纯函数里。
+     * 放行 `isMac` 与 `isWindows` 两个成员——前者是 `canRun` 的实参，后者是
+     * `resolveShell` 的实参；别的成员（`isLinux`、`isUnix`、`isWin10OrNewer`…）一律禁
+     * ——出现即意味着壳里长出了第二套平台逻辑，而闸门语义只该住在被真调用测试钉住的
+     * 那个纯函数里。
      *
      * 第二条是本轮的**翻面重写**，不是把老约束删掉让地方。老约束说的是「壳里不得出现
      * `RemedyKind.`，否则能在两个键都还在源码里的前提下把「激活」和「安装」对调」——
@@ -1238,7 +1239,7 @@ class ImuxLspUiSourceTest {
     @Test
     fun `壳里不得有第二处平台判断，也不得自己拼命令链`() {
         assertFalse(
-            "平台判断只能是喂给 canRun 的那两个实参（SystemInfo.isMac / isWindows）；" +
+            "平台判断只能是 canRun 的实参（SystemInfo.isMac）与 resolveShell 的实参（SystemInfo.isWindows）；" +
                 "壳里长出第三个平台成员，闸门就不在被真调用测试钉住的纯函数里了",
             Regex("""SystemInfo\.(?!isMac\b|isWindows\b)\w+""").containsMatchIn(normalized),
         )

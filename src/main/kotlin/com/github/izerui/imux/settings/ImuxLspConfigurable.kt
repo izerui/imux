@@ -573,7 +573,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 整段比对漏不掉。代价是改动这几行要来测试里点头一次。
      */
     private fun Row.runRemedyButton(key: String, remedy: Remedy): Boolean {
-        if (!canRun(remedy, SystemInfo.isMac, !SystemInfo.isWindows)) {
+        if (!canRun(remedy, SystemInfo.isMac)) {
             return false
         }
         if (!hasProjectWindow()) {

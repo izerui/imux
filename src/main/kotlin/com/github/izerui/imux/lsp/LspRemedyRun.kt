@@ -52,51 +52,35 @@ internal const val ENABLING_STATUS_KEY = "settings.lsp.status.enabling"
 /**
  * 这条修复建议该不该配一个执行按钮。
  *
- * 三个条件缺一不可，每一条挡的都是一种「按钮在，点下去却不对」：
+ * 两个条件缺一不可：
  *
- * 1. **有 POSIX shell**。命令是经 [runCommandLine] 交给 `shell -l -i -c` 跑的，
- *    而 shell 取自 `resolveShell(System.getenv("SHELL"))`——Windows 上取不到 `SHELL`，
- *    退回 `/bin/zsh`，标签页当场报 `Cannot run program /bin/zsh`。
- *    详见下面「为什么这一条要单独存在」。
- * 2. **有命令可跑**。链为空的两种情况都在这里被挡下：没有已知安装命令的
+ * 1. **有命令可跑**。链为空的两种情况都在这里被挡下：没有已知安装命令的
  *    （`kotlin-language-server`、`sourcekit-lsp` 等目录表里 installCommand 为 null 的
  *    那几门），以及卡在一个我们装不上的前置工具上的（[Remedy.blockingTool] 非空时
  *    [Remedy.commands] 必为空）。给一个点了必然失败的按钮是空头承诺。
- * 3. **整条链在本平台上验证过**。判据是[LspCatalog.macOnlyCommands]——目录表里的安装
- *    命令与前置工具的安装命令都只在 macOS 上核实过（`brew install llvm`、
- *    `gem install ruby-lsp`、`opam install ocaml-lsp-server`、`brew install --cask
- *    dotnet-sdk` 全是 macOS 形状）。而 `claude plugin install` / `pi install` /
- *    `codex mcp add` 是 CLI 自己的子命令，不依赖任何外部工具链，不在那张表里，
- *    因此不受这一条限制（但仍受第 1 条限制）。
+ * 2. **整条链在本平台上验证过**。判据是 [LspCatalog.macOnlyCommands]——只有 brew 与
+ *    opam 系的命令是 macOS 专属；`npm` / `go` / `gem` / `dotnet` 那 7 条三平台形态
+ *    相同，而 `claude plugin install` / `pi install` / `codex mcp add` 是 CLI 自己的
+ *    子命令，不依赖任何外部工具链。
  *
  * **为什么是「链里含任何一条 macOS-only 就整条按 macOS-only 处理」。** 链是用 `&&`
  * 串起来交给终端的：第一条跑不通，后面一条都跑不到。「前半段能跑」这种中间态不存在，
  * 而一个跑到一半就红着停下的终端标签，比一开始就没有按钮更让人以为是插件坏了。
- * 从前这道闸门按 `RemedyKind` 划，链式命令之后那个划法直接失效——同一条链里可以
- * 既有 `brew install --cask dotnet-sdk` 又有跨平台的 `claude plugin install`。
  *
- * 第 3 条是这次改动**唯一**真正危险的地方。这些命令从前只是显示出来给人复制，
- * 平台不对用户自己一眼就看出来了；现在按钮点下去是直接执行。
+ * **原先的第三个维度 `hasPosixShell` 已删除。** 它挡的是「Windows 上 `resolveShell`
+ * 退回 `/bin/zsh`，按钮点下去报 `Cannot run program /bin/zsh`」——[resolveShell] 支持
+ * Windows 之后这个前提消失了，本函数的旧 KDoc 亲口写着「`resolveShell` 支持 Windows
+ * 之后，第 1 条该去掉」。
  *
- * **为什么 [hasPosixShell] 要单独占一条，而不是并进 [isMac]。** 别处（会话启动）在
- * Windows 上本来就没能用过，多一个坏入口用户什么也没失去；而这一页在 Windows 上
- * **本来是能用的**——每门语言一句状态，缺口那几行给出命令的短目标名、完整命令挂
- * tooltip，有上游文档时还多一个链接。这一条不是自然成立的，它由
- * `ImuxLspConfigurable.fallbackCell` 兜着：闸门挡下按钮时那一格必须仍有内容。
- * 旁边多一个更显眼的「启用」按钮、点下去报 `Cannot run program /bin/zsh`，
- * 用户会合理推断整页坏了：那是拿一个能用的东西换了一个不能用的。
- *
- * 三个维度分开而不是揉成一个布尔，是因为它们会**各自**变化：目录表补齐平台分版之后，
- * 第 3 条里的 `isMac ||` 该放开；`resolveShell` 支持 Windows 之后，第 1 条该去掉。
- * 揉在一起的话，将来放开其中一个必然会顺手把另一个也放了。
+ * [isMac] 作为**参数注入**而不是在这里读 `SystemInfo`：SystemInfo 是平台类，一旦在纯
+ * 函数里读，这个函数就只能在开发者自己的机器上被测到一半——而这里最要命的分支恰恰
+ * 是「不在 macOS 上会怎样」。
  */
 internal fun canRun(
     remedy: Remedy,
     isMac: Boolean,
-    hasPosixShell: Boolean,
 ): Boolean =
-    hasPosixShell &&
-        remedy.commands.isNotEmpty() &&
+    remedy.commands.isNotEmpty() &&
         (isMac || remedy.commands.none { it in LspCatalog.macOnlyCommands })
 
 /**

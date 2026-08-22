@@ -40,41 +40,14 @@ class LspRemedyRunTest {
      * 跟平台没关系。非 macOS 上把它们一起闸掉，等于让 Windows 与 Linux 用户白白多敲一遍。
      */
     @Test
-    fun `纯 CLI 子命令的链在所有有 POSIX shell 的平台都能跑`() {
+    fun `纯 CLI 子命令的链在所有平台都能跑`() {
         val remedy = Remedy(listOf(claudePluginCommand), null)
 
-        assertTrue(canRun(remedy, isMac = true, hasPosixShell = true))
+        assertTrue(canRun(remedy, isMac = true))
         assertTrue(
             "这是 CLI 的子命令，在 Linux 上闸掉它只是白白让用户多敲一遍",
-            canRun(remedy, isMac = false, hasPosixShell = true),
+            canRun(remedy, isMac = false),
         )
-    }
-
-    /**
-     * 没有 POSIX shell 时**任何链都不给**，包括纯 CLI 子命令那种。
-     *
-     * 命令跨平台，但起命令的那一层不跨：imux 是用 `shell -l -i -c` 把它交出去的，
-     * 而 shell 来自 `resolveShell(System.getenv("SHELL"))`，Windows 上退回 `/bin/zsh`。
-     *
-     * 这一条红了，用户看到的是：Windows 的体检页上多出一个「启用」按钮，
-     * 点下去弹 `Cannot run program /bin/zsh`。而这一页在 Windows 上**本来是完整可用的**
-     * ——每门语言一句状态，缺口那几行由 `ImuxLspConfigurable.fallbackCell` 给出命令链的
-     * 短目标名（完整链挂 tooltip）与上游文档链接，信息一样不少。那是拿一个能用的
-     * 东西换了一个不能用的，和别处「一直不能用」不是一回事。
-     */
-    @Test
-    fun `没有 POSIX shell 时任何链都不给按钮`() {
-        val cli = Remedy(listOf(claudePluginCommand), null)
-        val install = Remedy(listOf("brew install llvm"), "https://clangd.llvm.org/installation")
-
-        assertFalse(
-            "命令跨平台，但 shell -l -i -c 这一层不跨；Windows 上会退回 /bin/zsh",
-            canRun(cli, isMac = false, hasPosixShell = false),
-        )
-        assertFalse(canRun(install, isMac = false, hasPosixShell = false))
-        // isMac 与 hasPosixShell 是两个维度，不许一个盖过另一个
-        assertFalse(canRun(cli, isMac = true, hasPosixShell = false))
-        assertFalse(canRun(install, isMac = true, hasPosixShell = false))
     }
 
     /**
@@ -89,44 +62,28 @@ class LspRemedyRunTest {
     fun `目录表里的安装命令只在 macOS 上能跑`() {
         val remedy = Remedy(listOf("brew install llvm"), "https://clangd.llvm.org/installation")
 
-        assertTrue(canRun(remedy, isMac = true, hasPosixShell = true))
+        assertTrue(canRun(remedy, isMac = true))
         assertFalse(
             "目录表里的安装命令只在 macOS 上核实过，其它平台按下去就是执行 brew/gem/opam",
-            canRun(remedy, isMac = false, hasPosixShell = true),
+            canRun(remedy, isMac = false),
         )
     }
 
     /**
-     * 目录表里**每一条**安装命令，在非 macOS 上都必须被闸住——一条都不许漏。
+     * macOS 专属（brew / opam）的安装命令，在非 macOS 上一条都不许漏。
      *
-     * 上一条只喂了 `brew install llvm` 一个样例，于是「看起来讲得通的一次放宽」能整个
-     * 绕过它。实测这段代码 645 条全绿：
+     * 判据是 [LspCatalog.macOnlyCommands] 的全集而不是抽样——上一条只喂了一个样例，
+     * 「看起来讲得通的一次放宽」能整个绕过它。失败时直接列出漏了哪几条。
      *
-     * ```
-     * val portable = listOf("npm ", "dotnet ", "rustup ", "go ", "gem ", "opam ")
-     * if (portable.any { remedy.command?.startsWith(it) == true }) return true
-     * ```
-     *
-     * 它放走的包括 `gem install ruby-lsp` 与 `opam install ocaml-lsp-server`
-     * ——**正是 `canRun` 自己的 KDoc 点名说「只有 macOS 形状」的那两条**。
-     * 这不是恶意变异，是一个改代码的人合理地想「npm/go 明明跨平台」时会写出来的东西。
-     *
-     * 所以判据必须是**目录表的全集**而不是抽样，先例是下面的
-     * [目录表里的安装命令都能认出目标]。失败时直接列出漏了哪几条。
-     *
-     * 本轮把**前置工具的安装命令**一起摊进来：`brew install --cask dotnet-sdk` 之流是
-     * 这一轮才新长出来的、会被放进链里执行的命令，它们与目录表那批是同一种东西
-     * （只在 macOS 上核实过的 brew 形状），漏掉的话链的第一步就能在 Linux 上跑起来。
+     * 前置工具的安装命令（`brew install --cask dotnet-sdk` 之流）一起摊进来：
+     * 它们也是 brew 形状的命令，漏掉的话链的第一步就能在 Linux 上跑起来。
      */
     @Test
-    fun `没有一条 macOS 形状的命令能在非 macOS 上跑`() {
-        val commands =
-            LspCatalog.servers.values.mapNotNull(LspServer::installCommand) +
-                LspCatalog.tools.values.mapNotNull(LspTool::installCommand)
-        val leaked = commands.filter { canRun(Remedy(listOf(it), "https://x"), isMac = false, hasPosixShell = true) }
+    fun `没有一条 macOS 专属命令能在非 macOS 上跑`() {
+        val leaked = LspCatalog.macOnlyCommands.filter { canRun(Remedy(listOf(it), "https://x"), isMac = false) }
 
         assertEquals(
-            "这些命令在非 macOS 上漏出了执行按钮，点下去就是在没有对应工具链的机器上执行：$leaked",
+            "这些 macOS 专属命令在非 macOS 上漏出了执行按钮：$leaked",
             emptyList<String>(),
             leaked,
         )
@@ -154,11 +111,11 @@ class LspRemedyRunTest {
                 null,
             )
 
-        assertTrue(canRun(mixed, isMac = true, hasPosixShell = true))
+        assertTrue(canRun(mixed, isMac = true))
         assertFalse(
             "链是 && 串的，第一条跑不通后面一条都跑不到；只看最后一条就放行，" +
                 "Linux 用户点下去会得到一个红着停在第一步的终端标签",
-            canRun(mixed, isMac = false, hasPosixShell = true),
+            canRun(mixed, isMac = false),
         )
     }
 
@@ -174,13 +131,44 @@ class LspRemedyRunTest {
         listOf(true, false).forEach { isMac ->
             assertFalse(
                 "isMac=$isMac 时仍给出了按钮，可点击却无事可做",
-                canRun(Remedy(emptyList(), "https://x"), isMac, hasPosixShell = true),
+                canRun(Remedy(emptyList(), "https://x"), isMac),
             )
             assertFalse(
                 "isMac=$isMac 时卡在装不上的前置工具上却仍给出了按钮",
-                canRun(Remedy(emptyList(), "https://brew.sh", blockingTool = "brew"), isMac, hasPosixShell = true),
+                canRun(Remedy(emptyList(), "https://brew.sh", blockingTool = "brew"), isMac),
             )
         }
+    }
+
+    @Test
+    fun `非 macOS 上跨平台命令给按钮`() {
+        val remedy = Remedy(listOf("npm install -g pyright"), null)
+        assertTrue(canRun(remedy, isMac = false))
+    }
+
+    @Test
+    fun `非 macOS 上 brew 命令不给按钮`() {
+        val remedy = Remedy(listOf("brew install jdtls"), null)
+        assertFalse(canRun(remedy, isMac = false))
+    }
+
+    @Test
+    fun `链里含任何一条 brew 命令就整条不给按钮`() {
+        // 链用 && 串起来，第一条跑不通后面一条都跑不到；
+        // 跑到一半红着停下的终端比一开始就没有按钮更让人以为插件坏了
+        val remedy =
+            Remedy(
+                listOf("brew install --cask dotnet-sdk", "dotnet tool install --global csharp-ls"),
+                null,
+            )
+        assertFalse(canRun(remedy, isMac = false))
+        assertTrue(canRun(remedy, isMac = true))
+    }
+
+    @Test
+    fun `空链一律不给按钮`() {
+        assertFalse(canRun(Remedy(emptyList(), "https://example.com"), isMac = true))
+        assertFalse(canRun(Remedy(emptyList(), null), isMac = false))
     }
 
     // —— enableCommands：点一下到底跑什么 ——
