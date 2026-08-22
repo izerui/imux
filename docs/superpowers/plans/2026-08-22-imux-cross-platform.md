@@ -2087,14 +2087,27 @@ internal fun codexHookOverrideArg(
     dialect: ShellDialect,
     scriptPath: String,
 ): String {
-    val command = "powershell -NoLogo -NoProfile -File ${tomlBasicString(scriptPath)}"
+    // 内层这对引号是**给 shell 看的**，不是 TOML 引号——codex 把 command 的值整条
+    // 交给 shell 执行，路径里有空格时全靠它。因此这里用**原始路径**，不预先转义。
+    val command = "powershell -NoLogo -NoProfile -File \"$scriptPath\""
+    // TOML 转义只施加一次，作用于整条 command。反斜杠在这一步翻倍、内层引号在这一步
+    // 变成 \"——这正是期望值的形状。
     val toml = "hooks.SessionStart=[{hooks=[{type=\"command\",command=${tomlBasicString(command)}}]}]"
     return quote(dialect, toml)
 }
 ```
 
-**注意**：`tomlBasicString(command)` 会把内层已经转义过的引号再转义一次，
-这正是期望值里出现 `\\\"` 的原因——测试里的期望值是唯一的真相，实现要与它对齐。
+**这里极易写错，务必对着测试期望值核**：把内层写成 `tomlBasicString(scriptPath)`
+会让路径**被转义两次**（`C:\p` 变成 `C:\\\\p` 而不是 `C:\\p`），TOML 解析出来的
+路径带着多余的反斜杠。转义只能施加一次，且必须在最外层——内层那对引号属于 shell。
+
+**而且写错了不会报错。** 实测把两种写法都喂给 `codex debug models -c`，
+**codex 全部接受**——双重转义在 TOML 语法上完全合法，只是解析出来的路径不存在。
+症状是 hook 静默地永不触发，与「Windows 上 codex 漂移探测没做」长得一模一样。
+`CodexHookOverrideTest` 里那条期望值是这一层唯一的守卫。
+
+`tomlBasicString` 内部两个 `replace` 的**顺序也不能换**：先转义反斜杠再转义引号，
+否则第二步给引号添的那个反斜杠会被第一步漏掉（换了顺序则会被重复转义）。
 
 - [ ] **Step 4: 写上报脚本**
 
