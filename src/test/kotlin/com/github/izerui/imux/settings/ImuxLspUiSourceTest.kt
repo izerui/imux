@@ -197,6 +197,73 @@ class ImuxLspUiSourceTest {
     }
 
     /**
+     * 一个按钮都放不出来时，页面必须**自己说清楚为什么**。
+     *
+     * 用户原话：「没看到激活按钮啊，没有任何操作按钮是咋回事」。这一页是
+     * `applicationConfigurable`，从欢迎页打开设置是完全正常的路径，而那时
+     * [hasProjectWindow] 一关，`runRemedyButton` 全线返回 false，整页退化成
+     * 「一列数据 + 一列短名」——连第四列那个 `kotlin-lsp` 都读不成「可操作信息」。
+     * 技术原因是实的（终端工具窗口是项目级的），但那是实现细节，不说出来用户只会
+     * 认为插件坏了。
+     *
+     * 两条各挡一头：
+     *
+     * 1. 说明必须存在，且必须用 `comment`——它是本页最长的几句之一（德语 190 字符），
+     *    不折行的 `label` 会直接把设置对话框撑宽，本页已为此返工过两轮。
+     * 2. 判据必须**复用同一个** [hasProjectWindow]。另写一句「有没有项目」（哪怕逻辑
+     *    看着一样）就是第二处闸门：两处一旦漂移，用户会看到「说明说没按钮、按钮却在」
+     *    或者反过来的组合，比不说更糟。
+     */
+    @Test
+    fun `没有项目窗口时必须解释为什么一个按钮都没有`() {
+        val panel = compactArgs(bodyAfter("override fun createPanel(): DialogPanel", '{'))
+
+        assertTrue(
+            "从欢迎页打开设置时一个执行按钮都不会有，页面必须说明原因，否则用户只会认为插件坏了：$panel",
+            panel.contains(
+                "if(!hasProjectWindow()){row{icon(AllIcons.General.Information)" +
+                    "comment(ImuxBundle.message(\"settings.lsp.no.project\"))}}",
+            ),
+        )
+        // 「没有项目窗口」在源码里只该有这两处否定用法：这句说明，以及 runRemedyButton
+        // 那道闸门。另写一句「有没有项目」（哪怕逻辑看着一样）就是第三处判据。
+        assertEquals(
+            "「有没有项目窗口」只能有一处判据。这句说明与 runRemedyButton 那道闸门必须是" +
+                "同一个 hasProjectWindow()，否则两处漂移之后，用户会看到「说明说没按钮、" +
+                "按钮却在」这种自相矛盾的组合",
+            2,
+            Regex("""!hasProjectWindow\(\)""").findAll(compactArgs(normalized)).count(),
+        )
+    }
+
+    /**
+     * 重新探测期间**不许把整页换成一句「正在检测…」**。
+     *
+     * 这一页的探测有两个入口，只有一个该看到那句话：
+     *
+     * - **首次打开**：手里什么都没有，「正在检测…」是唯一能说的话。
+     * - **重新探测**：手动点「重新检测」，或者一条安装命令跑完之后自动来这一趟。
+     *   这时整页闪成空白再重画，等于用一秒多的空白盖掉一张用户正在读的表；
+     *   命令刚跑完那次尤其刺眼——用户盯着的就是那一行。
+     *
+     * 断言钉的是**分派那一行**，因为这是一处「删掉之后代码看起来完全正常」的改动：
+     * 写回一句无条件的 `showChecking()`，编译通过、所有别的断言全绿，闪烁原样回来。
+     *
+     * 「失败态必须与进行中长得不一样」那条既有约定没有被动到：[showChecking] 与
+     * [showFailed] 仍是两句不同的文案、仍由 `if (report == null)` 分派（见
+     * [体检失败要留日志并显示错误态]），变的只是「进行中」什么时候需要露面。
+     */
+    @Test
+    fun `重新探测时保留上一份结果而不是闪回正在检测`() {
+        val body = compactArgs(bodyAfter("private fun refresh()", '{'))
+
+        assertTrue(
+            "手里已经有一份结果时必须原样摆着，只有首次打开才显示「正在检测…」：$body",
+            body.contains("valprevious=lastReportif(previous==null)showChecking()elseshowReport(previous)"),
+        )
+    }
+
+    /**
      * 复制按钮已随本轮改版删除（用户原话「也不需要复制了吧」），键也从十个语言文件里
      * 一起删了。守它的那条断言随之作废——但**否定断言必须留下**：再引用一个不存在的键，
      * 界面上会显示成 `!settings.lsp.copy!`，而 `ImuxBundleTest` 只比对十个文件之间的
@@ -542,7 +609,7 @@ class ImuxLspUiSourceTest {
             "showChecking", "showFailed", "showReport", "replaceContent",
             "Panel.renderCli", "summaryText", "findingsPanel",
             "Row.rowAction", "Row.groupAction", "Row.fallbackCell",
-            "Row.runRemedyButton", "hasProjectWindow", "runInTerminal", "refreshWhenFinished",
+            "Row.runRemedyButton", "hasProjectWindow", "runInTerminal", "refreshRow", "refreshWhenFinished",
             "targetProject", "groupMessage", "statusText", "rowIcon", "statusIcon",
             "getPreferredScrollableViewportSize", "getScrollableUnitIncrement",
             "getScrollableBlockIncrement", "getScrollableTracksViewportWidth",
@@ -959,6 +1026,14 @@ class ImuxLspUiSourceTest {
      * - `closeOnProcessTermination(false)`：命令跑完标签页就关，输出闪一下没了。
      *   它的默认值不是常量而是用户设置 `TerminalOptionsProvider.closeSessionOnLogout`，
      *   所以这一句消除的是对一项用户设置的依赖，不只是覆盖一个默认值。
+     * - `deferSessionStartUntilUiShown(false)`：**命令根本不跑**。这一项与上一条同类
+     *   ——它对抗的是一个平台默认值，删掉之后代码看起来完全正常、编译通过、所有行为
+     *   断言全绿，功能却静默失效。262 的 `TerminalToolWindowTabBuilderImpl` 构造里
+     *   这个字段默认是 `true`（字节码：`iconst_1 / putfield deferSessionStartUntilUiShown`），
+     *   语义是「等这个终端的 UI 真正显示出来再启动会话」。本页开标签时**设置对话框正
+     *   挡在前面**，终端工具窗口没被显示，会话就一直挂着。真机实测：点「安装」开出来的
+     *   标签通体空白只有一个光标，连登录 shell 的 profile 打印都没有；标签虽然被选中，
+     *   「首次显示」的时机已经错过。
      * - `shellCommand(runCommandLine(resolveShell(…)))`：这一层给的是 `-l -i -c`。
      *   从 Dock 启动的 IDE 只有系统默认 PATH，`brew`/`go`/`npm`/`rustup`/`gem` 一个都
      *   不在里面——壳里自己拼一个 `listOf(shell, "-c", command)`，`LspRemedyRunTest`
@@ -985,6 +1060,7 @@ class ImuxLspUiSourceTest {
                         .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
                         .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
                         .requestFocus(true)
+                        .deferSessionStartUntilUiShown(false)
                         .closeOnProcessTermination(false)
                         .createTab()
                     """,
@@ -1006,8 +1082,16 @@ class ImuxLspUiSourceTest {
      * 几分钟不等；这中间页面若纹丝不动，用户唯一能得出的结论就是「点了没用」，然后
      * 再点一次。而开标签会抢焦点，等用户切回设置页时，这一行必须已经不是点之前那样了。
      *
-     * 两句缺一不可：只标记不重画，界面上什么都不会变；只重画不标记，重画出来的还是旧样子。
-     * 顺序也钉住——标记必须在重画**之前**。
+     * 两句缺一不可：只标记不刷新，界面上什么都不会变；只刷新不标记，刷出来的还是旧样子。
+     * 顺序也钉住——标记必须在刷新**之前**。
+     *
+     * **刷新的对象必须是这一行，不是整页。** 这一条是本轮新长出来的约束，起因是用户
+     * 那句「点击激活就会刷新设置页，体验不好」：从前这里写的是
+     * `lastReport?.let(::showReport)`，为了让一行改个字，把三个分组 54 行整棵组件树
+     * 重建一遍——整页闪一下、滚动位置回到顶部，而他刚点的那一行多半已经滚出可视区。
+     * 断言因此从「必须调用 showReport」翻面成「必须调用 refreshRow(key, event)」：
+     * 守的还是同一件用户可见的事（点下去这一行当场变样），只是把「整页重画」这条
+     * 实现路径换掉了，而且顺带禁掉了它——写回 showReport 会让整段比对红。
      *
      * 加上**整段比对**，因为逐条 `contains` 挡不住加法，两条都实测过：
      *
@@ -1029,13 +1113,19 @@ class ImuxLspUiSourceTest {
             body.contains("running[key]=runningStatusKey(remedy.kind)"),
         )
         assertTrue(
-            "标记完必须立刻重画，否则界面上什么都不会变——正是用户抱怨的那一点：$body",
-            body.contains("running[key]=runningStatusKey(remedy.kind)lastReport?.let(::showReport)"),
+            "标记完必须立刻把这一行刷成新样子，否则界面上什么都不会变——正是用户抱怨的第一件事：$body",
+            body.contains("running[key]=runningStatusKey(remedy.kind)refreshRow(key,event)"),
         )
         assertTrue(
-            "开标签失败必须撤回标记，否则那一行永久停在「正在激活…」、按钮永久禁用，" +
-                "而「重新检测」清不掉它：$body",
-            body.contains("running.remove(key)lastReport?.let(::showReport)"),
+            "开标签失败必须撤回标记并把这一行刷回去，否则那一行永久停在「正在激活…」、" +
+                "按钮永久禁用，而「重新检测」清不掉它：$body",
+            body.contains("running.remove(key)refreshRow(key,event)"),
+        )
+        assertFalse(
+            "点一下按钮不得重画整页：showReport 会把三个分组 54 行整棵组件树重建一遍，" +
+                "页面闪一下、滚动位置回到顶部，而用户刚点的那一行多半已经滚出可视区" +
+                "——用户原话「点击激活就会刷新设置页，体验不好」：$body",
+            body.contains("showReport"),
         )
 
         assertSameCode(
@@ -1050,7 +1140,7 @@ class ImuxLspUiSourceTest {
                     return
                 }
                 running[key] = runningStatusKey(remedy.kind)
-                lastReport?.let(::showReport)
+                refreshRow(key, event)
                 val tab = runCatching {
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
@@ -1058,17 +1148,112 @@ class ImuxLspUiSourceTest {
                         .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
                         .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
                         .requestFocus(true)
+                        .deferSessionStartUntilUiShown(false)
                         .closeOnProcessTermination(false)
                         .createTab()
                 }.onFailure {
                     LOG.warn("开终端标签失败，撤回这一行的进行中标记：${'$'}command", it)
                     running.remove(key)
-                    lastReport?.let(::showReport)
+                    refreshRow(key, event)
                 }.getOrNull() ?: return
                 refreshWhenFinished(key, tab.view)
             }
             """,
             runInTerminalBody(),
+        )
+    }
+
+    /**
+     * 就地更新那一行的三个组件——**这是「点一下不重画整页」的落点**。
+     *
+     * 上一条只管住了「runInTerminal 必须叫 refreshRow」。这一条管的是 refreshRow 本身
+     * 真的把用户看得见的三样东西都改了，且都从**同一个数据源**推出来。每一行失败时
+     * 用户看到的是什么：
+     *
+     * 1. 按钮不禁用 → 用户以为没反应，再点一次，同一条 `brew install` 开出两个标签
+     *    抢同一把锁。它取自 `event.source`，所以语言行与组级行走同一条路（组级行在
+     *    [rowCells] 里查不到，正好在下一句退出，按钮已经处理完了）——**这一句必须排在
+     *    查表之前**，顺序由整段比对保证；排到后面的话组级按钮永远不会被禁用。
+     * 2. 状态文案不变 → 「点了没用」，这正是用户抱怨的原话。
+     * 3. 图标不变 → 一列绿勾黄叹号里夹着一句「正在激活…」，看起来像显示出错。
+     *
+     * 值必须回头问 [rowIcon] / [statusText]，不许在这里现算。那两个函数第一件事就是查
+     * `running`，于是「切进行中」与「撤回」共用同一段代码；这里若改成
+     * `cells.icon.icon = AllIcons.Process.Step_4`，撤回那条路就再也改不回去——
+     * 开标签失败之后那一行会顶着转圈图标却写着「未启用插件」，而上面几条 contains 全绿。
+     *
+     * 整段比对而不是逐条 token：这里每一种缺陷同样是加法（多一句 `return`、
+     * 把两句赋值之一删掉、在中间插一个按状态的分支）。
+     */
+    @Test
+    fun `就地更新那一行而不是重画整页`() {
+        val body = compactArgs(refreshRowBody())
+
+        assertFalse(
+            "就地更新里出现 showReport 就等于绕回整页重画，本轮改动直接作废：$body",
+            body.contains("showReport"),
+        )
+        assertTrue(
+            "被点的按钮必须当场禁用，否则用户以为没反应会再点一次，" +
+                "同一条 brew install 开出两个标签抢同一把锁：$body",
+            body.contains("(event.sourceas?JComponent)?.isEnabled=!running.containsKey(key)"),
+        )
+
+        assertSameCode(
+            "这四行就是「点一下按钮，那一行当场变样」的全部实现。图标与文案必须回头问 " +
+                "rowIcon / statusText（它们会先查 running），在这里现算一个「进行中的样子」" +
+                "会让撤回那条路再也改不回去。若你只是动了排版，照下面的「期望」抄回去即可。",
+            """
+            {
+                (event.source as? JComponent)?.isEnabled = !running.containsKey(key)
+                val cells = rowCells[key] ?: return
+                cells.icon.icon = rowIcon(cells.finding, cells.agentType)
+                cells.status.text = statusText(cells.finding, cells.agentType)
+            }
+            """,
+            refreshRowBody(),
+        )
+    }
+
+    private fun refreshRowBody(): String =
+        bodyAfter("private fun refreshRow(key: String, event: ActionEvent)", '{')
+
+    /**
+     * 就地更新拿得到组件，前提是渲染时把它们**留下来了**。
+     *
+     * 这一条挡的是最安静的一种失效：`findingsPanel` 里不再往 [rowCells] 里写，
+     * `refreshRow` 一字不改仍然编译通过、仍然照常执行，只是 `rowCells[key]` 恒为 null，
+     * 于是每一次点击都在第二行悄悄 return——按钮禁用了，图标和文案纹丝不动。
+     * 用户看到的与改动之前**一模一样**（「点了没用」），而上面那两条整段比对全绿。
+     *
+     * 行标识必须由 [runRowKey] 现算，与 `rowAction` 那一侧用的是同一把尺子：
+     * 这里写死一个常量或换一把尺子，写进去的与查出来的对不上，后果同上。
+     */
+    @Test
+    fun `语言行渲染时必须把可更新的组件留下来`() {
+        val loop = compactArgs(bodyAfter("findings.forEach", '{'))
+
+        assertTrue(
+            "第一列的组件必须留下来，否则点下按钮之后图标改不动：$loop",
+            loop.contains("valiconLabel=icon(rowIcon(finding,agentType)).component"),
+        )
+        assertTrue(
+            "第三列的组件必须留下来，否则点下按钮之后状态文案改不动——「点了没用」：$loop",
+            loop.contains("valstatusLabel=label(statusText(finding,agentType)).component"),
+        )
+        assertTrue(
+            "两个组件必须以 runRowKey 现算的行标识入表，与 rowAction 那一侧同一把尺子；" +
+                "不写进去的话每次点击都在 rowCells[key] 处悄悄 return，界面纹丝不动：$loop",
+            loop.contains(
+                "rowCells[runRowKey(agentType,finding.language)]=" +
+                    "RowCells(finding,agentType,iconLabel,statusLabel)",
+            ),
+        )
+        assertTrue(
+            "整页重建之前必须清空映射，否则表里留的是一批已经从组件树上摘掉的旧 JLabel，" +
+                "改它们不报错也没有任何效果——最难查的那种静默失效",
+            compactArgs(bodyAfter("private fun showReport(report: LspReport)", '{'))
+                .startsWith("{lastReport=reportrowCells.clear()"),
         )
     }
 
@@ -1218,6 +1403,9 @@ class ImuxLspUiSourceTest {
 
         assertTrue("必须取消页面自己的作用域：$body", body.contains("scope?.cancel()scope=null"))
         assertTrue("「进行中」的标记必须一并清空：$body", body.contains("running.clear()"))
+        // 组件映射握着整棵已经 dispose 的组件树。同一个实例被再次 createComponent 时，
+        // 那些引用一条都不该活到下一次会话——它们指向的是上一个对话框里的 JLabel。
+        assertTrue("行组件映射必须一并清空：$body", body.contains("rowCells.clear()"))
         assertTrue("必须调用父类的清理：$body", body.contains("super.disposeUIResources()"))
     }
 

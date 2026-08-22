@@ -61,6 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JViewport
 import javax.swing.Scrollable
@@ -106,8 +107,12 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 最近一份体检结果。
      *
-     * 点击按钮那一刻要立刻把那一行改成「正在激活…」，而重新渲染需要原始数据。
-     * 留一份比在点击时现场探测便宜得多——探测是登录 shell，而这一步要的只是重画。
+     * 它现在只服务一件事：**重新探测期间页面上摆什么**。手里有上一份结果时就摆它，
+     * 而不是把整页换成一句「正在检测…」——见 [refresh]。旧数据是上一秒还成立的信息，
+     * 比一片空白诚实得多，而探测回来照样整页重画。
+     *
+     * 从前它还兼着「点一下按钮就整页重画」的差事，那条路已经换成 [refreshRow] 的就地
+     * 更新了：为了让一行改个字而重建 54 行组件树，正是用户抱怨的那次闪烁。
      */
     private var lastReport: LspReport? = null
 
@@ -121,6 +126,27 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 用 [ConcurrentHashMap]：写入发生在 EDT（点击）与协程线程（跑完清除）两侧。
      */
     private val running = ConcurrentHashMap<String, String>()
+
+    /**
+     * 每一行**就地可改**的那两个组件：[runRowKey] 给的行标识 &#8594; 状态图标与状态文案。
+     *
+     * 存在的理由就是用户那句「点击激活就会刷新设置页，体验不好」。从前点一下按钮走的是
+     * `lastReport?.let(::showReport)`——把三个分组、54 行语言、整棵组件树全部重建一遍，
+     * 只为了让**一行**改个字。代价是整页闪一下、滚动位置回到顶部，而用户刚刚点的那一行
+     * 很可能已经滚出可视区，闪完他还得自己滚回去确认。
+     *
+     * 现在渲染时把组件本身留下来，状态一变就直接改这两个组件（外加被点的那个按钮，
+     * 它从 `ActionEvent.source` 现取，不必存）。滚动位置、焦点、展开状态全都不动。
+     *
+     * 存 [LanguageFinding] 与 [AgentType] 而不是存「该显示成什么样」：更新时原样回头调
+     * [rowIcon] / [statusText]，而那两个函数本来就会先查 [running]。于是「标记进行中」与
+     * 「撤回标记」两个方向共用同一段代码，不存在第二处「进行中长什么样」的判断——
+     * 那正是这一页反复栽过的那类第二处分支。
+     *
+     * 每次 [showReport] 重建组件树时整个清空：留着的话，映射会指向一批已经从界面上摘掉的
+     * 旧组件，改它们是彻底的静默无效果。
+     */
+    private val rowCells = ConcurrentHashMap<String, RowCells>()
 
     /**
      * 页面自己的协程作用域，**刻意不复用终端 view 的那一个**。
@@ -139,6 +165,20 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         return panel {
             row {
                 comment(ImuxBundle.message("settings.lsp.scope.note"))
+            }
+            // 从欢迎页打开设置时一个执行按钮都不会有（见 hasProjectWindow），而页面从前
+            // 对此只字不提。用户原话：「没看到激活按钮啊，没有任何操作按钮是咋回事」——
+            // 他看到的是一列数据加一片空白，连第四列那个 `kotlin-lsp` 短名都读不成
+            // 「可操作信息」。技术原因是实的（终端工具窗口是项目级的），但那是我们的实现
+            // 细节，不说出来就等于让用户以为插件坏了。
+            //
+            // 判据刻意**复用同一个** hasProjectWindow()，不另写一句「有没有项目」：
+            // 两处若各判各的，就会出现「说明说没按钮、按钮却在」或者反过来的组合。
+            if (!hasProjectWindow()) {
+                row {
+                    icon(AllIcons.General.Information)
+                    comment(ImuxBundle.message("settings.lsp.no.project"))
+                }
             }
             row {
                 refreshButton = button(ImuxBundle.message("settings.lsp.refresh")) { refresh() }.component
@@ -164,6 +204,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         scope?.cancel()
         scope = null
         running.clear()
+        rowCells.clear()
         lastReport = null
         super.disposeUIResources()
     }
@@ -179,11 +220,22 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 此刻的默认模态是 NON_MODAL，而对话框一弹出就会把 NON_MODAL 的事件压到关闭之后
      * 才派发——页面会一直停在「正在检测…」，直到用户关掉设置窗口才刷新，等于没刷新。
      * 这里只改自己那块 Swing 面板，不碰 PSI/VFS/项目模型，正是 `any()` 的适用场景。
+     *
+     * **手里已经有一份结果时不许闪回「正在检测…」。** 这一页的探测路径有两个入口：
+     * 首次打开（手里什么都没有，那句「正在检测…」是唯一能说的话），以及**重新探测**
+     *——手动点「重新检测」，或者一条安装命令跑完之后自动来这一趟。后一种情况下把整页
+     * 换成一句「正在检测…」，等于用一秒多的空白盖掉一张用户正在读的表；命令刚跑完那次
+     * 尤其刺眼，用户盯着的就是那一行。旧数据是**上一秒还成立**的信息，比空白诚实得多，
+     * 探测回来照样整页重画，什么都没少。
+     *
+     * 「进行中」与「失败」仍然是两副面孔（[showChecking] 与 [showFailed] 各说各的），
+     * 这条约定没动——变的只是「进行中」什么时候需要露面。
      */
     private fun refresh() {
         val token = generation.incrementAndGet()
         refreshButton?.isEnabled = false
-        showChecking()
+        val previous = lastReport
+        if (previous == null) showChecking() else showReport(previous)
         ApplicationManager.getApplication().executeOnPooledThread {
             // 失败必须留痕：这一页唯一的诊断入口就是 idea.log，
             // 与 ShellBinaryProbe.locate() 的处理方式保持一致。
@@ -212,8 +264,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /** 失败必须与「进行中」长得不一样，否则用户只会以为很慢，反复点重新检测。 */
     private fun showFailed() = replaceContent(JBLabel(ImuxBundle.message("settings.lsp.failed")))
 
+    /**
+     * 整页重画——**只在数据真的变了时才走这里**。
+     *
+     * [rowCells] 必须在重建之前清空：留下的是一批已经从组件树上摘掉的旧 JLabel，
+     * [refreshRow] 改它们不报错、也不会在界面上留下任何痕迹，是最难查的那种静默失效。
+     */
     private fun showReport(report: LspReport) {
         lastReport = report
+        rowCells.clear()
         replaceContent(
             panel {
                 report.cliReports.forEach { cliReport ->
@@ -314,16 +373,22 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * （「激活」/「安装」）或一个短链接（「文档 ↗」）。之所以敢这么做，正是因为
      * `npm install -g typescript-language-server typescript` 这种长度的东西已经搬进
      * tooltip；把它放回单元格里，第一列（图标）会被撑成那条命令的宽度，整张表当场散架。
+     *
+     * 前两列的组件顺手记进 [rowCells]。`Cell.component` 拿到的就是 UI DSL 摆上去的那个
+     * JLabel 本体，之后点按钮时直接改它——整页重建那条老路的代价是滚动位置丢失、整页闪烁，
+     * 而这两件事恰恰发生在用户最需要看清一行的时刻。
      */
     private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =
         CappedHeightView(
             panel {
                 findings.forEach { finding ->
                     row {
-                        icon(rowIcon(finding, agentType))
+                        val iconLabel = icon(rowIcon(finding, agentType)).component
                         label(finding.language.displayName)
-                        label(statusText(finding, agentType))
+                        val statusLabel = label(statusText(finding, agentType)).component
                         rowAction(finding, agentType)
+                        rowCells[runRowKey(agentType, finding.language)] =
+                            RowCells(finding, agentType, iconLabel, statusLabel)
                     }.layout(RowLayout.PARENT_GRID)
                 }
             },
@@ -486,8 +551,24 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `~/.claude/settings.json`，但改它的是 claude 这个 CLI，imux 只是替用户敲了那行字
      * ——敲在一个用户看得见、随时能打断的终端里。README 那句承诺因此继续成立。
      *
-     * 开标签**之前**先把这一行标成「进行中」并立刻重画：新标签会抢焦点，页面这一刻
-     * 已经不在用户眼前了；等回来时它必须已经变了样，而不是和点之前一模一样。
+     * `deferSessionStartUntilUiShown` 同样必须**显式**写 false，而且它比上一条更狠：
+     * 上一条只是让输出留不住，这一条是**命令根本不跑**。262 的
+     * `TerminalToolWindowTabBuilderImpl` 构造里这个字段的默认值是 `true`
+     *（字节码上核过：`iconst_1 / putfield deferSessionStartUntilUiShown`），语义是
+     * 「等这个终端的 UI 真正显示出来再启动会话」。而本页开标签时，**设置对话框正挡在
+     * 前面**——终端工具窗口没被显示，会话就一直挂着。真机实测：先点「激活」那个标签有
+     * 输出，紧接着点「安装」开出来的标签**通体空白，只有一个光标**，连登录 shell 的
+     * profile 打印（`[proxy] enabled via 127.0.0.1:7890`）都没有；标签虽然被选中，
+     * 「首次显示」的时机却已经错过。写死 false 让会话在建标签时就起来，用户关掉设置
+     * 对话框回到终端，看到的是已经跑完的完整输出。
+     *
+     * 开标签**之前**先把这一行标成「进行中」：新标签会抢焦点，页面这一刻已经不在用户
+     * 眼前了；等回来时它必须已经变了样，而不是和点之前一模一样。
+     *
+     * 改的是**这一行**，不是整页。从前这里写的是 `lastReport?.let(::showReport)`
+     *——为了让一行改个字，把三个分组 54 行整棵组件树重建一遍。用户原话
+     * 「点击激活就会刷新设置页，体验不好」：整页闪一下、滚动位置回到顶部，
+     * 而他刚点的那一行多半已经滚出可视区。
      *
      * 开标签**必须**包在 `runCatching` 里，且失败时把标记撤回来。标记写在建标签之前
      * （那是对的，否则抢焦点之后才改就晚了），于是一旦 `createTab()` 抛异常，那一行会
@@ -508,7 +589,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             return
         }
         running[key] = runningStatusKey(remedy.kind)
-        lastReport?.let(::showReport)
+        refreshRow(key, event)
         val tab = runCatching {
             TerminalToolWindowTabsManager.getInstance(project)
                 .createTabBuilder()
@@ -516,14 +597,39 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
                 .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
                 .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
                 .requestFocus(true)
+                .deferSessionStartUntilUiShown(false)
                 .closeOnProcessTermination(false)
                 .createTab()
         }.onFailure {
             LOG.warn("开终端标签失败，撤回这一行的进行中标记：$command", it)
             running.remove(key)
-            lastReport?.let(::showReport)
+            refreshRow(key, event)
         }.getOrNull() ?: return
         refreshWhenFinished(key, tab.view)
+    }
+
+    /**
+     * 把**一行**改成它此刻该有的样子——整页一个组件都不重建。
+     *
+     * 三件东西各有各的取法，刻意不走同一个映射表：
+     *
+     * - **被点的那个按钮**从 `ActionEvent.source` 现取。它就是用户刚按下去的那一个，
+     *   不必存、也不会认错行；而语言行与组级行共用这一条路（组级行没有图标与状态列，
+     *   [rowCells] 查不到，正好在下一行退出，按钮已经处理完了）。
+     * - **状态图标与状态文案**从 [rowCells] 取组件，值原样回头问 [rowIcon] / [statusText]。
+     *   那两个函数第一件事就是查 [running]，于是「标记进行中」与「撤回标记」两个方向
+     *   共用同一段代码——这里绝不能再写一次「进行中该显示成什么」，那就是第二处判断，
+     *   而这一页在第二处判断上栽过不止一次。
+     *
+     * 两个调用点（点击、开标签失败回滚）都在 EDT 上：按钮的 ActionListener 与它同步的
+     * `runCatching` 失败分支。所以这里不必再 `invokeLater`，也不该——多绕一圈就意味着
+     * 「点下去那一刻立刻变样」变成了「下一轮事件循环才变样」。
+     */
+    private fun refreshRow(key: String, event: ActionEvent) {
+        (event.source as? JComponent)?.isEnabled = !running.containsKey(key)
+        val cells = rowCells[key] ?: return
+        cells.icon.icon = rowIcon(cells.finding, cells.agentType)
+        cells.status.text = statusText(cells.finding, cells.agentType)
     }
 
     /**
@@ -683,6 +789,21 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         StatusIconKind.NEUTRAL -> AllIcons.General.Note
         StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
     }
+
+    /**
+     * 一行里**可以就地改**的那点东西：两个组件，加上重新算出「该显示成什么」所需的输入。
+     *
+     * 存 [finding] 与 [agentType] 而不是存两个现成的值（比如「原来的图标」「进行中的图标」），
+     * 是为了让更新只有一条路：回头调 [rowIcon] / [statusText]，它们会先查 [running]。
+     * 存现成值的话，「切到进行中」与「撤回」必然变成两套赋值，而那两套之间的任何不一致
+     * 都只有真机点一次才看得见。
+     */
+    private class RowCells(
+        val finding: LanguageFinding,
+        val agentType: AgentType,
+        val icon: JLabel,
+        val status: JLabel,
+    )
 
     /**
      * 滚动区的视图：把可视高度封顶，超出部分交给滚动条。
