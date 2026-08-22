@@ -322,3 +322,51 @@ row { scrollCell(findingsPanel(...)).align(AlignX.FILL) }.visible(false)
 6. `first {}` 作用在 `StateFlow` 上会重放当前值，「Terminated 早于开始收集」不会漏
 
 本项目 `TerminalHost.closeTabWhenTerminated` 早已依赖同一性质并在生产工作。
+
+---
+
+# 执行按钮真机修复后的遗留（`3331149`..`92eff44`）
+
+三条，都不阻塞使用，也没有一条能让用户看到不同的东西。
+
+## 1. 一条已被完全覆盖的冗余断言（挑一条带走的话就是它）
+
+`ImuxLspUiSourceTest` 的 `体检失败要留日志并显示错误态` 里那条分派断言，已被 `refresh()` 的整段比对**逐字节盖住同一行**——去括号实测两条同时红就是证据。留着只是一份更敏感的副本。
+
+副作用：`showReport(report = report)`（IDEA「Add names to call arguments」一次按键）会让它误红，而失败信息把维护者指向大括号（「若你只是把括号去掉了」），实际动的是具名实参。旁边那条整段比对对具名实参是**免疫**的（`compactArgs` 会抹掉）——同一次操作一条红一条不红。
+
+机制是既有的（本轮之前的断言串对同样的具名实参也是 False），但本轮正好重写了这一行和它的信息。**删掉它，一次同时消掉误红与「连红两条」的冗余。**
+
+## 2. `diagnostics()` 函数体无人钉 —— 栅栏往下一层
+
+它正是从池线程里被调用的，也就是上一轮栅栏被翻越的**同一个位置往下一层**：
+
+```kotlin
+private fun diagnostics(): LspDiagnostics {
+    ApplicationManager.getApplication().invokeLater({ showChecking() }, ModalityState.any())
+    return LspDiagnostics(…)
+}
+```
+整页闪白在重探路径上原样复活，`refresh()` 逐字节未变，**668 全绿**。
+
+这次 KDoc 没有说谎——它的措辞严格限定在「`refresh()` 里」，审查者验证过这句是真的。但读者读完那一大段「假承诺比没有承诺更坏」的自省，很容易推出比字面更宽的结论，而缺陷只是往调用栈里挪了一层。
+
+`diagnostics()` 是四行常量表达式，钉住接近零成本，且它已在 `本文件只允许声明这些函数` 的白名单里。
+
+## 3. `探测失败后不得再自称手里有结果` 对语句顺序敏感
+
+`showFailed()` 两句对调是**行为等价**的（`replaceContent` 不读 `lastReport`），此时失败信息断言「lastReport 没清掉」——它清了。
+
+权重很低：两行的函数体、`assertSameCode` 会把期望和实际都打出来。另外这条信息缺少「若你只是动了排版」的退路提示——该文件 15 条 `assertSameCode` 里只有 6 条带这个提示，不算本轮引入的不一致。
+
+## 一处被推翻的理由（决定留下，理由换掉）
+
+实现者称「`showChecking()` 不钉是因为它只有文案，`showFailed()` 钉是因为它有行为」。**这个理由不成立**：`showChecking()` 调的是 `replaceContent`——本页唯一的重建原语，会清空内容区**并清掉 `rowCells`**。`refresh()` 之所以必须拿 `if` 把它围起来，恰恰因为它有行为。
+
+审查者实测把它掏空成 `private fun showChecking() { ImuxBundle.message("settings.lsp.checking") }`（保留键以绕过既有断言），首次打开时内容区在**整个登录 shell 探测期间通体空白**，668 全绿。
+
+按「有没有行为」切，`showChecking` 落在该钉那一侧；按「本轮范围」切，不钉是合理的。
+
+## 一处未被声明的额外收益
+
+新用例顺带把「失败态复用进行中文案」这条以前根本抓不住的攻击关进去了：`settings.lsp.failed` 在整个测试树里唯一的钉点就是这条新用例的期望块。本轮之前把失败态文案换成「正在检测」是**全绿**的，现在红了——「两副面孔」这条老约定第一次在**定义处**被守住，而不只是分派处。
