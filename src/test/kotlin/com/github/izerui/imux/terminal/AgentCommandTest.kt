@@ -419,4 +419,151 @@ class AgentCommandTest {
         assertNull(env["IMUX_TOKEN"])
         assertEquals("tab-1", env[IMUX_TAB_ENV])
     }
+
+    @Test
+    fun `Windows 上 codex 拿到上报地址与令牌`() {
+        val codex = PiReportEndpoint("http://127.0.0.1:63342/imux/codex-session", "tok-2")
+        val env = launchEnvironment(AgentType.CODEX, "tab-1", isWindows = true, codexReport = codex)
+
+        assertEquals("http://127.0.0.1:63342/imux/codex-session", env["IMUX_REPORT_URL"])
+        assertEquals("tok-2", env["IMUX_TOKEN"])
+    }
+
+    /**
+     * 非 Windows 上 codex 的环境变量与改动前**逐字节**相同。
+     *
+     * macOS 走 `lsof`、Linux 走 `/proc` 读 codex 持有的会话文件句柄，那两条路
+     * 正在工作，不需要上报；而令牌是上报接口唯一的门禁，多发一个进程就多一份泄漏面。
+     *
+     * 平台判断是个布尔量，`isWindows = false` 就是「非 Windows」的全部取值，
+     * 这里同时断言整张环境变量表相等，而不只是缺了哪两个键。
+     */
+    @Test
+    fun `非 Windows 上 codex 不拿令牌`() {
+        val codex = PiReportEndpoint("http://127.0.0.1:63342/imux/codex-session", "tok-2")
+        val env = launchEnvironment(AgentType.CODEX, "tab-1", isWindows = false, codexReport = codex)
+
+        assertNull("非 Windows 上不该有上报地址", env["IMUX_REPORT_URL"])
+        assertNull("非 Windows 上不该有令牌", env["IMUX_TOKEN"])
+        assertEquals(mapOf(IMUX_TAB_ENV to "tab-1"), env)
+        // 默认实参也必须是「不发」：将来新增调用点忘了传平台判断时，退回安全的一侧
+        assertEquals(
+            mapOf(IMUX_TAB_ENV to "tab-1"),
+            launchEnvironment(AgentType.CODEX, "tab-1", codexReport = codex),
+        )
+    }
+
+    /** 令牌只发给需要上报的那一个 agent：Windows 上也不能顺手发给 claude。 */
+    @Test
+    fun `Windows 上 codex 的令牌不外溢给别的 agent`() {
+        val codex = PiReportEndpoint("http://127.0.0.1:63342/imux/codex-session", "tok-2")
+
+        assertNull(launchEnvironment(AgentType.CLAUDE, "tab-1", isWindows = true, codexReport = codex)["IMUX_TOKEN"])
+        assertNull(launchEnvironment(AgentType.PI, "tab-1", isWindows = true, codexReport = codex)["IMUX_TOKEN"])
+    }
+
+    @Test
+    fun `内置服务不可用时 codex 照常启动`() {
+        val env = launchEnvironment(AgentType.CODEX, "tab-1", isWindows = true, codexReport = null)
+
+        assertNull(env["IMUX_REPORT_URL"])
+        assertNull(env["IMUX_TOKEN"])
+        assertEquals("tab-1", env[IMUX_TAB_ENV])
+    }
+
+    @Test
+    fun `PowerShell 上 codex 新建会话带上 hook 覆盖`() {
+        assertEquals(
+            "codex -c 'hooks.SessionStart=[{hooks=[{type=\"command\"," +
+                "command=\"powershell -NoLogo -NoProfile -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]'",
+            launchCommand(
+                "pwsh.exe",
+                AgentType.CODEX,
+                resumeId = null,
+                codexHookScript = "C:\\p\\r.ps1",
+            ).last(),
+        )
+    }
+
+    /** `-c` 是全局选项，必须排在 `resume` 子命令**之前**，否则 clap 解析不到。 */
+    @Test
+    fun `PowerShell 上 codex 续聊时 hook 覆盖排在子命令之前`() {
+        val script = launchCommand(
+            "pwsh.exe",
+            AgentType.CODEX,
+            resumeId = "abc-123",
+            codexHookScript = "C:\\p\\r.ps1",
+        ).last()
+
+        assertTrue("覆盖必须紧跟在 codex 之后：$script", script.startsWith("codex -c '"))
+        assertTrue("子命令排在覆盖之后：$script", script.endsWith("' resume 'abc-123'"))
+    }
+
+    /**
+     * 脚本缺失（安装不完整）时绝不能拼出半截 `-c`。
+     *
+     * 理由与 pi 的 `-e` 完全相同：拼一个加载不了的路径会让 CLI 启动失败，
+     * 那是整个会话起不来，而少了上报只是标签不自动跟随。
+     */
+    @Test
+    fun `codex hook 脚本缺失时不加 -c`() {
+        assertEquals(
+            "codex",
+            launchCommand("pwsh.exe", AgentType.CODEX, resumeId = null, codexHookScript = null).last(),
+        )
+        assertEquals(
+            "codex resume 'abc-123'",
+            launchCommand("pwsh.exe", AgentType.CODEX, resumeId = "abc-123", codexHookScript = null).last(),
+        )
+    }
+
+    /**
+     * POSIX 方言上传了脚本也一个字不加。
+     *
+     * macOS 与 Linux 读 codex 持有的会话文件句柄，那条路正在工作，
+     * 不该为统一而动它；Windows 上的 Git Bash 同理走 POSIX 分支。
+     */
+    @Test
+    fun `POSIX 上 codex 的命令行不受 hook 脚本影响`() {
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "codex"),
+            launchCommand("/bin/zsh", AgentType.CODEX, resumeId = null, codexHookScript = "/tmp/r.ps1"),
+        )
+        assertEquals(
+            listOf("/bin/zsh", "-l", "-i", "-c", "codex resume 'abc-123'"),
+            launchCommand("/bin/zsh", AgentType.CODEX, resumeId = "abc-123", codexHookScript = "/tmp/r.ps1"),
+        )
+    }
+
+    /** hook 覆盖只给 codex，另外两个 agent 一个字不加。 */
+    @Test
+    fun `hook 覆盖不给 claude 与 pi`() {
+        assertEquals(
+            "claude --resume 'x'",
+            launchCommand("pwsh.exe", AgentType.CLAUDE, "x", codexHookScript = "C:\\p\\r.ps1").last(),
+        )
+        assertEquals(
+            "pi --session-id 'x'",
+            launchCommand("pwsh.exe", AgentType.PI, "x", codexHookScript = "C:\\p\\r.ps1").last(),
+        )
+    }
+
+    /** pid 自报、hook 覆盖、初始 prompt 三者同时在场时的完整形态。 */
+    @Test
+    fun `codex 的 pid 自报 hook 覆盖与初始 prompt 共存`() {
+        assertEquals(
+            "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
+                "codex -c 'hooks.SessionStart=[{hooks=[{type=\"command\"," +
+                "command=\"powershell -NoLogo -NoProfile -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]' " +
+                "resume 'abc-123' 'say hi'",
+            launchCommand(
+                "pwsh.exe",
+                AgentType.CODEX,
+                resumeId = "abc-123",
+                initialPrompt = "say hi",
+                pidFile = "C:\\t\\x.pid",
+                codexHookScript = "C:\\p\\r.ps1",
+            ).last(),
+        )
+    }
 }

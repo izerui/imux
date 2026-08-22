@@ -32,6 +32,36 @@ internal fun handlesPiReport(uri: String, isPost: Boolean): Boolean {
 }
 
 /**
+ * 判断这条请求是否是 codex hook 的上报。
+ *
+ * 形状与 [handlesPiReport] 完全一致，只是路径不同——两条并列而不是在 body 里加
+ * 判别字段，好让 pi 那一侧逐字节不变。
+ */
+internal fun handlesCodexReport(uri: String, isPost: Boolean): Boolean {
+    if (!isPost) return false
+    val path = uri.substringBefore('?')
+    return path == CODEX_REPORT_PATH
+}
+
+/**
+ * 解析 codex hook 的上报体。
+ *
+ * 语法与 pi 完全相同（上报脚本刻意发的是同一套字段），只多一步：**把 cwd 的
+ * 反斜杠归一化成正斜杠**。
+ *
+ * 这一步不是可选的。codex 报上来的 cwd 是 Windows 原生写法（`C:\a\b`），而
+ * `Project.getBasePath()` 标着 `@SystemIndependent`，在 Windows 上返回的是
+ * `C:/a/b`；[piReportBelongsToProject] 做的是精确字符串比较，不归一化的话这条
+ * 上报**永远**匹配不上任何项目，被整条丢弃——症状与「Windows 上 codex 漂移探测
+ * 没做」完全一样，且不报错。
+ *
+ * 只作用于 codex 这条路径：POSIX 上 `\` 是合法文件名字符，对 pi 的上报做同样的
+ * 替换会改坏正在工作的行为。而 codex 的上报只在 Windows 上产生
+ * （令牌与 hook 都只在那里下发），这里的替换因此没有 POSIX 的落点。
+ */
+internal fun parseCodexReport(body: String): PiSessionReport? = parsePiReport(body)?.let { it.copy(cwd = it.cwd.replace('\\', '/')) }
+
+/**
  * 校验请求携带的令牌。
  *
  * 与 [handlesPiReport] 同理抽成纯函数：令牌是这个接口唯一的门禁——平台在这一层
@@ -55,8 +85,10 @@ internal fun piReportTokenMatches(actual: String?, expected: String): Boolean =
  */
 internal class PiSessionReportHandler : HttpRequestHandler() {
 
-    override fun isSupported(request: FullHttpRequest): Boolean =
-        handlesPiReport(request.uri(), isPost = request.method() == HttpMethod.POST)
+    override fun isSupported(request: FullHttpRequest): Boolean {
+        val isPost = request.method() == HttpMethod.POST
+        return handlesPiReport(request.uri(), isPost) || handlesCodexReport(request.uri(), isPost)
+    }
 
     override fun process(
         urlDecoder: QueryStringDecoder,
@@ -66,14 +98,23 @@ internal class PiSessionReportHandler : HttpRequestHandler() {
         val expected = ApplicationManager.getApplication()
             .getService(PiReportTokenHolder::class.java)
             .token
+        // 两条路径共用同一个令牌校验：那个函数的 KDoc 列了四种「写宽一点就会漏」的
+        // 写法，另写一套比较逻辑等于把那些坑重新踩一遍。
         if (!piReportTokenMatches(request.headers().get(TOKEN_HEADER), expected)) {
             // 记一笔：本机任意进程都能打到这个接口，被拒的请求是排查时唯一的线索
-            LOG.warn("拒绝令牌不匹配的 pi 会话上报")
+            LOG.warn("拒绝令牌不匹配的会话上报")
             HttpResponseStatus.FORBIDDEN.send(context.channel(), request)
             return true
         }
 
-        val report = parsePiReport(request.content().toString(CharsetUtil.UTF_8))
+        val body = request.content().toString(CharsetUtil.UTF_8)
+        // codex 那条只多一步 cwd 分隔符归一化，见 parseCodexReport
+        val report =
+            if (handlesCodexReport(request.uri(), isPost = true)) {
+                parseCodexReport(body)
+            } else {
+                parsePiReport(body)
+            }
         if (report == null) {
             HttpResponseStatus.BAD_REQUEST.send(context.channel(), request)
             return true

@@ -1,6 +1,8 @@
 package com.github.izerui.imux.session
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +27,88 @@ class PiSessionReportHandlerTest {
     @Test
     fun `只受理 POST`() {
         assertFalse(handlesPiReport("/imux/pi-session", isPost = false))
+    }
+
+    /**
+     * codex 的上报走一条**并列**的新路径，而不是在 pi 的报文体里加判别字段。
+     *
+     * `handlesPiReport` 与 `parsePiReport` 都被一整批用例钉住，加判别字段要改它们
+     * 全部；并列一条新路径则 pi 那一侧一个字节都不用动。
+     */
+    @Test
+    fun `codex 只认自己的路径`() {
+        assertTrue(handlesCodexReport("/imux/codex-session", isPost = true))
+        assertTrue("带查询串也要认", handlesCodexReport("/imux/codex-session?x=1", isPost = true))
+
+        assertFalse(handlesCodexReport("/api/about/", isPost = true))
+        assertFalse(handlesCodexReport("/imux/codex-session-other", isPost = true))
+        assertFalse(handlesCodexReport("/", isPost = true))
+    }
+
+    /** 两条路径必须互不相认，否则新增一条等于什么都没隔开。 */
+    @Test
+    fun `两条上报路径互不相认`() {
+        assertFalse(handlesPiReport("/imux/codex-session", isPost = true))
+        assertFalse(handlesCodexReport("/imux/pi-session", isPost = true))
+    }
+
+    @Test
+    fun `codex 也只受理 POST`() {
+        assertFalse(handlesCodexReport("/imux/codex-session", isPost = false))
+    }
+
+    /**
+     * codex 报上来的 cwd 是 Windows 写法（`C:\a\b`），而 `Project.getBasePath()`
+     * 标着 `@SystemIndependent`，在 Windows 上返回的是 `C:/a/b`。
+     *
+     * `piReportBelongsToProject` 做的是精确字符串比较——不归一化分隔符，
+     * 这条上报**永远**匹配不上任何项目，被整条丢弃。症状与「Windows 上 codex
+     * 漂移探测没做」完全一样，且不报错。
+     */
+    @Test
+    fun `codex 上报的反斜杠 cwd 归一化成 IDE 写法`() {
+        val body =
+            """{"type":"session_start","tabId":"t1","sessionId":"01a02ac9-401b-7d00-9b38-e4f85392ccfd",""" +
+                """"cwd":"C:\\Users\\me\\proj"}"""
+
+        assertEquals("C:/Users/me/proj", parseCodexReport(body)?.cwd)
+    }
+
+    /** POSIX 上的 cwd 里没有反斜杠，归一化必须是恒等变换。 */
+    @Test
+    fun `POSIX 写法的 cwd 原样通过`() {
+        val body =
+            """{"type":"session_start","tabId":"t1","sessionId":"01a02ac9-401b-7d00-9b38-e4f85392ccfd",""" +
+                """"cwd":"/Users/me/proj"}"""
+
+        assertEquals("/Users/me/proj", parseCodexReport(body)?.cwd)
+    }
+
+    /** 报文不合形状时与 pi 一样返回 null：上报来自另一个进程，不能假定它的内容。 */
+    @Test
+    fun `codex 报文不合形状时返回 null`() {
+        assertNull(parseCodexReport("{}"))
+        assertNull(parseCodexReport("""{"type":"session_start","tabId":"t1"}"""))
+    }
+
+    /**
+     * codex 端点与 pi 端点共用端口和令牌，只换路径。
+     *
+     * 认不出的形状一律返回 null（退回「不上报」），不猜——这条链路的铁律。
+     */
+    @Test
+    fun `codex 端点由 pi 端点派生`() {
+        val pi = PiReportEndpoint("http://127.0.0.1:63342/imux/pi-session", "tok-1")
+
+        assertEquals(
+            PiReportEndpoint("http://127.0.0.1:63342/imux/codex-session", "tok-1"),
+            codexEndpointOf(pi),
+        )
+        assertNull(codexEndpointOf(null))
+        assertNull(
+            "认不出的 url 形状一律跳过",
+            codexEndpointOf(PiReportEndpoint("http://127.0.0.1:63342/somewhere", "tok-1")),
+        )
     }
 
     /** 正常路径：令牌一字不差才算通过。 */

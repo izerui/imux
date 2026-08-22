@@ -26,6 +26,9 @@ import com.github.izerui.imux.session.PiReportEndpoint
  *
  * [pidFile] 只在 Windows 上有值（由调用点按平台决定），用来让 shell 自报 pid；
  * POSIX 方言下 [pidFileRecordCommand] 恒为 null，macOS 与 Linux 的命令行一个字不加。
+ *
+ * [codexHookScript] 同理只在 Windows 上有值，用来给 codex 注入 SessionStart hook；
+ * 它只作用于 PowerShell 方言下的 codex，别的组合一个字不加，见 [codexHookOverrideArg]。
  */
 internal fun launchCommand(
     shell: String,
@@ -34,13 +37,26 @@ internal fun launchCommand(
     piExtension: java.nio.file.Path? = null,
     initialPrompt: String? = null,
     pidFile: String? = null,
+    codexHookScript: String? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = agentType.cli
+    // codex 的 `-c` 是**全局**选项，必须排在 `resume` 子命令之前，否则 clap 解析不到。
+    //
+    // 脚本缺失时整段为空、**不加** -c：理由与 pi 的 -e 完全相同（见下），
+    // 拼一个加载不了的路径只会让每次会话启动都报错。
+    //
+    // 只在 PowerShell 方言下注入：POSIX（含 Windows 上的 Git Bash）走的是
+    // lsof / /proc 那条正在工作的路，命令行一个字不加。
+    val codexHook =
+        codexHookScript
+            ?.takeIf { agentType == AgentType.CODEX && dialect == ShellDialect.POWERSHELL }
+            ?.let { " -c ${codexHookOverrideArg(dialect, it)}" }
+            .orEmpty()
     val script =
         when {
             resumeId == null -> {
-                cli
+                "$cli$codexHook"
             }
 
             // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
@@ -55,7 +71,7 @@ internal fun launchCommand(
             }
 
             agentType == AgentType.CODEX -> {
-                "$cli resume ${quote(dialect, resumeId)}"
+                "$cli$codexHook resume ${quote(dialect, resumeId)}"
             }
 
             else -> {
@@ -105,6 +121,8 @@ internal fun launchEnvironment(
     agentType: AgentType,
     tabId: String,
     piReport: PiReportEndpoint? = null,
+    isWindows: Boolean = false,
+    codexReport: PiReportEndpoint? = null,
 ): Map<String, String> =
     buildMap {
         put(IMUX_TAB_ENV, tabId)
@@ -123,7 +141,17 @@ internal fun launchEnvironment(
             }
 
             AgentType.CODEX -> {
-                Unit
+                // 令牌只发给需要上报的进程：它是上报接口唯一的门禁，
+                // 多发一个进程就多一份泄漏面。非 Windows 上 codex 走 lsof / /proc
+                // 读它持有的会话文件句柄，那条路正在工作、不需要上报，因此也不发。
+                //
+                // isWindows 默认 false：将来新增调用点忘了传平台判断时，退回安全的一侧。
+                if (isWindows) {
+                    codexReport?.let {
+                        put("IMUX_REPORT_URL", it.url)
+                        put("IMUX_TOKEN", it.token)
+                    }
+                }
             }
         }
     }

@@ -100,6 +100,9 @@ intellijPlatform {
 // withType 覆盖全部实例，脚本在所有沙箱里都在。
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
+    // codex 的 SessionStart hook 脚本同理：`-c hooks.SessionStart=…` 里写的是路径，
+    // 必须以文件形式随插件安装存在。
+    from("src/main/scripts/codex-imux-reporter.ps1") { into("${project.name}/scripts") }
 }
 
 // 本项目有一批「源码级」测试：ImuxLspUiSourceTest、PluginXmlRegistrationTest、
@@ -116,7 +119,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
 // 把这三个源码目录显式声明成 `:test` 的输入，源文件一变（哪怕只变注释）就重跑。
 // 代价是注释改动也会触发一次测试，相对于假绿是划算的。
 tasks.test {
-    listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
+    listOf("src/main/kotlin", "src/main/resources", "src/main/js", "src/main/scripts").forEach { dir ->
         inputs
             .dir(dir)
             .withPropertyName("sourceReadAtRuntime-${dir.replace('/', '-')}")
