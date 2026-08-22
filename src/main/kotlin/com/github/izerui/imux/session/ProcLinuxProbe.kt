@@ -49,7 +49,10 @@ internal fun readTabIdFromProc(
 ): String? =
     runCatching {
         tabIdFromProcEnviron(Files.readAllBytes(procRoot.resolve("$pid/environ")))
-    }.getOrNull()
+    }.getOrElse {
+        LOG.debug("读取 /proc/$pid/environ 失败，本轮不认领该进程", it)
+        null
+    }
 
 /**
  * 读一个进程正持有的 rollout 文件。
@@ -73,6 +76,6 @@ internal fun readHeldRolloutsFromProc(
                 .filter { threadIdOfRollout(it) != null }
         }
     }.getOrElse {
-        LOG.debug("读取 /proc/$pid/fd 失败，本轮不认领该进程")
+        LOG.debug("读取 /proc/$pid/fd 失败，本轮不认领该进程", it)
         emptyList()
     }

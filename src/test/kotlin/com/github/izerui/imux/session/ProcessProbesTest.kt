@@ -1,13 +1,16 @@
 package com.github.izerui.imux.session
 
+import com.intellij.openapi.util.SystemInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
+import java.nio.file.Path
 
 /** 解析 `ps eww` 与 `lsof` 的输出。命令本身不可测，解析必须可测。 */
 class ProcessProbesTest {
@@ -156,5 +159,25 @@ class ProcessProbesTest {
             tabIdFromPsOutput("  501 22941 ttys003 PATH=/usr/bin IMUX_TAB=imux-abc /bin/zsh"),
         )
         assertNull(tabIdFromPsOutput("  501 22941 ttys003 MY_IMUX_TAB=imux-abc /bin/zsh"))
+    }
+
+    @Test
+    fun `readHeldRollouts 在 isLinux 为真时走 proc`() {
+        Assume.assumeFalse(SystemInfo.isWindows)
+        val procRoot = temp.root.toPath()
+        val fd = Files.createDirectories(procRoot.resolve("999/fd"))
+        val rollout = temp.newFile(
+            "rollout-2026-08-06T13-59-47-c0b2cc08-746f-4dc6-bb78-636d380d9216.jsonl",
+        ).toPath()
+        Files.createSymbolicLink(fd.resolve("3"), rollout)
+
+        assertEquals(listOf(rollout.toString()), readHeldRollouts(999, isLinux = true, procRoot = procRoot))
+        // 反向：走 lsof 那条路，本机没有 pid 999 这个进程，认不出来
+        assertTrue(readHeldRollouts(999, isLinux = false, procRoot = procRoot).isEmpty())
+    }
+
+    @Test
+    fun `PROC_ROOT 指向正确的系统路径`() {
+        assertEquals(Path.of("/proc"), PROC_ROOT)
     }
 }

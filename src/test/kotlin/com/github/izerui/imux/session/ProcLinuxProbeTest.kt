@@ -1,7 +1,9 @@
 package com.github.izerui.imux.session
 
+import com.intellij.openapi.util.SystemInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assume
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -55,6 +57,7 @@ class ProcLinuxProbeTest {
 
     @Test
     fun `从 proc fd 目录读出 rollout 路径`() {
+        Assume.assumeFalse(SystemInfo.isWindows)
         val procRoot = temp.root.toPath()
         val fd = Files.createDirectories(procRoot.resolve("777/fd"))
         val id = "c0b2cc08-746f-4dc6-bb78-636d380d9216"
@@ -68,6 +71,7 @@ class ProcLinuxProbeTest {
 
     @Test
     fun `个别软链读不了不影响其余`() {
+        Assume.assumeFalse(SystemInfo.isWindows)
         val procRoot = temp.root.toPath()
         val fd = Files.createDirectories(procRoot.resolve("778/fd"))
         val id = "c0b2cc08-746f-4dc6-bb78-636d380d9216"
