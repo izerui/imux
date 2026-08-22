@@ -107,9 +107,12 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 最近一份体检结果。
      *
-     * 它现在只服务一件事：**重新探测期间页面上摆什么**。手里有上一份结果时就摆它，
-     * 而不是把整页换成一句「正在检测…」——见 [refresh]。旧数据是上一秒还成立的信息，
-     * 比一片空白诚实得多，而探测回来照样整页重画。
+     * 它现在只回答一个是非题：**这一页有没有拿出过结果**。没有（首次打开）才需要
+     * [showChecking] 那句「正在检测…」；有过的话，重新探测期间屏幕原样不动——见 [refresh]。
+     *
+     * 刻意**不**在探测期间拿它重画一遍。命令跑完那条路上 `running.remove(key)` 已经先
+     * 执行，用旧 finding 重跑一次映射得到的是**装之前**的状态，等于把刚被推翻的数据
+     * 当成新鲜的摆出来。
      *
      * 从前它还兼着「点一下按钮就整页重画」的差事，那条路已经换成 [refreshRow] 的就地
      * 更新了：为了让一行改个字而重建 54 行组件树，正是用户抱怨的那次闪烁。
@@ -143,8 +146,9 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 「撤回标记」两个方向共用同一段代码，不存在第二处「进行中长什么样」的判断——
      * 那正是这一页反复栽过的那类第二处分支。
      *
-     * 每次 [showReport] 重建组件树时整个清空：留着的话，映射会指向一批已经从界面上摘掉的
-     * 旧组件，改它们是彻底的静默无效果。
+     * 清空收在 [replaceContent] 这一个点上——它是本页唯一的重建原语，而且清空必须排在
+     * 新组件被构造**之前**（理由见那边）。留着旧条目的话，映射指向的是一批已经从界面上
+     * 摘掉的组件，改它们是彻底的静默无效果。
      */
     private val rowCells = ConcurrentHashMap<String, RowCells>()
 
@@ -221,12 +225,25 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 才派发——页面会一直停在「正在检测…」，直到用户关掉设置窗口才刷新，等于没刷新。
      * 这里只改自己那块 Swing 面板，不碰 PSI/VFS/项目模型，正是 `any()` 的适用场景。
      *
-     * **手里已经有一份结果时不许闪回「正在检测…」。** 这一页的探测路径有两个入口：
-     * 首次打开（手里什么都没有，那句「正在检测…」是唯一能说的话），以及**重新探测**
-     *——手动点「重新检测」，或者一条安装命令跑完之后自动来这一趟。后一种情况下把整页
-     * 换成一句「正在检测…」，等于用一秒多的空白盖掉一张用户正在读的表；命令刚跑完那次
-     * 尤其刺眼，用户盯着的就是那一行。旧数据是**上一秒还成立**的信息，比空白诚实得多，
-     * 探测回来照样整页重画，什么都没少。
+     * **手里已经有一份结果时，探测期间屏幕上一个像素都不许动。** 这一页的探测有两个
+     * 入口，只有一个该改屏幕：
+     *
+     * - **首次打开**：手里什么都没有，[showChecking] 那句「正在检测…」是唯一能说的话。
+     * - **重新探测**：手动点「重新检测」，或者一条安装命令跑完之后自动来这一趟。
+     *   这时候什么都不做——屏幕上摆着的正是 [refreshRow] 刚刚改好的那一行
+     *  （「正在激活…」+ 转圈图标），让它一直摆到真结果回来。反馈由「重新检测」按钮
+     *   自己禁用给出，不需要动内容区。
+     *
+     * 这里**绝不能**写成 `showReport(lastReport)`「先用旧数据重画一遍」。看着像是省掉了
+     * 一次闪白，实际是把一份**刚刚被推翻的数据重新算一遍再当成新鲜的摆出来**：命令跑完
+     * 那条路上 `running.remove(key)` 已经先执行了，拿旧 finding 重跑 [rowIcon] /
+     * [statusText] 得到的正是**装之前**的状态。用户刚看着一条 `brew install` 成功退出，
+     * 设置页立刻告诉他「未启用插件」——比闪白更假。同一个理由让「检测未完成」之后点
+     * 重新检测不会先弹出一整张完整的结果表（看起来像重试成功了）再翻回失败。
+     *
+     * 顺带把 [refreshRow] 那句「不重画整页」兑现到**完成时刻**：走 `showReport` 的话，
+     * 命令跑完仍然会整棵树重建一次、滚动位置照样回到顶部，用户抱怨的那次刷新只是被
+     * 推迟了几秒。现在整页重建只发生在**真结果到手**的那一刻，一次，不可避免的那一次。
      *
      * 「进行中」与「失败」仍然是两副面孔（[showChecking] 与 [showFailed] 各说各的），
      * 这条约定没动——变的只是「进行中」什么时候需要露面。
@@ -234,8 +251,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     private fun refresh() {
         val token = generation.incrementAndGet()
         refreshButton?.isEnabled = false
-        val previous = lastReport
-        if (previous == null) showChecking() else showReport(previous)
+        if (lastReport == null) showChecking()
         ApplicationManager.getApplication().executeOnPooledThread {
             // 失败必须留痕：这一页唯一的诊断入口就是 idea.log，
             // 与 ShellBinaryProbe.locate() 的处理方式保持一致。
@@ -259,30 +275,41 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         binaryProbe = ShellBinaryProbe(),
     )
 
-    private fun showChecking() = replaceContent(JBLabel(ImuxBundle.message("settings.lsp.checking")))
+    private fun showChecking() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.checking")) }
 
     /** 失败必须与「进行中」长得不一样，否则用户只会以为很慢，反复点重新检测。 */
-    private fun showFailed() = replaceContent(JBLabel(ImuxBundle.message("settings.lsp.failed")))
+    private fun showFailed() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.failed")) }
 
-    /**
-     * 整页重画——**只在数据真的变了时才走这里**。
-     *
-     * [rowCells] 必须在重建之前清空：留下的是一批已经从组件树上摘掉的旧 JLabel，
-     * [refreshRow] 改它们不报错、也不会在界面上留下任何痕迹，是最难查的那种静默失效。
-     */
+    /** 整页重画——**只在真结果到手那一刻走这里**，见 [refresh]。 */
     private fun showReport(report: LspReport) {
         lastReport = report
-        rowCells.clear()
-        replaceContent(
+        replaceContent {
             panel {
                 report.cliReports.forEach { cliReport ->
                     group(cliReport.agentType.displayName) { renderCli(cliReport) }
                 }
-            },
-        )
+            }
+        }
     }
 
-    private fun replaceContent(component: JComponent) {
+    /**
+     * 换掉内容区——本页**唯一**的重建原语，[rowCells] 的清空因此只能住在这里。
+     *
+     * 收口不是洁癖，是顺序问题。清空必须发生在**新组件被构造之前**：`panel { … }` 一跑
+     * 就会往 [rowCells] 里登记这一批新 JLabel，清空若排在它后面（无论是写在
+     * [showReport] 末尾，还是写在本函数里但排在构造之后），刚登记的东西当场被抹掉，
+     * 于是每一次点击都在 `rowCells[key] ?: return` 处悄悄返回——按钮灰了，图标和文案
+     * 纹丝不动，**用户看到的与「点了没用」那个老毛病一模一样**，而所有整段比对全绿。
+     *
+     * 所以这里收的是**构造函数**而不是构造好的组件：实参在调用点先于函数体求值，
+     * 传组件的写法根本没有「先清空再构造」这个可能。
+     *
+     * 顺带盖住 [showChecking] / [showFailed] 那两条路：它们同样把整棵树换掉，
+     * 留在表里的引用同样是一批已经摘下来的旧组件。
+     */
+    private fun replaceContent(build: () -> JComponent) {
+        rowCells.clear()
+        val component = build()
         content.removeAll()
         content.add(component, BorderLayout.CENTER)
         content.revalidate()
@@ -614,12 +641,23 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 三件东西各有各的取法，刻意不走同一个映射表：
      *
      * - **被点的那个按钮**从 `ActionEvent.source` 现取。它就是用户刚按下去的那一个，
-     *   不必存、也不会认错行；而语言行与组级行共用这一条路（组级行没有图标与状态列，
-     *   [rowCells] 查不到，正好在下一行退出，按钮已经处理完了）。
+     *   不必存、也不会认错行。这一句必须排在查表**之前**：组级行在 [rowCells] 里查不到，
+     *   排到后面的话组级按钮永远不会被禁用。
      * - **状态图标与状态文案**从 [rowCells] 取组件，值原样回头问 [rowIcon] / [statusText]。
      *   那两个函数第一件事就是查 [running]，于是「标记进行中」与「撤回标记」两个方向
      *   共用同一段代码——这里绝不能再写一次「进行中该显示成什么」，那就是第二处判断，
      *   而这一页在第二处判断上栽过不止一次。
+     *
+     * **已知缺口**：组级修复那一行（pi 没装 pi-lens、Codex 没挂 MCP）在 [rowCells] 里
+     * 没有条目，所以安装期间它只有「按钮变灰」，没有一句「正在安装…」。这不是本轮引入的
+     * ——从前整页重画时它同样不变，因为 [groupMessage] 压根不查 [running]。要补的话得让
+     * 组级那一行也有一个可更新的文本单元，不在这一轮的范围里。下面那句 `?: return`
+     * 是**顺带兜住**了这个缺口，不是为它设计的。
+     *
+     * `component.isEnabled` 是直接改 Swing 组件，**绕过了 UI DSL 的 `Cell.enabled()` 记账**。
+     * 本页安全，因为没有任何 `Panel.enabled()` / `enabledIf()` 会在之后重新下发一遍父级
+     * 使能状态，把这里的改动覆盖掉。哪天页面上长出那种链式使能，这一行会静默失效——
+     * 那时应该把 Cell 也存进 [RowCells]，而不是在这里加补丁。
      *
      * 两个调用点（点击、开标签失败回滚）都在 EDT 上：按钮的 ActionListener 与它同步的
      * `runCatching` 失败分支。所以这里不必再 `invokeLater`，也不该——多绕一圈就意味着

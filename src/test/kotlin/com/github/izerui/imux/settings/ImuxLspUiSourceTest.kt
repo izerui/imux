@@ -213,17 +213,48 @@ class ImuxLspUiSourceTest {
      * 2. 判据必须**复用同一个** [hasProjectWindow]。另写一句「有没有项目」（哪怕逻辑
      *    看着一样）就是第二处闸门：两处一旦漂移，用户会看到「说明说没按钮、按钮却在」
      *    或者反过来的组合，比不说更糟。
+     *
+     * 整段比对而不是一条 `contains`，因为 `createPanel` 是本文件里**唯一没有任何
+     * `.visible` / `.enabled` 否定覆盖**的渲染函数（那两条 token 否定只写在
+     * `findingsPanel` 与 `rowAction` 上），而本轮刚往这里放了新东西。两条实测过的逃逸：
+     *
+     * - 把说明块包进 `if (lastReport != null) { … }`——`lastReport` 在 `createPanel`
+     *   这一刻**恒为 null**（`disposeUIResources` 会置空），说明永远不渲染，用户那句
+     *   「没有任何操作按钮是咋回事」原封不动复活，而 `contains` 断言照常命中。
+     * - 给那一行链一个 `.visible(false)`，后果相同。
+     *
+     * 这个函数一年也未必动一次，整段钉住的维护成本近乎为零。
      */
     @Test
     fun `没有项目窗口时必须解释为什么一个按钮都没有`() {
-        val panel = compactArgs(bodyAfter("override fun createPanel(): DialogPanel", '{'))
-
-        assertTrue(
-            "从欢迎页打开设置时一个执行按钮都不会有，页面必须说明原因，否则用户只会认为插件坏了：$panel",
-            panel.contains(
-                "if(!hasProjectWindow()){row{icon(AllIcons.General.Information)" +
-                    "comment(ImuxBundle.message(\"settings.lsp.no.project\"))}}",
-            ),
+        assertSameCode(
+            "从欢迎页打开设置时一个执行按钮都不会有，页面必须说明原因，否则用户只会认为" +
+                "插件坏了。这里整段钉住：把说明块再包一层条件（比如恒为 null 的 lastReport）" +
+                "或者链一个 .visible(false)，都能让它永不渲染，而逐条 contains 照常命中。" +
+                "\n（说明必须用 comment：德语 190 字符，不折行的 label 会撑宽整个设置对话框。）",
+            """
+            {
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                return panel {
+                    row {
+                        comment(ImuxBundle.message("settings.lsp.scope.note"))
+                    }
+                    if (!hasProjectWindow()) {
+                        row {
+                            icon(AllIcons.General.Information)
+                            comment(ImuxBundle.message("settings.lsp.no.project"))
+                        }
+                    }
+                    row {
+                        refreshButton = button(ImuxBundle.message("settings.lsp.refresh")) { refresh() }.component
+                    }
+                    row {
+                        cell(content).align(AlignX.FILL)
+                    }
+                }.also { refresh() }
+            }
+            """,
+            bodyAfter("override fun createPanel(): DialogPanel", '{'),
         )
         // 「没有项目窗口」在源码里只该有这两处否定用法：这句说明，以及 runRemedyButton
         // 那道闸门。另写一句「有没有项目」（哪怕逻辑看着一样）就是第三处判据。
@@ -237,29 +268,111 @@ class ImuxLspUiSourceTest {
     }
 
     /**
-     * 重新探测期间**不许把整页换成一句「正在检测…」**。
+     * 那道闸门的**函数体**也得钉住——本轮它的杀伤面刚翻了一倍。
      *
-     * 这一页的探测有两个入口，只有一个该看到那句话：
+     * 从前 [hasProjectWindow] 只决定「按钮渲不渲染」，现在它同时决定「那句说明渲不渲染」。
+     * 把 `any` 改成 `none`（一个词）之后：有项目时按钮全灭、还平白多出一句「打开任意项目
+     * 后回到这里」；没项目时反过来长出一批点了没反应的按钮、说明却不见了。两种都是
+     * 这一页最难堪的形态，而整份源码里没有第二条断言看得见这一个词。
+     *
+     * 过滤条件同样一起钉：`isDefault` 那一条不是防御性冗余——从欢迎页打开设置时
+     * `CommonDataKeys.PROJECT` 照样答得出一个 default project，它没有窗口也没有终端
+     * 工具窗口（见 [targetProject] 的 KDoc）。去掉它，欢迎页会被判成「有项目窗口」，
+     * 按钮全部渲染出来、点下去全部没反应。
+     */
+    @Test
+    fun `有没有项目窗口这道闸门整段钉死`() {
+        assertSameCode(
+            "any → none 一个词就能让按钮与说明同时反转；去掉 isDefault 过滤，欢迎页会被" +
+                "判成「有项目窗口」，按钮全部渲染出来、点下去全部没反应",
+            """
+            = ProjectManager.getInstance().openProjects.any { !it.isDisposed && !it.isDefault }
+            """,
+            bodyAfter("private fun hasProjectWindow(): Boolean", '{'),
+        )
+    }
+
+    /**
+     * 渲染路径上不得出现可见性开关——**这条网要盖住整份源码**，不只是那两个函数。
+     *
+     * `findingsPanel` 与 `rowAction` 各自禁了 `.visible` / `.enabled`，而 `createPanel`
+     * 与 `Panel.renderCli` 一直裸奔。后者尤其要命：`renderCli` 是三个分组的总入口，
+     * 在它任何一行上链一个 `.visible(false)`，整组语言、组级提示或顶部汇总当场消失，
+     * 而那些逐条 contains 断言一条都看不见。
+     *
+     * 切法：`.visible` 全文件禁（本页从不需要它——该不该显示由 `if` 在构建期决定，
+     * 那是 UI DSL 更省的用法），`.enabled` 只在 `renderCli` 里禁——它在
+     * `runRemedyButton` 里有正当语义（`.enabled(!running.containsKey(key))` 挡连点），
+     * 全文件禁会误伤。
+     *
+     * 跑在 `compactArgs` 上而不是 `normalized` 上：`normalized` 只把连续空白压成一个
+     * 空格，于是 `. visible(…)`（点后面加一个空格）就整条绕过——同一个空格戏法在
+     * `findingsPanel` 那条断言上已经中过一次。
+     */
+    @Test
+    fun `渲染路径上不得出现可见性开关`() {
+        assertFalse(
+            "本页从不需要 .visible / .visibleIf：该不该显示由构建期的 if 决定。" +
+                "链一个 .visible(false) 能让任何一块内容消失，而所有逐条 contains 全绿",
+            compactArgs(normalized).contains(".visible"),
+        )
+        val group = compactArgs(bodyAfter("private fun Panel.renderCli(cliReport: CliReport)", '{'))
+        assertFalse(
+            "renderCli 是三个分组的总入口，这里链一个 .enabled(false) 会让整组内容变灰失效：$group",
+            group.contains(".enabled"),
+        )
+    }
+
+    /**
+     * 手里已经有结果时，探测期间**屏幕上一个像素都不许动**。
+     *
+     * 这一页的探测有两个入口，只有一个该改屏幕：
      *
      * - **首次打开**：手里什么都没有，「正在检测…」是唯一能说的话。
-     * - **重新探测**：手动点「重新检测」，或者一条安装命令跑完之后自动来这一趟。
-     *   这时整页闪成空白再重画，等于用一秒多的空白盖掉一张用户正在读的表；
-     *   命令刚跑完那次尤其刺眼——用户盯着的就是那一行。
+     * - **重新探测**（手动点、或一条安装命令跑完自动来这一趟）：什么都不做。
+     *   屏幕上摆着的正是 `refreshRow` 刚改好的那一行（「正在激活…」+ 转圈图标），
+     *   让它摆到真结果回来；反馈由「重新检测」按钮自己禁用给出。
      *
-     * 断言钉的是**分派那一行**，因为这是一处「删掉之后代码看起来完全正常」的改动：
-     * 写回一句无条件的 `showChecking()`，编译通过、所有别的断言全绿，闪烁原样回来。
+     * 两条被禁的写法各有各的坏法，且**都是加法**，所以钉的是**前四行的整段前缀**
+     * 而不是一条裸 `contains`：
+     *
+     * 1. 写成无条件的 `showChecking()`——整页闪成空白再重画，用一秒多的空白盖掉一张
+     *    用户正在读的表。这一条**追加**一句就能复活：`if (…) showChecking()` 留在原地，
+     *    后面再补一句裸的 `showChecking()`，逐条 contains 照常命中。
+     * 2. 写成 `showReport(lastReport)`「先用旧数据重画一遍」——看着像省掉了闪白，实际是
+     *    把**刚被推翻的数据重新算一遍再当成新鲜的摆出来**：命令跑完那条路上
+     *    `running.remove(key)` 已经先执行，拿旧 finding 重跑 rowIcon / statusText 得到的
+     *    正是**装之前**的状态。用户刚看着 `brew install` 成功退出，页面立刻告诉他
+     *    「未启用插件」，比闪白更假。同一条路还会让「检测未完成」之后点重新检测**先弹出
+     *    一整张完整的结果表**（看起来像重试成功了）再翻回失败。
+     *
+     * 前缀一直钉到 `executeOnPooledThread {` 那一行**开头**，第 1 种追加式复活因此
+     * 被封在里面；下游那半个函数（代次号比对、模态、失败分派）由别的用例各自管。
      *
      * 「失败态必须与进行中长得不一样」那条既有约定没有被动到：[showChecking] 与
      * [showFailed] 仍是两句不同的文案、仍由 `if (report == null)` 分派（见
      * [体检失败要留日志并显示错误态]），变的只是「进行中」什么时候需要露面。
      */
     @Test
-    fun `重新探测时保留上一份结果而不是闪回正在检测`() {
+    fun `重新探测期间不动屏幕，只有首次打开才显示正在检测`() {
         val body = compactArgs(bodyAfter("private fun refresh()", '{'))
+        val expected = compactArgs(
+            """
+            {
+                val token = generation.incrementAndGet()
+                refreshButton?.isEnabled = false
+                if (lastReport == null) showChecking()
+                ApplicationManager.getApplication().executeOnPooledThread {
+            """,
+        )
 
         assertTrue(
-            "手里已经有一份结果时必须原样摆着，只有首次打开才显示「正在检测…」：$body",
-            body.contains("valprevious=lastReportif(previous==null)showChecking()elseshowReport(previous)"),
+            "手里已经有一份结果时，探测期间屏幕必须原样不动：写成无条件的 showChecking() " +
+                "是整页闪白，写成 showReport(lastReport) 是把刚被推翻的状态重新算出来当新鲜的" +
+                "摆出来（用户刚看着 brew install 成功退出，页面告诉他「未启用插件」）。" +
+                "前缀钉到 executeOnPooledThread 那一行，所以「在后面再追加一句」也复活不了。" +
+                "\n期望前缀：$expected\n实际：$body",
+            body.startsWith(expected),
         )
     }
 
@@ -1249,11 +1362,77 @@ class ImuxLspUiSourceTest {
                     "RowCells(finding,agentType,iconLabel,statusLabel)",
             ),
         )
-        assertTrue(
-            "整页重建之前必须清空映射，否则表里留的是一批已经从组件树上摘掉的旧 JLabel，" +
-                "改它们不报错也没有任何效果——最难查的那种静默失效",
-            compactArgs(bodyAfter("private fun showReport(report: LspReport)", '{'))
-                .startsWith("{lastReport=reportrowCells.clear()"),
+    }
+
+    /**
+     * 清空 [rowCells] 的那一句**只能住在 replaceContent 里，且必须排在构造之前**。
+     *
+     * 这是本轮最阴的一处：多一句 `rowCells.clear()` 就能让整套就地更新静默作废，
+     * 而两处入口的整段比对都全绿。两条实测过的逃逸：
+     *
+     * 1. `replaceContent` 开头补一句 `rowCells.clear()`（当年清空写在 `showReport` 里时）
+     *    ——`showReport` 先清空、再构造并登记、`replaceContent` 又清一次，表恒空。
+     * 2. `showReport` **末尾追加**一句 `rowCells.clear()`——同样表恒空。它能过是因为
+     *    上一版这条断言用的是 `startsWith`：**只挡删除，不挡尾部追加**。
+     *
+     * 两种的用户可见后果完全相同，而且正是这一轮要修的那个老毛病原地复活：
+     * 每次点击都在 `rowCells[key] ?: return` 处悄悄返回，按钮灰了，图标和文案纹丝不动
+     * ——**「点了没用」**。
+     *
+     * 所以两头都整段比对：`replaceContent` 是本页唯一的重建原语（`showChecking` /
+     * `showFailed` / `showReport` 三条路全从这里过），`showReport` 是唯一会往表里登记的
+     * 那条路。再加上一条全文件计数——`rowCells.clear()` 只准出现两次（这里一次，
+     * `disposeUIResources` 一次），第三次出现在任何地方都是上面那两种攻击的变体。
+     *
+     * `replaceContent` 收**构造函数**而不是构造好的组件，这一点必须由整段比对钉住：
+     * 实参在调用点先于函数体求值，改回收组件的写法就再也没有「先清空再构造」这个可能，
+     * 而那正是攻击 1 得以成立的机制。
+     */
+    @Test
+    fun `清空行组件的那一句只能在重建之前发生一次`() {
+        assertSameCode(
+            "清空必须排在 build() 之前：`panel { … }` 一跑就往 rowCells 里登记新 JLabel，" +
+                "清空排在它后面（写在这里、或追加在 showReport 末尾）会把刚登记的抹掉，" +
+                "于是每次点击都在 rowCells[key] ?: return 处悄悄返回——「点了没用」原地复活。" +
+                "收构造函数而不是组件，正是为了让「先清空再构造」成为唯一可能的顺序。",
+            """
+            {
+                rowCells.clear()
+                val component = build()
+                content.removeAll()
+                content.add(component, BorderLayout.CENTER)
+                content.revalidate()
+                content.repaint()
+            }
+            """,
+            bodyAfter("private fun replaceContent(build: () -> JComponent)", '{'),
+        )
+
+        assertSameCode(
+            "showReport 只准做两件事：记下这份结果、把内容区换成新的一棵树。" +
+                "末尾追加一句 rowCells.clear() 就能让整套就地更新静默作废，" +
+                "而上一版那条 startsWith 断言看不见尾部追加。",
+            """
+            {
+                lastReport = report
+                replaceContent {
+                    panel {
+                        report.cliReports.forEach { cliReport ->
+                            group(cliReport.agentType.displayName) { renderCli(cliReport) }
+                        }
+                    }
+                }
+            }
+            """,
+            bodyAfter("private fun showReport(report: LspReport)", '{'),
+        )
+
+        assertEquals(
+            "rowCells.clear() 只准出现两次：replaceContent 里一次（重建原语），" +
+                "disposeUIResources 里一次（页面关掉收干净）。第三次出现在任何地方，" +
+                "都是「多清一次把刚登记的抹掉」那类攻击的变体",
+            2,
+            Regex("""rowCells\.clear\(\)""").findAll(compactArgs(normalized)).count(),
         )
     }
 
