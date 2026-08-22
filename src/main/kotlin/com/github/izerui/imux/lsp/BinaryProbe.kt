@@ -1,6 +1,9 @@
 package com.github.izerui.imux.lsp
 
+import com.github.izerui.imux.terminal.dialectOf
+import com.github.izerui.imux.terminal.probeScript
 import com.github.izerui.imux.terminal.resolveShell
+import com.github.izerui.imux.terminal.shellArgs
 import com.github.izerui.imux.terminal.singleQuote
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
@@ -99,9 +102,11 @@ internal class ShellBinaryProbe(
     override fun locate(binaries: Set<String>): Map<String, String?> {
         if (binaries.isEmpty()) return emptyMap()
         return runCatching {
+            val dialect = dialectOf(shell)
             val process =
-                ProcessBuilder(shell, "-l", "-i", "-c", buildProbeScript(binaries.toList()))
-                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                ProcessBuilder(
+                    listOf(shell) + shellArgs(dialect) + probeScript(dialect, binaries.toList()),
+                ).redirectError(ProcessBuilder.Redirect.DISCARD)
                     .start()
             process.outputStream.close()
             val output = process.inputStream.bufferedReader().use { it.readText() }

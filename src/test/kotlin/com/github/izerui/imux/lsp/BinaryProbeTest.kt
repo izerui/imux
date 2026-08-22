@@ -1,5 +1,7 @@
 package com.github.izerui.imux.lsp
 
+import com.github.izerui.imux.terminal.ShellDialect
+import com.github.izerui.imux.terminal.probeScript
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -113,4 +115,36 @@ class BinaryProbeTest {
             timeoutBranch.indexOf("LOG.warn") < timeoutBranch.indexOf("return emptyMap()"),
         )
     }
+
+    @Test
+    fun `PowerShell 与 POSIX 的探测输出走同一个解析器`() {
+        // 两种方言的脚本形状不同，但输出格式必须一致，否则 parseProbeOutput 会把
+        // Windows 的结果整片丢弃，18 门语言全落 UNKNOWN 而没有任何报错
+        val parsed = parseProbeOutput("gopls\t/usr/local/bin/gopls\njdtls\t\n")
+        assertEquals(mapOf("gopls" to "/usr/local/bin/gopls", "jdtls" to null), parsed)
+    }
+
+    @Test
+    fun `探测脚本仍然一次问完所有二进制`() {
+        // 每个二进制起一个登录 shell 不可接受：本表近二十个二进制，
+        // 而 zsh -l -i 要读 profile 与 rc
+        val posix = probeScript(ShellDialect.POSIX, listOf("a", "b", "c"))
+        assertEquals(2, posix.count { it == ';' })
+        val pwsh = probeScript(ShellDialect.POWERSHELL, listOf("a", "b", "c"))
+        assertTrue("PowerShell 版应把三个名字放进同一个数组", pwsh.contains("@('a','b','c')"))
+    }
+
+    /**
+     * locate() 起的是真进程，普通单测碰不到它；变异验证证实把 `probeScript(dialect, …)`
+     * 改回 `buildProbeScript(…)` 不会让任何用例红。这条源码断言是唯一的守卫。
+     */
+    @Test
+    fun `探测必须走方言分发而不是直接调 buildProbeScript`() {
+        val body = source.substringAfter("override fun locate")
+        assertTrue(
+            "locate 必须调用 probeScript(dialect, …) 以支持 PowerShell",
+            body.contains("probeScript("),
+        )
+    }
+
 }
