@@ -79,7 +79,7 @@ class ShellDialectTest {
         // 与 POSIX 版共用 parseProbeOutput，格式必须一致
         assertEquals(
             "\$ErrorActionPreference='SilentlyContinue'; @('gopls') | ForEach-Object { " +
-                "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \"\$_`t\$p\" }",
+                "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \$_ + [char]9 + \$p }",
             script,
         )
     }
@@ -88,7 +88,7 @@ class ShellDialectTest {
     fun `探测脚本对二进制名同样施加方言引号`() {
         assertEquals(
             "\$ErrorActionPreference='SilentlyContinue'; @('a''b') | ForEach-Object { " +
-                "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \"\$_`t\$p\" }",
+                "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \$_ + [char]9 + \$p }",
             probeScript(ShellDialect.POWERSHELL, listOf("a'b")),
         )
     }

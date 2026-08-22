@@ -92,6 +92,14 @@ internal fun quote(
  * 会往 stdout 混入 profile 的欢迎语。
  *
  * POSIX 分支直接复用 [buildProbeScript]，一个字节不改。
+ *
+ * **PowerShell 分支不用字符串插值（`"$_`t$p"`）拼制表符，用 `[char]9` 拼接。**
+ * `BinaryProbe` 的 `ShellBinaryProbe` 是 `src/main` 里唯一的裸 `ProcessBuilder`，
+ * Java 在 Windows 上给含空格的参数整体裹一层双引号，内层双引号是否被转义取决于
+ * JDK 走的是 `VERIFICATION_LEGACY` 还是 `VERIFICATION_WIN32_SAFE`。走前者时
+ * `CommandLineToArgvW` 会把内层引号吃掉，制表符不出现，`parseProbeOutput` 靠
+ * 制表符筛行，整片丢弃——症状与「这个功能没做」完全一样，且不报错。
+ * `[char]9` 避免了双引号，从根上消除这类风险。
  */
 internal fun probeScript(
     dialect: ShellDialect,
@@ -102,6 +110,6 @@ internal fun probeScript(
         ShellDialect.POWERSHELL -> {
             val list = binaries.joinToString(",") { quote(ShellDialect.POWERSHELL, it) }
             "\$ErrorActionPreference='SilentlyContinue'; @($list) | ForEach-Object { " +
-                "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \"\$_`t\$p\" }"
+                "\$p = (Get-Command \$_ -ErrorAction SilentlyContinue | Select-Object -First 1).Source; \$_ + [char]9 + \$p }"
         }
     }

@@ -223,13 +223,13 @@ private const val WINDOWS_FALLBACK_SHELL = "powershell.exe"
  * - `lsp/CodexLspProbe.kt` 用它拼的是**给用户看的命令文本**
  *   （`codex mcp add pi-lens -- '<路径>'`），与终端方言无关。
  * - `lsp/BinaryProbe.kt` 的 [buildProbeScript] 用它拼的是**真正交给
- *   `ProcessBuilder` 执行**的探测脚本，那条脚本由 `ShellBinaryProbe` 经
- *   POSIX shell 跑——当前只在 macOS/Linux 上执行，方言固定是 POSIX。
+ *   `ProcessBuilder` 执行**的探测脚本。`ShellBinaryProbe` 经 [probeScript] 分派后，
+ *   POSIX 方言仍然调用 [buildProbeScript] &#8594; 本函数；Windows 上 Git Bash
+ *   也走此路径。
  *
  * 已知取舍：Windows 上 `CodexLspProbe` 那条建议会由 PowerShell 执行，
  * 而两种方言只在值里含单引号时才产生不同结果——含单引号的可执行文件路径极其罕见，
- * 且失败形态是命令报错而非执行了别的东西。`BinaryProbe` 那条路径在下一个任务
- * （BinaryProbe 走方言）里会改经 [probeScript] 分派，届时不再经过这里。
+ * 且失败形态是命令报错而非执行了别的东西。
  * 不为此把方言穿透进探针层（那一层刻意不碰任何平台概念）。
  */
 internal fun singleQuote(value: String): String = quote(ShellDialect.POSIX, value)

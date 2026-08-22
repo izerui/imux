@@ -93,6 +93,10 @@ class BinaryProbeTest {
             "并进 stdout 虽不死锁，但 profile 噪音会污染探测结果",
             body.contains("redirectErrorStream(true)"),
         )
+        assertFalse(
+            "留独立管道正是死锁本身，Redirect.PIPE 是它的逐字等价物",
+            body.contains("Redirect.PIPE"),
+        )
     }
 
     /**
@@ -144,6 +148,14 @@ class BinaryProbeTest {
         assertTrue(
             "locate 必须调用 probeScript(dialect, …) 以支持 PowerShell",
             body.contains("probeScript("),
+        )
+        assertTrue(
+            "参数也必须按方言取，否则 PowerShell 收到 -l -i -c 直接报错",
+            body.contains("shellArgs(dialect)"),
+        )
+        assertTrue(
+            "方言必须由 shell 名判定",
+            body.contains("dialectOf(shell)"),
         )
     }
 
