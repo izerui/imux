@@ -137,7 +137,9 @@ class ProcessProbesTest {
         val dir = Files.createDirectories(procRoot.resolve("999"))
         Files.write(dir.resolve("environ"), "IMUX_TAB=imux-abc\u0000".toByteArray())
 
-        assertEquals("imux-abc", readTabId(999, isLinux = true, procRoot = procRoot))
+        // isWindows 必须显式传：不传就取 SystemInfo.isWindows，这条用例在 Windows 主机上
+        // 会落进 pid 文件分支返回 null，而它要测的是 Linux 分派。
+        assertEquals("imux-abc", readTabId(999, isLinux = true, isWindows = false, procRoot = procRoot))
     }
 
     @Test
@@ -148,7 +150,10 @@ class ProcessProbesTest {
 
         // 走的是 ps 那条路，本机没有 pid 999 这个进程，因此认不出来。
         // 若这条返回了 imux-abc，说明分派写反了。
-        assertNull(readTabId(999, isLinux = false, procRoot = procRoot))
+        //
+        // isWindows 同样必须显式传，理由同上；另外不传的话这条会去摸真实的
+        // PathManager 系统目录，单元测试不该碰那里。
+        assertNull(readTabId(999, isLinux = false, isWindows = false, procRoot = procRoot))
     }
 
     @Test

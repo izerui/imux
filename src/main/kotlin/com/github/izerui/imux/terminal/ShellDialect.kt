@@ -128,6 +128,19 @@ internal fun probeScript(
  *
  * `-Encoding ascii` 是必须的：PowerShell 5 的 `Set-Content` 默认写 UTF-16LE 带 BOM，
  * 读回来 `"100".toLong()` 会失败，而失败是静默的（该标签认不出来）。
+ *
+ * **已知的洞：Windows 上用 POSIX shell（Git Bash、MSYS2）的人拿不到漂移探测。**
+ * [dialectOf] 按可执行文件名判方言，Git Bash 判成 POSIX，于是这里返回 null、不写 pid 文件；
+ * 而 `ProcessProbes.readTabId` 仍按 `SystemInfo.isWindows` 走 pid 文件那条分支，
+ * 找一个永远不存在的文件——静默地认不出任何标签。
+ *
+ * **不要试图用 `echo $$` 把这个洞补上，那是错的。** Git Bash 的 `$$` 是 MSYS 自己的
+ * pid 空间，与 `ProcessHandle` 看到的 Windows pid 对不上号，写进去只会让父链上溯
+ * 撞到一个毫不相干的进程——那正是「认错比不迁移更糟」的那一类错。真要补，
+ * 得先解决 MSYS pid 到 Windows pid 的映射（`ps -W`、`/proc/<pid>/winpid`），
+ * 不是加一段 shell 命令的事。
+ *
+ * 保持现状的理由：改动前 Windows 上什么都不工作，这个洞不是回退，只是没覆盖到。
  */
 internal fun pidFileRecordCommand(
     dialect: ShellDialect,

@@ -72,7 +72,17 @@ internal fun readTabId(
     when {
         isWindows -> {
             val shells = tabPidFilesIn(pidDir())
-            tabIdByParentChain(pid, parentOf = ::parentPidOf, tabIdOfShellPid = shells::get)
+            tabIdByParentChain(
+                pid,
+                parentOf = ::parentPidOf,
+                tabIdOfShellPid = shells::get,
+                // 整条 Windows 通道的失败都是静默的：链断了、链太深、pid 文件压根没写出来，
+                // 在用户那里的症状都是「漂移探测不工作」。留一行 debug 把三者分开。
+                // 只记数量、层数与 pid 这类标识，**不记文件内容**，与本项目既有日志约定一致。
+                onUnclaimed = { depth ->
+                    LOG.debug("pid $pid 未认领：本轮有 ${shells.size} 个 pid 文件，父链走了 $depth 层")
+                },
+            )
         }
 
         isLinux -> readTabIdFromProc(pid, procRoot)
