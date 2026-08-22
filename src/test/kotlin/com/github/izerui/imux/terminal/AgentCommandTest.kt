@@ -136,9 +136,64 @@ class AgentCommandTest {
 
     @Test
     fun `未设置 SHELL 时回退到 zsh`() {
-        assertEquals("/bin/zsh", resolveShell(null))
-        assertEquals("/bin/zsh", resolveShell(""))
-        assertEquals("/bin/bash", resolveShell("/bin/bash"))
+        assertEquals("/bin/zsh", resolveShell(null, isWindows = false, configuredShell = null))
+        assertEquals("/bin/zsh", resolveShell("", isWindows = false, configuredShell = null))
+        assertEquals("/bin/bash", resolveShell("/bin/bash", isWindows = false, configuredShell = null))
+    }
+
+    @Test
+    fun `非 Windows 上的 shell 解析与现网逐字节相同`() {
+        // 这是 macOS 上正在工作的行为，改它等于改用户机器上正在跑的东西
+        assertEquals("/bin/zsh", resolveShell(null, isWindows = false, configuredShell = null))
+        assertEquals("/bin/zsh", resolveShell("", isWindows = false, configuredShell = null))
+        assertEquals("/bin/zsh", resolveShell("   ", isWindows = false, configuredShell = null))
+        assertEquals("/bin/bash", resolveShell("/bin/bash", isWindows = false, configuredShell = null))
+    }
+
+    @Test
+    fun `非 Windows 上不理会 IDE 配置的 shell`() {
+        // 换数据源会改变 macOS 行为，与「原有平台不能出问题」冲突
+        assertEquals(
+            "/bin/bash",
+            resolveShell("/bin/bash", isWindows = false, configuredShell = "/usr/local/bin/fish"),
+        )
+    }
+
+    @Test
+    fun `Windows 上采用 IDE 配置的 shell`() {
+        assertEquals(
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            resolveShell(
+                shellEnv = null,
+                isWindows = true,
+                configuredShell = "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            ),
+        )
+    }
+
+    @Test
+    fun `Windows 上保留用户配置的 Git Bash`() {
+        assertEquals(
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            resolveShell(null, isWindows = true, configuredShell = "C:\\Program Files\\Git\\bin\\bash.exe"),
+        )
+    }
+
+    @Test
+    fun `Windows 上配的是 cmd 时改用 PowerShell`() {
+        // 全文唯一一处不听用户配置：cmd 的转义规则写错会把初始 prompt 拼成另一条命令
+        assertEquals(
+            "powershell.exe",
+            resolveShell(null, isWindows = true, configuredShell = "C:\\Windows\\System32\\cmd.exe"),
+        )
+    }
+
+    @Test
+    fun `Windows 上取不到配置时退回 PowerShell 而不是 bin zsh`() {
+        assertEquals("powershell.exe", resolveShell(null, isWindows = true, configuredShell = null))
+        assertEquals("powershell.exe", resolveShell(null, isWindows = true, configuredShell = "  "))
+        // Windows 上 SHELL 通常没有值；就算有，也不该拿 POSIX 路径去 ProcessBuilder
+        assertEquals("powershell.exe", resolveShell("/bin/zsh", isWindows = true, configuredShell = null))
     }
 
     @Test

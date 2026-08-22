@@ -25,6 +25,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.options.BoundConfigurable
@@ -51,6 +52,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import org.jetbrains.plugins.terminal.TerminalOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
 import java.awt.BorderLayout
 import java.awt.Component
@@ -709,7 +711,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             TerminalToolWindowTabsManager.getInstance(project)
                 .createTabBuilder()
                 .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
+                .shellCommand(runCommandLine(resolveShell(
+                    System.getenv("SHELL"),
+                    isWindows = SystemInfo.isWindows,
+                    configuredShell = service<TerminalOptionsProvider>().shellPath,
+                ), command))
                 .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                 .requestFocus(true)
                 .closeOnProcessTermination(false)

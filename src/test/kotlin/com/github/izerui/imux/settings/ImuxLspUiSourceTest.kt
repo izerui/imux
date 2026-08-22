@@ -1368,7 +1368,11 @@ class ImuxLspUiSourceTest {
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                        .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
+                        .shellCommand(runCommandLine(resolveShell(
+                            System.getenv("SHELL"),
+                            isWindows = SystemInfo.isWindows,
+                            configuredShell = service<TerminalOptionsProvider>().shellPath,
+                        ), command))
                         .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                         .requestFocus(true)
                         .closeOnProcessTermination(false)
@@ -1466,7 +1470,11 @@ class ImuxLspUiSourceTest {
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                        .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
+                        .shellCommand(runCommandLine(resolveShell(
+                            System.getenv("SHELL"),
+                            isWindows = SystemInfo.isWindows,
+                            configuredShell = service<TerminalOptionsProvider>().shellPath,
+                        ), command))
                         .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                         .requestFocus(true)
                         .closeOnProcessTermination(false)

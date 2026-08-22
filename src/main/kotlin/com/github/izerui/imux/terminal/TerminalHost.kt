@@ -18,6 +18,7 @@ import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.fileEditor.ex.FileEditorOpenRequest
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
@@ -26,6 +27,8 @@ import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.intellij.openapi.components.service
+import org.jetbrains.plugins.terminal.TerminalOptionsProvider
 import org.jetbrains.plugins.terminal.block.util.TerminalDataContextUtils
 import java.util.EventListener
 
@@ -567,7 +570,11 @@ class TerminalHost(
         initialPrompt: String?,
     ): List<String> =
         launchCommand(
-            resolveShell(System.getenv("SHELL")),
+            resolveShell(
+                System.getenv("SHELL"),
+                isWindows = SystemInfo.isWindows,
+                configuredShell = service<TerminalOptionsProvider>().shellPath,
+            ),
             agentType,
             resumeId = sessionId,
             piExtension = piExtensionFor(agentType),
@@ -579,7 +586,11 @@ class TerminalHost(
         sessionId: String,
     ): List<String> =
         launchCommand(
-            resolveShell(System.getenv("SHELL")),
+            resolveShell(
+                System.getenv("SHELL"),
+                isWindows = SystemInfo.isWindows,
+                configuredShell = service<TerminalOptionsProvider>().shellPath,
+            ),
             agentType,
             resumeId = sessionId,
             piExtension = piExtensionFor(agentType),

@@ -2,7 +2,10 @@ package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.terminal.resolveShell
 import com.github.izerui.imux.terminal.singleQuote
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
+import org.jetbrains.plugins.terminal.TerminalOptionsProvider
 import java.util.concurrent.TimeUnit
 
 /** 二进制探测结果；键不存在与确认不存在必须保持可区分。 */
@@ -85,7 +88,12 @@ internal fun parseProbeOutput(output: String): Map<String, String?> =
  * 当成一条「名称→路径」，反而更糟。stderr 本来就无人读取，DISCARD 不丢任何信息。
  */
 internal class ShellBinaryProbe(
-    private val shell: String = resolveShell(System.getenv("SHELL")),
+    private val shell: String =
+        resolveShell(
+            System.getenv("SHELL"),
+            isWindows = SystemInfo.isWindows,
+            configuredShell = service<TerminalOptionsProvider>().shellPath,
+        ),
     private val timeoutSeconds: Long = TIMEOUT_SECONDS,
 ) : BinaryProbe {
     override fun locate(binaries: Set<String>): Map<String, String?> {

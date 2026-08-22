@@ -128,8 +128,53 @@ internal fun preassignedSessionId(
     },
 ): String? = if (agentType == AgentType.PI) newId() else null
 
-/** 用户的登录 shell；取不到时退回 zsh（macOS 自 Catalina 起的默认）。 */
-internal fun resolveShell(shellEnv: String?): String = shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
+/**
+ * 交给终端或 `ProcessBuilder` 的 shell 可执行文件。
+ *
+ * **非 Windows 分支与改动前逐字节相同**，且刻意**不看** [configuredShell]：
+ * macOS 上取 `SHELL` 是正在工作的行为，换数据源就是改用户机器上正在跑的东西。
+ *
+ * Windows 上 `SHELL` 通常没有值，从前退回 `/bin/zsh`，四个调用点一律
+ * `Cannot run program /bin/zsh`。改取 [configuredShell]——用户在 Terminal 设置里
+ * 配的那个 shell，也就是他自己终端里跑的东西。
+ *
+ * **解析到 cmd 时不听用户配置，改用 `powershell.exe`。** 这是全项目唯一一处覆盖
+ * 用户设置，理由是 cmd 的引号与转义规则（`^` 转义、`%` 二次展开）写错会把用户的
+ * 初始 prompt 拼成一条别的命令；宁可换一个我们能正确转义的 shell。PowerShell 在
+ * 每台受支持的 Windows 上都在。
+ *
+ * 三个参数都不给默认值：调用点必须显式表态，避免将来新增调用点时静默漏掉平台判断。
+ */
+internal fun resolveShell(
+    shellEnv: String?,
+    isWindows: Boolean,
+    configuredShell: String?,
+): String {
+    if (!isWindows) return shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
+    val configured = configuredShell?.takeIf { it.isNotBlank() } ?: return WINDOWS_FALLBACK_SHELL
+    // dialectOf 认不出的名字会落到 POSIX；Windows 上那意味着 cmd 或某个我们没见过的
+    // shell，两者都不该拿 PowerShell 的引号规则去拼，但也不该拿 POSIX 的 -l -i 去跑。
+    // 只放行明确认得出的两类：PowerShell，以及路径里带 sh/bash/zsh 的 POSIX shell。
+    return if (looksLikePosixShell(configured) || dialectOf(configured) == ShellDialect.POWERSHELL) {
+        configured
+    } else {
+        WINDOWS_FALLBACK_SHELL
+    }
+}
+
+/** Windows 上认得出的 POSIX shell（Git Bash、MSYS2、WSL 转发器等）。 */
+private fun looksLikePosixShell(shellPath: String): Boolean {
+    val name =
+        shellPath
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .lowercase()
+            .removeSuffix(".exe")
+    return name in POSIX_SHELL_NAMES
+}
+
+private val POSIX_SHELL_NAMES = setOf("sh", "bash", "zsh", "fish", "dash", "ksh")
+private const val WINDOWS_FALLBACK_SHELL = "powershell.exe"
 
 /**
  * 包成单引号字符串。
