@@ -121,7 +121,7 @@ private val normalized by lazy { source.replace(Regex("\\s+"), " ") }
 >
 > 由 `docs/superpowers/specs/2026-08-22-imux-cross-platform-design.md` 设计、阶段一实现解决。
 >
-> **已解决的部分：** `macOnlyCommands` 从「目录表里所有安装命令」收窄成只挡 `brew` / `opam` 系。`npm` / `go install` / `gem` / `dotnet tool` / `rustup` / `cargo` 这 8 条安装命令在三平台都给「启用」按钮。`canRun` 里 `isMac ||` 那一半已按本条建议放开——非 macOS 平台只要命令不在 `macOnlyCommands` 里，就出按钮。
+> **已解决的部分：** `macOnlyCommands` 从「目录表里所有安装命令」收窄成只挡 `brew` / `opam` 系。`npm` / `go` / `gem` / `dotnet` / `rustup` 那 8 条安装命令在三平台都给「启用」按钮。`canRun` 里 `isMac ||` 那一半已按本条建议放开——非 macOS 平台只要命令不在 `macOnlyCommands` 里，就出按钮。
 >
 > **未全解决的部分：** brew 系 4 门语言（Java / Kotlin / Lua / C 与 C++）以及 3 个前置工具（dotnet-sdk / rustup / opam）的非 macOS 安装命令仍未补。原因是本仓库没有 Linux 或 Windows 环境可以验证 apt / dnf / pacman / winget 的写法——编一条跑不通的命令挂在「启用」按钮上，比不给按钮更糟。这几门语言在非 macOS 上保持既有退路：短目标名 + 完整命令 tooltip + 上游文档链接。Linux 与 Windows 上的实际运行行为按设计应当如此，未经真机验证。
 
@@ -154,7 +154,7 @@ Windows 上 `SHELL` 通常没有值 → 退回 `/bin/zsh` → 拿它去 `Process
 >
 > 由 `docs/superpowers/specs/2026-08-22-imux-cross-platform-design.md` 设计、阶段一实现解决。
 >
-> **已解决的部分：** 根已修——`resolveShell` 现在经 `ShellDialect` 分平台解析：macOS / Linux 取 `SHELL` 环境变量（退回 `/bin/sh`），Windows 取 IDE 配置的终端 shell（`TerminalProjectOptionsProvider.shellPath`），再退回 `cmd.exe`。四个调用点（会话启动 newCommand / resumeCommand、LSP 探测 BinaryProbe、LSP 执行按钮）全部改经 `ShellDialect`，不再有 `/bin/zsh` 硬编码退路。`canRun` 的 `hasPosixShell` 维度已按本条预告删除（原文：「`resolveShell` 支持 Windows 之后，第 1 条该去掉」）。
+> **已解决的部分：** 根已修——`resolveShell` 现在经 `ShellDialect` 分平台解析：macOS / Linux 取 `SHELL` 环境变量（退回 `/bin/zsh`，与改造前一致），Windows 取 IDE 配置的终端 shell（`TerminalOptionsProvider.shellPath`），再退回 `powershell.exe`（设计明确排除了 `cmd.exe`——其引号与转义规则写对的难度远高于收益，解析到 cmd 时会换成 PowerShell）。四个调用点（会话启动 newCommand / resumeCommand、LSP 探测 BinaryProbe、LSP 执行按钮）全部改经 `ShellDialect`，Windows 上不再退回 `/bin/zsh`。`canRun` 的 `hasPosixShell` 维度已按本条预告删除（原文：「`resolveShell` 支持 Windows 之后，第 1 条该去掉」）。
 >
 > **未全解决的部分：** Linux 与 Windows 上的实际运行行为（会话能否正常起动、LSP 探测是否正确返回、执行按钮是否可用）按设计应当如此，但完全未经真机验证。本仓库没有 Linux 或 Windows 环境，所有行为结论均来自代码审查与 macOS 上的测试。
 
