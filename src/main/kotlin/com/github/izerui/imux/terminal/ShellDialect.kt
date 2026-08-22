@@ -72,7 +72,8 @@ internal fun shellArgs(dialect: ShellDialect): List<String> =
  * 两种方言都用单引号（内部一切都是字面量），只是转义单引号自身的写法不同：
  * POSIX 要闭合-转义-重开（`'\''`），PowerShell 写两个单引号（`''`）。
  *
- * **POSIX 分支必须与 [singleQuote] 逐字节相同**——那是 macOS 上正在工作的行为。
+ * **POSIX 分支必须与改动前的 `singleQuote` 实现逐字节相同**（`'` + 把 `'` 换成
+ * `'\''` + `'`）——那是 macOS 上正在工作的行为，由 `ShellDialectTest` 用字面量钉住。
  */
 internal fun quote(
     dialect: ShellDialect,

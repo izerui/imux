@@ -14,10 +14,12 @@ import com.github.izerui.imux.session.PiReportEndpoint
  * （从终端 `runIde` 起的沙箱继承了终端的 PATH，所以在沙箱里一切正常，
  * 只有装到正式 IDE 上才暴露。这个差异坑过一次。）
  *
- * 两个参数缺一不可：
+ * POSIX shell 的两个参数缺一不可：
  * - `-l` 读 profile，拿到用户配好的 PATH
  * - `-i` 读 rc，`claude` 这类 **alias** 才存在（实测本机的 claude 就是个 alias，
  *   还带着 `--dangerously-skip-permissions` 参数，丢了它行为就变了）
+ *
+ * PowerShell 反而要 `-NoProfile`，详见 [shellArgs] 的 KDoc。
  *
  * 不用 `exec` 替换进程：多一层 shell 无妨，而 `-c` 执行完即退出，
  * CLI 一结束 shell 也跟着结束，「进程终止即关标签页」的行为不受影响。
@@ -216,11 +218,18 @@ private const val WINDOWS_FALLBACK_SHELL = "powershell.exe"
 /**
  * 包成 POSIX 单引号字符串。
  *
- * 保留这个名字是因为 `lsp/CodexLspProbe.kt` 用它拼的是**给用户看的命令文本**
- * （`codex mcp add pi-lens -- '<路径>'`），与终端方言无关。
+ * 两个调用点，性质不同：
  *
- * 已知取舍：Windows 上那条建议会由 PowerShell 执行，而两种方言只在值里含单引号时
- * 才产生不同结果——含单引号的可执行文件路径极其罕见，且失败形态是命令报错而非
- * 执行了别的东西。不为此把方言穿透进探针层（那一层刻意不碰任何平台概念）。
+ * - `lsp/CodexLspProbe.kt` 用它拼的是**给用户看的命令文本**
+ *   （`codex mcp add pi-lens -- '<路径>'`），与终端方言无关。
+ * - `lsp/BinaryProbe.kt` 的 [buildProbeScript] 用它拼的是**真正交给
+ *   `ProcessBuilder` 执行**的探测脚本，那条脚本由 `ShellBinaryProbe` 经
+ *   POSIX shell 跑——当前只在 macOS/Linux 上执行，方言固定是 POSIX。
+ *
+ * 已知取舍：Windows 上 `CodexLspProbe` 那条建议会由 PowerShell 执行，
+ * 而两种方言只在值里含单引号时才产生不同结果——含单引号的可执行文件路径极其罕见，
+ * 且失败形态是命令报错而非执行了别的东西。`BinaryProbe` 那条路径在下一个任务
+ * （BinaryProbe 走方言）里会改经 [probeScript] 分派，届时不再经过这里。
+ * 不为此把方言穿透进探针层（那一层刻意不碰任何平台概念）。
  */
 internal fun singleQuote(value: String): String = quote(ShellDialect.POSIX, value)

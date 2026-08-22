@@ -52,7 +52,7 @@ class ShellDialectTest {
     @Test
     fun `POSIX 引号与现网的 singleQuote 逐字节相同`() {
         listOf("plain", "with space", "it's", "a'b'c", "", "--flag=x").forEach { value ->
-            assertEquals(singleQuote(value), quote(ShellDialect.POSIX, value))
+            assertEquals("'" + value.replace("'", "'\\''") + "'", quote(ShellDialect.POSIX, value))
         }
     }
 
