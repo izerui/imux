@@ -7,29 +7,42 @@ import java.io.File
 
 class TerminalIntegrationSourceTest {
     @Test
-    fun `只支持 262 并使用官方 detached tab 生命周期`() {
+    fun `支持整个 262 并使用跨版本 detached tab 生命周期`() {
         val buildFile = File("build.gradle.kts").readText()
         val terminalHost =
             File(
                 "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
             ).readText()
 
-        assertTrue("插件最低版本必须是 IDEA 2026.2 / build 262", buildFile.contains("""sinceBuild = "262""""))
+        assertTrue(
+            "插件最低版本必须覆盖 IDEA 2026.2 / build 262",
+            buildFile.contains("""sinceBuild = "262""""),
+        )
         assertTrue(
             "IDEA 2026.2 平台要求使用 Java 25 工具链",
             buildFile.contains("jvmToolchain(25)"),
         )
         assertTrue(
-            "隐藏终端创建后必须通过 detachTab 脱离工具窗口，避免被 backend 持久化恢复",
+            "必须通过受控桥接执行两版各自完整的 detach 生命周期",
+            terminalHost.contains("detachTabAcross262(manager, tab)"),
+        )
+        assertTrue(
+            "反射必须只按稳定参数查找 detachTab，不能绑定发生漂移的返回类型",
+            terminalHost.contains(
+                ".getMethod(\"detachTab\", TerminalToolWindowTab::class.java)",
+            ),
+        )
+        assertFalse(
+            "不能产生绑定某一版 detachTab 返回类型的直接调用字节码",
             terminalHost.contains("manager.detachTab(tab)"),
         )
         assertFalse(
-            "不能直接取 createTab().view，否则 backend 会把会话当作可恢复终端标签",
-            terminalHost.contains(".createTab()\n            .view"),
+            "不能用 Internal builder API 绕过 detach，否则旧版会泄漏 tab Content",
+            terminalHost.contains(".shouldAddToToolWindow("),
         )
-        assertFalse(
-            "不能调用 262 标记为 Internal 的 shouldAddToToolWindow",
-            terminalHost.contains("shouldAddToToolWindow("),
+        assertTrue(
+            "detached tab 的 TerminalView 必须从跨版本稳定的 tab getter 获取",
+            terminalHost.contains("return tab.view"),
         )
         assertTrue(
             "启动环境必须传入终端进程，不能只停留在命令构造层",

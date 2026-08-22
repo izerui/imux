@@ -289,7 +289,7 @@ class PlatformApiAlignmentSourceTest {
     }
 
     @Test
-    fun `终端创建不使用平台 Internal API`() {
+    fun `终端创建仅为跨 262 detachTab 返回类型漂移使用受控反射`() {
         val terminalHost =
             source(
                 "src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt",
@@ -299,7 +299,15 @@ class PlatformApiAlignmentSourceTest {
                 "src/main/kotlin/com/github/izerui/imux/terminal/PiReporterScript.kt",
             )
 
-        assertFalse(terminalHost.contains("shouldAddToToolWindow("))
+        assertFalse(terminalHost.contains(".shouldAddToToolWindow("))
+        assertTrue(terminalHost.contains("detachTabAcross262(manager, tab)"))
+        assertTrue(
+            terminalHost.contains(
+                ".getMethod(\"detachTab\", TerminalToolWindowTab::class.java)",
+            ),
+        )
+        assertFalse(terminalHost.contains("manager.detachTab(tab)"))
+        assertFalse(terminalHost.contains("getDeclaredMethod("))
         assertTrue(terminalHost.contains("requestFocus(false)"))
         assertTrue(terminalHost.contains("deferSessionStartUntilUiShown(false)"))
         assertFalse(reporterScript.contains("PluginManagerCore"))

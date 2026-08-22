@@ -18,6 +18,7 @@ import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.fileEditor.ex.FileEditorOpenRequest
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
@@ -513,10 +514,14 @@ class TerminalHost(
     /**
      * 创建一个只属于编辑器的终端。
      *
-     * IDEA 2026.2 的 [TerminalToolWindowTabsManager.detachTab] 会把 backend tab 标记为 detached：
-     * 它继续承载当前进程，但不会作为 Terminal 工具窗口标签持久化，也不会在下次启动时恢复。
-     * 公开 API 会先创建普通 tab，再立即 detach；关闭焦点请求可避免激活底部工具窗口，
-     * 禁用延迟启动则保证 detached view 无需等待工具窗口显示就能启动进程。
+     * 262 内部的 [TerminalToolWindowTabsManager.detachTab] 发生过二进制不兼容变更：
+     * 262.8665 / 262.9437 返回 TerminalView，262.10315+ 返回 Unit。JVM 方法描述符包含返回类型，
+     * 因此正常调用所生成的字节码不可能同时匹配两组 build。
+     *
+     * 用户明确要求同一个插件包支持整个 262，故这里按参数反射调用该公开方法：Java 反射查找不把
+     * 返回类型作为条件，两组实现都会正确执行自己的完整 detach 生命周期。反射严格封装在此处，
+     * 不探测实现类、不访问私有字段，也不增加旧 API 分支；返回值统一从稳定的 [TerminalToolWindowTab.view]
+     * 获取。不能改用 shouldAddToToolWindow(false)：它是 Internal，且旧版会把 tab Content 持有到项目关闭。
      */
     private fun createView(
         agentType: AgentType,
@@ -541,7 +546,17 @@ class TerminalHost(
                 .deferSessionStartUntilUiShown(false)
                 .createTab()
 
-        return manager.detachTab(tab)
+        detachTabAcross262(manager, tab)
+        return tab.view
+    }
+
+    private fun detachTabAcross262(
+        manager: TerminalToolWindowTabsManager,
+        tab: TerminalToolWindowTab,
+    ) {
+        TerminalToolWindowTabsManager::class.java
+            .getMethod("detachTab", TerminalToolWindowTab::class.java)
+            .invoke(manager, tab)
     }
 
     private fun projectPath(): String = project.basePath ?: System.getProperty("user.home")

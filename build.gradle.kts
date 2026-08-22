@@ -30,13 +30,18 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        // 用本机已安装的 IDEA 2026.2（IU-262.8665.337）作为平台依赖。
+        // 用最新 262.10315 平台编译并做 verifier 基线，同时保证产物能装到整个 262 系列。
         //
-        // 不用 intellijIdea("2026.2") 的原因：它会去 download.jetbrains.com 拉
-        // 完整安装包（macOS 上是 .dmg，1G+），而该主机在本机网络下不可达。
-        // 用 local 既避开下载，也保证编译期看到的就是运行期那份 jar ——
-        // 对我们依赖 Experimental 终端 API 的场景反而更准确。
-        local("/Applications/IntelliJ IDEA.app")
+        // 262 生命周期内 JetBrains 改了 Experimental detachTab 的 JVM 签名：
+        //   262.8665 / 262.9437: fun detachTab(tab): TerminalView
+        //   262.10315+        : fun detachTab(tab)            // 返回值改成 Unit
+        // 业务代码因此不能产生直接调用 detachTab 的字节码，而是在一个受控位置按参数反射调用；
+        // 具体原因和生命周期约束见 TerminalHost.detachTabAcross262。
+        //
+        // 走 intellij-repository（cache-redirector 可达，download.jetbrains.com 不可达）。
+        create("IU", "262.10315.19-EAP-SNAPSHOT") {
+            useInstaller.set(false)
+        }
         bundledPlugin("org.jetbrains.plugins.terminal")
         // 暂不引入 testFramework(TestFrameworkType.Platform)：
         // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，
@@ -72,6 +77,7 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
+            // detachTab 的返回类型漂移由 TerminalHost 中的窄反射桥接隔离，同一产物支持整个 262。
             sinceBuild = "262"
             // 刻意不设 untilBuild：见 docs/superpowers/plans 中的决策记录。
             // 代价是终端 API 漂移时会在运行时抛 NoSuchMethodError 而非安装期拒绝。
@@ -111,7 +117,8 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
 // 代价是注释改动也会触发一次测试，相对于假绿是划算的。
 tasks.test {
     listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
-        inputs.dir(dir)
+        inputs
+            .dir(dir)
             .withPropertyName("sourceReadAtRuntime-${dir.replace('/', '-')}")
             .withPathSensitivity(PathSensitivity.RELATIVE)
     }
