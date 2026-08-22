@@ -10,11 +10,13 @@ import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
 
 class LspDiagnosticsTest {
-
     @get:Rule
     val temp = TemporaryFolder()
 
-    private fun write(relative: String, content: String) {
+    private fun write(
+        relative: String,
+        content: String,
+    ) {
         val file = temp.root.toPath().resolve(relative)
         Files.createDirectories(file.parent)
         Files.writeString(file, content)
@@ -22,16 +24,18 @@ class LspDiagnosticsTest {
 
     /** [installed] 里的 CLI 会在探测结果中带上一个路径，其余带 null（= 确认未安装）。 */
     private fun diagnostics(
-        binaries: Map<String, String?> = emptyMap(),
+        locatedBinaries: Map<String, String?> = emptyMap(),
         installed: Set<AgentType> = AgentType.entries.toSet(),
     ) = LspDiagnostics(
         userHome = temp.root.toPath(),
-        binaryProbe = object : BinaryProbe {
-            override fun locate(wanted: Set<String>): Map<String, String?> =
-                binaries + AgentType.entries.associate { type ->
-                    type.cli to if (type in installed) "/usr/local/bin/${type.cli}" else null
-                }
-        },
+        binaryProbe =
+            object : BinaryProbe {
+                override fun locate(binaries: Set<String>): Map<String, String?> =
+                    locatedBinaries +
+                        AgentType.entries.associate { type ->
+                            type.cli to if (type in installed) "/usr/local/bin/${type.cli}" else null
+                        }
+            },
     )
 
     private fun LspReport.of(type: AgentType) = cliReports.single { it.agentType == type }
@@ -50,11 +54,22 @@ class LspDiagnosticsTest {
         write(".pi/agent/settings.json", """{"packages":["npm:pi-lens"]}""")
         write(".codex/config.toml", "[mcp_servers.lens]\ncommand = \"pi-lens-mcp\"")
 
-        val report = diagnostics(binaries = mapOf("gopls" to "/usr/bin/gopls")).run()
+        val report =
+            diagnostics(
+                locatedBinaries =
+                    mapOf(
+                        "gopls" to "/usr/bin/gopls",
+                        PI_LENS_MCP_BIN to "/usr/bin/pi-lens-mcp",
+                    ),
+            ).run()
 
         assertEquals(
             LspStatus.READY,
-            report.of(AgentType.CLAUDE).findings.single { it.language.id == "go" }.status,
+            report
+                .of(AgentType.CLAUDE)
+                .findings
+                .single { it.language.id == "go" }
+                .status,
         )
         assertEquals("装了 pi-lens 就不该再给整组建议", null, report.of(AgentType.PI).groupRemedy)
         assertEquals("挂了 MCP 就不该再给整组建议", null, report.of(AgentType.CODEX).groupRemedy)
@@ -67,7 +82,10 @@ class LspDiagnosticsTest {
 
         assertEquals(listOf("pi install npm:pi-lens"), report.of(AgentType.PI).groupRemedy?.commands)
         assertEquals(
-            listOf("codex mcp add pi-lens -- pi-lens-mcp"),
+            listOf(
+                "pi install npm:pi-lens",
+                "codex mcp add pi-lens -- '${standardPiLensMcp(temp.root.toPath())}'",
+            ),
             report.of(AgentType.CODEX).groupRemedy?.commands,
         )
         // 全量列表：有官方插件的都是「没配」，官方没插件的（Haskell 等）是「无对应插件」，
@@ -108,16 +126,20 @@ class LspDiagnosticsTest {
         val calls = mutableListOf<Set<String>>()
         LspDiagnostics(
             userHome = temp.root.toPath(),
-            binaryProbe = object : BinaryProbe {
-                override fun locate(wanted: Set<String>): Map<String, String?> {
-                    calls += wanted
-                    return emptyMap()
-                }
-            },
+            binaryProbe =
+                object : BinaryProbe {
+                    override fun locate(binaries: Set<String>): Map<String, String?> {
+                        calls += binaries
+                        return emptyMap()
+                    }
+                },
         ).run()
 
         assertEquals("只允许探测一次", 1, calls.size)
-        assertEquals(LspCatalog.allProbeTargets + AgentType.entries.map { it.cli }, calls.single())
+        assertEquals(
+            LspCatalog.allProbeTargets + AgentType.entries.map { it.cli } + setOf(PI_LENS_MCP_BIN, NPX_BIN),
+            calls.single(),
+        )
         assertTrue(
             "前置工具链必须在这一次里一起问完：漏掉的话每条链都会白白多出一层安装命令",
             calls.single().containsAll(LspCatalog.tools.keys),
@@ -130,12 +152,14 @@ class LspDiagnosticsTest {
      */
     @Test
     fun `探测结果里没有 CLI 键时视为已安装并逐项标记无法确定`() {
-        val report = LspDiagnostics(
-            userHome = temp.root.toPath(),
-            binaryProbe = object : BinaryProbe {
-                override fun locate(wanted: Set<String>): Map<String, String?> = emptyMap()
-            },
-        ).run()
+        val report =
+            LspDiagnostics(
+                userHome = temp.root.toPath(),
+                binaryProbe =
+                    object : BinaryProbe {
+                        override fun locate(binaries: Set<String>): Map<String, String?> = emptyMap()
+                    },
+            ).run()
 
         assertTrue("不得因探测失败而谎报未安装", report.of(AgentType.CLAUDE).installed)
     }

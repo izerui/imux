@@ -7,14 +7,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ClaudeCodeLspProbeTest {
-
-    private val marketplace = """
+    private val marketplace =
+        """
         {"plugins":[
           {"name":"gopls-lsp","lspServers":{"gopls":{"command":"gopls","extensionToLanguage":{".go":"go"}}}},
           {"name":"kotlin-lsp","lspServers":{"kotlin":{"command":"kotlin-lsp","extensionToLanguage":{".kt":"kotlin"}}}},
           {"name":"not-an-lsp-plugin","category":"development"}
         ]}
-    """.trimIndent()
+        """.trimIndent()
 
     @Test
     fun `从 settings 里直接定义的 lspServers 取 command`() {
@@ -40,10 +40,11 @@ class ClaudeCodeLspProbeTest {
 
     @Test
     fun `两个来源合并`() {
-        val settings = """
+        val settings =
+            """
             {"lspServers":{"custom":{"command":"my-server"}},
              "enabledPlugins":{"kotlin-lsp@claude-plugins-official":true}}
-        """.trimIndent()
+            """.trimIndent()
 
         assertEquals(setOf("my-server", "kotlin-lsp"), parseConfiguredCommands(settings, marketplace))
     }
@@ -61,11 +62,12 @@ class ClaudeCodeLspProbeTest {
 
     @Test
     fun `配置到位且二进制在则为就绪`() {
-        val report = claudeReport(
-            configuredCommands = setOf("gopls"),
-            binaries = mapOf("gopls" to "/Users/demo/go/bin/gopls"),
-            cliInstalled = true,
-        )
+        val report =
+            claudeReport(
+                configuredCommands = setOf("gopls"),
+                binaries = mapOf("gopls" to "/Users/demo/go/bin/gopls"),
+                cliInstalled = true,
+            )
 
         val go = report.findings.single { it.language.id == "go" }
         assertEquals(LspStatus.READY, go.status)
@@ -79,11 +81,12 @@ class ClaudeCodeLspProbeTest {
      */
     @Test
     fun `二进制在但插件没启用时只跑装插件那一步`() {
-        val report = claudeReport(
-            configuredCommands = emptySet(),
-            binaries = mapOf("kotlin-lsp" to "/opt/homebrew/bin/kotlin-lsp", "brew" to "/opt/homebrew/bin/brew"),
-            cliInstalled = true,
-        )
+        val report =
+            claudeReport(
+                configuredCommands = emptySet(),
+                binaries = mapOf("kotlin-lsp" to "/opt/homebrew/bin/kotlin-lsp", "brew" to "/opt/homebrew/bin/brew"),
+                cliInstalled = true,
+            )
 
         val kotlin = report.findings.single { it.language.id == "kotlin" }
         assertEquals(LspStatus.MISSING_CONFIG, kotlin.status)
@@ -107,11 +110,12 @@ class ClaudeCodeLspProbeTest {
      */
     @Test
     fun `配置了但二进制不在时只装 server`() {
-        val report = claudeReport(
-            configuredCommands = setOf("jdtls"),
-            binaries = mapOf("jdtls" to null, "brew" to "/opt/homebrew/bin/brew"),
-            cliInstalled = true,
-        )
+        val report =
+            claudeReport(
+                configuredCommands = setOf("jdtls"),
+                binaries = mapOf("jdtls" to null, "brew" to "/opt/homebrew/bin/brew"),
+                cliInstalled = true,
+            )
 
         val java = report.findings.single { it.language.id == "java" }
         assertEquals(LspStatus.MISSING_BINARY, java.status)
@@ -132,11 +136,12 @@ class ClaudeCodeLspProbeTest {
      */
     @Test
     fun `三层全缺时给出完整的三步链`() {
-        val report = claudeReport(
-            configuredCommands = emptySet(),
-            binaries = mapOf("csharp-ls" to null, "dotnet" to null, "brew" to "/opt/homebrew/bin/brew"),
-            cliInstalled = true,
-        )
+        val report =
+            claudeReport(
+                configuredCommands = emptySet(),
+                binaries = mapOf("csharp-ls" to null, "dotnet" to null, "brew" to "/opt/homebrew/bin/brew"),
+                cliInstalled = true,
+            )
 
         assertEquals(
             listOf(
@@ -144,7 +149,10 @@ class ClaudeCodeLspProbeTest {
                 "dotnet tool install --global csharp-ls",
                 "claude plugin install csharp-lsp@claude-plugins-official",
             ),
-            report.findings.single { it.language.id == "csharp" }.remedy?.commands,
+            report.findings
+                .single { it.language.id == "csharp" }
+                .remedy
+                ?.commands,
         )
     }
 
@@ -153,7 +161,21 @@ class ClaudeCodeLspProbeTest {
     fun `二进制映射里没有该键时状态为无法确定`() {
         val report = claudeReport(setOf("jdtls"), emptyMap(), cliInstalled = true)
 
-        assertEquals(LspStatus.UNKNOWN, report.findings.single { it.language.id == "java" }.status)
+        val java = report.findings.single { it.language.id == "java" }
+        assertEquals(LspStatus.UNKNOWN, java.status)
+        assertNull(java.remedy)
+    }
+
+    @Test
+    fun `插件未启用且探测未知时只建议启用插件`() {
+        val report = claudeReport(emptySet(), emptyMap(), cliInstalled = true)
+
+        val kotlin = report.findings.single { it.language.id == "kotlin" }
+        assertEquals(LspStatus.MISSING_CONFIG, kotlin.status)
+        assertEquals(
+            listOf("claude plugin install kotlin-lsp@claude-plugins-official"),
+            kotlin.remedy?.commands,
+        )
     }
 
     /**

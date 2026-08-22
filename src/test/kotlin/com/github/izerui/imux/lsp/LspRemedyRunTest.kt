@@ -21,11 +21,15 @@ import java.util.Properties
  * 以及「按钮上写着启用、点下去只做了三件事里的一件」。
  */
 class LspRemedyRunTest {
-
     private fun language(id: String): LspLanguage = LspCatalog.languages.single { it.id == id }
 
-    /** 只有列出来的这几个名字在 PATH 里，其余一律不在——每一层的在/缺都能精确摆出来。 */
-    private fun present(vararg names: String): (String) -> Boolean = { it in names }
+    /** 只有列出来的这几个名字在 PATH 里，其余一律确认不在。 */
+    private fun present(vararg names: String): (String) -> BinaryAvailability =
+        { name ->
+            if (name in names) BinaryAvailability.PRESENT else BinaryAvailability.MISSING
+        }
+
+    private fun unknown(): (String) -> BinaryAvailability = { BinaryAvailability.UNKNOWN }
 
     private val claudePluginCommand = "claude plugin install kotlin-lsp@claude-plugins-official"
 
@@ -116,8 +120,9 @@ class LspRemedyRunTest {
      */
     @Test
     fun `没有一条 macOS 形状的命令能在非 macOS 上跑`() {
-        val commands = LspCatalog.servers.values.mapNotNull(LspServer::installCommand) +
-            LspCatalog.tools.values.mapNotNull(LspTool::installCommand)
+        val commands =
+            LspCatalog.servers.values.mapNotNull(LspServer::installCommand) +
+                LspCatalog.tools.values.mapNotNull(LspTool::installCommand)
         val leaked = commands.filter { canRun(Remedy(listOf(it), "https://x"), isMac = false, hasPosixShell = true) }
 
         assertEquals(
@@ -139,14 +144,15 @@ class LspRemedyRunTest {
      */
     @Test
     fun `链里混进一条 macOS 形状的命令就整条闸住`() {
-        val mixed = Remedy(
-            listOf(
-                "brew install --cask dotnet-sdk",
-                "dotnet tool install --global csharp-ls",
-                "claude plugin install csharp-lsp@claude-plugins-official",
-            ),
-            null,
-        )
+        val mixed =
+            Remedy(
+                listOf(
+                    "brew install --cask dotnet-sdk",
+                    "dotnet tool install --global csharp-ls",
+                    "claude plugin install csharp-lsp@claude-plugins-official",
+                ),
+                null,
+            )
 
         assertTrue(canRun(mixed, isMac = true, hasPosixShell = true))
         assertFalse(
@@ -210,6 +216,14 @@ class LspRemedyRunTest {
         assertEquals(
             listOf("brew install --cask kotlin-lsp", claudePluginCommand),
             enableCommands(language("kotlin"), AgentType.CLAUDE, LspStatus.MISSING_CONFIG, present("brew")),
+        )
+    }
+
+    @Test
+    fun `未知的 server 与工具链不被推断为缺失`() {
+        assertEquals(
+            listOf(claudePluginCommand),
+            enableCommands(language("kotlin"), AgentType.CLAUDE, LspStatus.MISSING_CONFIG, unknown()),
         )
     }
 
@@ -362,8 +376,13 @@ class LspRemedyRunTest {
      */
     @Test
     fun `目录表全摊开时链里没有重复步骤`() {
-        val known = LspCatalog.servers.values.mapNotNull(LspServer::installCommand).toSet() +
-            LspCatalog.tools.values.mapNotNull(LspTool::installCommand).toSet()
+        val known =
+            LspCatalog.servers.values
+                .mapNotNull(LspServer::installCommand)
+                .toSet() +
+                LspCatalog.tools.values
+                    .mapNotNull(LspTool::installCommand)
+                    .toSet()
         val bad = mutableListOf<String>()
         listOf(LspStatus.MISSING_CONFIG, LspStatus.MISSING_BINARY).forEach { status ->
             AgentType.entries.forEach { agent ->
@@ -451,14 +470,15 @@ class LspRemedyRunTest {
     @Test
     fun `没有下一步的行不给任何建议`() {
         val nothing = present()
-        val leaked = LspCatalog.languages.flatMap { language ->
-            listOf(LspStatus.READY, LspStatus.AUTO_MANAGED, LspStatus.NOT_AVAILABLE, LspStatus.UNKNOWN)
-                .flatMap { status ->
-                    AgentType.entries.mapNotNull { agent ->
-                        "${language.id}/$agent/$status".takeIf { remedyFor(language, agent, status, nothing) != null }
+        val leaked =
+            LspCatalog.languages.flatMap { language ->
+                listOf(LspStatus.READY, LspStatus.AUTO_MANAGED, LspStatus.NOT_AVAILABLE, LspStatus.UNKNOWN)
+                    .flatMap { status ->
+                        AgentType.entries.mapNotNull { agent ->
+                            "${language.id}/$agent/$status".takeIf { remedyFor(language, agent, status, nothing) != null }
+                        }
                     }
-                }
-        }
+            }
 
         assertEquals("这些行没有任何可执行的下一步，却给了建议：$leaked", emptyList<String>(), leaked)
     }
@@ -501,9 +521,10 @@ class LspRemedyRunTest {
      */
     @Test
     fun `按钮文案键与资源包双向对齐`() {
-        val bundle = Properties().apply {
-            File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
-        }
+        val bundle =
+            Properties().apply {
+                File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
+            }
 
         assertTrue(
             "资源包里没有 $ENABLE_ACTION_KEY，按钮上会显示成 !$ENABLE_ACTION_KEY!",
@@ -540,9 +561,10 @@ class LspRemedyRunTest {
      */
     @Test
     fun `进行中文案键在资源包里存在`() {
-        val bundle = Properties().apply {
-            File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
-        }
+        val bundle =
+            Properties().apply {
+                File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
+            }
 
         assertTrue(
             "资源包里没有 $ENABLING_STATUS_KEY，界面上会显示成 !$ENABLING_STATUS_KEY!",
@@ -559,9 +581,10 @@ class LspRemedyRunTest {
      */
     @Test
     fun `缺工具的提示必须说出是哪个工具`() {
-        val bundle = Properties().apply {
-            File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
-        }
+        val bundle =
+            Properties().apply {
+                File("src/main/resources/messages/ImuxBundle.properties").reader(Charsets.UTF_8).use(::load)
+            }
 
         assertTrue(
             "settings.lsp.tool.missing 必须带 {0}，否则用户看到的是「需要先安装」——安装什么？",
@@ -586,7 +609,10 @@ class LspRemedyRunTest {
         assertEquals(
             "同一门语言在不同 CLI 下必须是不同的行；否则在一组里点启用，另外两组会一起假装在跑",
             AgentType.entries.size,
-            AgentType.entries.map { runRowKey(it, kotlin) }.toSet().size,
+            AgentType.entries
+                .map { runRowKey(it, kotlin) }
+                .toSet()
+                .size,
         )
     }
 
@@ -598,9 +624,10 @@ class LspRemedyRunTest {
      */
     @Test
     fun `目录表里每一行的标识都互不相同`() {
-        val keys = AgentType.entries.flatMap { agent ->
-            LspCatalog.languages.map { runRowKey(agent, it) }
-        }
+        val keys =
+            AgentType.entries.flatMap { agent ->
+                LspCatalog.languages.map { runRowKey(agent, it) }
+            }
 
         assertEquals("有两行拿到了同一个标识，它们会一起变成「进行中」：$keys", keys.size, keys.toSet().size)
     }
@@ -684,9 +711,10 @@ class LspRemedyRunTest {
      */
     @Test
     fun `目录表里的安装命令都能认出目标`() {
-        val mute = LspCatalog.servers.values
-            .mapNotNull { it.installCommand }
-            .filter { runTabTarget(it).isBlank() }
+        val mute =
+            LspCatalog.servers.values
+                .mapNotNull { it.installCommand }
+                .filter { runTabTarget(it).isBlank() }
 
         assertEquals("这些命令认不出安装目标，标签会没有名字：$mute", emptyList<String>(), mute)
     }

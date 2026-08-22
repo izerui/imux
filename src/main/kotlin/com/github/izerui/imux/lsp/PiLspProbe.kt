@@ -25,10 +25,11 @@ internal fun hasPiLens(settingsJson: String?): Boolean {
     // 那是「没装扩展」的正常状态，不该刷日志。真抛出来的是 JSON 坏了或形状不对
     // ——UI 上同样只显示成「未安装 pi-lens」，除了日志没有别的线索。
     // 只写文件名，不写内容：settings 里有用户主目录路径。
-    val packages = runCatching {
-        JsonParser.parseString(settingsJson).asJsonObject.getAsJsonArray("packages")
-    }.onFailure { LOG.warn("解析 ~/.pi/agent/settings.json 失败，按未安装 pi-lens 处理", it) }
-        .getOrNull() ?: return false
+    val packages =
+        runCatching {
+            JsonParser.parseString(settingsJson).asJsonObject.getAsJsonArray("packages")
+        }.onFailure { LOG.warn("解析 ~/.pi/agent/settings.json 失败，按未安装 pi-lens 处理", it) }
+            .getOrNull() ?: return false
 
     return packages.any { element ->
         val value = runCatching { element.asString }.getOrNull() ?: return@any false
@@ -59,28 +60,30 @@ internal fun piReport(
             installed = true,
             findings = emptyList(),
             // pi 自己的子命令，跨平台——所有平台都可以点一下就跑
-            groupRemedy = Remedy(
-                listOf("pi install $PI_LENS_PACKAGE"),
-                "https://github.com/apmantza/pi-lens",
-            ),
+            groupRemedy =
+                Remedy(
+                    listOf("pi install $PI_LENS_PACKAGE"),
+                    "https://github.com/apmantza/pi-lens",
+                ),
         )
     }
 
-    // 见 claudeReport 里同名 lambda 的说明。
-    val isToolPresent: (String) -> Boolean = { binaries[it] != null }
+    val toolAvailability: (String) -> BinaryAvailability = { binaryAvailability(binaries, it) }
 
-    val findings = LspCatalog.languages.map { language ->
-        // piLensBinary 非空 ⟺ piLensGated（LspCatalogTest 钉住），判空即「非 gated」。
-        val binary = language.piLensBinary
-        val status = when {
-            binary == null -> LspStatus.AUTO_MANAGED
-            !binaries.containsKey(binary) -> LspStatus.UNKNOWN
-            binaries[binary] == null -> LspStatus.MISSING_BINARY
-            else -> LspStatus.READY
+    val findings =
+        LspCatalog.languages.map { language ->
+            // piLensBinary 非空 ⟺ piLensGated（LspCatalogTest 钉住），判空即「非 gated」。
+            val binary = language.piLensBinary
+            val status =
+                when {
+                    binary == null -> LspStatus.AUTO_MANAGED
+                    !binaries.containsKey(binary) -> LspStatus.UNKNOWN
+                    binaries[binary] == null -> LspStatus.MISSING_BINARY
+                    else -> LspStatus.READY
+                }
+            // 只有 MISSING_BINARY 有可执行的下一步，而这一条由 remedyFor 自己判断——
+            // AUTO_MANAGED 尤其不能给建议：pi-lens 会自己装，让用户再手动装一遍是纯噪音。
+            LanguageFinding(language, status, remedyFor(language, AgentType.PI, status, toolAvailability))
         }
-        // 只有 MISSING_BINARY 有可执行的下一步，而这一条由 remedyFor 自己判断——
-        // AUTO_MANAGED 尤其不能给建议：pi-lens 会自己装，让用户再手动装一遍是纯噪音。
-        LanguageFinding(language, status, remedyFor(language, AgentType.PI, status, isToolPresent))
-    }
     return CliReport(AgentType.PI, installed = true, findings = findings)
 }

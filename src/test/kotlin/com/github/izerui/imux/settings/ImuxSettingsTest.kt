@@ -23,6 +23,36 @@ class ImuxSettingsTest {
     }
 
     @Test
+    fun `applying unchanged detected language keeps automatic mode`() {
+        val settings = ImuxSettings()
+
+        applyLanguageSelection(settings, settings.language)
+
+        assertEquals(null, settings.state.languageId)
+    }
+
+    @Test
+    fun `applying a different language persists explicit selection`() {
+        val settings = ImuxSettings()
+        val selected = PluginLanguage.entries.first { it != settings.language }
+
+        applyLanguageSelection(settings, selected)
+
+        assertEquals(selected.id, settings.state.languageId)
+    }
+
+    @Test
+    fun `existing explicit language remains explicit on apply`() {
+        val settings = ImuxSettings()
+        val selected = settings.language
+        settings.state.languageId = selected.id
+
+        applyLanguageSelection(settings, selected)
+
+        assertEquals(selected.id, settings.state.languageId)
+    }
+
+    @Test
     fun `enabled agents can be changed without changing their order`() {
         val settings = ImuxSettings()
 

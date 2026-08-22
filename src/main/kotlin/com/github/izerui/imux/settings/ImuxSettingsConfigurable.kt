@@ -20,7 +20,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
             row(ImuxBundle.message("settings.interface.language")) {
                 comboBox(PluginLanguage.entries).bindItem(
                     { settings.language },
-                    { language -> language?.let(settings::setLanguage) },
+                    { language -> language?.let { applyLanguageSelection(settings, it) } },
                 )
                 comment(ImuxBundle.message("settings.interface.language.comment"))
             }
@@ -84,6 +84,15 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
             }
         }
     }
+}
+
+/** UI DSL 会在每次 Apply 时调用 setter；未改语言时不能把自动检测结果写成显式偏好。 */
+internal fun applyLanguageSelection(
+    settings: ImuxSettings,
+    language: PluginLanguage,
+) {
+    if (settings.state.languageId == null && settings.language == language) return
+    settings.setLanguage(language)
 }
 
 private fun selectedAgentTypes(agentCheckBoxes: Map<AgentType, JBCheckBox>): Set<AgentType> =

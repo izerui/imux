@@ -17,34 +17,50 @@ internal class LspDiagnostics(
     private val userHome: Path,
     private val binaryProbe: BinaryProbe,
 ) {
-
     fun run(): LspReport {
         // 一次问完：语言服务器 + 它们的安装命令依赖的工具链（brew/go/npm/gem/dotnet/
         // rustup/opam）+ 三个 CLI 自身。登录 shell 要读 profile，那份开销每次都要付，
         // 没有理由为查几个名字再起第二个 shell。
-        val located = binaryProbe.locate(LspCatalog.allProbeTargets + AgentType.entries.map { it.cli })
+        val located =
+            binaryProbe.locate(
+                LspCatalog.allProbeTargets + AgentType.entries.map { it.cli } + setOf(PI_LENS_MCP_BIN, NPX_BIN),
+            )
 
-        val claude = claudeReport(
-            configuredCommands = parseConfiguredCommands(
-                read(".claude/settings.json"),
-                read(".claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"),
-            ),
-            binaries = located,
-            cliInstalled = isInstalled(located, AgentType.CLAUDE),
-        )
+        val claude =
+            claudeReport(
+                configuredCommands =
+                    parseConfiguredCommands(
+                        read(".claude/settings.json"),
+                        read(".claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"),
+                    ),
+                binaries = located,
+                cliInstalled = isInstalled(located, AgentType.CLAUDE),
+            )
 
-        val pi = piReport(
-            piLensInstalled = hasPiLens(read(".pi/agent/settings.json")),
-            binaries = located,
-            cliInstalled = isInstalled(located, AgentType.PI),
-        )
+        val pi =
+            piReport(
+                piLensInstalled = hasPiLens(read(".pi/agent/settings.json")),
+                binaries = located,
+                cliInstalled = isInstalled(located, AgentType.PI),
+            )
 
-        val codex = codexReport(
-            mounted = mountsPiLensMcp(read(".codex/config.toml")),
-            // 挂载后与 pi 是同一套 server，语言结果原样复用
-            piFindings = pi.findings,
-            cliInstalled = isInstalled(located, AgentType.CODEX),
-        )
+        val standardPiLensMcp = standardPiLensMcp(userHome)
+        val locatedPiLensMcp =
+            located[PI_LENS_MCP_BIN]
+                ?.let { value -> runCatching { Path.of(value) }.getOrNull() }
+                ?.takeIf(Path::isAbsolute)
+        val standardPiLensMcpAvailable = Files.isExecutable(standardPiLensMcp)
+        val piLensMcpExecutable =
+            if (standardPiLensMcpAvailable) standardPiLensMcp else locatedPiLensMcp ?: standardPiLensMcp
+        val codex =
+            codexReport(
+                mounted = mountsPiLensMcp(read(".codex/config.toml"), userHome, located),
+                // 挂载后与 pi 是同一套 server，语言结果原样复用
+                piFindings = pi.findings,
+                cliInstalled = isInstalled(located, AgentType.CODEX),
+                piLensMcpExecutable = piLensMcpExecutable,
+                piLensMcpAvailable = standardPiLensMcpAvailable || locatedPiLensMcp != null,
+            )
 
         return LspReport(listOf(claude, pi, codex))
     }
@@ -56,8 +72,10 @@ internal class LspDiagnostics(
      * 假消息。当作已安装，逐语言自然落到 UNKNOWN，用户看到的是「无法确定」，
      * 这才是真话。
      */
-    private fun isInstalled(located: Map<String, String?>, agentType: AgentType): Boolean =
-        !located.containsKey(agentType.cli) || located[agentType.cli] != null
+    private fun isInstalled(
+        located: Map<String, String?>,
+        agentType: AgentType,
+    ): Boolean = !located.containsKey(agentType.cli) || located[agentType.cli] != null
 
     /**
      * 读不到就是读不到——不存在、无权限、编码坏了，一律降级为「未配置」。

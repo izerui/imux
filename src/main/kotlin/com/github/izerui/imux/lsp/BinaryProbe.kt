@@ -5,6 +5,23 @@ import com.github.izerui.imux.terminal.singleQuote
 import com.intellij.openapi.diagnostic.logger
 import java.util.concurrent.TimeUnit
 
+/** 二进制探测结果；键不存在与确认不存在必须保持可区分。 */
+internal enum class BinaryAvailability {
+    PRESENT,
+    MISSING,
+    UNKNOWN,
+}
+
+internal fun binaryAvailability(
+    binaries: Map<String, String?>,
+    name: String,
+): BinaryAvailability =
+    when {
+        !binaries.containsKey(name) -> BinaryAvailability.UNKNOWN
+        binaries[name] == null -> BinaryAvailability.MISSING
+        else -> BinaryAvailability.PRESENT
+    }
+
 /** 查一批二进制在不在 PATH 里；值为绝对路径，不在则为 null。 */
 internal interface BinaryProbe {
     fun locate(binaries: Set<String>): Map<String, String?>
@@ -28,15 +45,15 @@ internal fun buildProbeScript(binaries: List<String>): String =
 
 /** 解析 [buildProbeScript] 的输出。不含制表符的行是 shell 噪音，丢弃。 */
 internal fun parseProbeOutput(output: String): Map<String, String?> =
-    output.lineSequence()
+    output
+        .lineSequence()
         .mapNotNull { line ->
             val tab = line.indexOf('\t')
             if (tab < 0) return@mapNotNull null
             val name = line.substring(0, tab).trim()
             if (name.isEmpty()) return@mapNotNull null
             name to line.substring(tab + 1).trim().takeIf(String::isNotEmpty)
-        }
-        .toMap()
+        }.toMap()
 
 /**
  * 经用户登录 shell 探测。
@@ -71,13 +88,13 @@ internal class ShellBinaryProbe(
     private val shell: String = resolveShell(System.getenv("SHELL")),
     private val timeoutSeconds: Long = TIMEOUT_SECONDS,
 ) : BinaryProbe {
-
     override fun locate(binaries: Set<String>): Map<String, String?> {
         if (binaries.isEmpty()) return emptyMap()
         return runCatching {
-            val process = ProcessBuilder(shell, "-l", "-i", "-c", buildProbeScript(binaries.toList()))
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start()
+            val process =
+                ProcessBuilder(shell, "-l", "-i", "-c", buildProbeScript(binaries.toList()))
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start()
             process.outputStream.close()
             val output = process.inputStream.bufferedReader().use { it.readText() }
             if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {

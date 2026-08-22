@@ -13,7 +13,7 @@ import com.github.izerui.imux.model.AgentType
 // SystemInfo 是平台类，一旦在纯函数里读，这个函数就只能在开发者自己的机器上被测到
 // 一半——而这里最要命的分支恰恰是「不在 macOS 上会怎样」。
 //
-// isToolPresent 同理：enableCommands 的正确性全在「哪一层已经在了、哪一层还缺」上，
+// toolAvailability 同理：enableCommands 的正确性全在「哪一层已经在了、哪一层还缺」上，
 // 一旦在函数里直接读探测结果，能被测到的就只有开发者这台机器当下的那一种组合。
 // 注入之后三层的每一种在/缺组合都能被真调用断言。
 //
@@ -88,7 +88,11 @@ internal const val ENABLING_STATUS_KEY = "settings.lsp.status.enabling"
  * 第 3 条里的 `isMac ||` 该放开；`resolveShell` 支持 Windows 之后，第 1 条该去掉。
  * 揉在一起的话，将来放开其中一个必然会顺手把另一个也放了。
  */
-internal fun canRun(remedy: Remedy, isMac: Boolean, hasPosixShell: Boolean): Boolean =
+internal fun canRun(
+    remedy: Remedy,
+    isMac: Boolean,
+    hasPosixShell: Boolean,
+): Boolean =
     hasPosixShell &&
         remedy.commands.isNotEmpty() &&
         (isMac || remedy.commands.none { it in LspCatalog.macOnlyCommands })
@@ -125,9 +129,9 @@ internal fun requiredTool(command: String): String = command.trim().substringBef
  * 层前面（`binary !in configuredCommands` 一命中就返回 MISSING_CONFIG），于是这个状态
  * **压根没说过二进制在不在**。只装插件不装 server，用户点完按钮得到的是一个配好了、
  * 却指向一个不存在的程序的 LSP——那正是「点了没用」的另一种形状。所以这里对两种缺口
- * 都问一次 [isToolPresent]，让它自己回答缺不缺。
+ * 都问一次 [toolAvailability]，让它保留“在 / 缺失 / 未知”三种答案。
  *
- * **[isToolPresent] 必须是注入的参数**，不在这里读探测结果或 `SystemInfo`：那样这个
+ * **[toolAvailability] 必须是注入的参数**，不在这里读探测结果或 `SystemInfo`：那样这个
  * 函数就只能在开发者自己那台机器上被测到一条路径，而这里最要紧的分支恰恰是
  * 「某一层已经在了会怎样」。注入之后每一层的加入/略过都能被真调用断言。
  */
@@ -135,8 +139,8 @@ internal fun enableCommands(
     language: LspLanguage,
     agentType: AgentType,
     status: LspStatus,
-    isToolPresent: (String) -> Boolean,
-): List<String> = enablePlan(language, agentType, status, isToolPresent).commands
+    toolAvailability: (String) -> BinaryAvailability,
+): List<String> = enablePlan(language, agentType, status, toolAvailability).commands
 
 /**
  * 卡住整条链的那个前置工具——它不在 PATH，而我们没有可靠的安装方式。
@@ -152,8 +156,8 @@ internal fun enableBlocker(
     language: LspLanguage,
     agentType: AgentType,
     status: LspStatus,
-    isToolPresent: (String) -> Boolean,
-): LspTool? = enablePlan(language, agentType, status, isToolPresent).blocker
+    toolAvailability: (String) -> BinaryAvailability,
+): LspTool? = enablePlan(language, agentType, status, toolAvailability).blocker
 
 /**
  * 这一行在界面上该有的那条修复建议，没有可说的就返回 null。
@@ -170,7 +174,7 @@ internal fun remedyFor(
     language: LspLanguage,
     agentType: AgentType,
     status: LspStatus,
-    isToolPresent: (String) -> Boolean,
+    toolAvailability: (String) -> BinaryAvailability,
 ): Remedy? {
     // 与 enablePlan 共用同一把尺子。这一句不能省：下面无条件取的 docsUrl 会让**每一行**
     // 都拿到一个非空 Remedy，于是就绪、pi-lens 自己提供、官方无对应插件的行末统统多出
@@ -178,7 +182,7 @@ internal fun remedyFor(
     if (!isActionableGap(status)) {
         return null
     }
-    val plan = enablePlan(language, agentType, status, isToolPresent)
+    val plan = enablePlan(language, agentType, status, toolAvailability)
     plan.blocker?.let { tool ->
         // 链组不出来时，唯一有用的链接是**那个工具**的官网，不是语言服务器的文档：
         // 用户下一步要做的事是装 brew / node / ruby，不是读 pyright 的 README。
@@ -202,28 +206,31 @@ internal fun remedyFor(
  * 再装一遍是纯噪音（用户原话「为什么还要按需安装？」）；[LspStatus.NOT_AVAILABLE]
  * 做什么都改变不了；[LspStatus.UNKNOWN] 是没查出来，编不出下一步。
  */
-private fun isActionableGap(status: LspStatus): Boolean =
-    status == LspStatus.MISSING_CONFIG || status == LspStatus.MISSING_BINARY
+private fun isActionableGap(status: LspStatus): Boolean = status == LspStatus.MISSING_CONFIG || status == LspStatus.MISSING_BINARY
 
 /** [enableCommands] 与 [enableBlocker] 的共同实现——两个出口，一份逻辑，不会漂移。 */
-private class EnablePlan(val commands: List<String>, val blocker: LspTool?)
+private class EnablePlan(
+    val commands: List<String>,
+    val blocker: LspTool?,
+)
 
 private fun enablePlan(
     language: LspLanguage,
     agentType: AgentType,
     status: LspStatus,
-    isToolPresent: (String) -> Boolean,
+    toolAvailability: (String) -> BinaryAvailability,
 ): EnablePlan {
     if (!isActionableGap(status)) {
         return NOTHING_TO_DO
     }
     val steps = mutableListOf<String>()
     val binary = serverBinaryFor(language, agentType)
-    if (binary != null && !isToolPresent(binary)) {
-        // 二进制不在，而目录表里没有已知安装命令（kotlin-language-server / sourcekit-lsp
-        // 那几门）：链跑完也不可用，不给按钮。那一格退回文档链接，见 remedyFor。
+    if (binary != null && toolAvailability(binary) == BinaryAvailability.MISSING) {
+        // 二进制确认不在，而目录表里没有已知安装命令（kotlin-language-server /
+        // sourcekit-lsp 那几门）：链跑完也不可用，不给按钮。UNKNOWN 不得在这里被
+        // 推断为缺失；配置缺口仍可只安装 CLI 插件。
         val install = LspCatalog.server(binary)?.installCommand ?: return NOTHING_TO_DO
-        val prerequisite = toolChain(requiredTool(install), isToolPresent)
+        val prerequisite = toolChain(requiredTool(install), toolAvailability)
         if (prerequisite.blocker != null) {
             return prerequisite
         }
@@ -232,7 +239,7 @@ private fun enablePlan(
     }
     if (status == LspStatus.MISSING_CONFIG) {
         // MISSING_CONFIG 只有 Claude Code 会产出，而它必定带着 claudePlugin
-        //（LspCatalogTest 钉住 claudePlugin 与 claudeBinary 同时存在或同时缺失）。
+        // （LspCatalogTest 钉住 claudePlugin 与 claudeBinary 同时存在或同时缺失）。
         val plugin = language.claudePlugin ?: return NOTHING_TO_DO
         steps += "claude plugin install $plugin@claude-plugins-official"
     }
@@ -245,11 +252,14 @@ private fun enablePlan(
  * 写成循环而不是递归，是为了让「表里不小心成环」有个确定的收场（当作装不上，不给按钮）
  * 而不是栈溢出。`addFirst` 让链保持**依赖在前**的顺序：装 dotnet 要先有 brew。
  */
-private fun toolChain(name: String, isToolPresent: (String) -> Boolean): EnablePlan {
+private fun toolChain(
+    name: String,
+    toolAvailability: (String) -> BinaryAvailability,
+): EnablePlan {
     val steps = ArrayDeque<String>()
     val seen = mutableSetOf<String>()
     var current = name
-    while (!isToolPresent(current)) {
+    while (toolAvailability(current) == BinaryAvailability.MISSING) {
         if (!seen.add(current)) {
             return NOTHING_TO_DO
         }
@@ -277,8 +287,10 @@ private val NOTHING_TO_DO = EnablePlan(emptyList(), null)
  * 容器类型也保持平凡，且失败信息（键长什么样）人能直接读懂。
  * `AgentType.name` 全大写、语言 id 全小写，两段之间不可能互相串味。
  */
-internal fun runRowKey(agentType: AgentType, language: LspLanguage): String =
-    "${agentType.name}/${language.id}"
+internal fun runRowKey(
+    agentType: AgentType,
+    language: LspLanguage,
+): String = "${agentType.name}/${language.id}"
 
 /**
  * 丢给终端标签的完整命令行。
@@ -295,8 +307,10 @@ internal fun runRowKey(agentType: AgentType, language: LspLanguage): String =
  * 从终端 `runIde` 起的沙箱继承了终端的 PATH，所以这个缺陷**在沙箱里永远不会出现**，
  * 只有装到正式 IDE 上才暴露。
  */
-internal fun runCommandLine(shell: String, command: String): List<String> =
-    listOf(shell, "-l", "-i", "-c", command)
+internal fun runCommandLine(
+    shell: String,
+    command: String,
+): List<String> = listOf(shell, "-l", "-i", "-c", command)
 
 /**
  * 从命令里认出「这一标签在装什么」，用作终端标签名。
@@ -320,7 +334,8 @@ internal fun runCommandLine(shell: String, command: String): List<String> =
  * 认不出来时退回整条命令：标签名难看远好过一个空标签。
  */
 internal fun runTabTarget(command: String): String =
-    command.trim()
+    command
+        .trim()
         .substringAfterLast(' ')
         .substringBefore('@')
         .substringAfterLast('/')
@@ -334,4 +349,7 @@ internal fun runTabTarget(command: String): String =
  * 能被逐字节钉住：链里留一个 `"${'$'}{…} ${'$'}{…}"` 字符串模板的话，断言要么写不出来，
  * 要么松到 `.tabName(` 前缀那个量级，而前缀断言拦不住 `.tabName("")`。
  */
-internal fun runTabName(actionText: String, command: String): String = "$actionText ${runTabTarget(command)}"
+internal fun runTabName(
+    actionText: String,
+    command: String,
+): String = "$actionText ${runTabTarget(command)}"

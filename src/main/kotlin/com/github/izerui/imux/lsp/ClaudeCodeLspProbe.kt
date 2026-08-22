@@ -27,7 +27,10 @@ private val LOG = Logger.getInstance("com.github.izerui.imux.lsp.ClaudeCodeLspPr
  * 数 MB 的会话文件做的线性扫描，只取顶层字符串；这里要读的是嵌套结构
  * （`lspServers.<名>.command`、`plugins[].lspServers`），且文件只有几 KB。
  */
-internal fun parseConfiguredCommands(settingsJson: String?, marketplaceJson: String?): Set<String> {
+internal fun parseConfiguredCommands(
+    settingsJson: String?,
+    marketplaceJson: String?,
+): Set<String> {
     val settings = parseObject(settingsJson, "~/.claude/settings.json") ?: return emptySet()
     return buildSet {
         addAll(directCommands(settings))
@@ -37,36 +40,44 @@ internal fun parseConfiguredCommands(settingsJson: String?, marketplaceJson: Str
 
 /** `lspServers` 直接定义的 command。 */
 private fun directCommands(settings: JsonObject): Set<String> =
-    settings.asObject("lspServers")
+    settings
+        .asObject("lspServers")
         ?.entrySet()
         .orEmpty()
         .mapNotNull { (_, value) -> value.asObjectOrNull()?.asString("command") }
         .toSet()
 
 /** 启用的插件在 marketplace 清单里声明的 command。 */
-private fun pluginCommands(settings: JsonObject, marketplaceJson: String?): Set<String> {
-    val enabled = settings.asObject("enabledPlugins")
-        ?.entrySet()
-        .orEmpty()
-        .filter { (_, value) -> runCatching { value.asBoolean }.getOrDefault(false) }
-        // 键形如 `gopls-lsp@claude-plugins-official`，marketplace 里的 name 不带来源后缀
-        .map { (key, _) -> key.substringBefore('@') }
-        .toSet()
+private fun pluginCommands(
+    settings: JsonObject,
+    marketplaceJson: String?,
+): Set<String> {
+    val enabled =
+        settings
+            .asObject("enabledPlugins")
+            ?.entrySet()
+            .orEmpty()
+            .filter { (_, value) -> runCatching { value.asBoolean }.getOrDefault(false) }
+            // 键形如 `gopls-lsp@claude-plugins-official`，marketplace 里的 name 不带来源后缀
+            .map { (key, _) -> key.substringBefore('@') }
+            .toSet()
     if (enabled.isEmpty()) return emptySet()
 
-    val plugins = parseObject(marketplaceJson, "claude-plugins-official/marketplace.json")
-        ?.get("plugins")
-        ?.asArrayOrNull()
-        ?: return emptySet()
-    return plugins.mapNotNull { it.asObjectOrNull() }
+    val plugins =
+        parseObject(marketplaceJson, "claude-plugins-official/marketplace.json")
+            ?.get("plugins")
+            ?.asArrayOrNull()
+            ?: return emptySet()
+    return plugins
+        .mapNotNull { it.asObjectOrNull() }
         .filter { it.asString("name") in enabled }
         .flatMap { plugin ->
-            plugin.asObject("lspServers")
+            plugin
+                .asObject("lspServers")
                 ?.entrySet()
                 .orEmpty()
                 .mapNotNull { (_, value) -> value.asObjectOrNull()?.asString("command") }
-        }
-        .toSet()
+        }.toSet()
 }
 
 /**
@@ -85,27 +96,26 @@ internal fun claudeReport(
         return CliReport(AgentType.CLAUDE, installed = false, findings = emptyList())
     }
 
-    // 「这个名字在 PATH 里吗」——键不存在（探测超时）与值为 null（查过没有）都算不在。
-    // 它同时要回答语言服务器与前置工具链两类名字，两者在同一次探测里问完
-    //（见 LspCatalog.allProbeTargets）。
-    val isToolPresent: (String) -> Boolean = { binaries[it] != null }
+    val toolAvailability: (String) -> BinaryAvailability = { binaryAvailability(binaries, it) }
 
-    val findings = LspCatalog.languages.map { language ->
-        // claudePlugin 与 claudeBinary 必定同时存在或同时缺失（LspCatalogTest 钉住），
-        // 所以判 binary 为空就等价于「官方没有这门语言的插件」。
-        val binary = language.claudeBinary
-        val status = when {
-            binary == null -> LspStatus.NOT_AVAILABLE
-            binary !in configuredCommands -> LspStatus.MISSING_CONFIG
-            !binaries.containsKey(binary) -> LspStatus.UNKNOWN
-            binaries[binary] == null -> LspStatus.MISSING_BINARY
-            else -> LspStatus.READY
+    val findings =
+        LspCatalog.languages.map { language ->
+            // claudePlugin 与 claudeBinary 必定同时存在或同时缺失（LspCatalogTest 钉住），
+            // 所以判 binary 为空就等价于「官方没有这门语言的插件」。
+            val binary = language.claudeBinary
+            val status =
+                when {
+                    binary == null -> LspStatus.NOT_AVAILABLE
+                    binary !in configuredCommands -> LspStatus.MISSING_CONFIG
+                    !binaries.containsKey(binary) -> LspStatus.UNKNOWN
+                    binaries[binary] == null -> LspStatus.MISSING_BINARY
+                    else -> LspStatus.READY
+                }
+            // 建议由 remedyFor 一处算出：它要串的是「缺哪层加哪层」的整条链，而不是
+            // 「这个状态对应哪一条命令」——MISSING_CONFIG 这个状态压根没说过二进制在不在
+            // （上面的 when 里配置层排在二进制层前面，一命中就返回了）。
+            LanguageFinding(language, status, remedyFor(language, AgentType.CLAUDE, status, toolAvailability))
         }
-        // 建议由 remedyFor 一处算出：它要串的是「缺哪层加哪层」的整条链，而不是
-        // 「这个状态对应哪一条命令」——MISSING_CONFIG 这个状态压根没说过二进制在不在
-        //（上面的 when 里配置层排在二进制层前面，一命中就返回了）。
-        LanguageFinding(language, status, remedyFor(language, AgentType.CLAUDE, status, isToolPresent))
-    }
     return CliReport(AgentType.CLAUDE, installed = true, findings = findings)
 }
 
@@ -120,21 +130,20 @@ internal fun claudeReport(
  *
  * [source] 只写文件名，**不写文件内容**：这些 settings 里有用户主目录路径乃至令牌。
  */
-private fun parseObject(text: String?, source: String): JsonObject? {
+private fun parseObject(
+    text: String?,
+    source: String,
+): JsonObject? {
     if (text.isNullOrBlank()) return null
     return runCatching { JsonParser.parseString(text).asJsonObject }
         .onFailure { LOG.warn("解析 $source 失败，按未配置处理", it) }
         .getOrNull()
 }
 
-private fun JsonElement.asObjectOrNull(): JsonObject? =
-    runCatching { asJsonObject }.getOrNull()
+private fun JsonElement.asObjectOrNull(): JsonObject? = runCatching { asJsonObject }.getOrNull()
 
-private fun JsonElement.asArrayOrNull(): List<JsonElement>? =
-    runCatching { asJsonArray.toList() }.getOrNull()
+private fun JsonElement.asArrayOrNull(): List<JsonElement>? = runCatching { asJsonArray.toList() }.getOrNull()
 
-private fun JsonObject.asObject(key: String): JsonObject? =
-    get(key)?.asObjectOrNull()
+private fun JsonObject.asObject(key: String): JsonObject? = get(key)?.asObjectOrNull()
 
-private fun JsonObject.asString(key: String): String? =
-    runCatching { get(key)?.asString }.getOrNull()?.takeIf(String::isNotBlank)
+private fun JsonObject.asString(key: String): String? = runCatching { get(key)?.asString }.getOrNull()?.takeIf(String::isNotBlank)
