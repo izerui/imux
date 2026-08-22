@@ -53,6 +53,26 @@ internal fun readHeldRollouts(pid: Long): List<String> =
     rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
 
 /**
+ * 这条可执行文件路径是不是指定的 CLI。
+ *
+ * 按**可执行文件名**匹配而不是整条命令行包含——后者会把 `tail -f codex.log`、
+ * 乃至本插件自己的 `zsh -c "codex resume ..."` 外壳都算进来。
+ *
+ * 两种分隔符都要切、`.exe` 后缀要去、比较不分大小写：Windows 上路径是
+ * `C:\Users\me\AppData\npm\codex.exe`，只切 `/` 且区分大小写的话**一个进程都
+ * 认不出来**，而失败是静默的——漂移探测什么也不报，看起来跟「没有漂移」一样。
+ */
+internal fun executableMatches(
+    command: String,
+    cli: String,
+): Boolean =
+    command
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .lowercase()
+        .removeSuffix(".exe") == cli.lowercase()
+
+/**
  * 活着的 codex 进程。
  *
  * codex 没有运行态文件可查（claude 那边有 `~/.claude/sessions/`），只能扫进程表。
@@ -61,9 +81,7 @@ internal fun readHeldRollouts(pid: Long): List<String> =
  */
 internal fun codexPids(): List<Long> = runCatching {
     ProcessHandle.allProcesses()
-        .filter { handle ->
-            handle.info().command().map { it.substringAfterLast('/') == "codex" }.orElse(false)
-        }
+        .filter { handle -> handle.info().command().map { executableMatches(it, "codex") }.orElse(false) }
         .map { it.pid() }
         .toList()
 }.getOrElse {

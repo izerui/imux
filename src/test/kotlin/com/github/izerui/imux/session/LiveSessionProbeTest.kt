@@ -305,4 +305,23 @@ class LiveSessionProbeTest {
     fun `上报来自未知标签页时不产生迁移`() {
         assertTrue(driftOf(mapOf("tab-1" to "pi-old"), listOf(LiveTab("tab-9", "pi-new"))).isEmpty())
     }
+
+    @Test
+    fun `rollout 路径在两种分隔符下都能取到文件名`() {
+        val id = "c0b2cc08-746f-4dc6-bb78-636d380d9216"
+        assertEquals(
+            id,
+            threadIdOfRollout("/Users/me/.codex/sessions/rollout-2026-08-06T13-59-47-$id.jsonl"),
+        )
+        assertEquals(
+            id,
+            threadIdOfRollout("C:\\Users\\me\\.codex\\sessions\\rollout-2026-08-06T13-59-47-$id.jsonl"),
+        )
+    }
+
+    @Test
+    fun `不是 rollout 形状的路径一律不认`() {
+        assertNull(threadIdOfRollout("C:\\Users\\me\\.codex\\history.jsonl"))
+        assertNull(threadIdOfRollout("/Users/me/.codex/history.jsonl"))
+    }
 }

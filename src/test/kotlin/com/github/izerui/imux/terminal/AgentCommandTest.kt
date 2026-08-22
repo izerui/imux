@@ -122,7 +122,7 @@ class AgentCommandTest {
             ).last(),
         )
         assertEquals(
-            "pi --session-id 'new-id' -e '/tmp/reporter.js' 'Continue the work'",
+            "pi --session-id 'new-id' -e '${java.nio.file.Paths.get("/tmp/reporter.js")}' 'Continue the work'",
             launchCommand(
                 "/bin/zsh",
                 AgentType.PI,
@@ -251,7 +251,7 @@ class AgentCommandTest {
             launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123"),
         )
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123' -e '/tmp/r.js'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123' -e '${Path.of("/tmp/r.js")}'"),
             launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", piExtension = Path.of("/tmp/r.js")),
         )
         assertEquals(
@@ -288,7 +288,7 @@ class AgentCommandTest {
                 .get("/plugins/imux/scripts/pi-imux-reporter.js")
 
         assertEquals(
-            "pi --session-id 'abc-123' -e '/plugins/imux/scripts/pi-imux-reporter.js'",
+            "pi --session-id 'abc-123' -e '$script'",
             launchCommand("/bin/zsh", AgentType.PI, "abc-123", script).last(),
         )
     }

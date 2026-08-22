@@ -140,7 +140,8 @@ internal fun stillApplicable(
     currentTabs: Map<String, String>,
 ): List<KeyDrift> = drifts.filter { currentTabs[it.tabId] == it.from }
 
-private fun fileNameOf(path: String): String = path.substringAfterLast('/')
+/** 两种分隔符都切：Windows 上 rollout 路径来自 codex，用的是反斜杠。 */
+internal fun fileNameOf(path: String): String = path.substringAfterLast('/').substringAfterLast('\\')
 
 private fun looksLikeUuid(value: String): Boolean =
     value.length == UUID_LENGTH &&

@@ -1,6 +1,7 @@
 package com.github.izerui.imux.session
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -93,5 +94,23 @@ class ProcessProbesTest {
         val output = "codex 31694 liuyuhua 7u REG 1,18 1024 876 /Users/x/.codex/history.jsonl"
 
         assertTrue(rolloutPathsFromLsof(output).isEmpty())
+    }
+
+    @Test
+    fun `macOS 与 Linux 的可执行文件名匹配不变`() {
+        assertTrue(executableMatches("/opt/homebrew/bin/codex", "codex"))
+        assertTrue(executableMatches("/usr/local/bin/codex", "codex"))
+        assertFalse(executableMatches("/usr/bin/tail", "codex"))
+        // 整条命令行含 codex 不算——那会把 `tail -f codex.log` 也算进来
+        assertFalse(executableMatches("/usr/bin/codex-helper", "codex"))
+    }
+
+    @Test
+    fun `Windows 的反斜杠路径与 exe 后缀都能认出来`() {
+        // 从前用 substringAfterLast('/') 比较，Windows 上两头都不匹配，
+        // 结果是一个 codex 进程都认不出来，漂移探测整个静默失效
+        assertTrue(executableMatches("C:\\Users\\me\\AppData\\npm\\codex.exe", "codex"))
+        assertTrue(executableMatches("C:\\bin\\CODEX.EXE", "codex"))
+        assertFalse(executableMatches("C:\\bin\\notcodex.exe", "codex"))
     }
 }
