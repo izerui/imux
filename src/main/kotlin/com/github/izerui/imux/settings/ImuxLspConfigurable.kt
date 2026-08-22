@@ -32,6 +32,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
@@ -50,6 +51,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
@@ -606,16 +608,63 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `~/.claude/settings.json`，但改它的是 claude 这个 CLI，imux 只是替用户敲了那行字
      * ——敲在一个用户看得见、随时能打断的终端里。README 那句承诺因此继续成立。
      *
-     * `deferSessionStartUntilUiShown` 同样必须**显式**写 false，而且它比上一条更狠：
-     * 上一条只是让输出留不住，这一条是**命令根本不跑**。262 的
-     * `TerminalToolWindowTabBuilderImpl` 构造里这个字段的默认值是 `true`
-     *（字节码上核过：`iconst_1 / putfield deferSessionStartUntilUiShown`），语义是
-     * 「等这个终端的 UI 真正显示出来再启动会话」。而本页开标签时，**设置对话框正挡在
-     * 前面**——终端工具窗口没被显示，会话就一直挂着。真机实测：先点「激活」那个标签有
-     * 输出，紧接着点「安装」开出来的标签**通体空白，只有一个光标**，连登录 shell 的
-     * profile 打印（`[proxy] enabled via 127.0.0.1:7890`）都没有；标签虽然被选中，
-     * 「首次显示」的时机却已经错过。写死 false 让会话在建标签时就起来，用户关掉设置
-     * 对话框回到终端，看到的是已经跑完的完整输出。
+     * **开标签之前必须先把终端工具窗口显示出来**，而 `deferSessionStartUntilUiShown`
+     * 反过来**必须留给平台默认值 `true`**。这一句是上一轮的反话，照实重写。
+     *
+     * 上一轮的诊断只对了一半：262 的 `TerminalToolWindowTabBuilderImpl` 构造里这个字段
+     * 默认确实是 `true`（`iconst_1 / putfield`），语义确实是「等 UI 真正显示出来再启动
+     * 会话」。错在结论——写死 `false` 只是把「不跑」换成了「跑了但没人收」，用户看到的
+     * 仍然是通体空白的标签。这一次有 `idea.log` 作证，不是推断：
+     *
+     * ```
+     * #c.i.t.f.s.StateAwareTerminalSession - Failed to emit output to the collector
+     *   in 3 seconds, is there a connection problem? Terminating the output flow.
+     * ```
+     *
+     * 那句话出自 `StateAwareTerminalSession.getOutputFlow()`，字节码上核过它是
+     * `channelFlow { incrementalUpdateFlow.collect { withTimeout(3.seconds) { send(it) } } }`，
+     * 而 `catch (TimeoutCancellationException)` 只 `LOG.info(…)` 就让 producer 块正常
+     * 返回——channel 随之关闭，唯一的下游（`TerminalSessionController.handleEvents`，
+     * 它把每一批事件 `withContext(Dispatchers.EDT + ModalityState.any())` 交给文档）
+     * 收到的是「流结束了」。**平台里没有任何一处会重新订阅**。也就是说这不是一次卡顿，
+     * 是一次性的、不可逆的掐断：3 秒之内没接上，这个标签页此后永远空白。
+     *
+     * 会走到那 3 秒，是因为 `deferSessionStartUntilUiShown(false)` 让会话在**前端还没
+     * 具象化**的时候就跑了起来。`TerminalToolWindowTabsManagerImpl.createTab` 的顺序是
+     * `createTerminalViewAndStartSession(builder)` **在前**、`doCreateTab(view)` 在后，
+     * 于是写死 false 时进程比「把这个标签放进工具窗口」还早开始吐字节。
+     *
+     * 而工具窗口那一头，平台**不会**替我们把它显示出来：`addTabToToolWindow` 里只有
+     * `if (requestFocus && !toolWindow.isActive) toolWindow.activate(Runnable { select() }, false, false)`，
+     * 且 `ToolWindowImpl.isActive` 读的是 `toolWindowManager.activeToolWindowId`，
+     * 后者的实现第一句就是遍历 pane 找 `frame.isActive()`——**设置对话框拿着焦点时，
+     * 项目主窗口不是 active window，这个判据恒为假**。于是选中新标签的那一句
+     * `select()` 被塞进 `ToolWindowManagerImpl` 的 `Dispatchers.EDT`（那次 launch
+     * **没有** `ModalityState.any()`，取的是 nonModal）里晚一拍才跑。
+     *
+     * 所以这一轮改成：**自己先 `activate` 终端工具窗口，再建标签，会话交回给平台的
+     * `initOnShow` 去启动**。`scheduleSessionStart` 在 flag 为 `true` 时走的正是
+     * `UiScopeKt.initOnShow(view.component, "Terminal Session start", NonCancellable) { … }`
+     *——会话在组件**真的显示出来的那一刻**启动，收集器早已在位，3 秒预算根本不会被
+     * 触发。附带的好处也在同一条分支上：只有 flag 为 `true` 时
+     * `prepareStartupOptions` 才会 `await` `TerminalUiUtils.getComponentSizeInitializedFuture(component)`
+     * 并把**真实**网格尺寸写进 `initialTermSize`；写死 false 的那一版连初始尺寸都没有。
+     *
+     * `activate(null, false)` 的两个实参都是有讲究的：第二个是 `autoFocusContents`，
+     * 传 false 表示「显示出来但别抢键盘焦点」——真正把焦点带过去的是 builder 上那句
+     * `requestFocus(true)`，经由 `select()` 的 `setSelectedContent(content, true)`。
+     * 单参重载 `activate(runnable, autoFocusContents)` 内部补的第三个实参 `forced` 是
+     * `iconst_1`，即强制激活，正是我们要的。
+     *
+     * **设置对话框是模态时会怎样**：262 的 `ide.ui.non.modal.settings.window`
+     * 默认 `true`（`intellij.idea.ultimate.customization.jar` 里那条 `advancedSetting`
+     * 上写着 `default="true"`），本改动的判据也是在非模态下成立的。用户若把它关掉，
+     * `activate` 的同步部分（`showToolWindowImpl`）照样把工具窗口显示出来——它不经过
+     * `LaterInvocator`，不受模态影响；但平台那句被推迟的 `select()` 是 nonModal 模态的
+     * EDT 任务，会**一直等到对话框关闭**才执行。后果是：标签在对话框开着时不会被选中、
+     * 会话也就不会启动，**用户关掉对话框之后它才开始跑**。慢，但不空——因为
+     * `initOnShow` 从不「错过」时机，它是注册在组件上的，而写死 false 那一版恰恰是
+     * 在这个窗口期里把输出流永久掐断的。宁可晚几秒，不要永久空白。
      *
      * 开标签**之前**先把这一行标成「进行中」：新标签会抢焦点，页面这一刻已经不在用户
      * 眼前了；等回来时它必须已经变了样，而不是和点之前一模一样。
@@ -646,13 +695,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         running[key] = runningStatusKey(remedy.kind)
         refreshRow(key, event)
         val tab = runCatching {
+            ToolWindowManager.getInstance(project)
+                .getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)
+                ?.activate(null, false)
             TerminalToolWindowTabsManager.getInstance(project)
                 .createTabBuilder()
                 .workingDirectory(project.basePath ?: System.getProperty("user.home"))
                 .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
                 .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
                 .requestFocus(true)
-                .deferSessionStartUntilUiShown(false)
                 .closeOnProcessTermination(false)
                 .createTab()
         }.onFailure {

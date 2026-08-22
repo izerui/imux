@@ -694,11 +694,19 @@ class ImuxLspUiSourceTest {
             "com.github.izerui.imux.lsp.statusMessageKey",
             "com.github.izerui.imux.terminal.resolveShell",
             "com.intellij.icons.AllIcons",
+            // 显示终端工具窗口这件事只能走平台的 ToolWindowManager：本文件里补一个同名
+            // object，`activate` 就成了一句什么都不做的桩，工具窗口不显示、组件不具象化，
+            // 平台默认的 initOnShow 永远不触发——命令一行都不跑，而整条链的比对一字不变。
+            "com.intellij.openapi.wm.ToolWindowManager",
             "com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager",
             // 「跑完了没有」这个判据只能是平台给的终端会话状态。本文件里补一个同名的
             // 密封类占位，`it is TerminalViewSessionState.Terminated` 会永远为假，
             // 那一行就永远停在「正在激活…」——正是这一轮要修的毛病。
             "com.intellij.terminal.frontend.view.TerminalViewSessionState",
+            // 工具窗口 ID 必须取平台常量。本文件里补一个
+            // `private object TerminalToolWindowFactory { const val TOOL_WINDOW_ID = "" }`，
+            // getToolWindow("") 返回 null、`?.` 直接短路，activate 那三行静默变成 no-op。
+            "org.jetbrains.plugins.terminal.TerminalToolWindowFactory",
         ).forEach { fqn ->
             val name = fqn.substringAfterLast('.')
             assertTrue(
@@ -1227,14 +1235,26 @@ class ImuxLspUiSourceTest {
      * - `closeOnProcessTermination(false)`：命令跑完标签页就关，输出闪一下没了。
      *   它的默认值不是常量而是用户设置 `TerminalOptionsProvider.closeSessionOnLogout`，
      *   所以这一句消除的是对一项用户设置的依赖，不只是覆盖一个默认值。
-     * - `deferSessionStartUntilUiShown(false)`：**命令根本不跑**。这一项与上一条同类
-     *   ——它对抗的是一个平台默认值，删掉之后代码看起来完全正常、编译通过、所有行为
-     *   断言全绿，功能却静默失效。262 的 `TerminalToolWindowTabBuilderImpl` 构造里
-     *   这个字段默认是 `true`（字节码：`iconst_1 / putfield deferSessionStartUntilUiShown`），
-     *   语义是「等这个终端的 UI 真正显示出来再启动会话」。本页开标签时**设置对话框正
-     *   挡在前面**，终端工具窗口没被显示，会话就一直挂着。真机实测：点「安装」开出来的
-     *   标签通体空白只有一个光标，连登录 shell 的 profile 打印都没有；标签虽然被选中，
-     *   「首次显示」的时机已经错过。
+     * - **`activate` 那三行必须排在 `createTabBuilder()` 之前**，且链上**不得**再出现
+     *   `deferSessionStartUntilUiShown`。这一条是上一轮断言的翻面，照实改：从前这里写的是
+     *   「`deferSessionStartUntilUiShown(false)` 少了命令根本不跑」，那句话只对了一半。
+     *   真机 `idea.log` 给出了另一半：
+     *   `StateAwareTerminalSession - Failed to emit output to the collector in 3 seconds,
+     *   is there a connection problem? Terminating the output flow.`
+     *   ——写死 false 之后命令**跑了**，只是没人收：那句 warn 出自
+     *   `getOutputFlow()` 的 `channelFlow { … withTimeout(3.seconds) { send(it) } }`，
+     *   `catch (TimeoutCancellationException)` 只记一行日志就让 producer 正常返回、
+     *   channel 关闭，平台里没有任何一处重新订阅。于是标签页**永久**空白。
+     *
+     *   两种缺陷形态、同一个用户可见后果：
+     *   删掉 `activate` 那三行 → 工具窗口不显示（`addTabToToolWindow` 只在
+     *   `requestFocus && !toolWindow.isActive` 时才 activate，而 `isActive` 读的是
+     *   `activeToolWindowId`，它遍历 pane 找 `frame.isActive()`——设置对话框拿着焦点时
+     *   恒为假）→ 组件不显示 → 平台默认的 `initOnShow` 不触发 → 命令不跑；
+     *   补回 `deferSessionStartUntilUiShown(false)` → 会话在
+     *   `createTerminalViewAndStartSession`（它排在 `doCreateTab` **之前**）里就起来，
+     *   对着一个还没具象化的前端吐字节 → 3 秒后输出流被永久掐断 → 一样空白。
+     *   所以这两件事必须**一起**钉：只钉一件，另一件回退就是静默失效。
      * - `shellCommand(runCommandLine(resolveShell(…)))`：这一层给的是 `-l -i -c`。
      *   从 Dock 启动的 IDE 只有系统默认 PATH，`brew`/`go`/`npm`/`rustup`/`gem` 一个都
      *   不在里面——壳里自己拼一个 `listOf(shell, "-c", command)`，`LspRemedyRunTest`
@@ -1255,18 +1275,27 @@ class ImuxLspUiSourceTest {
             compactArgs(runInTerminalBody()).contains(
                 compactArgs(
                     """
+                    ToolWindowManager.getInstance(project)
+                        .getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)
+                        ?.activate(null, false)
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
                         .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
                         .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
                         .requestFocus(true)
-                        .deferSessionStartUntilUiShown(false)
                         .closeOnProcessTermination(false)
                         .createTab()
                     """,
                 ),
             ),
+        )
+        assertFalse(
+            "链上不得再出现 deferSessionStartUntilUiShown：平台默认的 true 才是对的，" +
+                "它把会话交给 initOnShow，在组件真的显示出来那一刻启动；写死 false 会让会话" +
+                "对着还没具象化的前端吐字节，3 秒后 StateAwareTerminalSession 把输出流永久掐断，" +
+                "标签页此后一直空白（真机 idea.log 已确诊）：" + runInTerminalBody(),
+            runInTerminalBody().contains("deferSessionStartUntilUiShown"),
         )
     }
 
@@ -1343,13 +1372,15 @@ class ImuxLspUiSourceTest {
                 running[key] = runningStatusKey(remedy.kind)
                 refreshRow(key, event)
                 val tab = runCatching {
+                    ToolWindowManager.getInstance(project)
+                        .getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)
+                        ?.activate(null, false)
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
                         .shellCommand(runCommandLine(resolveShell(System.getenv("SHELL")), command))
                         .tabName(runTabName(ImuxBundle.message(runActionKey(remedy.kind)), command))
                         .requestFocus(true)
-                        .deferSessionStartUntilUiShown(false)
                         .closeOnProcessTermination(false)
                         .createTab()
                 }.onFailure {
