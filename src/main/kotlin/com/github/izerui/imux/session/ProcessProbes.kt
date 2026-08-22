@@ -4,6 +4,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.util.ExecUtil
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.SystemInfo
+import java.nio.file.Path
 
 /**
  * 向操作系统问两件事：某个进程的环境变量、它打开着哪些文件。
@@ -45,13 +46,38 @@ internal fun rolloutPathsFromLsof(output: String): List<String> =
         .filter { threadIdOfRollout(it) != null }
         .toList()
 
-/** 读一个进程的 [IMUX_TAB_ENV]；读不到（进程已退出、权限不足）返回 null。 */
-internal fun readTabId(pid: Long): String? =
-    tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
+/**
+ * 读一个进程的 [IMUX_TAB_ENV]；读不到（进程已退出、权限不足）返回 null。
+ *
+ * Linux 走 `/proc`（不起子进程、无需 `ps`）；其余走 `ps eww`。
+ * Windows 上**读不到别的进程的环境变量**（环境块在目标进程的 PEB 里，要
+ * `ReadProcessMemory` + 调试权限），因此不走这条路——见 [WindowsTabPidFile]。
+ */
+internal fun readTabId(
+    pid: Long,
+    isLinux: Boolean = SystemInfo.isLinux,
+    procRoot: Path = PROC_ROOT,
+): String? =
+    if (isLinux) {
+        readTabIdFromProc(pid, procRoot)
+    } else {
+        tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
+    }
 
 /** 读一个进程正持有的 rollout 文件。 */
-internal fun readHeldRollouts(pid: Long): List<String> =
-    rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
+internal fun readHeldRollouts(
+    pid: Long,
+    isLinux: Boolean = SystemInfo.isLinux,
+    procRoot: Path = PROC_ROOT,
+): List<String> =
+    if (isLinux) {
+        readHeldRolloutsFromProc(pid, procRoot)
+    } else {
+        rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
+    }
+
+/** 生产入口。参数化只为让分派本身可测——分派选错分支是这一层最难发现的错。 */
+internal val PROC_ROOT: Path = Path.of("/proc")
 
 /**
  * 这条可执行文件路径是不是指定的 CLI。

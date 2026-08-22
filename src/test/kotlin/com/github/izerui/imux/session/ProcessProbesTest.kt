@@ -4,10 +4,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.nio.file.Files
 
 /** 解析 `ps eww` 与 `lsof` 的输出。命令本身不可测，解析必须可测。 */
 class ProcessProbesTest {
+
+    @get:Rule
+    val temp = TemporaryFolder()
 
     @Test
     fun `从 ps 输出里取出终端标记`() {
@@ -120,5 +126,35 @@ class ProcessProbesTest {
         assertTrue(executableMatches("C:\\Users\\me\\AppData\\npm\\codex.exe", "codex", isWindows = true))
         assertTrue(executableMatches("C:\\bin\\CODEX.EXE", "codex", isWindows = true))
         assertFalse(executableMatches("C:\\bin\\notcodex.exe", "codex", isWindows = true))
+    }
+
+    @Test
+    fun `isLinux 为真时走 proc 而不是 ps`() {
+        val procRoot = temp.root.toPath()
+        val dir = Files.createDirectories(procRoot.resolve("999"))
+        Files.write(dir.resolve("environ"), "IMUX_TAB=imux-abc\u0000".toByteArray())
+
+        assertEquals("imux-abc", readTabId(999, isLinux = true, procRoot = procRoot))
+    }
+
+    @Test
+    fun `isLinux 为假时不碰 proc`() {
+        val procRoot = temp.root.toPath()
+        val dir = Files.createDirectories(procRoot.resolve("999"))
+        Files.write(dir.resolve("environ"), "IMUX_TAB=imux-abc\u0000".toByteArray())
+
+        // 走的是 ps 那条路，本机没有 pid 999 这个进程，因此认不出来。
+        // 若这条返回了 imux-abc，说明分派写反了。
+        assertNull(readTabId(999, isLinux = false, procRoot = procRoot))
+    }
+
+    @Test
+    fun `非 Linux 仍走 ps 与 lsof 的解析路径`() {
+        // 这两个纯解析函数是 macOS 上正在工作的东西，Linux 分支不得影响它们
+        assertEquals(
+            "imux-abc",
+            tabIdFromPsOutput("  501 22941 ttys003 PATH=/usr/bin IMUX_TAB=imux-abc /bin/zsh"),
+        )
+        assertNull(tabIdFromPsOutput("  501 22941 ttys003 MY_IMUX_TAB=imux-abc /bin/zsh"))
     }
 }
