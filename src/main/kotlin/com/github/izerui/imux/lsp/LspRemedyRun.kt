@@ -59,9 +59,9 @@ internal const val ENABLING_STATUS_KEY = "settings.lsp.status.enabling"
  *    那几门），以及卡在一个我们装不上的前置工具上的（[Remedy.blockingTool] 非空时
  *    [Remedy.commands] 必为空）。给一个点了必然失败的按钮是空头承诺。
  * 2. **整条链在本平台上验证过**。判据是 [LspCatalog.macOnlyCommands]——只有 brew 与
- *    opam 系的命令是 macOS 专属；`npm` / `go` / `gem` / `dotnet` 那 7 条三平台形态
- *    相同，而 `claude plugin install` / `pi install` / `codex mcp add` 是 CLI 自己的
- *    子命令，不依赖任何外部工具链。
+ *    opam 系的命令是 macOS 专属；`npm` / `go` / `gem` / `dotnet` / `rustup` 那 8 条
+ *    三平台形态相同，而 `claude plugin install` / `pi install` / `codex mcp add` 是
+ *    CLI 自己的子命令，不依赖任何外部工具链。
  *
  * **为什么是「链里含任何一条 macOS-only 就整条按 macOS-only 处理」。** 链是用 `&&`
  * 串起来交给终端的：第一条跑不通，后面一条都跑不到。「前半段能跑」这种中间态不存在，

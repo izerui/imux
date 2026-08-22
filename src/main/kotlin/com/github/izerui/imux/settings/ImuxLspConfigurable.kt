@@ -536,11 +536,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 执行按钮——点一下开个终端标签，把命令跑起来。返回**是否真的放上了按钮**。
      *
-     * **平台与性质的取舍完全交给 [canRun]，壳里一个平台判断都不许有。** 目录表里的
-     * 安装命令只在 macOS 上核实过（`brew install llvm`、`gem install ruby-lsp`、
-     * `opam install ocaml-lsp-server`），从前它们只是显示出来给人复制，平台不对用户
-     * 自己一眼就看出来；现在按钮点下去是**直接执行**。这条闸门是「点错了就在用户机器上
-     * 跑错东西」的唯一入口，所以它住在纯函数里、被真调用测试钉着，这里只剩一个调用点。
+     * **平台与性质的取舍完全交给 [canRun]，壳里一个平台判断都不许有。** brew 与 opam
+     * 系的安装命令只在 macOS 上核实过（`brew install llvm`、`brew install opam`、
+     * `opam install ocaml-lsp-server`），npm / go / gem / dotnet / rustup 那 8 条三平台
+     * 形态完全相同已经放开。这条闸门是「点错了就在用户机器上跑错东西」的唯一入口，
+     * 所以它住在纯函数里、被真调用测试钉着，这里只剩一个调用点。
      *
      * 第二道闸门 [hasProjectWindow] 挡的是另一种「按钮在、点下去却什么都不发生」：
      * 终端标签是**项目级**的，而这一页是应用级设置，天生就会从欢迎页被打开。

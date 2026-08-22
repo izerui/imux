@@ -203,7 +203,7 @@ class LspCatalogTest {
     }
 
     @Test
-    fun `brew 系命令仍算 macOS 专属`() {
+    fun `brew 与 opam 系命令仍算 macOS 专属`() {
         listOf(
             "brew install jdtls",
             "brew install --cask kotlin-lsp",
@@ -212,6 +212,7 @@ class LspCatalogTest {
             "brew install --cask dotnet-sdk",
             "brew install rustup",
             "brew install opam",
+            "opam install ocaml-lsp-server",
         ).forEach { command ->
             assertTrue("『$command』只在 macOS 上核实过", command in LspCatalog.macOnlyCommands)
         }

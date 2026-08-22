@@ -51,20 +51,18 @@ class LspRemedyRunTest {
     }
 
     /**
-     * 这一条是整次改动最要紧的断言。
-     *
-     * 目录表里的安装命令只在 macOS 上核实过——`brew install llvm`、`gem install ruby-lsp`、
+     * brew / opam 系的安装命令只在 macOS 上核实过——`brew install llvm`、
      * `opam install ocaml-lsp-server`。从前它们只是显示出来给人复制，平台不对用户自己
      * 一眼就看出来了；现在按钮点下去是直接执行。这一条红了，意味着 Windows 用户的
      * 体检页上多出一个「启用」按钮，点下去在自己机器上跑 brew。
      */
     @Test
-    fun `目录表里的安装命令只在 macOS 上能跑`() {
+    fun `brew 与 opam 系安装命令只在 macOS 上能跑`() {
         val remedy = Remedy(listOf("brew install llvm"), "https://clangd.llvm.org/installation")
 
         assertTrue(canRun(remedy, isMac = true))
         assertFalse(
-            "目录表里的安装命令只在 macOS 上核实过，其它平台按下去就是执行 brew/gem/opam",
+            "brew/opam 系安装命令只在 macOS 上核实过，其它平台按下去就是执行 brew/opam",
             canRun(remedy, isMac = false),
         )
     }
@@ -156,13 +154,17 @@ class LspRemedyRunTest {
     fun `链里含任何一条 brew 命令就整条不给按钮`() {
         // 链用 && 串起来，第一条跑不通后面一条都跑不到；
         // 跑到一半红着停下的终端比一开始就没有按钮更让人以为插件坏了
-        val remedy =
+        val leading =
             Remedy(
                 listOf("brew install --cask dotnet-sdk", "dotnet tool install --global csharp-ls"),
                 null,
             )
-        assertFalse(canRun(remedy, isMac = false))
-        assertTrue(canRun(remedy, isMac = true))
+        assertFalse(canRun(leading, isMac = false))
+        assertTrue(canRun(leading, isMac = true))
+
+        // mac-only 排在末位也必须被闸住——不能只查第一条
+        val trailing = Remedy(listOf("npm install -g pyright", "brew install llvm"), null)
+        assertFalse(canRun(trailing, isMac = false))
     }
 
     @Test

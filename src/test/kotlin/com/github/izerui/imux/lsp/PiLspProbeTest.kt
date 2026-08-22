@@ -139,14 +139,14 @@ class PiLspProbeTest {
     }
 
     /**
-     * 二进制缺口的修复走的是目录表里的安装命令，它们只在 macOS 上核实过。
+     * 二进制缺口的修复走的是目录表里的安装命令。
      *
      * 用 go 而不是 kotlin：kotlin-language-server 的 installCommand 是 null，
-     * 就算平台判定错了也没有按钮长出来，测不到这条闸门真正要拦的东西。
-     * 判成跨平台的话，Windows 用户会看到「启用」按钮，点下去执行 `go install`。
+     * 就算平台判定错了也没有按钮长出来，测不到闸门。`go install` 是跨平台命令
+     * （`go` 不在 `NON_PORTABLE_TOOLS` 里），非 macOS 上也该给按钮。
      */
     @Test
-    fun `二进制缺口的安装命令是只在 macOS 验证过的那一类`() {
+    fun `跨平台安装命令在非 macOS 上也给按钮`() {
         val report = piReport(
             piLensInstalled = true,
             binaries = mapOf("gopls" to null, "go" to "/usr/local/bin/go"),
