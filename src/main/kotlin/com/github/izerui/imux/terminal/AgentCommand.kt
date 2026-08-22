@@ -138,10 +138,21 @@ internal fun preassignedSessionId(
  * `Cannot run program /bin/zsh`。改取 [configuredShell]——用户在 Terminal 设置里
  * 配的那个 shell，也就是他自己终端里跑的东西。
  *
- * **解析到 cmd 时不听用户配置，改用 `powershell.exe`。** 这是全项目唯一一处覆盖
- * 用户设置，理由是 cmd 的引号与转义规则（`^` 转义、`%` 二次展开）写错会把用户的
- * 初始 prompt 拼成一条别的命令；宁可换一个我们能正确转义的 shell。PowerShell 在
- * 每台受支持的 Windows 上都在。
+ * [configuredShell] 可能是一条完整命令行（`"C:\...\bash.exe" --login -i`），
+ * 因为 JetBrains Terminal 设置允许用户在同一个字段里填路径加参数。
+ * [shellExecutableOf] 负责取出第一个 token（可执行文件路径），
+ * 用户填的参数（`--login -i` 之类）被丢弃——我们不是开交互 shell，
+ * 是跑一条命令，参数由 [shellArgs] 提供。
+ *
+ * **白名单之外一律换成 `powershell.exe`。** 只放行两类认得出的 shell：
+ * PowerShell（`pwsh`、`powershell`），以及名字在 [POSIX_SHELL_NAMES] 里的
+ * POSIX shell（`bash`、`zsh`、`fish` 等）。不在白名单里的——包括 `cmd.exe`、
+ * `wsl.exe`、`nu.exe`、`elvish.exe`、Cmder——都会被换成 PowerShell。
+ *
+ * cmd 被换掉是因为它的引号与转义规则（`^` 转义、`%` 二次展开）写错会把用户的
+ * 初始 prompt 拼成一条别的命令。WSL 也在被换之列：它的命令行形状是
+ * `wsl.exe -d Ubuntu`，参数语义与 `-l -i -c` 完全不同，草率放行会更糟。
+ * PowerShell 在每台受支持的 Windows 上都在。
  *
  * 三个参数都不给默认值：调用点必须显式表态，避免将来新增调用点时静默漏掉平台判断。
  */
@@ -151,18 +162,43 @@ internal fun resolveShell(
     configuredShell: String?,
 ): String {
     if (!isWindows) return shellEnv?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
-    val configured = configuredShell?.takeIf { it.isNotBlank() } ?: return WINDOWS_FALLBACK_SHELL
+    val executable = shellExecutableOf(configuredShell) ?: return WINDOWS_FALLBACK_SHELL
     // dialectOf 认不出的名字会落到 POSIX；Windows 上那意味着 cmd 或某个我们没见过的
     // shell，两者都不该拿 PowerShell 的引号规则去拼，但也不该拿 POSIX 的 -l -i 去跑。
-    // 只放行明确认得出的两类：PowerShell，以及路径里带 sh/bash/zsh 的 POSIX shell。
-    return if (looksLikePosixShell(configured) || dialectOf(configured) == ShellDialect.POWERSHELL) {
-        configured
+    // 只放行明确认得出的两类：PowerShell，以及名字在 POSIX_SHELL_NAMES 里的 POSIX shell。
+    return if (looksLikePosixShell(executable) || dialectOf(executable) == ShellDialect.POWERSHELL) {
+        executable
     } else {
         WINDOWS_FALLBACK_SHELL
     }
 }
 
-/** Windows 上认得出的 POSIX shell（Git Bash、MSYS2、WSL 转发器等）。 */
+/**
+ * 从 IDE Terminal 设置字段里取出可执行文件路径。
+ *
+ * JetBrains 允许用户在 Shell Path 字段里填完整命令行（路径 + 参数），
+ * 内部用 `ParametersListUtil.parse` 解析。我们不调平台的解析器——它内部做
+ * 文件存在性检查（IO），会让纯函数在别人的机器上测不出确定结果。
+ *
+ * 规则：
+ * - null / 全空白 → null
+ * - 以双引号开头 → 取到下一个双引号为止的内容（处理带空格的路径）
+ * - 否则 → 取第一个空白之前的部分
+ */
+internal fun shellExecutableOf(configuredShell: String?): String? {
+    val trimmed = configuredShell?.trim() ?: return null
+    if (trimmed.isEmpty()) return null
+    if (trimmed.startsWith('"')) {
+        val closing = trimmed.indexOf('"', 1)
+        // 没有配对的闭合引号 → 去掉开头引号、整串当路径
+        return if (closing <= 1) trimmed.removePrefix("\"").ifBlank { null }
+        else trimmed.substring(1, closing).ifBlank { null }
+    }
+    val spaceIdx = trimmed.indexOfFirst { it.isWhitespace() }
+    return if (spaceIdx < 0) trimmed else trimmed.substring(0, spaceIdx).ifBlank { null }
+}
+
+/** 白名单里的 POSIX shell（Git Bash、MSYS2 等）。 */
 private fun looksLikePosixShell(shellPath: String): Boolean {
     val name =
         shellPath

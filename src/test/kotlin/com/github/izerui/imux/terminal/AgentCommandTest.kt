@@ -157,26 +157,61 @@ class AgentCommandTest {
             "/bin/bash",
             resolveShell("/bin/bash", isWindows = false, configuredShell = "/usr/local/bin/fish"),
         )
+        // SHELL 为空时也不能拿 configuredShell 顶上去，否则兜底路径从 /bin/zsh 变了
+        assertEquals(
+            "/bin/zsh",
+            resolveShell(null, isWindows = false, configuredShell = "/usr/local/bin/fish"),
+        )
     }
 
     @Test
     fun `Windows 上采用 IDE 配置的 shell`() {
+        // 路径含空格时 IDE 会用双引号包裹——这是平台实际存的形状
         assertEquals(
             "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
             resolveShell(
                 shellEnv = null,
                 isWindows = true,
-                configuredShell = "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+                configuredShell = "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\"",
             ),
         )
     }
 
     @Test
     fun `Windows 上保留用户配置的 Git Bash`() {
+        // 路径含空格时 IDE 会用双引号包裹——这是平台实际存的形状
         assertEquals(
             "C:\\Program Files\\Git\\bin\\bash.exe",
-            resolveShell(null, isWindows = true, configuredShell = "C:\\Program Files\\Git\\bin\\bash.exe"),
+            resolveShell(null, isWindows = true, configuredShell = "\"C:\\Program Files\\Git\\bin\\bash.exe\""),
         )
+    }
+
+    @Test
+    fun `Windows 上按 JetBrains 文档配的 Git Bash 命令行仍被保留`() {
+        assertEquals(
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            resolveShell(
+                null,
+                isWindows = true,
+                configuredShell = "\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i",
+            ),
+        )
+    }
+
+    @Test
+    fun `shellExecutableOf 从命令行取出可执行文件`() {
+        assertEquals(
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            shellExecutableOf("\"C:\\Program Files\\Git\\bin\\bash.exe\" --login -i"),
+        )
+        assertEquals(
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            shellExecutableOf("\"C:\\Program Files\\Git\\bin\\bash.exe\""),
+        )
+        assertEquals("pwsh.exe", shellExecutableOf("pwsh.exe -NoLogo"))
+        assertEquals("/bin/zsh", shellExecutableOf("/bin/zsh"))
+        assertNull(shellExecutableOf(null))
+        assertNull(shellExecutableOf("   "))
     }
 
     @Test
