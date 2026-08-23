@@ -160,8 +160,9 @@ class SessionMonitor(
      * 当前活着的 Claude 进程，按会话 id 索引。
      *
      * 只服务于 resume 前的忙碌预检——那里要看 kind 与 status 两个字段。
-     * 渲染看的是已经合成好的 [runningIds]：codex 没有运行态文件，
-     * 它的执行中状态来自会话文件，两者必须先合并再渲染。
+     * 渲染看的是已经合成好的 [runningIds]：codex 不像 claude 那样有一个按 pid 命名、
+     * 直接写着「在不在跑」的运行态文件，它的执行中状态来自会话文件，
+     * 两者必须先合并再渲染。
      */
     var runtime: Map<String, ClaudeRuntimeSession> = emptyMap()
         private set

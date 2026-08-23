@@ -15,14 +15,15 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 监控会话文件的轮次状态，产出「刚完成、需要提醒」的会话。
  *
- * **只服务没有运行态文件的 agent（codex、pi）**：claude 有 CLI 亲自写的运行态文件
+ * **只服务没有「在不在跑」运行态文件的 agent（codex、pi）**：claude 有 CLI 亲自写的运行态文件
  * （`~/.claude/sessions/<pid>.json`），
  * 那是一手状态，由 [RuntimeStatusTracker] 判定完成即可。两边都监控会让同一轮完成被
  * 报两次——实测两个信号相隔约 0.1 秒，而轮询 1 秒一拍，约 10% 的概率跨拍，此时
  * [com.github.izerui.imux.monitor.SessionMonitor] 的 `distinct()` 只能同拍去重，
  * 兜不住，于是弹出两个通知气泡（[TurnNotifier] 覆盖 active 时也不 expire 旧的）。
  *
- * codex 与 pi 没有等价的运行态文件，只能从会话文件的轮次信号推断
+ * codex 与 pi 没有等价的运行态文件（codex 那个运行态 sqlite 只答「这个 pid 在写哪个
+ * 会话」，不答「在不在跑」），只能从会话文件的轮次信号推断
  * （codex 是 `task_started` / `task_complete`，pi 是 assistant 消息的 `stopReason`），
  * 因此这里保留。[TurnSignalParser] 的 claude 分支不再被生产链路调用，但作为纯函数保留：
  * 它是按 8535 条真实记录调出来的，将来 claude 若不再写运行态文件可以直接启用。
@@ -155,7 +156,7 @@ class TurnWatcher(
     /**
      * 所有被监控的会话中当前处于「执行中」的 id，不分 agent。
      *
-     * 本类监控的本就只有「没有运行态文件、只能从会话文件推断」的那些 agent，
+     * 本类监控的本就只有「没有『在不在跑』运行态文件、只能从会话文件推断」的那些 agent，
      * 全取即可。逐个 agent 点名的写法每加一个 agent 就得改一次调用点，漏了就静默不亮。
      */
     fun workingIds(): Set<String> =

@@ -123,7 +123,16 @@ internal fun readTabId(
  *
  * **查询代价**：`readHeldRollouts` 由 `SessionMonitor.probeSessionDrift` 调用，
  * 跑在 `Dispatchers.IO`（池线程）上——不会阻塞 EDT。Windows 分支的
- * [CodexRuntimeIndex.rolloutPathOf] 在大库上约 0.3 秒墙钟，只要不在 EDT 上就没问题。
+ * [CodexRuntimeIndex.rolloutPathOf] 在真库（1.1GB / 77460 行）上实测分三档：
+ * 命中 17ms、未命中且页缓存是热的 0.07–0.25 秒、**未命中且缓存是冷的 1.9–5.3 秒**。
+ * 从前这里只写了「约 0.3 秒」，那是热缓存那一档，把最坏情况漏掉了一个数量级。
+ *
+ * 未命中之所以贵：查询走 `SCAN logs USING INDEX idx_logs_ts` 全索引扫描。库里那个
+ * `idx_logs_process_uuid_threadless_ts` 的谓词是 `WHERE thread_id IS NULL`，
+ * 与本查询正好相反，用不上。
+ *
+ * 因此那一路自带 3 秒的查询上界（见 `withQueryDeadline`），与本文件的
+ * `COMMAND_TIMEOUT_MS` 取齐：调用方在轮询链路上，宁可这一轮探测不出来。
  *
  * [runCommand] 与 [rolloutOfPid] 注入的理由见 [readTabId]：分派选错分支是这一层最难
  * 发现的错，症状与「没有漂移」不可区分。
@@ -184,7 +193,10 @@ internal fun executableMatches(
 /**
  * 活着的 codex 进程。
  *
- * codex 没有运行态文件可查（claude 那边有 `~/.claude/sessions/`），只能扫进程表。
+ * codex 不像 claude 那样有一个按 pid 命名的运行态文件（claude 那边是
+ * `~/.claude/sessions/&lt;pid&gt;.json`，照着 pid 取即可），所以「有哪些 codex 活着」
+ * 只能扫进程表。它**有**运行态映射（见 [CodexRuntimeIndex]），但那是「由 pid 反查
+ * 会话」的方向，回答不了「有哪些 pid」。
  * 按可执行文件名匹配而不是整条命令行包含 "codex"——后者会把
  * `tail -f codex.log`、乃至本插件自己的 `zsh -c "codex resume ..."` 外壳都算进来。
  */

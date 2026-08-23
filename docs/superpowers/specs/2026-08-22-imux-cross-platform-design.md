@@ -472,6 +472,19 @@ hooks.SessionStart = [
 
 ## 验证边界（必须照实写进交付说明）
 
+> **本节以下关于 codex 运行态的那一条已被取代，保留作为记录。**
+>
+> 下面写着「codex `state_5.sqlite` 的 `threads` 表仍无 pid 字段（老结论复核成立）」。
+> **那句话本身是真的**——`threads` 表确实没有 pid 列。但它当初被用来支撑
+> 「codex 没有任何运行态文件」这个更大的结论，而那个更大的结论是**错的**：
+> 真正的反证在 `logs_<n>.sqlite`，那里 `logs.process_uuid` 的字面格式是
+> `pid:<PID>:<uuid>`，同一行带 `thread_id`，由它经 `threads.rollout_path`
+> 就能拿到会话路径。当初复核只查了 `threads` 表与 `.codex-global-state.json`，
+> 没查 `logs_<n>.sqlite` 的列。
+>
+> 现行做法见本文档「Windows / codex：读 codex 自己的运行态 sqlite」一节与
+> `CodexRuntimeIndex`。
+
 **这台机器上无法验证 Linux 与 Windows 的任何一行运行时行为。** 不得在交付时把推断
 说成验证。
 

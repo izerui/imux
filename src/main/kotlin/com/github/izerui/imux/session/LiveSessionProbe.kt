@@ -58,9 +58,15 @@ data class KeyDrift(val tabId: String, val from: String, val to: String)
  * **怎么知道「这个进程此刻在跑哪个会话」**：两个 CLI 的可观测面恰好相反，各取一条：
  * - claude 把 `~/.claude/sessions/<pid>.json` 当运行态文件实时维护，换 id 时原地更新，
  *   是一手权威信息；但它**不持有**会话文件句柄（open-append-close，实测 lsof 为空）
- * - codex 没有任何运行态文件（`state_5.sqlite` 无 pid 字段，rollout 的 session_meta
- *   也不记 pid），但它**长期持有** rollout 文件句柄（实测一个跑了一天多的进程仍持有），
- *   于是反过来从打开的文件名取 thread id
+ * - codex **有**运行态映射，只是不像 claude 那样是一个按 pid 命名的文件：
+ *   `logs_&lt;n&gt;.sqlite` 的 `logs.process_uuid` 字面格式是 `pid:&lt;PID&gt;:&lt;uuid&gt;`，
+ *   同一行带 `thread_id`（`state_5.sqlite` 的 `threads` 表确实无 pid 列，
+ *   当初只查了那张表才得出「codex 没有运行态文件」的错误结论）。
+ *   它同时**长期持有** rollout 文件句柄（实测一个跑了一天多的进程仍持有）
+ *
+ * 于是 codex 这一侧按平台分两条：macOS 与 Linux 从打开的文件名取 thread id
+ * （正在工作，不动），Windows 读不到别的进程的文件句柄，改读那个运行态 sqlite，
+ * 见 [CodexRuntimeIndex]。
  *
  * 所有 IO 以函数注入，本类因此完全脱离进程表与文件系统，可直接测试。
  */
