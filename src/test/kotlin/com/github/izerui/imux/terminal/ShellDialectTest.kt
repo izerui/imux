@@ -66,7 +66,7 @@ class ShellDialectTest {
      *
      * 它是 Process 作用域，只活在 `$Env:PSExecutionPolicyPreference` 里，
      * **不写任何配置文件**——完全在「别改 cli 的配置文件本身」这条约束内。
-     * 同一段论证 `CodexHookOverride` 的 KDoc 里写全了，这里不重复。
+     * 同一段论证 [shellArgs] 的 KDoc 里写全了，这里不重复。
      */
     @Test
     fun `PowerShell 参数带上 Process 作用域的执行策略绕过`() {

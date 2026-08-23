@@ -344,9 +344,7 @@ class LiveSessionProbeTest {
      *
      * 无条件切它就是在改一条 macOS 上正在工作的行为：目录名里带一个反斜杠，
      * 「文件名」就会被从中间截断，rollout 认不出来、会话跟不上。
-     * `PiSessionReportHandler.parseCodexReport` 的 KDoc 早就为 pi 那一侧写明了同一条
-     * 道理（「POSIX 上 `\` 是合法文件名字符，对 pi 的上报做同样的替换会改坏正在工作的
-     * 行为」），而 `executableMatches` 的 POSIX 侧也已经这么做了——这里是第三处，
+     * `codexCwdKey` 与 `executableMatches` 的 POSIX 侧也已经这么做了——这里是第三处，
      * 一起对齐。
      */
     @Test

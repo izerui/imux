@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.SourceCode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -9,11 +10,12 @@ import org.junit.Test
  * `TerminalHost` 那几处**接线**的守卫。
  *
  * 这一层没法跑起来做行为测试（未引入平台 test-framework，见 build.gradle.kts），
- * 而它拼出来的东西恰恰是三平台支持的全部落点：pid 自报、codex hook、Windows 的
- * pid 文件清理、shell 的取法。审查时实测过四条变异，**每一条都让全量套件保持全绿**：
+ * 而它拼出来的东西恰恰是三平台支持的全部落点：pid 自报、Windows 的 pid 文件清理、
+ * shell 的取法。审查时实测过三条变异，**每一条都让全量套件保持全绿**：
  *
- * - `pidFile = tabPidFileFor(tabId)` → `null`：Windows 上 claude 的漂移探测静默死掉
- * - `codexHookScript = codexHookScriptFor(agentType)` → `null`：Windows 上 codex 同上
+ * - `pidFile = tabPidFileFor(tabId)` → `null`：Windows 上 claude 与 codex 的漂移
+ *   探测一起静默死掉——pid 文件回答的是「这个 shell 属于哪个标签」，两种 agent
+ *   都靠它（`tabPidFileFor` 只看 `SystemInfo.isWindows`，不看 agent 类型）
  * - 删掉 `closeSession` 里那句 `deleteTabPidFile`：pid 文件泄漏 → pid 被系统复用 →
  *   **把一个毫不相干的新进程认成某标签的 shell**，正是「认错比不迁移更糟」那一类
  * - `configuredShell = service<TerminalOptionsProvider>().shellPath` → `null`：
@@ -33,9 +35,8 @@ class TerminalHostWiringSourceTest {
      *
      * - `pidFile` 传 null → Windows 上 shell 不写 pid 文件 → `readTabId` 去一个永远
      *   为空的目录里找 → claude 敲 `/clear` 之后标题停更、未读清不掉，
-     *   再点该会话会开出第二个终端与还在跑的原进程抢同一个会话
-     * - `codexHookScript` 传 null → Windows 上 codex 不注入 SessionStart hook →
-     *   codex 那条上报通道整个不存在（那边读不到文件句柄，没有第二条路）
+     *   再点该会话会开出第二个终端与还在跑的原进程抢同一个会话；codex 一并受害，
+     *   它在 Windows 上同样靠 pid 文件认「属于哪个标签」
      * - `configuredShell` 换掉或传 null → Windows 上永远退回 `powershell.exe`，
      *   用户在 Terminal 设置里配的 Git Bash 被无声忽略
      * - `piExtension` 传 null → pi 的标签不跟随
@@ -44,7 +45,7 @@ class TerminalHostWiringSourceTest {
      * 在改成 `pidFile = null` 之后照样命中。
      */
     @Test
-    fun `新建会话的命令带齐 pid 自报 hook 脚本与用户配置的 shell`() {
+    fun `新建会话的命令带齐 pid 自报与用户配置的 shell`() {
         host.assertSameCode(
             "这几个实参各自守着一条 Windows 上的通道，改成 null 的后果全是静默失效——" +
                 "功能看起来「没做」而不是「坏了」。若你只是动了排版，照下面的「期望」抄回去即可。",
@@ -61,7 +62,6 @@ class TerminalHostWiringSourceTest {
                     piExtension = piExtensionFor(agentType),
                     initialPrompt = initialPrompt,
                     pidFile = tabPidFileFor(tabId),
-                    codexHookScript = codexHookScriptFor(agentType),
                 )
             """,
             host.bodyAfter(
@@ -82,7 +82,7 @@ class TerminalHostWiringSourceTest {
      * 唯一的差别是没有 `initialPrompt`：续聊不带初始 prompt。
      */
     @Test
-    fun `续聊会话的命令同样带齐 pid 自报与 hook 脚本`() {
+    fun `续聊会话的命令同样带齐 pid 自报`() {
         host.assertSameCode(
             "续聊与新建必须一样齐全。恢复标签走的正是这一条，Windows 上重启 IDE 之后" +
                 "恢复出来的每个标签都会落在这里。",
@@ -98,7 +98,6 @@ class TerminalHostWiringSourceTest {
                     resumeId = sessionId,
                     piExtension = piExtensionFor(agentType),
                     pidFile = tabPidFileFor(tabId),
-                    codexHookScript = codexHookScriptFor(agentType),
                 )
             """,
             host.bodyAfter(
@@ -174,38 +173,25 @@ class TerminalHostWiringSourceTest {
     }
 
     /**
-     * codex hook 脚本只给 Windows 上的 codex，且找不到脚本时必须返回 null。
+     * 整套 codex hook 机制必须从接线层彻底消失。
      *
-     * 返回一个不存在的路径的后果不是「上报失败」，是 **codex 每次会话启动都报错**；
-     * 而返回 null 只是标签不自动跟随。这条取舍与 pi 的 `-e` 完全相同。
-     *
-     * 平台判断留在这一层（接线层）也被这段比对钉住：`launchCommand` 与
-     * `codexHookOverrideArg` 都是纯函数，函数体内不读 `SystemInfo`——那是它们能被
-     * 普通 JUnit 4 真调用的前提。
+     * 它已被 codex 自己写的运行态 sqlite 取代（`CodexRuntimeIndex`）。留着任何一截
+     * 都不是「多余但无害」：`-c hooks.SessionStart=…` 一旦重新出现在命令行上，
+     * 用户首次开 codex 标签就会被 codex 的 hook 信任复核屏挡一次，而那道门后面
+     * 什么都换不到——上报端点、上报路径与那个 `.ps1` 都已经不在了。
      */
     @Test
-    fun `hook 脚本只给 Windows 上的 codex 且缺失时返回 null`() {
-        // 这是表达式体的 if/else，`bodyAfter(…, '{')` 只会切到 then 那一块（`else` 在
-        // 配对的右花括号之后），所以整条声明连签名一起做等价比对。
-        val expected =
-            host.compactArgs(
-                """
-                private fun codexHookScriptFor(agentType: AgentType): String? =
-                    if (agentType == AgentType.CODEX && SystemInfo.isWindows) {
-                        codexReporterScript()?.toString()
-                    } else {
-                        null
-                    }
-                """,
-            )
+    fun `接线层不再有任何 codex hook 的残留`() {
+        val source = host.normalized
 
-        assertTrue(
-            "拼一个不存在的路径进去，codex 每开一次会话就报一次错；而返回 null 只是" +
-                "标签不自动跟随。去掉 agentType 那一半，claude 与 pi 的命令行上会多出一个" +
-                "它们不认识的 -c；去掉 isWindows 那一半，macOS 上正在工作的 lsof 通道会被" +
-                "一条它不需要的 hook 顶掉。平台判断必须留在这一层，纯函数那边不读 SystemInfo。",
-            host.compactArgs(host.normalized).contains(expected),
-        )
+        listOf("codexHookScriptFor", "codexReporterScript", "codexHookScript", "codexEndpointOf")
+            .forEach { symbol ->
+                assertFalse(
+                    "hook 机制已整套删除，接线层不该再提到 $symbol——它带来的是一次" +
+                        "什么都换不到的信任复核屏",
+                    source.contains(symbol),
+                )
+            }
     }
 
     /**

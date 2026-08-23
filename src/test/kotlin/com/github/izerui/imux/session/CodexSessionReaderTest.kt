@@ -233,8 +233,7 @@ class CodexSessionReaderTest {
      *
      * `\` 在 POSIX 上是合法的目录名字符，无条件替换会把 `/tmp/a\b` 与 `/tmp/a/b`
      * 判成同一个目录——那是把标签认到**别的项目**上，比匹配不上糟得多。
-     * `PiSessionReportHandler.parseCodexReport` 的 KDoc 早就为 pi 那一侧写明了这条，
-     * 这里把 codex 这一侧补齐；`fileNameOf` 与 `executableMatches` 是同一族的另外两处。
+     * `fileNameOf` 与 `executableMatches` 的 POSIX 侧是同一族的另外两处。
      */
     @Test
     fun `POSIX 路径的换算是恒等变换`() {

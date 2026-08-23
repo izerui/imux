@@ -80,25 +80,19 @@ class SessionMonitorTest {
     }
 
     /**
-     * Windows 上恢复 codex 标签同样要等。
+     * codex 在**任何**平台上都不等端点。
      *
-     * `PiReportEndpoint.current()` 的契约是「绝不等待」，而恢复恰好发生在内置 HTTP
-     * 服务还没起来的那几百毫秒里。不等的话恢复出来的 codex 进程拿不到
-     * `IMUX_REPORT_URL` / `IMUX_TOKEN`，**这个标签一辈子不上报**；而 `-c` 照旧注入，
-     * 用户照样被 codex 那屏「Hooks need review」挡一次，却什么都换不到。
-     * IDE 重启后恢复标签正是最常见的场景。
+     * 它一条平台都不靠上报：macOS 走 `lsof`、Linux 走 `/proc` 读它持有的会话文件
+     * 句柄，Windows 读它自己写的运行态 sqlite（`CodexRuntimeIndex`）。
+     * 白等一次 `BuiltInServerManager.waitForStart()` 只会拖慢启动恢复，
+     * 而那正是 IDE 重启后最常见的场景。
+     *
+     * Windows 那一半曾经返回 true（codex 一度靠 `-c hooks.SessionStart` 注入的
+     * hook 上报），随整套 hook 机制一起删除。
      */
     @Test
-    fun `Windows 上恢复 codex 标签也要等端点`() {
-        assertEquals(true, restoreNeedsReportEndpoint(listOf(AgentType.CODEX.cli), isWindows = true))
-    }
-
-    /**
-     * 非 Windows 上 codex 走 `lsof` / `/proc`，不需要端点——不能为了对称白等一次
-     * `BuiltInServerManager.waitForStart()`，那会拖慢 macOS 与 Linux 的启动恢复。
-     */
-    @Test
-    fun `非 Windows 上恢复 codex 标签不等端点`() {
+    fun `任何平台上恢复 codex 标签都不等端点`() {
+        assertFalse(restoreNeedsReportEndpoint(listOf(AgentType.CODEX.cli), isWindows = true))
         assertFalse(restoreNeedsReportEndpoint(listOf(AgentType.CODEX.cli), isWindows = false))
     }
 
@@ -111,21 +105,28 @@ class SessionMonitorTest {
         assertFalse(restoreNeedsReportEndpoint(emptyList(), isWindows = true))
     }
 
-    /** 混着来时只要有一个需要就得等。 */
+    /** 混着来时只要有一个需要就得等——而只有 pi 需要。 */
     @Test
     fun `混合标签里有一个需要端点就要等`() {
         assertEquals(
             true,
             restoreNeedsReportEndpoint(
-                listOf(AgentType.CLAUDE.cli, AgentType.CODEX.cli),
-                isWindows = true,
+                listOf(AgentType.CLAUDE.cli, AgentType.PI.cli),
+                isWindows = false,
             ),
         )
         assertEquals(
             true,
             restoreNeedsReportEndpoint(
                 listOf(AgentType.CLAUDE.cli, AgentType.PI.cli),
-                isWindows = false,
+                isWindows = true,
+            ),
+        )
+        assertFalse(
+            "claude 与 codex 都不靠上报，混在一起也不该等",
+            restoreNeedsReportEndpoint(
+                listOf(AgentType.CLAUDE.cli, AgentType.CODEX.cli),
+                isWindows = true,
             ),
         )
     }

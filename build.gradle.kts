@@ -100,9 +100,6 @@ intellijPlatform {
 // withType 覆盖全部实例，脚本在所有沙箱里都在。
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
-    // codex 的 SessionStart hook 脚本同理：`-c hooks.SessionStart=…` 里写的是路径，
-    // 必须以文件形式随插件安装存在。
-    from("src/main/scripts/codex-imux-reporter.ps1") { into("${project.name}/scripts") }
 }
 
 // 本项目有一批「源码级」测试：ImuxLspUiSourceTest、PluginXmlRegistrationTest、
@@ -119,15 +116,15 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
 // 把这三个源码目录显式声明成 `:test` 的输入，源文件一变（哪怕只变注释）就重跑。
 // 代价是注释改动也会触发一次测试，相对于假绿是划算的。
 tasks.test {
-    listOf("src/main/kotlin", "src/main/resources", "src/main/js", "src/main/scripts").forEach { dir ->
+    listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
         inputs
             .dir(dir)
             .withPropertyName("sourceReadAtRuntime-${dir.replace('/', '-')}")
             .withPathSensitivity(PathSensitivity.RELATIVE)
     }
     // **构建脚本自己也是运行期读的源码之一。** TerminalIntegrationSourceTest 打开
-    // build.gradle.kts 核对上面那两条 `from(…)` 的脚本路径与仓库里的文件对不对得上，
-    // 而 `:test` 的输入里原本没有构建脚本：把 `codex-imux-reporter.ps1` 写错一个字母，
+    // build.gradle.kts 核对上面那条 `from(…)` 的脚本路径与仓库里的文件对不对得上，
+    // 而 `:test` 的输入里原本没有构建脚本：把 `pi-imux-reporter.js` 写错一个字母，
     // Gradle 判 `:test` UP-TO-DATE 直接跳过，那条断言**根本没跑过**——变异验证实测确认。
     // 与上面那段说的是同一类「假绿」，只是漏了这一个文件。
     inputs

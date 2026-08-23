@@ -5,7 +5,6 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.PiReportEndpoint
 import com.github.izerui.imux.session.blocksResume
-import com.github.izerui.imux.session.codexEndpointOf
 import com.github.izerui.imux.session.deleteTabPidFile
 import com.github.izerui.imux.session.imuxTabPidDir
 import com.github.izerui.imux.session.tabPidFilePath
@@ -569,16 +568,6 @@ class TerminalHost(
                         agentType,
                         tabId,
                         piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
-                        // 平台判断在接线层做完再传进去：launchEnvironment 是纯函数，
-                        // 函数体内不读 SystemInfo，否则三个平台的分支就只剩源码文本能测。
-                        isWindows = SystemInfo.isWindows,
-                        // codex 只在 Windows 上需要上报，端点因此也只在那时才算。
-                        codexReport =
-                            if (agentType == AgentType.CODEX && SystemInfo.isWindows) {
-                                codexEndpointOf(PiReportEndpoint.current())
-                            } else {
-                                null
-                            },
                     ),
                 ).tabName(tabTitle)
                 .requestFocus(false)
@@ -617,7 +606,6 @@ class TerminalHost(
             piExtension = piExtensionFor(agentType),
             initialPrompt = initialPrompt,
             pidFile = tabPidFileFor(tabId),
-            codexHookScript = codexHookScriptFor(agentType),
         )
 
     private fun resumeCommand(
@@ -635,7 +623,6 @@ class TerminalHost(
             resumeId = sessionId,
             piExtension = piExtensionFor(agentType),
             pidFile = tabPidFileFor(tabId),
-            codexHookScript = codexHookScriptFor(agentType),
         )
 
     /**
@@ -662,20 +649,6 @@ class TerminalHost(
 
     /** 只有 pi 需要上报扩展，别的 agent 一律不加。 */
     private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? = if (agentType == AgentType.PI) piReporterScript() else null
-
-    /**
-     * Windows 上给 codex 注入 SessionStart hook 的脚本路径；别的情形返回 null。
-     *
-     * 平台判断放在接线层，[launchCommand] 与 [codexHookOverrideArg] 都是纯函数、
-     * 函数体内不读 `SystemInfo`。脚本找不到时返回 null，命令行**不加** `-c`——
-     * 理由与 [piExtensionFor] 完全相同，见 [locateCodexReporterScript]。
-     */
-    private fun codexHookScriptFor(agentType: AgentType): String? =
-        if (agentType == AgentType.CODEX && SystemInfo.isWindows) {
-            codexReporterScript()?.toString()
-        } else {
-            null
-        }
 
     private fun persistRestorableTabs() {
         if (!restorationState.canPersist(projectClosing, project.isDisposed)) return

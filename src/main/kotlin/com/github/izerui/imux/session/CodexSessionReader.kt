@@ -20,9 +20,8 @@ import kotlin.io.path.useLines
  * **替换只在 Windows 上做。** POSIX 上 `\` 是合法的目录名字符，无条件替换等于在改一条
  * macOS 上正在工作的行为：`/tmp/a\b` 与 `/tmp/a/b` 会被判成同一个目录，
  * 而这条链路的铁律是「认不出就跳过」——错误折叠可能把标签认到**别的项目**上，
- * 比匹配不上更糟。`PiSessionReportHandler.parseCodexReport` 的 KDoc 早就为 pi 那一侧
- * 写明了同一条道理，这里补齐它。POSIX 上因此是**恒等变换**，
- * 精确比较与本轮改动之前逐字节相同。
+ * 比匹配不上更糟。[fileNameOf] 与 [executableMatches] 的 POSIX 侧是同一族的另外两处。
+ * POSIX 上因此是**恒等变换**，精确比较与本轮改动之前逐字节相同。
  *
  * 只换分隔符，**不折叠盘符大小写**，同上一条理由。
  *

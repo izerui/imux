@@ -72,21 +72,22 @@ internal fun piReportBelongsToProject(
  * 拿不到 `IMUX_REPORT_URL` / `IMUX_TOKEN`，于是**一辈子不上报**。
  * 而 IDE 重启后恢复标签正是最常见的场景。
  *
- * 两种 agent 都要等：
- * - pi 在所有平台上都靠上报认领会话
- * - codex **只在 Windows 上**靠上报（macOS 与 Linux 走 `lsof` / `/proc`，不需要端点）
+ * **只有 pi 要等。** 它是唯一靠上报认领会话的 agent——claude 有运行态文件，
+ * codex 在每个平台上都由 imux 自己观测：macOS 与 Linux 读它持有的会话文件句柄，
+ * Windows 读它自己写的运行态 sqlite（见
+ * [com.github.izerui.imux.session.CodexRuntimeIndex]）。两者都不需要端点，
+ * 为对称白等一次 `BuiltInServerManager.waitForStart()` 只会拖慢启动恢复。
  *
- * codex 这一支尤其不能漏：`codexHookScriptFor` 不看端点，端点缺失时 `-c` 照旧注入，
- * 用户照样被 codex 那屏「Hooks need review」挡一次，却什么都换不到。
- *
- * 平台判断由调用点注入，函数体内不读 `SystemInfo`。
+ * [isWindows] 保留但当前不参与判定：这个判据是**按平台分岔过一次**的
+ * （Windows 上的 codex 一度靠 hook 上报），形参留在这里，将来再有平台差异时
+ * 不必把平台判断重新穿透一遍——同时也钉住「函数体内不读 `SystemInfo`」这条形状，
+ * 那是它能被普通 JUnit 4 真调用的前提。平台判断由调用点注入。
  */
+@Suppress("UNUSED_PARAMETER")
 internal fun restoreNeedsReportEndpoint(
     savedAgentIds: List<String>,
     isWindows: Boolean,
-): Boolean =
-    savedAgentIds.any { it == AgentType.PI.cli } ||
-        (isWindows && savedAgentIds.any { it == AgentType.CODEX.cli })
+): Boolean = savedAgentIds.any { it == AgentType.PI.cli }
 
 /**
  * 从完成提醒打开会话。

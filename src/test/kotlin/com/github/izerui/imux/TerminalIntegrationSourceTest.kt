@@ -7,28 +7,28 @@ import java.io.File
 
 class TerminalIntegrationSourceTest {
     /**
-     * 两个随插件安装的脚本**必须真的被打进去**，而且打包配置里写的路径要与仓库里的
+     * 随插件安装的脚本**必须真的被打进去**，而且打包配置里写的路径要与仓库里的
      * 文件对得上。
      *
-     * 这两条 `from(...)` 收的是字符串路径，Gradle 对**不存在**的源路径不报错——
+     * 那条 `from(...)` 收的是字符串路径，Gradle 对**不存在**的源路径不报错——
      * 打错一个字母、或者把脚本挪了个目录，构建照样成功，只是 zip 里少一个文件。
-     * 而两边的失败症状都是「功能没做」：
+     * 失败症状是「功能没做」：`pi-imux-reporter.js` 缺失 → `piReporterScript()`
+     * 返回 null → 命令行**不加** `-e` → pi 的标签不跟随（这条取舍是刻意的，
+     * 正因为如此它不会报错）。
      *
-     * - `pi-imux-reporter.js` 缺失 → `piReporterScript()` 返回 null → 命令行**不加**
-     *   `-e` → pi 的标签不跟随（这条取舍是刻意的，正因为如此它不会报错）
-     * - `codex-imux-reporter.ps1` 缺失 → `codexReporterScript()` 返回 null → 不加 `-c`
-     *   → Windows 上 codex 那条上报通道整个不存在，而那边没有第二条路
-     *
-     * 目标目录也一起钉：`codexReporterScriptIn` 找的是插件目录下的 `scripts/`，
+     * 目标目录也一起钉：`piReporterScriptIn` 找的是插件目录下的 `scripts/`，
      * 打到别处等于没打。
+     *
+     * codex 曾经也有一个随包分发的 `.ps1`（Windows 上的 SessionStart hook 上报），
+     * 已随整套 hook 机制删除——它改读 codex 自己写的运行态 sqlite，不需要任何
+     * 随包脚本。这里因此只剩 pi 一个。
      */
     @Test
-    fun `随插件安装的两个脚本都在仓库里且打包路径对得上`() {
+    fun `随插件安装的脚本在仓库里且打包路径对得上`() {
         val buildFile = File("build.gradle.kts").readText()
 
         listOf(
             "src/main/js/pi-imux-reporter.js",
-            "src/main/scripts/codex-imux-reporter.ps1",
         ).forEach { path ->
             assertTrue("仓库里缺少待打包的脚本：$path", File(path).exists())
             assertTrue(
@@ -41,6 +41,11 @@ class TerminalIntegrationSourceTest {
             "打包必须用 withType 覆盖全部 PrepareSandboxTask：named 只配到第一个，" +
                 "runIde 的沙箱与测试沙箱里都会缺脚本，而缺了不报错",
             buildFile.contains("tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>"),
+        )
+        assertFalse(
+            "codex 的 hook 上报脚本已随整套 hook 机制删除：留着一条打包行会把一个" +
+                "不存在的源路径写进构建，而 Gradle 对不存在的 from() 源路径不报错",
+            buildFile.contains("codex-imux-reporter.ps1"),
         )
     }
 

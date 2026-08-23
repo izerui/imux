@@ -181,8 +181,7 @@ internal fun stillApplicable(
  * **反斜杠只在 Windows 上切。** POSIX 上 `\` 是合法的文件名字符，无条件切它就是在
  * 改一条 macOS 上正在工作的行为——`/tmp/a\b/rollout-…jsonl` 这种目录名会被切出
  * 一个错误的「文件名」。触发面窄，但这是「不得改动原有平台」这条硬约束下不该留的口子，
- * 与 [executableMatches] 的 POSIX 侧、[codexCwdKey] 的 POSIX 侧是同一条道理
- *（`PiSessionReportHandler.parseCodexReport` 的 KDoc 早就写明了它）。
+ * 与 [executableMatches] 的 POSIX 侧、[codexCwdKey] 的 POSIX 侧是同一条道理。
  *
  * [isWindows] 走默认实参而不是逐层穿透：本函数的调用点全在 rollout 解析链上，
  * 与 [readTabId] 的 `isLinux` 是同一种注入形状——生产走 `SystemInfo`，测试显式传。

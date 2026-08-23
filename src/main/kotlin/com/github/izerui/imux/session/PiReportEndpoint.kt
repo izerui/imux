@@ -14,30 +14,6 @@ import java.util.UUID
 const val PI_REPORT_PATH: String = "/imux/pi-session"
 
 /**
- * codex hook 的上报路径。
- *
- * 与 pi 分开而不是在 body 里加判别字段：[com.github.izerui.imux.session.handlesPiReport]
- * 是被一整批用例钉住的纯函数，加判别字段要连同 `parsePiReport` 的全部用例一起改；
- * 并列一条新路径则 pi 那一侧逐字节不变。
- */
-const val CODEX_REPORT_PATH: String = "/imux/codex-session"
-
-/**
- * 由 pi 端点派生出 codex 端点：同一个内置服务、同一个令牌，只换路径。
- *
- * 做成纯函数而不是往 [PiReportEndpointCache] 里加第二个字段，是为了能被普通
- * JUnit 4 真调用——那个缓存要碰 `BuiltInServerManager` 与应用级服务，测不到。
- *
- * 认不出的 url 形状一律返回 null，退回「不上报」。这条链路的铁律是
- * **认不出就跳过，不能猜**（见 [LiveSessionProbe]）：猜错的后果是把标签迁到
- * 另一个会话上，比不迁移糟得多。
- */
-internal fun codexEndpointOf(piEndpoint: PiReportEndpoint?): PiReportEndpoint? =
-    piEndpoint
-        ?.takeIf { it.url.endsWith(PI_REPORT_PATH) }
-        ?.let { PiReportEndpoint(it.url.removeSuffix(PI_REPORT_PATH) + CODEX_REPORT_PATH, it.token) }
-
-/**
  * pi 上报所需的地址与令牌。
  *
  * 令牌是这个接口**唯一**的门禁：平台在 `HttpRequestHandler` 这一层不做任何校验，

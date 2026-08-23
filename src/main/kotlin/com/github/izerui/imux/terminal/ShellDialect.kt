@@ -58,10 +58,13 @@ internal fun dialectOf(shellPath: String): ShellDialect {
  * 已知取舍：Windows 上把 CLI 配成 PowerShell 函数或别名的用户拿不到它。触发面窄——
  * Windows 上 npm 装的 CLI 是 PATH 里的 `.cmd` shim，不是别名。
  *
- * **`-ExecutionPolicy Bypass` 不是可选的，理由与 [codexHookOverrideArg] 那段
- * KDoc 逐条相同**（Windows 客户端 SKU 的默认执行策略是 `Restricted`，
- * 而它是 Process 作用域、不写任何配置文件，完全在「别改 cli 的配置文件本身」这条约束内），
- * 那里不再重复。这里补的是**它在这一层为什么同样必需**：
+ * **`-ExecutionPolicy Bypass` 不是可选的**：Windows **客户端** SKU 上所有作用域都是
+ * `Undefined` 时，有效执行策略是 `Restricted`——「Prevents running of all script files」。
+ * 命令行上的 `-ExecutionPolicy` 是 **Process 作用域**，只活在
+ * `$Env:PSExecutionPolicyPreference` 里，进程一结束就没了，**不写任何配置文件**，
+ * 完全在「别改 cli 的配置文件本身」这条约束内。它盖不过组策略
+ * （`MachinePolicy` / `UserPolicy` 优先级更高），被 GPO 锁死的机器上仍然跑不起来。
+ * 具体到这一层，它为什么必需：
  *
  * PowerShell 解析外部命令时 `.ps1` 优先于 `.cmd`，而 npm 全局安装用 `cmd-shim`
  * **同时铺** `name`、`name.cmd`、`name.ps1` 三份（npm 自带的 `npm.ps1` / `npx.ps1`
