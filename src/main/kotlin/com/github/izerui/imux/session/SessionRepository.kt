@@ -1,6 +1,7 @@
 package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentSession
+import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -25,7 +26,7 @@ class SessionRepository(
             val home: Path = Paths.get(System.getProperty("user.home"))
             return SessionRepository(
                 ClaudeSessionReader(home.resolve(".claude")),
-                CodexSessionReader(home.resolve(".codex")),
+                CodexSessionReader(home.resolve(".codex"), isWindows = SystemInfo.isWindows),
                 PiSessionReader(home.resolve(".pi")),
             )
         }

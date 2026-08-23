@@ -71,7 +71,7 @@ class PiSessionReportHandlerTest {
             """{"type":"session_start","tabId":"t1","sessionId":"01a02ac9-401b-7d00-9b38-e4f85392ccfd",""" +
                 """"cwd":"C:\\Users\\me\\proj"}"""
 
-        assertEquals("C:/Users/me/proj", parseCodexReport(body)?.cwd)
+        assertEquals("C:/Users/me/proj", parseCodexReport(body, isWindows = true)?.cwd)
     }
 
     /** POSIX 上的 cwd 里没有反斜杠，归一化必须是恒等变换。 */
@@ -81,14 +81,16 @@ class PiSessionReportHandlerTest {
             """{"type":"session_start","tabId":"t1","sessionId":"01a02ac9-401b-7d00-9b38-e4f85392ccfd",""" +
                 """"cwd":"/Users/me/proj"}"""
 
-        assertEquals("/Users/me/proj", parseCodexReport(body)?.cwd)
+        assertEquals("/Users/me/proj", parseCodexReport(body, isWindows = false)?.cwd)
+        // Windows 上同样恒等：POSIX 写法里没有反斜杠可换
+        assertEquals("/Users/me/proj", parseCodexReport(body, isWindows = true)?.cwd)
     }
 
     /** 报文不合形状时与 pi 一样返回 null：上报来自另一个进程，不能假定它的内容。 */
     @Test
     fun `codex 报文不合形状时返回 null`() {
-        assertNull(parseCodexReport("{}"))
-        assertNull(parseCodexReport("""{"type":"session_start","tabId":"t1"}"""))
+        assertNull(parseCodexReport("{}", isWindows = true))
+        assertNull(parseCodexReport("""{"type":"session_start","tabId":"t1"}""", isWindows = true))
     }
 
     /**

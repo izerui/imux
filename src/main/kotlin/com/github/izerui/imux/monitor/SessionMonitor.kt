@@ -312,6 +312,9 @@ class SessionMonitor(
                         tabIdOf = ::readTabId,
                         claudeSessionOf = { pid -> byPid[pid]?.sessionId },
                         rolloutsHeldBy = ::readHeldRollouts,
+                        // 平台判断在接线层做完再传进去：探测器本身是纯的，
+                        // 三个平台的分支才都能被普通 JUnit 4 真调用。
+                        isWindows = SystemInfo.isWindows,
                     ).probe()
 
                 val drifts = driftOf(openTabs, live)

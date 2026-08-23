@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.util.SystemInfo
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.http.FullHttpRequest
 import io.netty.handler.codec.http.HttpMethod
@@ -58,8 +59,14 @@ internal fun handlesCodexReport(uri: String, isPost: Boolean): Boolean {
  * 只作用于 codex 这条路径：POSIX 上 `\` 是合法文件名字符，对 pi 的上报做同样的
  * 替换会改坏正在工作的行为。而 codex 的上报只在 Windows 上产生
  * （令牌与 hook 都只在那里下发），这里的替换因此没有 POSIX 的落点。
+ *
+ * [isWindows] 因此也照同一条道理**注入**：`codexCwdKey` 在 POSIX 上是恒等变换，
+ * 万一将来 codex 在别的平台上也走这条路，它不会顺手改坏一条合法路径。
  */
-internal fun parseCodexReport(body: String): PiSessionReport? = parsePiReport(body)?.let { it.copy(cwd = codexCwdKey(it.cwd)) }
+internal fun parseCodexReport(
+    body: String,
+    isWindows: Boolean = SystemInfo.isWindows,
+): PiSessionReport? = parsePiReport(body)?.let { it.copy(cwd = codexCwdKey(it.cwd, isWindows)) }
 
 /**
  * 校验请求携带的令牌。

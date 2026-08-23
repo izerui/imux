@@ -24,9 +24,8 @@ private val LOG = logger<WindowsTabPidFileLocation>()
 
 private object WindowsTabPidFileLocation
 
-/** pid 文件的扩展名与前缀；去掉扩展名后的文件名即 tabId。 */
+/** pid 文件的扩展名；去掉它之后的文件名即 tabId，由共用的 [isTabId] 校验。 */
 private const val PID_FILE_SUFFIX = ".pid"
-private const val TAB_ID_PREFIX = "imux-"
 
 /**
  * 从 CLI 进程沿父链上溯，找出它属于哪个终端标签。
@@ -78,6 +77,13 @@ internal fun tabIdByParentChain(
  * 文件名即 tabId（`imux-&#42;.pid`），内容是一个十进制 pid。
  * 内容不是数字的条目直接跳过而不是抛——目录里可能有写了一半的文件
  * （shell 刚起、还没写完就被探测撞上）。
+ *
+ * **重复的 pid 键由 `toMap` 静默取后来者，这是安全的。** pid 会被系统复用，两个不同
+ * 标签的 pid 文件因此可能记着同一个数字；但那意味着其中一个的 tabId 是陈旧的——
+ * 关标签页时 `TerminalHost.closeSession` 会删掉自己的那份，IDE 崩溃留下的残留由
+ * `ImuxStartupActivity` 开机清扫。而陈旧 tabId 永远不在 `openTabs` 里，`driftOf`
+ * 在 `openTabs[tabId] ?: return` 那一步就把它丢掉了，取到哪一个都不会认错标签。
+ * 换成「重复即两个都丢」反而会让活着的那个标签一起失去漂移探测。
  */
 internal fun tabPidFilesIn(dir: Path): Map<Long, String> =
     runCatching {
@@ -140,8 +146,13 @@ internal fun sweepTabPidFiles(dir: Path) {
     }.onFailure { LOG.debug("清扫 pid 文件目录失败：$dir") }
 }
 
-/** 「这是 imux 自己的 pid 文件」的唯一判据。读出端与清扫端必须共用。 */
-private fun isTabPidFileName(name: String): Boolean = name.startsWith(TAB_ID_PREFIX) && name.endsWith(PID_FILE_SUFFIX)
+/**
+ * 「这是 imux 自己的 pid 文件」的唯一判据。读出端与清扫端必须共用。
+ *
+ * 判据落到共用的 [isTabId] 上：去掉 `.pid` 之后剩下的必须是一个合法 tabId，
+ * 与 `ps` / `/proc` 两条通道同一把尺子。别人的 `.pid` 文件不归我们管，不能删。
+ */
+private fun isTabPidFileName(name: String): Boolean = name.endsWith(PID_FILE_SUFFIX) && isTabId(name.removeSuffix(PID_FILE_SUFFIX))
 
 /**
  * imux 自己的临时目录，只放 pid 文件。

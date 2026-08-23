@@ -1,9 +1,34 @@
 package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.openapi.util.SystemInfo
 
 /** 注入给 CLI 进程的标记，值是终端的 tabId。见 [LiveSessionProbe]。 */
 const val IMUX_TAB_ENV: String = "IMUX_TAB"
+
+/** tabId 的前缀，由 `TerminalHost.newTabId` 发出（`imux-<uuid>`）。 */
+private const val TAB_ID_PREFIX = "imux-"
+
+/**
+ * 「这串东西是不是一个 imux tabId」——**三条读取通道共用的唯一判据**。
+ *
+ * 从前三条通道各有各的宽严，而它们认的是同一样东西：
+ * - `/proc/&lt;pid&gt;/environ`：只要非空就照单全收
+ * - `ps eww`：正则 `\S+`，不含空白即可
+ * - Windows 的 pid 文件：文件名必须 `imux-*.pid`
+ *
+ * 三套判据意味着同一个畸形值在三个平台上有三种命运，而这一层的铁律是
+ * **「认不出就跳过」——认错会把终端迁到别人的会话上，比不迁移更糟**。
+ * 收成一条之后，最严的那一套（也就是唯一与 `newTabId` 的产出对得上的那一套）
+ * 在三个平台上一致生效。
+ *
+ * 收紧对 macOS 没有可观察的影响：imux 发出的 tabId 一律是 `imux-<uuid>`，
+ * 被这条挡掉的只可能是**别人**的 `IMUX_TAB`。
+ */
+internal fun isTabId(value: String): Boolean =
+    value.startsWith(TAB_ID_PREFIX) &&
+        value.length > TAB_ID_PREFIX.length &&
+        value.none(Char::isWhitespace)
 
 /** 某个 imux 终端此刻真正在跑的会话。 */
 data class LiveTab(val tabId: String, val sessionId: String)
@@ -48,6 +73,13 @@ class LiveSessionProbe(
     private val claudeSessionOf: (Long) -> String?,
     /** codex：该 pid 正持有的 rollout 文件路径。 */
     private val rolloutsHeldBy: (Long) -> List<String>,
+    /**
+     * rollout 路径用的是哪个平台的分隔符。
+     *
+     * 与 [executableMatches] 同一条理由：POSIX 上 `\` 是合法文件名字符，无条件切它
+     * 会改坏 macOS 上正在工作的行为。默认取 `SystemInfo`，测试显式传两侧。
+     */
+    private val isWindows: Boolean = SystemInfo.isWindows,
 ) {
 
     /**
@@ -76,9 +108,9 @@ class LiveSessionProbe(
      * 文件名里的时间戳是零填充的 `YYYY-MM-DDThh-mm-ss`，字典序即时间序，取最大者。
      */
     private fun currentThreadOf(rollouts: List<String>): String? =
-        rollouts.filter { threadIdOfRollout(it) != null }
-            .maxByOrNull { fileNameOf(it) }
-            ?.let(::threadIdOfRollout)
+        rollouts.filter { threadIdOfRollout(it, isWindows) != null }
+            .maxByOrNull { fileNameOf(it, isWindows) }
+            ?.let { threadIdOfRollout(it, isWindows) }
 }
 
 /**
@@ -88,8 +120,11 @@ class LiveSessionProbe(
  * 只认这个形状，别的文件（`history.jsonl` 等）一律返回 null——codex 进程会打开
  * 一大堆文件，不筛就会把无关路径当会话 id。
  */
-internal fun threadIdOfRollout(path: String): String? {
-    val name = fileNameOf(path)
+internal fun threadIdOfRollout(
+    path: String,
+    isWindows: Boolean = SystemInfo.isWindows,
+): String? {
+    val name = fileNameOf(path, isWindows)
     if (!name.startsWith(ROLLOUT_PREFIX) || !name.endsWith(JSONL_SUFFIX)) return null
     val id = name.removeSuffix(JSONL_SUFFIX).takeLast(UUID_LENGTH)
     return id.takeIf(::looksLikeUuid)
@@ -140,8 +175,25 @@ internal fun stillApplicable(
     currentTabs: Map<String, String>,
 ): List<KeyDrift> = drifts.filter { currentTabs[it.tabId] == it.from }
 
-/** 两种分隔符都切：Windows 上 rollout 路径来自 codex，用的是反斜杠。 */
-internal fun fileNameOf(path: String): String = path.substringAfterLast('/').substringAfterLast('\\')
+/**
+ * 路径的最后一段。
+ *
+ * **反斜杠只在 Windows 上切。** POSIX 上 `\` 是合法的文件名字符，无条件切它就是在
+ * 改一条 macOS 上正在工作的行为——`/tmp/a\b/rollout-…jsonl` 这种目录名会被切出
+ * 一个错误的「文件名」。触发面窄，但这是「不得改动原有平台」这条硬约束下不该留的口子，
+ * 与 [executableMatches] 的 POSIX 侧、[codexCwdKey] 的 POSIX 侧是同一条道理
+ *（`PiSessionReportHandler.parseCodexReport` 的 KDoc 早就写明了它）。
+ *
+ * [isWindows] 走默认实参而不是逐层穿透：本函数的调用点全在 rollout 解析链上，
+ * 与 [readTabId] 的 `isLinux` 是同一种注入形状——生产走 `SystemInfo`，测试显式传。
+ */
+internal fun fileNameOf(
+    path: String,
+    isWindows: Boolean = SystemInfo.isWindows,
+): String {
+    val afterSlash = path.substringAfterLast('/')
+    return if (isWindows) afterSlash.substringAfterLast('\\') else afterSlash
+}
 
 private fun looksLikeUuid(value: String): Boolean =
     value.length == UUID_LENGTH &&

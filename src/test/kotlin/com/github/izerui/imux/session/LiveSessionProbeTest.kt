@@ -23,6 +23,7 @@ class LiveSessionProbeTest {
         env: Map<Long, String> = emptyMap(),
         claudeSession: Map<Long, String> = emptyMap(),
         rollouts: Map<Long, List<String>> = emptyMap(),
+        isWindows: Boolean = false,
     ) = LiveSessionProbe(
         pidsOf = { type ->
             when (type) {
@@ -34,6 +35,9 @@ class LiveSessionProbeTest {
         tabIdOf = { pid -> env[pid] },
         claudeSessionOf = { pid -> claudeSession[pid] },
         rolloutsHeldBy = { pid -> rollouts[pid].orEmpty() },
+        // 默认 false：绝大多数用例说的是 macOS 上正在工作的行为，
+        // 不显式传的话它们会在 Windows 主机上换一条路走。
+        isWindows = isWindows,
     )
 
     private fun rollout(threadId: String, stamp: String = "2026-08-06T13-59-47") =
@@ -307,29 +311,48 @@ class LiveSessionProbeTest {
     }
 
     @Test
-    fun `rollout 路径在两种分隔符下都能取到文件名`() {
+    fun `rollout 路径在各自平台的分隔符下都能取到文件名`() {
         val id = "c0b2cc08-746f-4dc6-bb78-636d380d9216"
         assertEquals(
             id,
-            threadIdOfRollout("/Users/me/.codex/sessions/rollout-2026-08-06T13-59-47-$id.jsonl"),
+            threadIdOfRollout("/Users/me/.codex/sessions/rollout-2026-08-06T13-59-47-$id.jsonl", isWindows = false),
         )
         assertEquals(
             id,
-            threadIdOfRollout("C:\\Users\\me\\.codex\\sessions\\rollout-2026-08-06T13-59-47-$id.jsonl"),
+            threadIdOfRollout(
+                "C:\\Users\\me\\.codex\\sessions\\rollout-2026-08-06T13-59-47-$id.jsonl",
+                isWindows = true,
+            ),
         )
     }
 
     @Test
     fun `不是 rollout 形状的路径一律不认`() {
-        assertNull(threadIdOfRollout("C:\\Users\\me\\.codex\\history.jsonl"))
-        assertNull(threadIdOfRollout("/Users/me/.codex/history.jsonl"))
+        assertNull(threadIdOfRollout("C:\\Users\\me\\.codex\\history.jsonl", isWindows = true))
+        assertNull(threadIdOfRollout("/Users/me/.codex/history.jsonl", isWindows = false))
     }
 
     @Test
-    fun `fileNameOf 在两种分隔符下都能取到文件名`() {
-        assertEquals("b.jsonl", fileNameOf("C:\\a\\b.jsonl"))
-        assertEquals("b.jsonl", fileNameOf("/a/b.jsonl"))
-        assertEquals("plain.txt", fileNameOf("plain.txt"))
+    fun `fileNameOf 在各自平台的分隔符下都能取到文件名`() {
+        assertEquals("b.jsonl", fileNameOf("C:\\a\\b.jsonl", isWindows = true))
+        assertEquals("b.jsonl", fileNameOf("/a/b.jsonl", isWindows = false))
+        assertEquals("plain.txt", fileNameOf("plain.txt", isWindows = false))
+    }
+
+    /**
+     * **POSIX 上不许切反斜杠——`\` 在那里是合法的文件名字符。**
+     *
+     * 无条件切它就是在改一条 macOS 上正在工作的行为：目录名里带一个反斜杠，
+     * 「文件名」就会被从中间截断，rollout 认不出来、会话跟不上。
+     * `PiSessionReportHandler.parseCodexReport` 的 KDoc 早就为 pi 那一侧写明了同一条
+     * 道理（「POSIX 上 `\` 是合法文件名字符，对 pi 的上报做同样的替换会改坏正在工作的
+     * 行为」），而 `executableMatches` 的 POSIX 侧也已经这么做了——这里是第三处，
+     * 一起对齐。
+     */
+    @Test
+    fun `POSIX 上反斜杠是文件名的一部分`() {
+        assertEquals("a\\b.jsonl", fileNameOf("/tmp/a\\b.jsonl", isWindows = false))
+        assertEquals("b.jsonl", fileNameOf("/tmp/a\\b.jsonl", isWindows = true))
     }
 
     @Test
@@ -346,6 +369,7 @@ class LiveSessionProbeTest {
                     "C:\\Users\\me\\.codex\\sessions\\A\\rollout-2026-08-06T14-13-47-$newThread.jsonl",
                 ),
             ),
+            isWindows = true,
         )
 
         assertEquals(listOf(LiveTab("tab-2", newThread)), probe.probe())

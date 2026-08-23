@@ -12,7 +12,8 @@ class CodexSessionReaderTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
-    private fun reader() = CodexSessionReader(tmp.root.toPath())
+    // isWindows 显式传：默认值取 SystemInfo，那样每条用例的行为都会随主机平台变。
+    private fun reader(isWindows: Boolean = false) = CodexSessionReader(tmp.root.toPath(), isWindows)
 
     private fun writeRollout(
         uuid: String,
@@ -180,7 +181,7 @@ class CodexSessionReaderTest {
         // JSON 字符串里的一个反斜杠要写成两个
         writeRollout("uuid-win", "C:\\\\Users\\\\demo\\\\proj")
 
-        val sessions = reader().read("C:/Users/demo/proj")
+        val sessions = reader(isWindows = true).read("C:/Users/demo/proj")
 
         assertEquals(1, sessions.size)
         assertEquals("uuid-win", sessions[0].id)
@@ -197,7 +198,7 @@ class CodexSessionReaderTest {
     fun `projectPath 那一侧的反斜杠同样要换算`() {
         writeRollout("uuid-a", "C:/Users/demo/proj")
 
-        val sessions = reader().read("C:\\Users\\demo\\proj")
+        val sessions = reader(isWindows = true).read("C:\\Users\\demo\\proj")
 
         assertEquals(1, sessions.size)
         assertEquals("uuid-a", sessions[0].id)
@@ -223,14 +224,29 @@ class CodexSessionReaderTest {
     /** 只换分隔符，不折叠盘符大小写：认不出就跳过，认错比不列出糟得多。 */
     @Test
     fun `不同盘符大小写不算同一个目录`() {
-        assertTrue(sameCodexCwd("C:\\Users\\demo", "C:/Users/demo"))
-        assertEquals(false, sameCodexCwd("c:/Users/demo", "C:/Users/demo"))
+        assertTrue(sameCodexCwd("C:\\Users\\demo", "C:/Users/demo", isWindows = true))
+        assertEquals(false, sameCodexCwd("c:/Users/demo", "C:/Users/demo", isWindows = true))
     }
 
-    /** POSIX 路径过一遍换算必须原样返回。 */
+    /**
+     * **POSIX 上换算是彻底的恒等变换，连反斜杠都不换。**
+     *
+     * `\` 在 POSIX 上是合法的目录名字符，无条件替换会把 `/tmp/a\b` 与 `/tmp/a/b`
+     * 判成同一个目录——那是把标签认到**别的项目**上，比匹配不上糟得多。
+     * `PiSessionReportHandler.parseCodexReport` 的 KDoc 早就为 pi 那一侧写明了这条，
+     * 这里把 codex 这一侧补齐；`fileNameOf` 与 `executableMatches` 是同一族的另外两处。
+     */
     @Test
     fun `POSIX 路径的换算是恒等变换`() {
-        assertEquals("/Users/demo/proj", codexCwdKey("/Users/demo/proj"))
-        assertEquals("", codexCwdKey(""))
+        assertEquals("/Users/demo/proj", codexCwdKey("/Users/demo/proj", isWindows = false))
+        assertEquals("", codexCwdKey("", isWindows = false))
+        assertEquals("反斜杠在 POSIX 上是目录名的一部分", "/tmp/a\\b", codexCwdKey("/tmp/a\\b", isWindows = false))
+        assertEquals(
+            "POSIX 上这两个是不同的目录，混为一谈就是把标签认到别的项目上",
+            false,
+            sameCodexCwd("/tmp/a\\b", "/tmp/a/b", isWindows = false),
+        )
+        // 反向：Windows 上它们确实是同一个目录，否则一个 codex 会话都匹配不上
+        assertTrue(sameCodexCwd("C:\\a\\b", "C:/a/b", isWindows = true))
     }
 }

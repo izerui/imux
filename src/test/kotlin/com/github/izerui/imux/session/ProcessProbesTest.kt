@@ -49,6 +49,35 @@ class ProcessProbesTest {
         assertNull(tabIdFromPsOutput(""))
     }
 
+    /**
+     * **三条读取通道共用同一条 tabId 判据。**
+     *
+     * 从前 `/proc` 只要非空就照单全收、`ps` 只要求不含空白、Windows 那侧却要求
+     * `imux-` 前缀——同一个畸形值在三个平台上有三种命运，而这一层的铁律是
+     * 「认不出就跳过：认错会把终端迁到别人的会话上，比不迁移更糟」。
+     *
+     * 收紧对 macOS 没有可观察的影响：imux 发出的 tabId 一律是 `imux-<uuid>`，
+     * 被挡掉的只可能是**别人**的 `IMUX_TAB`。
+     *
+     * 三支各一条断言：判据本身、`ps` 通道、`/proc` 通道。
+     */
+    @Test
+    fun `三条通道的 tabId 判据是同一条`() {
+        assertTrue(isTabId("imux-abc123"))
+        assertFalse("空值不是 tabId", isTabId(""))
+        assertFalse("只有前缀不是 tabId", isTabId("imux-"))
+        assertFalse("别人的变量值不是 tabId", isTabId("something-else"))
+        assertFalse("带空白的不是 tabId", isTabId("imux-a b"))
+
+        // ps 通道：别人往 IMUX_TAB 里写了什么，一律不认领
+        assertNull(tabIdFromPsOutput("999 ?? S 0:01.00 IMUX_TAB=not-ours claude"))
+        assertEquals("imux-ok", tabIdFromPsOutput("999 ?? S 0:01.00 IMUX_TAB=imux-ok claude"))
+
+        // /proc 通道：同一把尺子
+        assertNull(tabIdFromProcEnviron("IMUX_TAB=not-ours\u0000".toByteArray()))
+        assertEquals("imux-ok", tabIdFromProcEnviron("IMUX_TAB=imux-ok\u0000".toByteArray()))
+    }
+
     @Test
     fun `从 lsof 输出里挑出 rollout 文件`() {
         // 真实形状：codex 同时开着一堆无关文件，只有 rollout 才是会话
@@ -156,14 +185,55 @@ class ProcessProbesTest {
         assertNull(readTabId(999, isLinux = false, isWindows = false, procRoot = procRoot))
     }
 
+    /**
+     * **macOS 的 `ps` 分派必须真的走到 `ps`，而不只是「解析函数还在」。**
+     *
+     * 上一版这条用例名字承诺「走 ps 与 lsof 的解析路径」，方法体却只调了
+     * `tabIdFromPsOutput`——`readHeldRollouts` 与 `readTabId` 的非 Linux 分派一次都没
+     * 被调用。于是把 `else` 那一支改成 `?: return null`（或干脆 `-> null`）全套照绿，
+     * 而 macOS 上一个标签都认不出来。
+     *
+     * 现在把 `runCommand` 注入进来，直接断言**它收到的是哪一条命令**、
+     * 以及输出真的被解析了：这是「走了 ps 但没结果」与「压根没走 ps」唯一的分水岭。
+     */
     @Test
-    fun `非 Linux 仍走 ps 与 lsof 的解析路径`() {
-        // 这两个纯解析函数是 macOS 上正在工作的东西，Linux 分支不得影响它们
+    fun `macOS 分派真的把 ps 跑起来并解析它的输出`() {
+        val asked = mutableListOf<List<String>>()
+
+        val tabId =
+            readTabId(
+                11814,
+                isLinux = false,
+                isWindows = false,
+                procRoot = temp.root.toPath(),
+                pidDir = { temp.root.toPath() },
+                runCommand = { command ->
+                    asked += command
+                    "11814 ?? S 1:23.45 SHELL=/bin/zsh IMUX_TAB=imux-abc123 claude"
+                },
+            )
+
+        assertEquals("imux-abc123", tabId)
         assertEquals(
-            "imux-abc",
-            tabIdFromPsOutput("  501 22941 ttys003 PATH=/usr/bin IMUX_TAB=imux-abc /bin/zsh"),
+            "macOS 上认领终端靠的就是这一条命令；分派改掉之后它一次都不会被跑到",
+            listOf(listOf("ps", "eww", "-p", "11814")),
+            asked,
         )
-        assertNull(tabIdFromPsOutput("  501 22941 ttys003 MY_IMUX_TAB=imux-abc /bin/zsh"))
+    }
+
+    /** `ps` 起不来（进程已退出、命令不存在）时不认领，而不是拿空串去比。 */
+    @Test
+    fun `ps 跑不起来时不认领`() {
+        assertNull(
+            readTabId(
+                999,
+                isLinux = false,
+                isWindows = false,
+                procRoot = temp.root.toPath(),
+                pidDir = { temp.root.toPath() },
+                runCommand = { null },
+            ),
+        )
     }
 
     @Test
@@ -176,9 +246,115 @@ class ProcessProbesTest {
         ).toPath()
         Files.createSymbolicLink(fd.resolve("3"), rollout)
 
-        assertEquals(listOf(rollout.toString()), readHeldRollouts(999, isLinux = true, procRoot = procRoot))
-        // 反向：走 lsof 那条路，本机没有 pid 999 这个进程，认不出来
-        assertTrue(readHeldRollouts(999, isLinux = false, procRoot = procRoot).isEmpty())
+        assertEquals(
+            listOf(rollout.toString()),
+            readHeldRollouts(999, isLinux = true, isWindows = false, procRoot = procRoot),
+        )
+        // 反向：Linux 分支不得去跑 lsof
+        var ranCommand = false
+        readHeldRollouts(999, isLinux = true, isWindows = false, procRoot = procRoot, runCommand = {
+            ranCommand = true
+            null
+        })
+        assertFalse("Linux 上读 /proc 就够了，不该另起一个 lsof 子进程", ranCommand)
+    }
+
+    /**
+     * **macOS 的 lsof 分派同样要真的走到 lsof。**
+     *
+     * 这是三平台改造里唯一一处 macOS 侧「没有红灯保护」的分派。把
+     * `else -> rolloutPathsFromLsof(runCommand(…))` 改成 `else -> emptyList()`
+     *（一行、看起来完全像正常代码）之后，上一版全套 827 照绿，而 macOS 上 codex 的
+     * 漂移探测**彻底失效**：敲 `/new` 后标题停更、未读清不掉，
+     * 再点新会话会跟原进程抢同一个 rollout。
+     *
+     * 「走了 lsof 但没结果」与「压根没走 lsof」在真实环境里给出完全相同的返回值
+     *（都是空列表），所以只能把 `runCommand` 注入进来，直接看它收到了什么。
+     */
+    @Test
+    fun `macOS 分派真的把 lsof 跑起来并解析它的输出`() {
+        val asked = mutableListOf<List<String>>()
+        val rollout =
+            "/Users/x/.codex/sessions/2026/08/06/" +
+                "rollout-2026-08-06T13-59-47-019fd5a8-0890-73f3-abf8-891be422a5a6.jsonl"
+
+        val held =
+            readHeldRollouts(
+                31694,
+                isLinux = false,
+                isWindows = false,
+                procRoot = temp.root.toPath(),
+                runCommand = { command ->
+                    asked += command
+                    "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\n" +
+                        "codex 31694 me 7u REG 1,18 1024 876 /Users/x/.codex/history.jsonl\n" +
+                        "codex 31694 me 30u REG 1,18 120847 372 $rollout\n"
+                },
+            )
+
+        assertEquals(listOf(rollout), held)
+        assertEquals(
+            "macOS 上 codex 的漂移探测就靠这一条命令；分派改成 emptyList() 之后它一次都跑不到",
+            listOf(listOf("lsof", "-p", "31694")),
+            asked,
+        )
+    }
+
+    /** `lsof` 起不来（未安装、进程已退出）时返回空，而不是抛。 */
+    @Test
+    fun `lsof 跑不起来时返回空`() {
+        assertTrue(
+            readHeldRollouts(
+                999,
+                isLinux = false,
+                isWindows = false,
+                procRoot = temp.root.toPath(),
+                runCommand = { null },
+            ).isEmpty(),
+        )
+    }
+
+    /**
+     * **Windows 上一句 `lsof` 都不许跑。**
+     *
+     * 那条观测面在 Windows 上根本不存在（读不到别的进程打开的文件句柄），codex 那侧
+     * 改由 codex 自己的 SessionStart hook 上报。少了这一支，Windows 会落到 `lsof` 那条
+     * 路：`GeneralCommandLine` 起不来 → **每一轮探测的每一个 codex pid** 都往
+     * `idea.log` 写一条带完整堆栈的 `LOG.warn`。功能不坏，但 Windows 用户排障时唯一的
+     * 线索来源被刷屏淹掉——包括 `readTabId` 那条专门为此留下的三态 debug 日志。
+     */
+    @Test
+    fun `Windows 上不碰 lsof 也不碰 proc`() {
+        Assume.assumeFalse(SystemInfo.isWindows)
+        val procRoot = temp.root.toPath()
+        var ranCommand = false
+
+        assertTrue(
+            readHeldRollouts(
+                999,
+                isLinux = false,
+                isWindows = true,
+                procRoot = procRoot,
+                runCommand = {
+                    ranCommand = true
+                    null
+                },
+            ).isEmpty(),
+        )
+        assertFalse(
+            "Windows 上 lsof 根本不存在，跑它只会让 idea.log 被失败堆栈刷屏",
+            ranCommand,
+        )
+        // Windows 且 isLinux 也为真（不可能，但分派顺序必须写对）时同样不读 /proc
+        val fd = Files.createDirectories(procRoot.resolve("777/fd"))
+        val rollout = temp.newFile(
+            "rollout-2026-08-06T13-59-47-c0b2cc08-746f-4dc6-bb78-636d380d9217.jsonl",
+        ).toPath()
+        Files.createSymbolicLink(fd.resolve("3"), rollout)
+        assertTrue(
+            "Windows 分支必须排在最前，否则平台判断的顺序一变就会落到别的路上",
+            readHeldRollouts(777, isLinux = true, isWindows = true, procRoot = procRoot).isEmpty(),
+        )
     }
 
     @Test

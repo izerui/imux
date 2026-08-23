@@ -4,6 +4,7 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.useLines
@@ -16,13 +17,22 @@ import kotlin.io.path.useLines
  * 也是正斜杠**（`C:/a/b`）。两边都是精确字符串比较，不换算的话 Windows 上
  * **一个 codex 会话都匹配不上**——会话列表整片空白、漂移探测无处落地，且不报错。
  *
- * macOS 与 Linux 上这是**恒等变换**：两侧本来就都是正斜杠，一个字节都不变。
- * 由 `CodexSessionReaderTest` 与 `PiSessionReportHandlerTest` 各钉一条。
+ * **替换只在 Windows 上做。** POSIX 上 `\` 是合法的目录名字符，无条件替换等于在改一条
+ * macOS 上正在工作的行为：`/tmp/a\b` 与 `/tmp/a/b` 会被判成同一个目录，
+ * 而这条链路的铁律是「认不出就跳过」——错误折叠可能把标签认到**别的项目**上，
+ * 比匹配不上更糟。`PiSessionReportHandler.parseCodexReport` 的 KDoc 早就为 pi 那一侧
+ * 写明了同一条道理，这里补齐它。POSIX 上因此是**恒等变换**，
+ * 精确比较与本轮改动之前逐字节相同。
  *
- * 只换分隔符，**不折叠盘符大小写**。「认不出就跳过」是这条链路的铁律：匹配不上
- * 只是不列出、不迁移，而错误折叠可能把标签认到别的项目上——那是更糟的一类错。
+ * 只换分隔符，**不折叠盘符大小写**，同上一条理由。
+ *
+ * [isWindows] 走默认实参，形状与 [readTabId] 的 `isLinux` 一致：生产读 `SystemInfo`，
+ * 测试显式传，两个平台的分支因此都能在 macOS 上被真调用断言。
  */
-internal fun codexCwdKey(path: String): String = path.replace('\\', '/')
+internal fun codexCwdKey(
+    path: String,
+    isWindows: Boolean = SystemInfo.isWindows,
+): String = if (isWindows) path.replace('\\', '/') else path
 
 /**
  * 两个 cwd 是否指同一个目录。
@@ -33,7 +43,8 @@ internal fun codexCwdKey(path: String): String = path.replace('\\', '/')
 internal fun sameCodexCwd(
     left: String,
     right: String,
-): Boolean = codexCwdKey(left) == codexCwdKey(right)
+    isWindows: Boolean = SystemInfo.isWindows,
+): Boolean = codexCwdKey(left, isWindows) == codexCwdKey(right, isWindows)
 
 /**
  * 读取 Codex 的会话库。
@@ -46,6 +57,13 @@ internal fun sameCodexCwd(
  */
 class CodexSessionReader(
     private val codexHome: Path,
+    /**
+     * cwd 比较用哪个平台的规则，见 [codexCwdKey]。
+     *
+     * 注入而不是在 [readOne] 里读 `SystemInfo`：这一层的正确性全在「哪些会话算这个
+     * 项目的」上，而 Windows 那条分支在 macOS 开发机上一条也走不到。
+     */
+    private val isWindows: Boolean = SystemInfo.isWindows,
 ) {
     private val threadIndex = CodexThreadIndex(codexHome)
 
@@ -86,7 +104,7 @@ class CodexSessionReader(
 
             val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
             // 两侧都换算：codex 记原生分隔符，projectPath 是 @SystemIndependent 的正斜杠
-            if (!sameCodexCwd(cwd, projectPath)) return null
+            if (!sameCodexCwd(cwd, projectPath, isWindows)) return null
 
             val id = JsonLineScanner.stringValue(meta, "id") ?: return null
 

@@ -25,7 +25,9 @@ private object ProcLinuxProbeLocation
  * 命令行拼在同一行、必须靠正则锚定变量名。变量名仍要整条相等地比，
  * 否则 `MY_IMUX_TAB` 与 `IMUX_TABS` 都会被误认。
  *
- * 空值当作没有：不是 imux 开的进程，或者 shell 把变量清了。
+ * 空值当作没有：不是 imux 开的进程，或者 shell 把变量清了。判据用共用的 [isTabId]，
+ * 与 `ps` 那条通道、Windows 的 pid 文件通道同一把尺子——三套宽严不一的判据意味着
+ * 同一个畸形值在三个平台上有三种命运，而这一层的铁律是「认不出就跳过」。
  */
 internal fun tabIdFromProcEnviron(bytes: ByteArray): String? =
     String(bytes, Charsets.UTF_8)
@@ -34,7 +36,7 @@ internal fun tabIdFromProcEnviron(bytes: ByteArray): String? =
             val separator = entry.indexOf('=')
             if (separator < 0) return@firstNotNullOfOrNull null
             if (entry.substring(0, separator) != IMUX_TAB_ENV) return@firstNotNullOfOrNull null
-            entry.substring(separator + 1).takeIf { it.isNotBlank() }
+            entry.substring(separator + 1).takeIf(::isTabId)
         }
 
 /**

@@ -14,7 +14,16 @@ import java.nio.file.Path
  *
  * 解析与执行分开写，是为了让解析可测——命令输出的形状是这里最容易出错的地方。
  */
-private val LOG = logger<LiveSessionProbe>()
+private val LOG = logger<ProcessProbesLocation>()
+
+/**
+ * 日志归属锚点。
+ *
+ * 从前这里写的是 `logger<LiveSessionProbe>()`——本文件的日志会记到**另一个类**名下，
+ * 排障时按类名过滤 `idea.log` 直接漏掉。隔壁 `ProcLinuxProbe.kt` 与
+ * `WindowsTabPidFile.kt` 各有一个 `*Location` object 专门解决这件事，这里跟它们统一。
+ */
+private object ProcessProbesLocation
 
 /**
  * 读进程的环境变量，取出 [IMUX_TAB_ENV]。
@@ -24,9 +33,11 @@ private val LOG = logger<LiveSessionProbe>()
  * 所以直接锚定这一个变量名去取，既准又不受其它变量干扰。
  *
  * 变量名两侧的边界必须卡死，否则 `IMUX_TABS=` 或 `MY_IMUX_TAB=` 都会被误认。
+ *
+ * 取到的值再过一遍 [isTabId]——三条读取通道共用同一条判据，见那个函数的 KDoc。
  */
 internal fun tabIdFromPsOutput(output: String): String? =
-    TAB_ENV_PATTERN.find(output)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+    TAB_ENV_PATTERN.find(output)?.groupValues?.get(1)?.takeIf(::isTabId)
 
 /**
  * 从 `lsof -p` 的输出里挑出 codex 正在写的 rollout 文件。
@@ -61,6 +72,10 @@ internal fun rolloutPathsFromLsof(output: String): List<String> =
  *
  * [pidDir] 传的是取目录的函数而不是目录本身：默认值在调用点求值，写成 `Path` 会让
  * 每一次非 Windows 的调用都白跑一趟 [imuxTabPidDir]。
+ *
+ * [runCommand] 与 [procRoot] / [pidDir] 同一个理由被注入：分派选错分支是这一层最难
+ * 发现的错，而「走了 `ps` 但本机没有这个 pid」与「压根没走 `ps`」在真实环境里给出
+ * **完全相同**的结果（都是 null），不注入就没有任何断言分得开这两者。
  */
 internal fun readTabId(
     pid: Long,
@@ -68,6 +83,7 @@ internal fun readTabId(
     isWindows: Boolean = SystemInfo.isWindows,
     procRoot: Path = PROC_ROOT,
     pidDir: () -> Path = ::imuxTabPidDir,
+    runCommand: (List<String>) -> String? = ::runCommandForOutput,
 ): String? =
     when {
         isWindows -> {
@@ -90,16 +106,36 @@ internal fun readTabId(
         else -> tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
     }
 
-/** 读一个进程正持有的 rollout 文件。 */
+/**
+ * 读一个进程正持有的 rollout 文件。
+ *
+ * 三条路，按平台分派，与 [readTabId] 同一个形状：
+ * - Windows：**这条观测面根本不存在**——读不到别的进程打开的文件句柄（要
+ *   Sysinternals 的 `handle.exe`，不自带且要管理员权限）。codex 那侧改由 codex 自己
+ *   的 SessionStart hook 上报，见 `terminal/CodexHookOverride.kt`。直接返回空。
+ * - Linux：读 `/proc/&lt;pid&gt;/fd/`（不起子进程、也不依赖 `lsof`）
+ * - 其余（macOS）：`lsof -p`
+ *
+ * **Windows 分支必须排在最前，而且不能省。** 少了它，Windows 会落到 `lsof` 那一支，
+ * [GeneralCommandLine] 起不来，每一轮探测的每一个 codex pid 都会往 `idea.log` 写一条
+ * 带完整堆栈的 `LOG.warn`——功能不坏，但 Windows 用户排障时唯一的线索来源被刷屏淹掉，
+ * 包括 [readTabId] 那条专门留下的三态 debug 日志。
+ *
+ * [runCommand] 注入的理由见 [readTabId]。
+ */
 internal fun readHeldRollouts(
     pid: Long,
     isLinux: Boolean = SystemInfo.isLinux,
+    isWindows: Boolean = SystemInfo.isWindows,
     procRoot: Path = PROC_ROOT,
+    runCommand: (List<String>) -> String? = ::runCommandForOutput,
 ): List<String> =
-    if (isLinux) {
-        readHeldRolloutsFromProc(pid, procRoot)
-    } else {
-        rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
+    when {
+        isWindows -> emptyList()
+
+        isLinux -> readHeldRolloutsFromProc(pid, procRoot)
+
+        else -> rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
     }
 
 /** 生产入口。参数化只为让分派本身可测——分派选错分支是这一层最难发现的错。 */
@@ -149,12 +185,12 @@ internal fun codexPids(): List<Long> = runCatching {
 }
 
 /**
- * 跑一条命令并取标准输出。
+ * 跑一条命令并取标准输出。生产默认值，测试从参数注入一个假的。
  *
  * 超时必须设：`lsof` 在挂载点无响应（网络盘、睡眠中的外置盘）时会长时间卡住，
  * 而调用方在轮询链路上。宁可这一轮探测不出来。
  */
-private fun runCommand(command: List<String>): String? = runCatching {
+private fun runCommandForOutput(command: List<String>): String? = runCatching {
     val output = ExecUtil.execAndGetOutput(GeneralCommandLine(command), COMMAND_TIMEOUT_MS)
     if (output.isTimeout) {
         LOG.warn("探测命令超时：${command.joinToString(" ")}")
