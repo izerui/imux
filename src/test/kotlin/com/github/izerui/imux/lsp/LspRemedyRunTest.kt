@@ -68,23 +68,39 @@ class LspRemedyRunTest {
     }
 
     /**
-     * macOS 专属（brew / opam）的安装命令，在非 macOS 上一条都不许漏。
+     * 目录表里**每一条** brew / opam 形状的安装命令，在非 macOS 上一条都不许漏。
      *
-     * 判据是 [LspCatalog.macOnlyCommands] 的全集而不是抽样——上一条只喂了一个样例，
-     * 「看起来讲得通的一次放宽」能整个绕过它。失败时直接列出漏了哪几条。
+     * **遍历的必须是 `servers` + `tools` 的真全集，不是 [LspCatalog.macOnlyCommands]。**
+     * 上一版写的是 `macOnlyCommands.filter { canRun(…) }`，而 `canRun` 的判据恰恰是
+     * `commands.none { it in macOnlyCommands }`——对任意 `it ∈ macOnlyCommands`，
+     * `none{}` 恒假、`canRun` 恒假、`leaked` 恒空：**它在任何实现下都绿**，
+     * 包括「把 `macOnlyCommands` 整个改成 `emptySet()`」这种改法。
+     * 从真全集出发才是有鉴别力的交叉校验：一侧是目录表的原始数据，
+     * 另一侧是闸门的实际行为，两头对齐才算数。
      *
      * 前置工具的安装命令（`brew install --cask dotnet-sdk` 之流）一起摊进来：
      * 它们也是 brew 形状的命令，漏掉的话链的第一步就能在 Linux 上跑起来。
      */
     @Test
     fun `没有一条 macOS 专属命令能在非 macOS 上跑`() {
-        val leaked = LspCatalog.macOnlyCommands.filter { canRun(Remedy(listOf(it), "https://x"), isMac = false) }
+        val everyInstallCommand =
+            LspCatalog.servers.values.mapNotNull(LspServer::installCommand) +
+                LspCatalog.tools.values.mapNotNull(LspTool::installCommand)
+        val macShaped = everyInstallCommand.filter { requiredTool(it) in setOf("brew", "opam") }
 
+        assertTrue(
+            "目录表里一条 brew/opam 形状的命令都没有了？那这条用例已经守不住任何东西",
+            macShaped.isNotEmpty(),
+        )
+        val leaked = macShaped.filter { canRun(Remedy(listOf(it), "https://x"), isMac = false) }
         assertEquals(
             "这些 macOS 专属命令在非 macOS 上漏出了执行按钮：$leaked",
             emptyList<String>(),
             leaked,
         )
+        // 反向：同一批命令在 macOS 上必须放行，否则「一条都不漏」可以靠「一条都不给」达成
+        val blocked = macShaped.filterNot { canRun(Remedy(listOf(it), "https://x"), isMac = true) }
+        assertEquals("这些命令在 macOS 上被误闸了：$blocked", emptyList<String>(), blocked)
     }
 
     /**
@@ -476,25 +492,53 @@ class LspRemedyRunTest {
     // —— 命令链拼接 ——
 
     /**
-     * 链用 `&&` 串起来：**哪一步失败就停在哪，用户在终端里看得见**。
+     * POSIX 上链用 `&&` 串起来，**与改动前逐字节相同**：哪一步失败就停在哪，
+     * 用户在终端里看得见。
      *
      * 换成 `;` 的话，`brew install --cask dotnet-sdk` 失败之后 `dotnet tool install`
      * 照样会跑一遍、再失败一次、最后 `claude plugin install` 把一个指向不存在程序的
      * 配置写进 `~/.claude/settings.json`——用户得到的是一屏红字加一个坏掉的配置。
      */
     @Test
-    fun `链用 and-and 串起来`() {
+    fun `POSIX shell 下链用 and-and 串起来`() {
         assertEquals(
             "brew install --cask dotnet-sdk && dotnet tool install --global csharp-ls",
-            Remedy(listOf("brew install --cask dotnet-sdk", "dotnet tool install --global csharp-ls"), null).chain,
+            Remedy(
+                listOf("brew install --cask dotnet-sdk", "dotnet tool install --global csharp-ls"),
+                null,
+            ).chainFor("/bin/zsh"),
         )
-        assertEquals("pi install npm:pi-lens", Remedy(listOf("pi install npm:pi-lens"), null).chain)
+        assertEquals("pi install npm:pi-lens", Remedy(listOf("pi install npm:pi-lens"), null).chainFor("/bin/zsh"))
+    }
+
+    /**
+     * PowerShell shell 下链**不能**是 `&&`——5.1 见到它直接报解析错误、一条命令都不跑。
+     *
+     * 这一条与 `ShellDialectTest` 那组并存：那边钉的是拼接函数本身，这边钉的是
+     * **`Remedy` 真的按传进来的 shell 选方言**。少了它，把 `chainFor` 的实现写回
+     * `commands.joinToString(" && ")` 照样全绿，而 Windows 用户点「启用」得到一片红字。
+     */
+    @Test
+    fun `PowerShell shell 下链改用 LASTEXITCODE 检查`() {
+        val chain =
+            Remedy(
+                listOf("npm install -g pyright", "claude plugin install pyright-lsp@claude-plugins-official"),
+                null,
+            ).chainFor("powershell.exe")
+
+        assertEquals(
+            "npm install -g pyright; if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }; " +
+                "claude plugin install pyright-lsp@claude-plugins-official",
+            chain,
+        )
+        assertFalse("&& 是 PowerShell 7 才有的操作符，5.1 上整条链一个命令都不跑：$chain", chain!!.contains("&&"))
     }
 
     /** 空链没有命令行可给：`""` 会让终端标签起一个什么都不做的 shell，而按钮看着能点。 */
     @Test
-    fun `空链没有命令行`() {
-        assertNull(Remedy(emptyList(), "https://x").chain)
+    fun `空链在两个方言下都没有命令行`() {
+        assertNull(Remedy(emptyList(), "https://x").chainFor("/bin/zsh"))
+        assertNull(Remedy(emptyList(), "https://x").chainFor("powershell.exe"))
     }
 
     // —— 文案键 ——
@@ -650,7 +694,10 @@ class LspRemedyRunTest {
     @Test
     fun `PowerShell 形态的执行命令行用 PowerShell 参数`() {
         assertEquals(
-            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "npm install -g pyright"),
+            listOf(
+                "pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                "npm install -g pyright",
+            ),
             runCommandLine("pwsh.exe", "npm install -g pyright"),
         )
     }

@@ -512,8 +512,8 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * 1. [Remedy.blockingTool]——「要先装什么」。链根本组不出来时唯一有用的一句：
      *    `brew` / `go` / `npm` / `gem` 不在 PATH，而我们没有可靠的安装方式。
-     *    此时 [Remedy.chain] 必为空，[Remedy.docsUrl] 换成的是**那个工具**的官网。
-     * 2. [Remedy.chain]——「会跑什么」。摆一个**不可点的短标签**，文字取 [runTabTarget]
+     *    此时 [Remedy.chainFor] 必为空，[Remedy.docsUrl] 换成的是**那个工具**的官网。
+     * 2. [Remedy.chainFor]——「会跑什么」。摆一个**不可点的短标签**，文字取 [runTabTarget]
      *   （整条链取最后一步：`… && claude plugin install kotlin-lsp@…` &#8594; `kotlin-lsp`），
      *    完整链挂 tooltip。用户缺的恰恰就是那个插件名/包名——CLI 的官方文档只会告诉他
      *    「有 plugin install 这个子命令」，不会告诉他 Kotlin 对应哪个插件。短标签让这一
@@ -525,7 +525,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         remedy.blockingTool?.let { tool ->
             label(ImuxBundle.message("settings.lsp.tool.missing", tool))
         }
-        remedy.chain?.let { chain ->
+        remedy.chainFor(remedyShell())?.let { chain ->
             label(runTabTarget(chain)).applyToComponent { toolTipText = chain }
         }
         remedy.docsUrl?.let { url ->
@@ -579,7 +579,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         if (!hasProjectWindow()) {
             return false
         }
-        val command = remedy.chain ?: return false
+        val command = remedy.chainFor(remedyShell()) ?: return false
         button(ImuxBundle.message(ENABLE_ACTION_KEY)) { event ->
             runInTerminal(key, command, event)
         }
@@ -599,6 +599,23 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      */
     private fun hasProjectWindow(): Boolean =
         ProjectManager.getInstance().openProjects.any { !it.isDisposed && !it.isDefault }
+
+    /**
+     * 这一页要用的 shell——**拼链与执行必须用同一个**。
+     *
+     * 收成一个函数而不是在两处各写一遍，是因为它现在有两个消费者：
+     * [Remedy.chainFor] 按它的方言决定命令之间怎么串（PowerShell 5.1 不认 `&&`），
+     * [runCommandLine] 按它的方言决定 shell 参数。两处若各取各的，
+     * 就可能拿 POSIX 的 `&&` 交给 PowerShell 去跑——那是一屏解析错误、一条命令都不跑。
+     *
+     * 本身不做任何取舍：平台判断作为实参交给 [resolveShell]，那是被真调用测试钉住的纯函数。
+     */
+    private fun remedyShell(): String =
+        resolveShell(
+            System.getenv("SHELL"),
+            isWindows = SystemInfo.isWindows,
+            configuredShell = service<TerminalOptionsProvider>().shellPath,
+        )
 
     /**
      * 开一个终端标签把命令跑起来——**不是后台静默执行**。
@@ -711,11 +728,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             TerminalToolWindowTabsManager.getInstance(project)
                 .createTabBuilder()
                 .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                .shellCommand(runCommandLine(resolveShell(
-                    System.getenv("SHELL"),
-                    isWindows = SystemInfo.isWindows,
-                    configuredShell = service<TerminalOptionsProvider>().shellPath,
-                ), command))
+                .shellCommand(runCommandLine(remedyShell(), command))
                 .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                 .requestFocus(true)
                 .closeOnProcessTermination(false)

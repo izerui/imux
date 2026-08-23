@@ -63,8 +63,9 @@ internal const val ENABLING_STATUS_KEY = "settings.lsp.status.enabling"
  *    三平台形态相同，而 `claude plugin install` / `pi install` / `codex mcp add` 是
  *    CLI 自己的子命令，不依赖任何外部工具链。
  *
- * **为什么是「链里含任何一条 macOS-only 就整条按 macOS-only 处理」。** 链是用 `&&`
- * 串起来交给终端的：第一条跑不通，后面一条都跑不到。「前半段能跑」这种中间态不存在，
+ * **为什么是「链里含任何一条 macOS-only 就整条按 macOS-only 处理」。** 链是**串起来
+ * 交给终端、哪一步失败就停在哪**的（见 [Remedy.chainFor]）：第一条跑不通，
+ * 后面一条都跑不到。「前半段能跑」这种中间态不存在，
  * 而一个跑到一半就红着停下的终端标签，比一开始就没有按钮更让人以为是插件坏了。
  *
  * **原先的第三个维度 `hasPosixShell` 已删除。** 它挡的是「Windows 上 `resolveShell`
@@ -108,8 +109,8 @@ internal fun requiredTool(command: String): String = command.trim().substringBef
  * | 语言服务器 | server 二进制不在 PATH | `dotnet tool install --global csharp-ls` |
  * | CLI 插件 | 状态是 [LspStatus.MISSING_CONFIG] | `claude plugin install csharp-lsp@…` |
  *
- * 顺序不是审美：后一层依赖前一层跑成。链用 `&&` 串给终端，**哪一步失败就停在哪**，
- * 用户在终端里看得见是哪一条红的。
+ * 顺序不是审美：后一层依赖前一层跑成。链按方言串给终端（[Remedy.chainFor]），
+ * **哪一步失败就停在哪**，用户在终端里看得见是哪一条红的。
  *
  * **为什么 [LspStatus.MISSING_CONFIG] 也要查二进制。** 探针算状态时配置层排在二进制
  * 层前面（`binary !in configuredCommands` 一命中就返回 MISSING_CONFIG），于是这个状态

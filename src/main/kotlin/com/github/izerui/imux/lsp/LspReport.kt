@@ -1,6 +1,8 @@
 package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.terminal.commandChain
+import com.github.izerui.imux.terminal.dialectOf
 
 /**
  * 一门语言在某个 CLI 上的 LSP 可用状态。
@@ -49,7 +51,8 @@ internal enum class LspStatus {
  *（见 `canRun`）——一条链里可以同时含 `brew` 与跨平台的 `claude plugin install`，
  * 按性质根本分不出来。
  *
- * [commands] 用 `&&` 串起来交给终端：**哪一步失败就停在哪，用户在终端里看得见**。
+ * [commands] 串成一行交给终端，串法按 shell 方言取（见 [chainFor]）：
+ * **哪一步失败就停在哪，用户在终端里看得见**。
  *
  * [blockingTool] 是「链根本组不出来」的那种情况：某条命令依赖的工具不在 PATH，而我们
  * 又没有可靠的安装方式（`brew` 本身、`go`、`npm`、`gem`）。此时 [commands] 必为空，
@@ -68,8 +71,17 @@ internal data class Remedy(
      * `commands.joinToString(" && ")` 的话，把分隔符改成 `;`（哪一步失败都继续往下跑）
      * 或者改成 `" "`（拼成一条谁也不认识的命令）都只是改一个字面量，而设置页那一侧
      * 只能做源码文本断言。搬到这里之后它能被真正调用着测。
+     *
+     * **收 [shell] 而不是恒用 `&&`。** `&&` 是 PowerShell **7.0** 才有的操作符，
+     * 交给 Windows 自带的 5.1 会直接报解析错误、整条链一个命令都不跑，
+     * 详见 [com.github.izerui.imux.terminal.commandChain]。方言与 [runCommandLine]
+     * 同源（都由 [dialectOf] 从同一个 shell 路径推出），两处不可能漂移；
+     * macOS 上它恒为 POSIX，结果与改动前逐字节相同。
+     *
+     * 收 shell 路径而不是 `ShellDialect`，是为了让设置页那一侧继续不碰方言概念——
+     * 它手上本来就有 `resolveShell(…)` 的结果，要交给 [runCommandLine] 的也正是它。
      */
-    val chain: String? get() = commands.joinToString(" && ").takeIf(String::isNotEmpty)
+    fun chainFor(shell: String): String? = commandChain(dialectOf(shell), commands).takeIf(String::isNotEmpty)
 }
 
 internal data class LanguageFinding(

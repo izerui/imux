@@ -1,5 +1,6 @@
 package com.github.izerui.imux.settings
 
+import com.github.izerui.imux.SourceCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -20,150 +21,27 @@ import java.io.File
  * 答不上来的断言守的多半不是用户在乎的东西，只会在重新格式化时制造误报。
  */
 class ImuxLspUiSourceTest {
-    private val source: String by lazy {
-        File("src/main/kotlin/com/github/izerui/imux/settings/ImuxLspConfigurable.kt").readText()
-    }
-
     /**
-     * 剥掉注释、再把空白归一后的源码。**几乎所有断言都必须跑在它上面，而不是 [source]。**
+     * 归一化与整段比对的规则**全部住在 [SourceCode] 里**，本文件只是它的一个使用者。
      *
-     * 三个理由，每一个都被实测击穿过：
-     *
-     * 1. 跑在 [source] 上的 `contains` **可以用注释满足**。把调用点改成
-     *    `findingsPanel(cliReport.gaps, …)`、在下面补一行注释放上原来的字面量，
-     *    断言照样绿，而 pi 组里的 TypeScript 又不见了——正是这几轮要消灭的那条缺陷。
-     * 2. 不归一空白，断言会连缩进和换行位置一起钉死，重新格式化一次就误报。
-     * 3. 不剥注释，在被钉住的那段代码里补一行说明就会红——本代码库注释密度极高，
-     *    那是大概率发生的误报，报错信息还会把维护者往「你改坏了逻辑」的方向指。
-     *
-     * 行注释用 `(?<!:)` 排除 `https://`，免得把字符串里的 URL 当成注释吃掉。
+     * 这些规则是在本文件上一条一条被实测击穿之后攒出来的，后来 `TerminalHost` 那边也
+     * 需要同样的东西。抄一份过去就是两套会漂移的判据，所以搬进公共类、两边共用；
+     * 下面几个 private 成员只是转发，KDoc 留在 [SourceCode] 那一侧。
      */
-    private val normalized: String by lazy {
-        source.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), " ")
-            .replace(Regex("""(?<!:)//[^\n]*"""), " ")
-            .replace(Regex("""\s+"""), " ")
-    }
+    private val code = SourceCode("src/main/kotlin/com/github/izerui/imux/settings/ImuxLspConfigurable.kt")
 
-    /**
-     * 把空白**全部**去掉、并抹平尾逗号，供代码片段的等价比对使用。
-     *
-     * 两步各治一类误报，都是实测出来的：
-     *
-     * 1. [normalized] 只把连续空白压成一个空格，于是「这里必须有一个空格」变成了隐含要求：
-     *    `CappedHeightView(panel {` 与 `CappedHeightView( panel {` 行为完全一样，
-     *    前者却会让「归一后不在意排成几行」的断言变红。
-     * 2. IDEA 一拆行就会自动补尾逗号——`label(command)` 变成 `label(\n command,\n)`，
-     *    去空白之后是 `label(command,)`，`contains("label(command)")` 当场误报。
-     *    ktlint 把 trailing-comma 规则关掉则是反方向的同一件事。尾逗号在 Kotlin 里
-     *    **没有任何语义**，抹掉它两个方向都不再误报，而真正的结构改动仍然会改变结果。
-     *
-     * 只抹**尾**逗号（后面紧跟收尾定界符的那个），`f(a, b)` 里的分隔逗号原样保留。
-     */
-    private fun compact(code: String): String =
-        code.replace(Regex("""\s+"""), "").replace(Regex(""",(?=[)\]}>])"""), "")
+    private val source: String get() = code.source
 
-    /**
-     * 在 [compact] 之上再抹掉**具名实参的名字**——`f(a, b = x)` 与 `f(a, x)` 等价。
-     *
-     * IDEA 的「Add name to argument」意图是一次按键的纯重构，语义零变化。
-     * 不抹的话 `label(statusText(finding, agentType = agentType))` 会让
-     * 「第三列必须来自 statusText()」变红，而报错说的是「接一句 .let { "" } 就是整列空白」
-     *——又一次「敏感面比不变量大一圈」，与尾逗号是同一类装饰。
-     *
-     * 只抹 `(` 或 `,` 紧跟着的 `名字=`，且用 `(?![=])` 排除 `==` / `!=` / `>=` / `<=`。
-     * **实参的先后顺序仍然被检查**：具名重排（`f(b = b, a = a)`）抹完是 `f(b,a)`，
-     * 与 `f(a,b)` 仍然不等——那本来也不是纯格式改动。
-     *
-     * 刻意不并进 [compact]：[compactIndex] 为了做下标映射复刻了 [compact] 的规则，
-     * 两处必须逐条对齐，多一条就多一处走样的机会。而锚点是函数**签名**
-     *（`(finding: LanguageFinding, …)`），里面根本没有具名实参，用不到这一条。
-     */
-    private fun compactArgs(code: String): String =
-        compact(code).replace(Regex("""(?<=[(,])\w+=(?![=])"""), "")
+    private val normalized: String get() = code.normalized
 
-    /** 忽略空白差异地比对整段代码。 */
-    private fun assertSameCode(message: String, expected: String, actual: String) {
-        assertTrue(
-            "$message\n期望（忽略空白）：${expected.replace(Regex("""\s+"""), " ").trim()}\n实际：$actual",
-            compactArgs(expected) == compactArgs(actual),
-        )
-    }
+    private fun compact(snippet: String): String = code.compact(snippet)
 
-    /**
-     * [normalized] 的**压缩视图**，外加「压缩串的第 i 个字符原本落在 normalized 的哪个
-     * 下标」这张映射表。规则与 [compact] 完全一致（去全部空白、抹尾逗号），两处必须同步。
-     *
-     * [bodyAfter] 用它做**格式无关**的锚点定位：锚点写的是人能读的函数签名，
-     * 而 IDEA 一把参数表拆行就会写成 `statusText(\n finding: …,\n agentType: …,\n)`,
-     * 逐字节匹配的锚点当场找不到——那是纯格式改动，不该红。
-     * 定位在压缩视图上做、切片仍然回到 [normalized] 上切，失败信息因此还是人能读的原文。
-     */
-    private val compactIndex: Pair<String, IntArray> by lazy {
-        val dense = StringBuilder()
-        val origin = ArrayList<Int>()
-        normalized.forEachIndexed { i, c ->
-            if (!c.isWhitespace()) {
-                dense.append(c)
-                origin.add(i)
-            }
-        }
-        val packed = StringBuilder()
-        val map = ArrayList<Int>()
-        dense.indices.forEach { i ->
-            if (dense[i] == ',' && i + 1 < dense.length && dense[i + 1] in ")]}>") return@forEach
-            packed.append(dense[i])
-            map.add(origin[i])
-        }
-        packed.toString() to map.toIntArray()
-    }
+    private fun compactArgs(snippet: String): String = code.compactArgs(snippet)
 
-    /**
-     * 取出 [anchor] **之后**、直到与第一个 [open] 配对的定界符为止的整段源码。
-     *
-     * 返回值从 anchor 末尾算起而不是从 [open] 算起，这样表达式体函数的分派表达式
-     *（`= when (statusIconKind(status)) {`）也在结果里——它恰恰是最该被断言的那部分。
-     *
-     * 在 [normalized] 上做，所以不必担心注释里的括号打乱配平。
-     * 用它把断言限定在**某个函数体内**：「rowAction 里不得出现 X」这种话，
-     * 在整份源码上说会被别处的合法用法搅黄，在函数体内说才是准的。
-     *
-     * **锚点必须唯一**。用 `indexOf` 取第一个匹配，意味着「把原函数原封不动留成死代码、
-     * 另写一个真正被调用的同形函数」能让整组断言钉在一段没人执行的代码上——Kotlin 对
-     * 没人调用的 private 函数只报 warning，拦不住。这里直接把「出现两次」判为失败。
-     *
-     * 锚点写**完整签名**（含形参名），而返回的切片正是从锚点末尾算起——把锚点截短到
-     * 左括号可以让它对形参改名免疫，但那样切片会连形参表一起带进来，下游的整段比对
-     * 全部要跟着改写，得不偿失。代价是 Rename 一个形参会走到「找不到锚点」这条路上，
-     * 所以那句失败信息必须**自己把这种可能说出来**，别让维护者以为函数被删了。
-     */
-    private fun bodyAfter(anchor: String, open: Char): String {
-        val (packed, map) = compactIndex
-        val needle = compact(anchor)
-        val at = packed.indexOf(needle)
-        assertTrue(
-            "源码里找不到锚点：$anchor\n" +
-                "锚点写的是完整签名。如果你只是给形参改了个名（纯重构），把这里的签名同步过去即可；" +
-                "只有在函数确实被删掉或拆开时，这条失败才意味着逻辑变了。",
-            at >= 0,
-        )
-        assertEquals(
-            "锚点出现了不止一次，断言可能钉在一段没人调用的死代码上：$anchor",
-            at,
-            packed.lastIndexOf(needle),
-        )
-        val start = map[at + needle.length - 1] + 1
-        val from = normalized.indexOf(open, start)
-        assertTrue("锚点 $anchor 之后找不到 $open", from >= 0)
-        val close = if (open == '{') '}' else ')'
-        var depth = 0
-        for (i in from until normalized.length) {
-            when (normalized[i]) {
-                open -> depth++
-                close -> if (--depth == 0) return normalized.substring(start, i + 1).trim()
-            }
-        }
-        throw AssertionError("锚点 $anchor 之后的 $open 没有配对")
-    }
+    private fun assertSameCode(message: String, expected: String, actual: String) =
+        code.assertSameCode(message, expected, actual)
+
+    private fun bodyAfter(anchor: String, open: Char): String = code.bodyAfter(anchor, open)
 
     /**
      * shell 探测要起登录 shell 读 profile，绝不能落在 EDT 上——
@@ -289,6 +167,44 @@ class ImuxLspUiSourceTest {
             = ProjectManager.getInstance().openProjects.any { !it.isDisposed && !it.isDefault }
             """,
             bodyAfter("private fun hasProjectWindow(): Boolean", '{'),
+        )
+    }
+
+    /**
+     * **拼链与执行必须用同一个 shell**，所以取 shell 这件事只能有一处。
+     *
+     * 这一页现在有两个消费者：[com.github.izerui.imux.lsp.Remedy.chainFor] 按它的方言
+     * 决定命令之间怎么串（PowerShell 5.1 不认 `&&`），
+     * [com.github.izerui.imux.lsp.runCommandLine] 按它的方言决定 shell 参数。
+     * 两处若各取各的，就可能拿 POSIX 的 `&&` 交给 PowerShell 去跑——一屏解析错误、
+     * 一条命令都不跑，而两处整段比对各自读的都是「自己那一份」，一字不变。
+     *
+     * 整段钉住而不是只数出现次数：`configuredShell` 那一项若被换成
+     * `System.getenv("SHELL")` 或写死一个常量，Windows 上 Git Bash 用户的配置会被
+     * 无声忽略、永远退回 `powershell.exe`；`isWindows` 那一项若写死 false，
+     * Windows 上四个调用点一律 `Cannot run program /bin/zsh`。
+     */
+    @Test
+    fun `取 shell 只能有一处，拼链与执行共用它`() {
+        assertSameCode(
+            "拼链（Remedy.chainFor）与执行（runCommandLine）必须拿到同一个 shell，" +
+                "否则 Windows 上会把 POSIX 的 && 交给 PowerShell 5.1 去跑——" +
+                "一屏解析错误、一条命令都没跑",
+            """
+            =
+                resolveShell(
+                    System.getenv("SHELL"),
+                    isWindows = SystemInfo.isWindows,
+                    configuredShell = service<TerminalOptionsProvider>().shellPath,
+                )
+            """,
+            bodyAfter("private fun remedyShell(): String", '('),
+        )
+        assertEquals(
+            "resolveShell 只准出现在 remedyShell 里这一次；别处再取一次 shell，" +
+                "拼链与执行就可能落到两个不同的方言上",
+            1,
+            Regex("""resolveShell\(""").findAll(compactArgs(normalized)).count(),
         )
     }
 
@@ -819,7 +735,8 @@ class ImuxLspUiSourceTest {
             "showChecking", "showFailed", "showReport", "replaceContent",
             "Panel.renderCli", "summaryText", "findingsPanel",
             "Row.rowAction", "Row.groupAction", "Row.fallbackCell",
-            "Row.runRemedyButton", "hasProjectWindow", "runInTerminal", "refreshRow", "refreshWhenFinished",
+            "Row.runRemedyButton", "hasProjectWindow", "remedyShell",
+            "runInTerminal", "refreshRow", "refreshWhenFinished",
             "targetProject", "groupMessage", "statusText", "rowIcon", "statusIcon",
             "getPreferredScrollableViewportSize", "getScrollableUnitIncrement",
             "getScrollableBlockIncrement", "getScrollableTracksViewportWidth",
@@ -1083,7 +1000,7 @@ class ImuxLspUiSourceTest {
                 remedy.blockingTool?.let { tool ->
                     label(ImuxBundle.message("settings.lsp.tool.missing", tool))
                 }
-                remedy.chain?.let { chain ->
+                remedy.chainFor(remedyShell())?.let { chain ->
                     label(runTabTarget(chain)).applyToComponent { toolTipText = chain }
                 }
                 remedy.docsUrl?.let { url ->
@@ -1158,12 +1075,18 @@ class ImuxLspUiSourceTest {
      * 代价是改动这几行要来这里点头一次。这是刻意的：这几行每一次改动都直接决定
      * 「谁能看到这个按钮、点下去跑什么」。
      *
-     * 本轮多进来一行 `val command = remedy.chain ?: return false`。它**不是**第三道闸门
+     * `val command = remedy.chainFor(remedyShell()) ?: return false` **不是**第三道闸门
      *（`canRun` 见空链已经返回 false 了，这里的 `?: return false` 走不到），
-     * 它是把「交给终端的那一整行」从被真调用测试钉着的 [com.github.izerui.imux.lsp.Remedy.chain]
-     * 取出来的唯一入口——分隔符 `&&`（哪一步失败就停在哪）住在那一侧。
-     * 改成 `remedy.commands.joinToString("; ")` 之后按钮照样在、照样能点，
+     * 它是把「交给终端的那一整行」从被真调用测试钉着的
+     * [com.github.izerui.imux.lsp.Remedy.chainFor] 取出来的唯一入口——「哪一步失败就
+     * 停在哪」这件事怎么表达（POSIX 的 `&&`、PowerShell 的 `$LASTEXITCODE` 检查）
+     * 住在那一侧。改成 `remedy.commands.joinToString("; ")` 之后按钮照样在、照样能点，
      * 而第一步红了后面两步照跑，最后把一个指向不存在程序的配置写进用户的 settings.json。
+     *
+     * **实参必须是 `remedyShell()`，而且必须与 `runInTerminal` 里执行时用的是同一个。**
+     * 写死 `"/bin/zsh"`（或任何 POSIX 名字）之后，tooltip 与真正执行的那一行都会拿到
+     * `&&`，而 Windows 自带的 PowerShell 5.1 见到 `&&` 直接报解析错误——
+     * 用户点「启用」得到一片红字、一条命令都没跑，而这里所有别的断言一条都不会红。
      *
      * 另外两项同样必须**连实参一起**被这段比对盖住：
      *
@@ -1195,7 +1118,7 @@ class ImuxLspUiSourceTest {
                 if (!hasProjectWindow()) {
                     return false
                 }
-                val command = remedy.chain ?: return false
+                val command = remedy.chainFor(remedyShell()) ?: return false
                 button(ImuxBundle.message(ENABLE_ACTION_KEY)) { event ->
                     runInTerminal(key, command, event)
                 }
@@ -1227,12 +1150,12 @@ class ImuxLspUiSourceTest {
      * `RemedyKind.`，否则能在两个键都还在源码里的前提下把「激活」和「安装」对调」——
      * 那个枚举随本轮一起删掉了（两个词收成了一个「启用」），它守的东西**确实不存在了**，
      * 而且删掉之后连引用它都编译不过，那条断言只会永远为真。顶上来的是同一层的新风险：
-     * **命令链的拼接**。链住在 [com.github.izerui.imux.lsp.Remedy.chain] 那个被真调用
-     * 测试钉着分隔符是 `&&` 的属性里，壳里只准读它、不准碰
+     * **命令链的拼接**。链住在 [com.github.izerui.imux.lsp.Remedy.chainFor] 那个被真调用
+     * 测试钉着「按方言选串法」的函数里，壳里只准调它、不准碰
      * [com.github.izerui.imux.lsp.Remedy.commands]。碰了就能写出
      * `remedy.commands.joinToString("; ")`：`brew install --cask dotnet-sdk` 失败之后
      * 后面两步照跑，最后把一个指向不存在程序的配置写进 `~/.claude/settings.json`
-     * ——用户得到一屏红字加一个坏掉的配置，而两处整段比对读的都是 `remedy.chain`、
+     * ——用户得到一屏红字加一个坏掉的配置，而两处整段比对读的都是 `remedy.chainFor(…)`、
      * 一字不变。`joinToString` 已被 [顶部汇总只给计数不再拼接语言名] 全文件禁掉，
      * 这一条堵的是「换个方式拼」，两条各挡一种写法。
      */
@@ -1244,9 +1167,10 @@ class ImuxLspUiSourceTest {
             Regex("""SystemInfo\.(?!isMac\b|isWindows\b)\w+""").containsMatchIn(normalized),
         )
         assertFalse(
-            "壳里只准读 Remedy.chain（分隔符 `&&` 被真调用测试钉着），不准碰 " +
-                "Remedy.commands——碰了就能自己拼一条，把 && 换成 ; 之后「哪一步失败就停在哪」" +
-                "失效：第一步红了后面照跑，最后把一个指向不存在程序的配置写进用户的 settings.json",
+            "壳里只准调 Remedy.chainFor（串法按方言取、被真调用测试钉着），不准碰 " +
+                "Remedy.commands——碰了就能自己拼一条，把方言感知的串法换成裸 ; 之后" +
+                "「哪一步失败就停在哪」失效：第一步红了后面照跑，" +
+                "最后把一个指向不存在程序的配置写进用户的 settings.json",
             Regex("""\.commands\b""").containsMatchIn(normalized),
         )
     }
@@ -1369,11 +1293,7 @@ class ImuxLspUiSourceTest {
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                        .shellCommand(runCommandLine(resolveShell(
-                            System.getenv("SHELL"),
-                            isWindows = SystemInfo.isWindows,
-                            configuredShell = service<TerminalOptionsProvider>().shellPath,
-                        ), command))
+                        .shellCommand(runCommandLine(remedyShell(), command))
                         .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                         .requestFocus(true)
                         .closeOnProcessTermination(false)
@@ -1471,11 +1391,7 @@ class ImuxLspUiSourceTest {
                     TerminalToolWindowTabsManager.getInstance(project)
                         .createTabBuilder()
                         .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                        .shellCommand(runCommandLine(resolveShell(
-                            System.getenv("SHELL"),
-                            isWindows = SystemInfo.isWindows,
-                            configuredShell = service<TerminalOptionsProvider>().shellPath,
-                        ), command))
+                        .shellCommand(runCommandLine(remedyShell(), command))
                         .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
                         .requestFocus(true)
                         .closeOnProcessTermination(false)

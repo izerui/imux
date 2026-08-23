@@ -264,7 +264,10 @@ class AgentCommandTest {
     @Test
     fun `PowerShell 形态用 PowerShell 的参数与引号`() {
         assertEquals(
-            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "claude --resume 'abc-123'"),
+            listOf(
+                "pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                "claude --resume 'abc-123'",
+            ),
             launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = "abc-123"),
         )
     }
@@ -277,7 +280,10 @@ class AgentCommandTest {
             launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
         )
         assertEquals(
-            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "claude 'it''s'"),
+            listOf(
+                "pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                "claude 'it''s'",
+            ),
             launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
         )
     }
@@ -336,6 +342,8 @@ class AgentCommandTest {
                 "pwsh.exe",
                 "-NoLogo",
                 "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
                 "-Command",
                 "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; claude",
             ),
@@ -367,7 +375,10 @@ class AgentCommandTest {
     @Test
     fun `不传 pid 文件时命令与从前一致`() {
         assertEquals(
-            listOf("pwsh.exe", "-NoLogo", "-NoProfile", "-Command", "claude"),
+            listOf(
+                "pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                "claude",
+            ),
             launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, pidFile = null),
         )
     }
@@ -379,6 +390,8 @@ class AgentCommandTest {
                 "pwsh.exe",
                 "-NoLogo",
                 "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
                 "-Command",
                 "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
                     "claude --resume 'abc-123' 'say hi'",

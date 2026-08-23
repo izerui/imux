@@ -57,12 +57,69 @@ internal fun dialectOf(shellPath: String): ShellDialect {
  *
  * 已知取舍：Windows 上把 CLI 配成 PowerShell 函数或别名的用户拿不到它。触发面窄——
  * Windows 上 npm 装的 CLI 是 PATH 里的 `.cmd` shim，不是别名。
+ *
+ * **`-ExecutionPolicy Bypass` 不是可选的，理由与 [codexHookOverrideArg] 那段
+ * KDoc 逐条相同**（Windows 客户端 SKU 的默认执行策略是 `Restricted`，
+ * 而它是 Process 作用域、不写任何配置文件，完全在「别改 cli 的配置文件本身」这条约束内），
+ * 那里不再重复。这里补的是**它在这一层为什么同样必需**：
+ *
+ * PowerShell 解析外部命令时 `.ps1` 优先于 `.cmd`，而 npm 全局安装用 `cmd-shim`
+ * **同时铺** `name`、`name.cmd`、`name.ps1` 三份（npm 自带的 `npm.ps1` / `npx.ps1`
+ * 就是这么来的）。`claude` 与 `codex` 在 Windows 上正是 npm 装的，
+ * `npm install -g pyright`、`gem install ruby-lsp` 这类启用命令同理。少了它，
+ * 干净的 Windows 上得到的是那条人尽皆知的
+ * `xxx.ps1 cannot be loaded because running scripts is disabled on this system`
+ * ——**「Windows 上会话能起」这条设计承诺当场不成立**，而 LSP 页的每一个「启用」
+ * 按钮点下去也都是同一句红字。
+ *
+ * 探测那一路不受影响：`-Command` 收的是内联脚本，不是脚本**文件**，不受执行策略管辖。
+ *
+ * **边界**：它盖不过组策略（`MachinePolicy` / `UserPolicy` 的优先级高于 Process）。
+ * 企业环境里被 GPO 锁死的机器上仍然跑不起来，那属于「认不出就跳过」。
  */
 internal fun shellArgs(dialect: ShellDialect): List<String> =
     when (dialect) {
         ShellDialect.POSIX -> listOf("-l", "-i", "-c")
-        ShellDialect.POWERSHELL -> listOf("-NoLogo", "-NoProfile", "-Command")
+        ShellDialect.POWERSHELL -> listOf("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command")
     }
+
+/**
+ * 把一串命令拼成「**哪一步失败就停在哪**」的一行，按方言选写法。
+ *
+ * **POSIX 分支必须与改动前的 `commands.joinToString(" && ")` 逐字节相同**——那是
+ * macOS 上正在工作的行为，由 `ShellDialectTest` 用字面量钉住。
+ *
+ * **PowerShell 不能用 `&&`。** `&&` / `||` 是 PowerShell **7.0** 才引入的 pipeline
+ * chain operator，而 Windows 自带的是 5.1（[resolveShell] 的兜底正是 `powershell.exe`）。
+ * 5.1 见到它直接报解析错误
+ * `The token '&&' is not a valid statement separator in this version.`：
+ * 整条链一个命令都不会跑，而「二进制缺 + 配置缺」正是干净 Windows 上最常见的形态。
+ * 改用显式的 `$LASTEXITCODE` 检查，扁平串接、不嵌套。
+ *
+ * **为什么是 `$LASTEXITCODE` 而不是 `$?`。** 5.1 里原生命令只要往 stderr 写东西就可能
+ * 把 `$?` 置为 false，而 `npm install` 恰恰会把进度写 stderr——用 `$?` 会在第一步
+ * **成功**时就把链掐断，比不检查更糟。
+ *
+ * **已知局限：命令根本不存在时（CommandNotFound）`$LASTEXITCODE` 不会被更新**，
+ * 链不会停在那一步。后果是用户看到一条错误、后面的命令继续跑（多半也跟着失败），
+ * 而这些在终端里全都看得见。这比 `&&`（100% 解析失败、一条都不跑）严格更好。
+ * **刻意不引入 `$ErrorActionPreference='Stop'` 去补它**：它在 5.1 上对原生命令 stderr
+ * 的行为我们没有条件验证，拿一个不确定性换另一个不划算。
+ *
+ * 只有一条命令时两个方言都直接返回它本身，不加任何检查（`joinToString` 天然如此）；
+ * 空列表两个方言都是空串。
+ */
+internal fun commandChain(
+    dialect: ShellDialect,
+    commands: List<String>,
+): String =
+    when (dialect) {
+        ShellDialect.POSIX -> commands.joinToString(" && ")
+        ShellDialect.POWERSHELL -> commands.joinToString("; $POWERSHELL_EXIT_ON_ERROR; ")
+    }
+
+/** 上一条命令非 0 就把整条链的退出码原样抛出去；[commandChain] 用它顶替 `&&`。 */
+private const val POWERSHELL_EXIT_ON_ERROR = "if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }"
 
 /**
  * 包成该方言的字面量字符串。
