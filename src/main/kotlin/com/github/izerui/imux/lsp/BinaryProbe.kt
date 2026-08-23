@@ -89,6 +89,18 @@ internal fun parseProbeOutput(output: String): Map<String, String?> =
  * 合并进 stdout（`redirectErrorStream(true)`）确实也能消除死锁，但会把 profile 的
  * 噪音混进探测结果：[parseProbeOutput] 靠制表符筛行，任何恰好含制表符的告警都会被
  * 当成一条「名称→路径」，反而更糟。stderr 本来就无人读取，DISCARD 不丢任何信息。
+ *
+ * **PowerShell 那一侧同样要 DISCARD，只是坏法换了个名字。** 那边跑的不是登录 shell
+ *（[shellArgs] 给的是 `-NoProfile`），profile 噪音这条理由不成立；但脚本本身会往
+ * stderr 写——`Get-Command` 查不到时即便带了 `-ErrorAction SilentlyContinue`，
+ * 上游模块自动加载失败之类的告警仍可能落到 error stream。18 个二进制逐个查，
+ * 无人读取的 stderr 一旦写满管道缓冲，死锁与 `waitFor` 形同虚设这两条后果
+ * **与 POSIX 侧一模一样**。而合并进 stdout 在这边更糟：PowerShell 的 ErrorRecord
+ * 多行输出里带制表符缩进，正好被 [parseProbeOutput] 当成「名称→路径」。
+ *
+ * 命令行的三段（shell、参数、脚本）现在**全部按方言取**（[dialectOf] &#8594;
+ * [shellArgs] / [probeScript]），一段都不能写死：给 PowerShell 发 `-l -i -c`
+ * 是当场报错，给它发 POSIX 的 `printf` 脚本则是 18 门语言全落 UNKNOWN 而不报错。
  */
 internal class ShellBinaryProbe(
     private val shell: String =

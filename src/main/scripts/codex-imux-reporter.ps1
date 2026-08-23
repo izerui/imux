@@ -43,8 +43,13 @@ try {
     # 塞进 -Headers 哈希表在 5.1 上无效。
     $bytes = [Text.Encoding]::UTF8.GetBytes($body)
 
+    # -TimeoutSec 不是可选的：hook 是 codex **会话启动路径上的同步步骤**，
+    # 这一句卡住就是会话起不来——越过了「上报失败只该让标签不跟随」这条线。
+    # 对端是 IDE 内置的本机 HTTP 服务，正常是毫秒级；真卡住多半是 IDE 正忙或已退出，
+    # 那时等下去也不会有结果。5 秒之后放弃，走 catch 里的 exit 0。
     Invoke-RestMethod -Method Post -Uri "$url" -Body $bytes `
         -ContentType 'application/json; charset=utf-8' `
+        -TimeoutSec 5 `
         -Headers @{ 'x-imux-token' = $token } | Out-Null
 } catch {
     # 上报失败只是标签不自动跟随，绝不能让 codex 的会话启动受影响：

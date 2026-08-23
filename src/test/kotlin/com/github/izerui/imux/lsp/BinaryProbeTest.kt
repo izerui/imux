@@ -120,12 +120,51 @@ class BinaryProbeTest {
         )
     }
 
+    /**
+     * 两种方言的脚本**真的**输出同一种分隔符，而且解析器认得它。
+     *
+     * 上一版这条用例名字承诺「两方言的探测输出走同一个解析器」，方法体却只把一条
+     * 手写字符串喂给 `parseProbeOutput`——`probeScript` 一次都没被调用。于是把
+     * `ShellDialect.kt` 里的 `[char]9` 改成 `[char]58`（冒号）照样全绿，
+     * 而 Windows 上 `parseProbeOutput` 靠制表符筛行，18 门语言的结果整片被丢掉、
+     * 全落 UNKNOWN，**且没有任何报错**——症状与「这个功能没做」一模一样。
+     *
+     * 现在两个方言各调一次 `probeScript`，把 PowerShell 脚本**真的会输出**的那个字符
+     * 抽出来拼成一行，再喂给上游共用的解析器。
+     */
     @Test
-    fun `PowerShell 与 POSIX 的探测输出走同一个解析器`() {
-        // 两种方言的脚本形状不同，但输出格式必须一致，否则 parseProbeOutput 会把
-        // Windows 的结果整片丢弃，18 门语言全落 UNKNOWN 而没有任何报错
-        val parsed = parseProbeOutput("gopls\t/usr/local/bin/gopls\njdtls\t\n")
-        assertEquals(mapOf("gopls" to "/usr/local/bin/gopls", "jdtls" to null), parsed)
+    fun `两个方言的探测脚本产出同一个分隔符且解析器认得它`() {
+        val binaries = listOf("gopls", "jdtls")
+        val posix = probeScript(ShellDialect.POSIX, binaries)
+        val pwsh = probeScript(ShellDialect.POWERSHELL, binaries)
+
+        assertTrue(
+            "POSIX 侧靠 printf 的格式串输出制表符，改掉它 macOS 上当场全落 UNKNOWN：$posix",
+            posix.contains("""%s\t%s\n"""),
+        )
+
+        val emitted =
+            Regex("""\[char\](\d+)""").find(pwsh)
+                ?: throw AssertionError(
+                    "PowerShell 脚本必须用 [char]N 拼分隔符（字符串插值要用双引号，" +
+                        "而 Java 在 Windows 上给含空格的参数裹引号时内层引号可能被 " +
+                        "CommandLineToArgvW 吃掉）：$pwsh",
+                )
+        val separator = emitted.groupValues[1].toInt().toChar()
+
+        assertEquals(
+            "两个方言的分隔符必须是同一个字符；PowerShell 侧实际输出的是 U+" +
+                separator.code.toString(16).padStart(4, '0'),
+            '\t',
+            separator,
+        )
+        // 用脚本真的会输出的那个字符拼一行，喂给上游共用的解析器
+        assertEquals(
+            "PowerShell 脚本输出的分隔符必须能被 parseProbeOutput 认出来，" +
+                "否则 Windows 上 18 门语言全落 UNKNOWN 而没有任何报错",
+            mapOf("gopls" to "/usr/local/bin/gopls", "jdtls" to null),
+            parseProbeOutput("gopls$separator/usr/local/bin/gopls\njdtls$separator\n"),
+        )
     }
 
     @Test

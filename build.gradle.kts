@@ -125,4 +125,13 @@ tasks.test {
             .withPropertyName("sourceReadAtRuntime-${dir.replace('/', '-')}")
             .withPathSensitivity(PathSensitivity.RELATIVE)
     }
+    // **构建脚本自己也是运行期读的源码之一。** TerminalIntegrationSourceTest 打开
+    // build.gradle.kts 核对上面那两条 `from(…)` 的脚本路径与仓库里的文件对不对得上，
+    // 而 `:test` 的输入里原本没有构建脚本：把 `codex-imux-reporter.ps1` 写错一个字母，
+    // Gradle 判 `:test` UP-TO-DATE 直接跳过，那条断言**根本没跑过**——变异验证实测确认。
+    // 与上面那段说的是同一类「假绿」，只是漏了这一个文件。
+    inputs
+        .file("build.gradle.kts")
+        .withPropertyName("buildScriptReadAtRuntime")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }

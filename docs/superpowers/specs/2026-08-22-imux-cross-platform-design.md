@@ -494,8 +494,8 @@ hooks.SessionStart = [
 
 ## 交付状态
 
-全量构建与测试通过（`./gradlew clean test buildPlugin --offline`，827 个测试全绿，
-`build/distributions/imux-0.3.7.zip` 已产出），打包产物含
+全量构建与测试通过（`./gradlew clean test buildPlugin --offline`，**全量套件 851 个
+测试方法**全绿，`build/distributions/imux-0.3.7.zip` 已产出），打包产物含
 `scripts/codex-imux-reporter.ps1` 与 `scripts/pi-imux-reporter.js`。
 
 ### 已验证
@@ -503,24 +503,48 @@ hooks.SessionStart = [
 **在 macOS 上实证（CI + 本机）：**
 
 - 三平台分支（macOS / Linux / Windows）均在 macOS 上由普通 JUnit 4 以参数注入的方式
-  真调用并断言，共 827 个测试方法
-- macOS 分支的返回值用 `assertEquals` 逐字节钉死：`launchCommand`、`resolveShell`、
-  `quote`、`shellArgs`、`probeScript` 对 macOS 的输出与改动前一致
+  真调用并断言。**851 是全量套件的总数，不是三平台分支的用例数**——本仓库的绝大多数
+  用例与平台无关（会话解析、轮次判定、UI 源码断言等），三平台分支只占其中一小部分
+- macOS 分支的返回值用 `assertEquals` 钉死：`launchCommand`、`resolveShell`、
+  `quote`、`shellArgs` 对 macOS 的输出写的是**字面量**期望值
+  （`listOf("/bin/zsh", "-l", "-i", "-c", "claude")`、`listOf("-l", "-i", "-c")` 等），
+  与改动前逐字节相同
+- `probeScript` 对 macOS 的输出用的是**自指等式**
+  `assertEquals(buildProbeScript(b), probeScript(POSIX, b))`——它钉住的是
+  「POSIX 分支就是原来那个函数、一个字节不加工」，**不是**脚本文本的字面量。
+  脚本文本本身另由 `BinaryProbeTest` 的字面量断言（`command -v`、`2>/dev/null`、
+  `'%s\t%s\n'`）守着
 - `ShellDialect.POSIX` 的 `shellArgs` 返回 `["-l", "-i", "-c"]`、`quote` 使用
   `'\''` 转义——与现有 `singleQuote` 行为逐字节相同
   （`ShellDialect.kt` 第 63 行、第 83 行）
-- `ShellDialect.POWERSHELL` 的 `shellArgs` 返回 `["-NoLogo", "-NoProfile", "-Command"]`、
-  `quote` 使用 `''` 转义（`ShellDialect.kt` 第 64 行、第 84 行）
+- `ShellDialect.POWERSHELL` 的 `shellArgs` 返回
+  `["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]`、
+  `quote` 使用 `''` 转义。`-ExecutionPolicy Bypass` 是 Process 作用域、不写任何配置
+  文件，理由与 `codexHookOverrideArg` 那段 KDoc 逐条相同（npm 的 `cmd-shim` 会铺出
+  `.ps1`，而 Windows 客户端 SKU 的默认执行策略是 `Restricted`）
+- 命令链按方言拼装：`commandChain(POSIX, …)` 仍是 `joinToString(" && ")`
+  （与改动前逐字节相同、有字面量断言），`commandChain(POWERSHELL, …)` 改用
+  `$LASTEXITCODE` 显式检查——`&&` 是 PowerShell 7.0 才引入的操作符，
+  Windows 自带的 5.1 见到它直接报解析错误、整条链一个命令都不跑
 - `resolveShell(shellEnv, isWindows=false, configuredShell)` 完全保持旧行为：
   `shellEnv?.takeIf { isNotBlank() } ?: "/bin/zsh"`，忽略 `configuredShell`
   （`AgentCommand.kt` 第 205-220 行）
-- `canRun` 已删除 `hasPosixShell` 维度（`LspRemedyRun.kt` 第 70-79 行），
-  生产代码中 `hasPosixShell` 不再出现
+- `canRun` 已删除 `hasPosixShell` 维度（`LspRemedyRun.kt` 第 70-79 行）。
+  生产代码里这个名字**只出现在解释「这个维度已删除」的那段 KDoc 里**，没有任何
+  可执行代码引用它
 - `macOnlyCommands` 收窄为 `requiredTool` 在 `NON_PORTABLE_TOOLS`（`setOf("brew", "opam")`）
   中的命令集（`LspCatalog.kt` 第 134-137 行、第 198 行）
 - `executableMatches` 同时切 `/` 与 `\`、Windows 分支去 `.exe` 后大小写不敏感比较，
   macOS 输入上是恒等的（`ProcessProbes.kt` 第 120-131 行）
-- `fileNameOf` 同时切 `/` 与 `\`，macOS 输入上是恒等的（`LiveSessionProbe.kt` 第 143-144 行）
+- `fileNameOf` 的反斜杠切分**只在 Windows 分支做**，POSIX 侧只切 `/`——
+  `\` 在 POSIX 上是合法文件名字符。`codexCwdKey` 的分隔符替换同样只在 Windows 分支做。
+  两处与 `executableMatches` 的 POSIX 侧对齐，各有一条「POSIX 上反斜杠属于名字本身」
+  的断言（`LiveSessionProbe.kt`、`CodexSessionReader.kt`）
+- `readHeldRollouts` 三平台分派：Windows 直接返回空（那条观测面不存在，codex 改走
+  hook 上报），Linux 读 `/proc`，macOS 走 `lsof`。三支各有一条真调用断言，
+  其中 macOS 那条把 `runCommand` 注入进来、直接断言它收到的是 `lsof -p <pid>`
+  ——这是「走了 lsof 但没结果」与「压根没走 lsof」唯一的分水岭
+- tabId 判据（`isTabId`）三条读取通道共用一条：`ps`、`/proc`、Windows 的 pid 文件名
 - `pidFileRecordCommand` 对 `POSIX` 方言返回 `null`，macOS/Linux 启动命令不添加任何内容
   （`ShellDialect.kt` 第 145-153 行）
 - Linux 的 `/proc` 探针（`readTabIdFromProc`、`readHeldRolloutsFromProc`）以
@@ -558,22 +582,36 @@ hooks.SessionStart = [
    在 macOS 上用伪目录验证了逻辑，但 `/proc` 在不同发行版上的权限策略可能不同
 4. **Linux / Windows 上任何一条命令能否跑通。** 本仓库没有这两个平台的环境
 5. **PowerShell 5.1 的 UTF-8 上报修复只验证了源码形态。** 本机与 CI 都没有
-   PowerShell。`codex-imux-reporter.ps1` 第 34-47 行用
+   PowerShell。`codex-imux-reporter.ps1` 用
    `[Text.Encoding]::UTF8.GetBytes($body)` 绕开 PowerShell 5.1 的 ISO-8859-1
    默认编码，但**非 ASCII 路径（中文用户名、中文项目路径）如果编码错了，
    症状与「功能没做」一模一样**——上报被静默丢弃，标签不自动跟随
+6. **PowerShell 5.1 的执行策略绕过与命令链形式同样只验证了源码形态。**
+   `shellArgs(POWERSHELL)` 的 `-ExecutionPolicy Bypass`、以及
+   `commandChain(POWERSHELL, …)` 用 `$LASTEXITCODE` 顶替 `&&`，
+   两者都只在 macOS 上以字面量断言钉住了**生成的文本**，**没有在真 Windows 上
+   运行过一次**。已知的推理边界：
+   - `-ExecutionPolicy Bypass` 盖不过组策略（`MachinePolicy` / `UserPolicy`
+     优先级高于 Process），企业环境里被 GPO 锁死的机器上仍然跑不起来
+   - `$LASTEXITCODE` 在命令**根本不存在**（CommandNotFound）时不会被更新，
+     链不会停在那一步；后果是用户看到一条错误、后面的命令继续跑（多半也失败），
+     这些在终端里全都看得见。刻意**不**引入 `$ErrorActionPreference='Stop'`
+     去补它：那条在 5.1 上对原生命令 stderr 的行为无法在本仓库验证
 
 ### 真机验证清单（只有仓库所有者能做，按优先级）
 
-1. **Windows / 中文路径下的 codex 标签能否跟随** —— 优先级最高，验证第 5 条
-2. **Windows**：三个 CLI 的会话标签能否起来
-3. **Windows**：LSP 页 18 门语言不再全是「无法确定」；点「启用」终端里真跑起命令
-4. **Windows**：codex 里敲 `/new`、claude 里敲 `/clear`，标签是否跟上
-5. **Windows**：codex 若是 npm 装的 `.cmd` / node shim，`ProcessHandle.info().command()`
-   可能返回 `node.exe`，`executableMatches`（`ProcessProbes.kt` 第 120-131 行）
-   会匹配不上——需确认
-6. **Linux**：会话能起、LSP 页能探；`/proc` 探针在无 `lsof` 的发行版上工作
-7. **macOS**：整体回归——会话启动、LSP 页、漂移探测三者与改动前一致
+1. **Windows：三个 CLI 的会话标签能否起来** —— 优先级最高，验证第 6 条的前一半
+   （npm 装的 `claude.ps1` / `codex.ps1` 在默认执行策略下能否被 PowerShell 拉起）
+2. **Windows**：LSP 页点「启用」时，**多条命令的链**能否跑完——验证第 6 条的后一半
+   （`$LASTEXITCODE` 串接在 5.1 上的实际行为）；干净机器上「二进制缺 + 配置缺」
+   必然产出两条以上命令，这是最常见的形态
+3. **Windows / 中文路径下的 codex 标签能否跟随** —— 验证第 5 条
+4. **Windows**：LSP 页 18 门语言不再全是「无法确定」
+5. **Windows**：codex 里敲 `/new`、claude 里敲 `/clear`，标签是否跟上
+6. **Windows**：codex 若是 npm 装的 `.cmd` / node shim，`ProcessHandle.info().command()`
+   可能返回 `node.exe`，`executableMatches`（`ProcessProbes.kt`）会匹配不上——需确认
+7. **Linux**：会话能起、LSP 页能探；`/proc` 探针在无 `lsof` 的发行版上工作
+8. **macOS**：整体回归——会话启动、LSP 页、漂移探测三者与改动前一致
 
 ### 仍未补齐的能力
 

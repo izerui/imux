@@ -156,10 +156,6 @@ class CodexHookOverrideTest {
             script.contains("session_id"),
         )
         assertTrue(
-            "cwd 必须一起报上去：handler 靠它判断这条属于哪个项目，缺了会被整条丢弃",
-            script.contains("cwd"),
-        )
-        assertTrue(
             "type 必须是 session_start：parsePiReport 认不出 type 就返回 null",
             script.contains("session_start"),
         )
@@ -167,6 +163,66 @@ class CodexHookOverrideTest {
             "令牌走 x-imux-token 头，与 handler 校验的字段名一致",
             script.contains("x-imux-token"),
         )
+    }
+
+    /**
+     * **报文构造那一段**必须把四个字段都填上——尤其是 `cwd`。
+     *
+     * 上一版这条是对整份 `.ps1` 源码查子串 `script.contains("cwd")`，而顶部中文注释里
+     * `cwd` 出现了三次：删掉 `$body` 里那一行 `cwd = $cwd`，断言照样绿，
+     * 而 Windows 上每一条 codex 上报都会被 handler 回 400 整条丢弃
+     *（`parsePiReport` 缺 cwd 就返回 null），标签一个都不跟随、且不报错。
+     *
+     * 所以断言必须限定在 `$body = @{ … }` 这一段里，且**连右边的取值一起钉**：
+     * 写成 `cwd = ''` 与删掉它是同一个后果。
+     */
+    @Test
+    fun `报文构造那一段把四个字段都填上`() {
+        val script = File("src/main/scripts/codex-imux-reporter.ps1").readText()
+        val body =
+            Regex(Regex.escape("\$body") + """\s*=\s*@\{(.*?)\n\s*\}""", RegexOption.DOT_MATCHES_ALL)
+                .find(script)
+                ?.groupValues
+                ?.get(1)
+                ?: throw AssertionError("找不到 \$body = @{ … } 这一段，报文构造被改写了：$script")
+
+        listOf(
+            "type" to "'session_start'",
+            "tabId" to "\$tab",
+            "sessionId" to "\$sessionId",
+            "cwd" to "\$cwd",
+        ).forEach { (field, value) ->
+            assertTrue(
+                "报文里必须有 $field = $value。少了 cwd，handler 靠它判断这条属于哪个项目，" +
+                    "整条上报会被回 400 丢弃；少了别的字段 parsePiReport 直接返回 null。" +
+                    "注意断言只看 \$body 那一段——顶上的中文注释里这些词也出现过：$body",
+                Regex("""\b${Regex.escape(field)}\s*=\s*${Regex.escape(value)}""").containsMatchIn(body),
+            )
+        }
+    }
+
+    /**
+     * 上报必须有超时——**hook 是 codex 会话启动路径上的同步步骤**。
+     *
+     * `Invoke-RestMethod` 不带 `-TimeoutSec` 时会一直等下去，而这一句卡住就是
+     * **会话起不来**，越过了「上报失败只该让标签不跟随」这条明写的线。
+     * 对端是 IDE 内置的本机 HTTP 服务，正常毫秒级；真卡住多半是 IDE 正忙或已退出，
+     * 等下去也不会有结果。
+     */
+    @Test
+    fun `上报带超时不会拖住会话启动`() {
+        val script = File("src/main/scripts/codex-imux-reporter.ps1").readText()
+
+        assertTrue(
+            "少了 -TimeoutSec，一次卡住的上报就是一个起不来的 codex 会话",
+            Regex("""-TimeoutSec\s+\d+""").containsMatchIn(script),
+        )
+        val seconds =
+            Regex("""-TimeoutSec\s+(\d+)""")
+                .find(script)!!
+                .groupValues[1]
+                .toInt()
+        assertTrue("超时要短：这是会话启动路径上的同步步骤，实际用了 ${seconds}s", seconds in 1..10)
     }
 
     /**
