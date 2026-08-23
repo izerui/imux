@@ -9,6 +9,33 @@ import java.nio.file.Path
 import kotlin.io.path.useLines
 
 /**
+ * 把 codex 写下的 cwd 换算成可比较的键。
+ *
+ * codex 记录的是**操作系统原生**写法：Windows 上是 `C:\a\b`。而项目路径来自
+ * `Project.getBasePath()`，那个方法标着 `@SystemIndependent`，**在 Windows 上返回的
+ * 也是正斜杠**（`C:/a/b`）。两边都是精确字符串比较，不换算的话 Windows 上
+ * **一个 codex 会话都匹配不上**——会话列表整片空白、漂移探测无处落地，且不报错。
+ *
+ * macOS 与 Linux 上这是**恒等变换**：两侧本来就都是正斜杠，一个字节都不变。
+ * 由 `CodexSessionReaderTest` 与 `PiSessionReportHandlerTest` 各钉一条。
+ *
+ * 只换分隔符，**不折叠盘符大小写**。「认不出就跳过」是这条链路的铁律：匹配不上
+ * 只是不列出、不迁移，而错误折叠可能把标签认到别的项目上——那是更糟的一类错。
+ */
+internal fun codexCwdKey(path: String): String = path.replace('\\', '/')
+
+/**
+ * 两个 cwd 是否指同一个目录。
+ *
+ * 做成比较函数而不是只暴露 [codexCwdKey]，是为了让「只归一化一侧」写不出来——
+ * 那种写法在 macOS 上照样全绿，只在 Windows 上静默失效。
+ */
+internal fun sameCodexCwd(
+    left: String,
+    right: String,
+): Boolean = codexCwdKey(left) == codexCwdKey(right)
+
+/**
  * 读取 Codex 的会话库。
  *
  * 布局：<codexHome>/sessions/YYYY/MM/DD/rollout-<时间戳>-<uuid>.jsonl
@@ -58,7 +85,8 @@ class CodexSessionReader(
             if (JsonLineScanner.stringValue(meta, "thread_source") == SUBAGENT_THREAD_SOURCE) return null
 
             val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
-            if (cwd != projectPath) return null
+            // 两侧都换算：codex 记原生分隔符，projectPath 是 @SystemIndependent 的正斜杠
+            if (!sameCodexCwd(cwd, projectPath)) return null
 
             val id = JsonLineScanner.stringValue(meta, "id") ?: return null
 

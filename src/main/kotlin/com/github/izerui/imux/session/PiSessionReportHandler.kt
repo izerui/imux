@@ -46,20 +46,20 @@ internal fun handlesCodexReport(uri: String, isPost: Boolean): Boolean {
 /**
  * 解析 codex hook 的上报体。
  *
- * 语法与 pi 完全相同（上报脚本刻意发的是同一套字段），只多一步：**把 cwd 的
- * 反斜杠归一化成正斜杠**。
+ * 语法与 pi 完全相同（上报脚本刻意发的是同一套字段），只多一步：**把 cwd 换算成
+ * 可比较的键**，见 [codexCwdKey]。
  *
  * 这一步不是可选的。codex 报上来的 cwd 是 Windows 原生写法（`C:\a\b`），而
- * `Project.getBasePath()` 标着 `@SystemIndependent`，在 Windows 上返回的是
- * `C:/a/b`；[piReportBelongsToProject] 做的是精确字符串比较，不归一化的话这条
- * 上报**永远**匹配不上任何项目，被整条丢弃——症状与「Windows 上 codex 漂移探测
+ * [piReportBelongsToProject] 拿它跟 `Project.getBasePath()` 做精确字符串比较，
+ * 后者标着 `@SystemIndependent`，在 Windows 上是 `C:/a/b`。不换算的话这条上报
+ * **永远**匹配不上任何项目，被整条丢弃——症状与「Windows 上 codex 漂移探测
  * 没做」完全一样，且不报错。
  *
  * 只作用于 codex 这条路径：POSIX 上 `\` 是合法文件名字符，对 pi 的上报做同样的
  * 替换会改坏正在工作的行为。而 codex 的上报只在 Windows 上产生
  * （令牌与 hook 都只在那里下发），这里的替换因此没有 POSIX 的落点。
  */
-internal fun parseCodexReport(body: String): PiSessionReport? = parsePiReport(body)?.let { it.copy(cwd = it.cwd.replace('\\', '/')) }
+internal fun parseCodexReport(body: String): PiSessionReport? = parsePiReport(body)?.let { it.copy(cwd = codexCwdKey(it.cwd)) }
 
 /**
  * 校验请求携带的令牌。

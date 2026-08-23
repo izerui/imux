@@ -66,15 +66,23 @@ class PiReportEndpointCachingTest {
         )
     }
 
+    /**
+     * 「该不该等」的判据本身已经搬进纯函数 `restoreNeedsReportEndpoint`，由
+     * `SessionMonitorTest` 真调用覆盖（pi / codex×平台 / claude / 混合各一条）。
+     * 这里只剩守住接线：恢复路径确实**调了**那个判据，并且在它为真时走 `awaitReady`。
+     */
     @Test
-    fun `恢复 pi 标签前等待同一份后台计算`() {
+    fun `恢复靠上报认领的标签前等待同一份后台计算`() {
         val monitor = File(
             "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
         ).readText()
 
         assertTrue(endpoint.contains("private val computation: Deferred<PiReportEndpoint?>"))
         assertTrue(endpoint.contains("awaitEndpoint(): PiReportEndpoint? = computation.await()"))
-        assertTrue(monitor.contains("saved.any { it.agentId == AgentType.PI.cli }"))
+        assertTrue(
+            "平台判断必须在接线层做完再传进纯函数",
+            monitor.contains("restoreNeedsReportEndpoint(saved.map { it.agentId }, SystemInfo.isWindows)"),
+        )
         assertTrue(monitor.contains("PiReportEndpointCache.awaitReady()"))
     }
 }

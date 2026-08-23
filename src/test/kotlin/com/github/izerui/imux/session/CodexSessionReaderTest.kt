@@ -169,4 +169,68 @@ class CodexSessionReaderTest {
         val expected = File(tmp.root, "sessions/2026/08/03/rollout-2026-08-03T11-31-27-uuid-path.jsonl")
         assertEquals(expected.toPath(), reader().read("/Users/demo/proj")[0].filePath)
     }
+
+    /**
+     * Windows 上 rollout 里的 cwd 是原生反斜杠，而 `Project.getBasePath()` 标着
+     * `@SystemIndependent`、返回正斜杠。不换算的话**一个 codex 会话都列不出来**——
+     * 会话列表整片空白，且不报错；本任务做的漂移探测也就无处落地。
+     */
+    @Test
+    fun `Windows 写法的 cwd 也能匹配上项目`() {
+        // JSON 字符串里的一个反斜杠要写成两个
+        writeRollout("uuid-win", "C:\\\\Users\\\\demo\\\\proj")
+
+        val sessions = reader().read("C:/Users/demo/proj")
+
+        assertEquals(1, sessions.size)
+        assertEquals("uuid-win", sessions[0].id)
+    }
+
+    /**
+     * 换算必须**两侧都做**。
+     *
+     * 上一条（rollout 反斜杠、projectPath 正斜杠）只逼出「换算 rollout 那一侧」；
+     * 这一条把两边对调——rollout 正斜杠、projectPath 反斜杠——只换算 rollout 那一侧
+     * 就会红。两条合起来才把「两侧都换」钉死。
+     */
+    @Test
+    fun `projectPath 那一侧的反斜杠同样要换算`() {
+        writeRollout("uuid-a", "C:/Users/demo/proj")
+
+        val sessions = reader().read("C:\\Users\\demo\\proj")
+
+        assertEquals(1, sessions.size)
+        assertEquals("uuid-a", sessions[0].id)
+    }
+
+    /**
+     * macOS 与 Linux 上换算必须是**恒等变换**：两侧本来就都是正斜杠，一个字节都不能变。
+     *
+     * 这条同时钉住反面——不匹配的项目仍然要被排除，别为了「宽容」把两个项目混到一起。
+     */
+    @Test
+    fun `POSIX 上的匹配与改动前逐字节一致`() {
+        writeRollout("uuid-posix", "/Users/demo/proj")
+        writeRollout("uuid-other", "/Users/demo/other")
+
+        val sessions = reader().read("/Users/demo/proj")
+
+        assertEquals(1, sessions.size)
+        assertEquals("uuid-posix", sessions[0].id)
+        assertTrue(reader().read("/Users/demo/nowhere").isEmpty())
+    }
+
+    /** 只换分隔符，不折叠盘符大小写：认不出就跳过，认错比不列出糟得多。 */
+    @Test
+    fun `不同盘符大小写不算同一个目录`() {
+        assertTrue(sameCodexCwd("C:\\Users\\demo", "C:/Users/demo"))
+        assertEquals(false, sameCodexCwd("c:/Users/demo", "C:/Users/demo"))
+    }
+
+    /** POSIX 路径过一遍换算必须原样返回。 */
+    @Test
+    fun `POSIX 路径的换算是恒等变换`() {
+        assertEquals("/Users/demo/proj", codexCwdKey("/Users/demo/proj"))
+        assertEquals("", codexCwdKey(""))
+    }
 }

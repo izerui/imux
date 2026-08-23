@@ -37,6 +37,7 @@ import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.impl.FrameTitleBuilder
 import com.intellij.openapi.wm.impl.ProjectFrameHelper
@@ -61,6 +62,31 @@ internal fun piReportBelongsToProject(
     report: PiSessionReport,
     projectPath: String,
 ): Boolean = report.cwd == projectPath
+
+/**
+ * 恢复这批标签之前，是否必须**等**上报端点算好。
+ *
+ * `PiReportEndpoint.current()` 的契约是「绝不等待」：算不出来就返回 null，调用方退回
+ * 「不上报」。那对用户手点开的标签是对的（延迟不能落在 EDT 上），但对**启动恢复**
+ * 是错的——恢复恰好发生在内置 HTTP 服务还没起来的那几百毫秒里，恢复出来的进程会
+ * 拿不到 `IMUX_REPORT_URL` / `IMUX_TOKEN`，于是**一辈子不上报**。
+ * 而 IDE 重启后恢复标签正是最常见的场景。
+ *
+ * 两种 agent 都要等：
+ * - pi 在所有平台上都靠上报认领会话
+ * - codex **只在 Windows 上**靠上报（macOS 与 Linux 走 `lsof` / `/proc`，不需要端点）
+ *
+ * codex 这一支尤其不能漏：`codexHookScriptFor` 不看端点，端点缺失时 `-c` 照旧注入，
+ * 用户照样被 codex 那屏「Hooks need review」挡一次，却什么都换不到。
+ *
+ * 平台判断由调用点注入，函数体内不读 `SystemInfo`。
+ */
+internal fun restoreNeedsReportEndpoint(
+    savedAgentIds: List<String>,
+    isWindows: Boolean,
+): Boolean =
+    savedAgentIds.any { it == AgentType.PI.cli } ||
+        (isWindows && savedAgentIds.any { it == AgentType.CODEX.cli })
 
 /**
  * 从完成提醒打开会话。
@@ -459,8 +485,10 @@ class SessionMonitor(
 
         var applied = false
         try {
-            // 恢复 Pi 前必须等上报端点真正可用；warmUp 只启动异步计算，不保证完成。
-            if (saved.any { it.agentId == AgentType.PI.cli }) {
+            // 恢复靠上报认领的标签之前，必须等端点真正可用；warmUp 只启动异步计算，
+            // 不保证完成。哪些标签算「靠上报认领」见 restoreNeedsReportEndpoint——
+            // 平台判断在这一层做完再传进去，那个函数体内不读 SystemInfo。
+            if (restoreNeedsReportEndpoint(saved.map { it.agentId }, SystemInfo.isWindows)) {
                 PiReportEndpointCache.awaitReady()
             } else {
                 PiReportEndpointCache.warmUp()

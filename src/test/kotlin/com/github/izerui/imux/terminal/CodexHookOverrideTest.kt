@@ -41,8 +41,34 @@ class CodexHookOverrideTest {
         val arg = codexHookOverrideArg(ShellDialect.POWERSHELL, "C:\\p\\r.ps1")
         assertEquals(
             "'hooks.SessionStart=[{hooks=[{type=\"command\"," +
-                "command=\"powershell -NoLogo -NoProfile -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]'",
+                "command=\"powershell -NoLogo -NoProfile -ExecutionPolicy Bypass " +
+                "-File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]'",
             arg,
+        )
+    }
+
+    /**
+     * `-ExecutionPolicy Bypass` 缺不得。
+     *
+     * `-File` 是运行脚本文件，受执行策略管辖；所有作用域都 `Undefined` 时 Windows
+     * **客户端**的有效策略是 `Restricted`——「Prevents running of all script files」。
+     * 这条命令跑的是随 Windows 附带的 PowerShell 5.1（`pwsh` 7 才默认 `RemoteSigned`）。
+     *
+     * 少了它有两重后果：干净的 Windows 上整个功能静默空转；而且 PowerShell 在
+     * **读到脚本之前**就非 0 退出，`上报脚本任何分支都以 0 退出` 那条完全盖不到
+     * ——它断言的是脚本源码内部的分支，而失败发生在脚本被读取之前，
+     * 于是用户每开一次 codex 会话都看见一次红字。
+     *
+     * 命令行上的 `-ExecutionPolicy` 是 Process 作用域，进程结束即消失，不写任何配置文件。
+     */
+    @Test
+    fun `hook 命令带上 Process 作用域的执行策略绕过`() {
+        val arg = codexHookOverrideArg(ShellDialect.POWERSHELL, "C:\\p\\r.ps1")
+
+        assertTrue("少了它在默认 Windows 上一行脚本都跑不起来：$arg", arg.contains("-ExecutionPolicy Bypass"))
+        assertTrue(
+            "必须排在 -File 之前：-File 之后的都是脚本自己的参数",
+            arg.indexOf("-ExecutionPolicy Bypass") < arg.indexOf("-File"),
         )
     }
 
@@ -140,6 +166,34 @@ class CodexHookOverrideTest {
         assertTrue(
             "令牌走 x-imux-token 头，与 handler 校验的字段名一致",
             script.contains("x-imux-token"),
+        )
+    }
+
+    /**
+     * 报文体必须自己编成 UTF-8 字节。
+     *
+     * Windows PowerShell 5.1 在 `-ContentType` 不带 charset 时，把字符串 `-Body`
+     * 按 ISO-8859-1 编码发出（PowerShell 7 才换成 UTF-8）。cwd 里只要有一个非 ASCII
+     * 字符——`C:\Users\刘宇华\...`、带重音的用户名——就会被打成 `?`，而服务端做的是
+     * 精确字符串比较，这条上报于是永远匹配不上任何项目，被整条丢弃且不报错。
+     *
+     * 这与 cwd 分隔符是同一族的坑：都在 Windows 上静默失效，都碰不到任何报错。
+     */
+    @Test
+    fun `上报脚本把报文体编成 UTF-8 字节再发`() {
+        val script = File("src/main/scripts/codex-imux-reporter.ps1").readText()
+
+        assertTrue(
+            "5.1 默认按 ISO-8859-1 编字符串 body，中文路径会被打成问号",
+            script.contains("[Text.Encoding]::UTF8.GetBytes("),
+        )
+        assertTrue(
+            "-Body 收的必须是那个字节数组，不能还是原字符串",
+            Regex("-Body \\(?\\\$bytes\\)?").containsMatchIn(script),
+        )
+        assertTrue(
+            "Content-Type 只能走 -ContentType 形参：塞进 -Headers 哈希表在 5.1 上无效",
+            script.contains("-ContentType 'application/json; charset=utf-8'"),
         )
     }
 

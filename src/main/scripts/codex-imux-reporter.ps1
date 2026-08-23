@@ -31,8 +31,21 @@ try {
         cwd       = $cwd
     } | ConvertTo-Json -Compress
 
-    Invoke-RestMethod -Method Post -Uri "$url" -Body $body `
-        -ContentType 'application/json' -Headers @{ 'x-imux-token' = $token } | Out-Null
+    # 报文体必须自己编成 UTF-8 字节再发。
+    #
+    # Windows PowerShell 5.1 在 -ContentType 不带 charset 时，把字符串 -Body 按
+    # ISO-8859-1 编码发出（PowerShell 7 才换成 UTF-8）。cwd 里只要有一个非 ASCII
+    # 字符——`C:\Users\刘宇华\...`、带重音的用户名——就会被打成 `?`，而服务端做的是
+    # **精确字符串比较**，这条上报于是永远匹配不上任何项目，被整条丢弃且不报错。
+    #
+    # 传字节数组而不是往 -ContentType 里塞 charset：前者绕开整个字符串编码环节，
+    # 不依赖某个版本怎么解读 charset。注意 Content-Type 只能走 -ContentType 形参，
+    # 塞进 -Headers 哈希表在 5.1 上无效。
+    $bytes = [Text.Encoding]::UTF8.GetBytes($body)
+
+    Invoke-RestMethod -Method Post -Uri "$url" -Body $bytes `
+        -ContentType 'application/json; charset=utf-8' `
+        -Headers @{ 'x-imux-token' = $token } | Out-Null
 } catch {
     # 上报失败只是标签不自动跟随，绝不能让 codex 的会话启动受影响：
     # hook 退出码非 0 时 codex 会在会话里显示报错。

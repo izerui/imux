@@ -42,6 +42,23 @@ internal fun tomlBasicString(value: String): String = "\"" + value.replace("\\",
  * 用户配置里所有未经复核的 hook（项目级 hooks.json、插件、市场来源），
  * 等于替用户拆掉一道安全闸。
  *
+ * **`-ExecutionPolicy Bypass` 不是可选的。** `-File` 是运行脚本文件，受执行策略管辖；
+ * 所有作用域都是 `Undefined` 时，Windows **客户端**的有效策略是 `Restricted`
+ * ——「Prevents running of all script files」。而这里跑的是 `powershell`，
+ * 即随 Windows 附带的 Windows PowerShell 5.1（`pwsh` 7 才把默认改成 `RemoteSigned`，
+ * 这条命令拿不到）。少了它有两重后果，都很重：干净的 Windows 上整个功能静默空转，
+ * 正是本任务立项要消灭的那个症状；而且 PowerShell 在**读到脚本之前**就非 0 退出，
+ * 脚本里的 `try / catch { exit 0 }` 一行都没机会跑，codex 于是每开一次会话就红一次字。
+ *
+ * 命令行上的 `-ExecutionPolicy` 是 **Process 作用域**——只活在
+ * `$Env:PSExecutionPolicyPreference` 里，进程一结束就没了，**不写任何配置文件**，
+ * 完全在「别改 cli 的配置文件本身」这条约束内。附带好处是 `Bypass` 不做 Zone 检查，
+ * 顺手免疫解压出来的 `.ps1` 万一带上 MOTW。
+ *
+ * **边界**：它盖不过组策略（`MachinePolicy` / `UserPolicy` 优先级高于 Process）。
+ * 企业环境里被 GPO 锁死执行策略的机器上，这条 hook 仍然跑不起来——那属于
+ * 「认不出就跳过」，代价是标签不自动跟随，可接受。
+ *
  * 只在 Windows 上注入：macOS 与 Linux 走 `lsof` / `/proc` 读文件句柄，那条路
  * 正在工作，不该为统一而动它。
  */
@@ -51,7 +68,7 @@ internal fun codexHookOverrideArg(
 ): String {
     // 内层这对引号是**给 shell 看的**，不是 TOML 引号——codex 把 command 的值整条
     // 交给 shell 执行，路径里有空格时全靠它。因此这里用**原始路径**，不预先转义。
-    val command = "powershell -NoLogo -NoProfile -File \"$scriptPath\""
+    val command = "powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"$scriptPath\""
     // TOML 转义只施加一次，作用于整条 command。反斜杠在这一步翻倍、内层引号在这一步
     // 变成 \"——这正是 CodexHookOverrideTest 里钉住的形状。写成
     // tomlBasicString(scriptPath) 会让路径被转义两次，而 codex **不会报错**：

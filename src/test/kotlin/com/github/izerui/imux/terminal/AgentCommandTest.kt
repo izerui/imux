@@ -475,7 +475,7 @@ class AgentCommandTest {
     fun `PowerShell 上 codex 新建会话带上 hook 覆盖`() {
         assertEquals(
             "codex -c 'hooks.SessionStart=[{hooks=[{type=\"command\"," +
-                "command=\"powershell -NoLogo -NoProfile -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]'",
+                "command=\"powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]'",
             launchCommand(
                 "pwsh.exe",
                 AgentType.CODEX,
@@ -554,7 +554,7 @@ class AgentCommandTest {
         assertEquals(
             "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
                 "codex -c 'hooks.SessionStart=[{hooks=[{type=\"command\"," +
-                "command=\"powershell -NoLogo -NoProfile -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]' " +
+                "command=\"powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File \\\"C:\\\\p\\\\r.ps1\\\"\"}]}]' " +
                 "resume 'abc-123' 'say hi'",
             launchCommand(
                 "pwsh.exe",
