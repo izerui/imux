@@ -5,6 +5,7 @@ import org.sqlite.SQLiteConfig
 import org.sqlite.SQLiteDataSource
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 由 pid 查出 codex 此刻正在写的 rollout 文件路径。
@@ -31,38 +32,41 @@ internal class CodexRuntimeIndex(private val codexHome: Path) {
 
     /** 该进程此刻在写的 rollout 路径；查不到返回 null。 */
     fun rolloutPathOf(pid: Long): String? {
-        val thread = latestThreadOf(pid) ?: return null
-        return rolloutOf(thread)
+        val dir = sqliteDir()
+        val thread = latestThreadOf(pid, dir) ?: return null
+        return rolloutOf(thread, dir)
     }
 
-    private fun latestThreadOf(pid: Long): String? {
-        val db = versionedDbIn(logDir(), "logs") ?: return null
+    private fun latestThreadOf(pid: Long, dir: Path): String? {
+        val db = versionedDbIn(dir, "logs") ?: return null
         // 前缀整段匹配：`pid:419:` 不能命中 `pid:4197:`，反之亦然。
-        // 走 idx_logs_ts 倒序，命中即停——本机 1.1GB 库上典型 7ms、最坏 200ms。
+        // LIKE 的 `%` 与 `_` 仍是元字符，此处安全仅因为 pid 是 Long——
+        // 将来如果有人把 pid 改成 String，必须转义或换用 GLOB。
         return querySingle(
             db,
             "SELECT thread_id FROM logs WHERE process_uuid LIKE ? AND thread_id IS NOT NULL " +
-                "ORDER BY ts DESC LIMIT 1",
+                "ORDER BY ts DESC, ts_nanos DESC, id DESC LIMIT 1",
             "pid:$pid:%",
         )
     }
 
-    private fun rolloutOf(threadId: String): String? {
-        val db = versionedDbIn(codexHome, "state") ?: return null
+    private fun rolloutOf(threadId: String, dir: Path): String? {
+        val db = versionedDbIn(dir, "state") ?: return null
         return querySingle(db, "SELECT rollout_path FROM threads WHERE id = ? LIMIT 1", threadId)
     }
 
     /**
-     * `log_dir` 是 codex 认识的配置键（实测 `codex -c log_dir=42` 报
-     * `expected path string`），所以日志目录可以被用户改到别处。读不到就用默认。
+     * `sqlite_home` 是 codex 管六个 sqlite 库存放目录的配置键（`codex doctor` 输出证实
+     * `log DB` 与 `state DB` 均跟随此键变化，而 `log_dir` 管的是 `codex-tui.log`
+     * 文本日志——两者无关）。读不到就用 `codexHome` 默认值。
      */
-    private fun logDir(): Path {
+    private fun sqliteDir(): Path {
         val configured =
             runCatching {
                 val file = codexHome.resolve("config.toml")
                 if (Files.isRegularFile(file)) Files.readString(file) else null
             }.getOrNull()
-        return codexLogDirFrom(configured)
+        return codexSqliteHomeFrom(configured)
             ?.let { runCatching { Path.of(it) }.getOrNull() }
             ?: codexHome
     }
@@ -81,7 +85,11 @@ internal class CodexRuntimeIndex(private val codexHome: Path) {
                 }
             }
         }.getOrElse {
-            LOG.debug("查询 ${db.fileName} 失败，本轮不认领", it)
+            if (hasWarned.compareAndSet(false, true)) {
+                LOG.warn("查询 ${db.fileName} 失败，本轮不认领", it)
+            } else {
+                LOG.debug("查询 ${db.fileName} 失败，本轮不认领", it)
+            }
             null
         }
 
@@ -103,6 +111,7 @@ internal class CodexRuntimeIndex(private val codexHome: Path) {
 
     private companion object {
         val LOG = logger<CodexRuntimeIndex>()
+        val hasWarned = AtomicBoolean(false)
     }
 }
 
@@ -136,21 +145,24 @@ internal fun latestVersionedDb(
         ?.second
 
 /**
- * 从 `config.toml` 取顶层的 `log_dir`；没有则返回 null。
+ * 从 `config.toml` 取顶层的 `sqlite_home`；没有则返回 null。
  *
- * **只认顶层键**：`[某段]` 之后出现的同名键是那个段落的属性，不是日志目录。
+ * `codex doctor` 的输出证明 `sqlite_home` 管六个 sqlite 库的存放目录，
+ * `log_dir` 管的是 `codex-tui.log` 文本日志——两者无关。
+ *
+ * **只认顶层键**：`[某段]` 之后出现的同名键是那个段落的属性，不是库目录。
  * 与 `lsp/TomlSectionScanner.kt` 一样，这不是通用 TOML 解析器，只回答一个问题。
  */
-internal fun codexLogDirFrom(configToml: String?): String? {
+internal fun codexSqliteHomeFrom(configToml: String?): String? {
     if (configToml.isNullOrBlank()) return null
     configToml.lineSequence().forEach { rawLine ->
         val line = rawLine.trim()
         if (line.startsWith("[")) return null
-        if (!line.startsWith("log_dir")) return@forEach
+        if (!line.startsWith("sqlite_home")) return@forEach
         val value = line.substringAfter('=', "").trim()
-        return LOG_DIR_VALUE.find(value)?.groupValues?.get(1)
+        return TOML_QUOTED_VALUE.find(value)?.groupValues?.get(1)
     }
     return null
 }
 
-private val LOG_DIR_VALUE = Regex("""^"([^"]*)"""")
+private val TOML_QUOTED_VALUE = Regex("""^"([^"]*)"""")
