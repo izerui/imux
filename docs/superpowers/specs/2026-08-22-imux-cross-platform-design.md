@@ -489,3 +489,103 @@ hooks.SessionStart = [
    会话启动在 Windows 上从未工作过，本次是第一次
 5. `docs/superpowers/specs/2026-08-21-cli-lsp-diagnostics-followups.md` 第 10 / 10.1 条
    记录的就是本设计要解决的问题，实现完成后应回填结论
+
+---
+
+## 交付状态
+
+全量构建与测试通过（`./gradlew clean test buildPlugin --offline`，827 个测试全绿，
+`build/distributions/imux-0.3.7.zip` 已产出），打包产物含
+`scripts/codex-imux-reporter.ps1` 与 `scripts/pi-imux-reporter.js`。
+
+### 已验证
+
+**在 macOS 上实证（CI + 本机）：**
+
+- 三平台分支（macOS / Linux / Windows）均在 macOS 上由普通 JUnit 4 以参数注入的方式
+  真调用并断言，共 827 个测试方法
+- macOS 分支的返回值用 `assertEquals` 逐字节钉死：`launchCommand`、`resolveShell`、
+  `quote`、`shellArgs`、`probeScript` 对 macOS 的输出与改动前一致
+- `ShellDialect.POSIX` 的 `shellArgs` 返回 `["-l", "-i", "-c"]`、`quote` 使用
+  `'\''` 转义——与现有 `singleQuote` 行为逐字节相同
+  （`ShellDialect.kt` 第 63 行、第 83 行）
+- `ShellDialect.POWERSHELL` 的 `shellArgs` 返回 `["-NoLogo", "-NoProfile", "-Command"]`、
+  `quote` 使用 `''` 转义（`ShellDialect.kt` 第 64 行、第 84 行）
+- `resolveShell(shellEnv, isWindows=false, configuredShell)` 完全保持旧行为：
+  `shellEnv?.takeIf { isNotBlank() } ?: "/bin/zsh"`，忽略 `configuredShell`
+  （`AgentCommand.kt` 第 205-220 行）
+- `canRun` 已删除 `hasPosixShell` 维度（`LspRemedyRun.kt` 第 70-79 行），
+  生产代码中 `hasPosixShell` 不再出现
+- `macOnlyCommands` 收窄为 `requiredTool` 在 `NON_PORTABLE_TOOLS`（`setOf("brew", "opam")`）
+  中的命令集（`LspCatalog.kt` 第 134-137 行、第 198 行）
+- `executableMatches` 同时切 `/` 与 `\`、Windows 分支去 `.exe` 后大小写不敏感比较，
+  macOS 输入上是恒等的（`ProcessProbes.kt` 第 120-131 行）
+- `fileNameOf` 同时切 `/` 与 `\`，macOS 输入上是恒等的（`LiveSessionProbe.kt` 第 143-144 行）
+- `pidFileRecordCommand` 对 `POSIX` 方言返回 `null`，macOS/Linux 启动命令不添加任何内容
+  （`ShellDialect.kt` 第 145-153 行）
+- Linux 的 `/proc` 探针（`readTabIdFromProc`、`readHeldRolloutsFromProc`）以
+  伪 `/proc` 目录在 macOS 上真调用断言（`ProcLinuxProbe.kt` 第 46 行、第 66-81 行）
+- Windows 的 pid 文件通道（`tabIdByParentChain`、`tabPidFilesIn`、`imuxTabPidDir`）
+  以注入的 `parentOf` 与临时目录在 macOS 上真调用断言，深度上限 8
+  （`WindowsTabPidFile.kt` 第 52-56 行）
+- codex hook 注入参数 `codexHookOverrideArg` 的嵌套引号（TOML 内嵌脚本路径、外层
+  shell 引号、路径含空格）在 macOS 上有针对性用例
+  （`CodexHookOverride.kt` 第 65-78 行）
+- codex 的上报端点 `/imux/codex-session` 与 pi 的 `/imux/pi-session` 是并列的两条路径，
+  pi 一侧逐字节不变（`PiReportEndpoint.kt` 第 14 行、第 23 行）
+
+**在真 codex TUI 上实证（Task 10 实现者用隔离 `CODEX_HOME` 验证）：**
+
+- codex 的 `SessionStart` hook **在用户敲 `/new` 时确实会触发第二次**，带新的
+  `session_id`
+- **`-c` 注入的 hook 确实会触发信任提示**——
+  `Hooks need review / Trust all and continue / Continue without trusting`。
+  选信任后 **codex 自己**往 `~/.codex/config.toml` 写 `trusted_hash`。
+  **imux 一个字节都不写。** 仓库所有者已裁定保持现状，接受首次的那一下提示
+- **codex 的 hook 执行器确实能跑起来注入的命令**——shell 收到正确加引号的路径
+  （含**路径带空格**的用例）、hook 真的触发、`IMUX_TAB` 被继承
+
+### 推断，未证实
+
+1. **codex 自己的 hook 执行器在 Windows 上是否工作。** codex 二进制里有 `SHELL-lc`
+   字样，是 POSIX 形状；Windows 上的行为未知
+2. **Windows 上 PowerShell 的 `$PID | Set-Content` 与父子链上溯是否如设计所想。**
+   `pidFileRecordCommand` 生成的命令（`ShellDialect.kt` 第 151-152 行）
+   与 `tabIdByParentChain` 的父链遍历（`WindowsTabPidFile.kt` 第 52-61 行）
+   都只在 macOS 上以注入参数测试，未在真 Windows 上运行过
+3. **Linux 上 `/proc/<pid>/environ` 与 `/proc/<pid>/fd/` 的权限表现。**
+   `readTabIdFromProc` 与 `readHeldRolloutsFromProc`（`ProcLinuxProbe.kt`）
+   在 macOS 上用伪目录验证了逻辑，但 `/proc` 在不同发行版上的权限策略可能不同
+4. **Linux / Windows 上任何一条命令能否跑通。** 本仓库没有这两个平台的环境
+5. **PowerShell 5.1 的 UTF-8 上报修复只验证了源码形态。** 本机与 CI 都没有
+   PowerShell。`codex-imux-reporter.ps1` 第 34-47 行用
+   `[Text.Encoding]::UTF8.GetBytes($body)` 绕开 PowerShell 5.1 的 ISO-8859-1
+   默认编码，但**非 ASCII 路径（中文用户名、中文项目路径）如果编码错了，
+   症状与「功能没做」一模一样**——上报被静默丢弃，标签不自动跟随
+
+### 真机验证清单（只有仓库所有者能做，按优先级）
+
+1. **Windows / 中文路径下的 codex 标签能否跟随** —— 优先级最高，验证第 5 条
+2. **Windows**：三个 CLI 的会话标签能否起来
+3. **Windows**：LSP 页 18 门语言不再全是「无法确定」；点「启用」终端里真跑起命令
+4. **Windows**：codex 里敲 `/new`、claude 里敲 `/clear`，标签是否跟上
+5. **Windows**：codex 若是 npm 装的 `.cmd` / node shim，`ProcessHandle.info().command()`
+   可能返回 `node.exe`，`executableMatches`（`ProcessProbes.kt` 第 120-131 行）
+   会匹配不上——需确认
+6. **Linux**：会话能起、LSP 页能探；`/proc` 探针在无 `lsof` 的发行版上工作
+7. **macOS**：整体回归——会话启动、LSP 页、漂移探测三者与改动前一致
+
+### 仍未补齐的能力
+
+- **brew 系 4 门语言（Java / Kotlin / Lua / C 与 C++）与 3 个前置工具
+  （dotnet-sdk / rustup / opam）的非 macOS 安装命令仍未补。**
+  `NON_PORTABLE_TOOLS = setOf("brew", "opam")`（`LspCatalog.kt` 第 198 行）
+  过滤了它们的安装命令，使其在非 macOS 上不出现启用按钮。
+  原因是本仓库没有 Linux 或 Windows 环境可以验证 apt / dnf / pacman / winget 的写法。
+  这几门在非 macOS 上保持既有退路：短目标名 + 完整命令 tooltip + 上游文档链接
+- **Windows 上用 Git Bash 的用户拿不到 claude 的漂移探测。**
+  `pidFileRecordCommand` 对 POSIX 方言返回 `null`（`ShellDialect.kt` 第 150 行），
+  而 `readTabId` 仍按 `SystemInfo.isWindows` 走 pid 文件分支
+  （`ProcessProbes.kt` 第 73-86 行）。这是有意取舍——Git Bash 的 `$$` 是 MSYS pid，
+  对不上 `ProcessHandle` 的 Windows pid（`ShellDialect.kt` 第 132-143 行 KDoc 详述了
+  原因与「为什么不能用 `echo $$` 补洞」）
