@@ -530,18 +530,28 @@ hooks.SessionStart = [
 
 ## 交付状态
 
-全量构建与测试通过（`./gradlew clean test --offline` 与 `./gradlew buildPlugin --offline`，
-**全量套件 844 个测试方法**全绿、0 失败 0 跳过，`build/distributions/imux-0.3.7.zip` 已产出）。打包产物里的脚本
+全量构建与测试通过（`./gradlew clean test --offline` 与
+`./gradlew buildPlugin --offline`，**全量套件 844 个测试方法**全绿、0 失败 0 跳过，
+`build/distributions/imux-0.3.7.zip` 已产出）。打包产物里的脚本
 **只剩 `imux/scripts/pi-imux-reporter.js` 一个**——`codex-imux-reporter.ps1` 已随整套
 hook 机制删除（`unzip -l build/distributions/imux-0.3.7.zip | grep -E "ps1|js"`
 只有那一行）。
 
-> **本节的行号是随「删掉 codex hook 机制」那一次提交逐条 grep 核对过的**，
+> **本节四个子节（已验证 / 推断，未证实 / 真机验证清单 / 仍未补齐的能力）里的每一个
+> 行号、符号名与数字，都在「删掉 codex hook 机制」那次改动中逐条 grep 核对过**，
 > 不是从旧版抄下来的。源码一改就会漂，读到对不上时以符号名为准。
-> 851 → 844：删掉 hook 之后不再存在的 **35** 条用例，新补 **5** 条（净 −30；
-> 上一版记的 851 与删除前的实测基线 874 之间还差 23 条，那是 851 落笔之后
-> 若干次提交陆续新增的，与本次无关）。逐条清单见
-> `.superpowers/sdd/2026-08-23-codex-runtime-index/task-3-report.md`。
+>
+> 851 → 844：删掉 hook 之后不再存在的 **35** 条用例，新补 **5** 条（净 −30）。
+> 上一版记的 851 与删除前的实测基线 874 之间还差 23 条，那是 851 落笔之后若干次提交
+> 陆续新增的，与本次无关。
+>
+> 那次改动同时查出并修正了本节原有的一批失实引用，分三类：**十余处行号对不上**
+> （其中若干在更早之前就已经错了，例如 `pidFileRecordCommand` 的 POSIX 分支被同时
+> 标成第 150 行与第 210 行两个值）、**一处代码写法抄成了编译不过的 Kotlin**
+> （`takeIf { isNotBlank() }`，源码是 `takeIf { it.isNotBlank() }`）、
+> **一处结论整条过时**（`readHeldRollouts` 的 Windows 分支仍被写作「直接返回空」，
+> 而它早已改成读运行态 sqlite——照那句话读会得出「Windows 上漂移探测根本没做」
+> 的错误结论）。逐处清单与核对方式见该次提交的实现报告。
 
 ### 已验证
 
@@ -587,7 +597,7 @@ hook 机制删除（`unzip -l build/distributions/imux-0.3.7.zip | grep -E "ps1|
   `\` 在 POSIX 上是合法文件名字符。`codexCwdKey` 的分隔符替换同样只在 Windows 分支做。
   两处与 `executableMatches` 的 POSIX 侧对齐，各有一条「POSIX 上反斜杠属于名字本身」
   的断言（`LiveSessionProbe.kt`、`CodexSessionReader.kt`）
-- `readHeldRollouts` 三平台分派（`ProcessProbes.kt` 第 131-146 行）：
+- `readHeldRollouts` 三平台分派（`ProcessProbes.kt` 第 131-145 行）：
   **Windows 读 codex 的运行态 sqlite**（`rolloutOfPid` 注入点，生产实现
   `codexRolloutOfPid` 走 `CodexRuntimeIndex(~/.codex).rolloutPathOf(pid)`），
   Linux 读 `/proc`，macOS 走 `lsof`。三支各有一条真调用断言，
@@ -642,7 +652,7 @@ hook 机制删除（`unzip -l build/distributions/imux-0.3.7.zip | grep -E "ps1|
    **这一条已无关紧要**：hook 那条路已整套删除，留着只为记录当时的未知项
 3. **Windows 上 PowerShell 的 `$PID | Set-Content` 与父子链上溯是否如设计所想。**
    `pidFileRecordCommand` 生成的命令（`ShellDialect.kt` 第 211-212 行）
-   与 `tabIdByParentChain` 的父链遍历（`WindowsTabPidFile.kt` 第 57-70 行）
+   与 `tabIdByParentChain` 的父链遍历（`WindowsTabPidFile.kt` 第 57-72 行的函数体）
    都只在 macOS 上以注入参数测试，未在真 Windows 上运行过。
    **删掉 hook 之后这一条的分量更重了**：Windows 上 codex 与 claude 现在都靠它认
    「属于哪个标签」，它不成立就是两种 agent 一起不跟随
@@ -693,9 +703,13 @@ hook 机制删除（`unzip -l build/distributions/imux-0.3.7.zip | grep -E "ps1|
   过滤了它们的安装命令，使其在非 macOS 上不出现启用按钮。
   原因是本仓库没有 Linux 或 Windows 环境可以验证 apt / dnf / pacman / winget 的写法。
   这几门在非 macOS 上保持既有退路：短目标名 + 完整命令 tooltip + 上游文档链接
-- **Windows 上用 Git Bash 的用户拿不到 claude 的漂移探测。**
-  `pidFileRecordCommand` 对 POSIX 方言返回 `null`（`ShellDialect.kt` 第 150 行），
+- **Windows 上用 Git Bash 的用户拿不到 claude 与 codex 的漂移探测。**
+  `pidFileRecordCommand` 对 POSIX 方言返回 `null`（`ShellDialect.kt` 第 210 行），
   而 `readTabId` 仍按 `SystemInfo.isWindows` 走 pid 文件分支
-  （`ProcessProbes.kt` 第 73-86 行）。这是有意取舍——Git Bash 的 `$$` 是 MSYS pid，
-  对不上 `ProcessHandle` 的 Windows pid（`ShellDialect.kt` 第 132-143 行 KDoc 详述了
-  原因与「为什么不能用 `echo $$` 补洞」）
+  （`ProcessProbes.kt` 第 80 行声明、Windows 分支在第 89-90 行）。这是有意取舍——
+  Git Bash 的 `$$` 是 MSYS pid，对不上 `ProcessHandle` 的 Windows pid
+  （`ShellDialect.kt` 第 192-201 行 KDoc 详述了原因与「为什么不能用 `echo $$` 补洞」）。
+  **删掉 hook 之后这个洞变宽了半格**：从前 Windows 上的 codex 走 hook 上报、
+  与 pid 文件无关，Git Bash 用户至少 codex 那一半还能跟随；现在 codex 认「属于哪个
+  标签」也靠 pid 文件，因此两种 agent 在 Git Bash 下一起没有漂移探测。
+  （codex 的另一半「此刻在跑哪个会话」由运行态 sqlite 回答，不受 shell 方言影响）

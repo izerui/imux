@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.SourceCode
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.IMUX_TAB_ENV
 import com.github.izerui.imux.session.PiReportEndpoint
@@ -433,7 +434,6 @@ class AgentCommandTest {
         assertEquals("tab-1", env[IMUX_TAB_ENV])
     }
 
-
     /**
      * codex 在**任何**平台上都不拿令牌。
      *
@@ -441,21 +441,49 @@ class AgentCommandTest {
      * 读 codex 持有的会话文件句柄，Windows 读 codex 自己写的运行态 sqlite
      * （`CodexRuntimeIndex`）。而令牌是上报接口唯一的门禁，多发一个进程就多一份泄漏面。
      *
-     * Windows 上曾经有过一条例外（`-c hooks.SessionStart` 注入的上报 hook），
-     * 已随整套 hook 机制删除。这里断言的是**整张环境变量表**相等，而不只是缺了
-     * 哪两个键——顺手把令牌塞回来会当场变红。
+     * **「任何平台」这句话必须由方法体自己兑现，而不是靠名字宣称。**
+     * `launchEnvironment` 现在**没有平台轴**——`isWindows` 形参随 codex 的 hook 上报
+     * 一起删掉了，所以行为断言再怎么写也只有一支可传。光靠两条 `assertEquals`
+     * （传/不传 endpoint）撑不起「任何平台」这四个字：谁把 Windows 的令牌下发接回来
+     * （加一个平台形参 + Windows 分支），它们走默认实参照样全绿。
+     *
+     * 因此这里把**「平台无关是构造性的」本身**变成断言：钉住 `launchEnvironment`
+     * 的签名里一个平台形参都没有。重新加回 `isWindows` 的那一刻它就变红，
+     * 而那正是需要有人重新审视令牌下发面的时刻。
+     *
+     * 行为侧则断言**整张环境变量表**相等，而不只是缺了哪两个键——顺手把令牌塞回来
+     * 会当场变红。
      */
     @Test
     fun `codex 在任何平台上都不拿令牌`() {
         val endpoint = PiReportEndpoint("http://127.0.0.1:63342/imux/pi-session", "tok-1")
 
         assertEquals(
+            "带着 pi 的端点调用也不能漏给 codex：令牌是上报接口唯一的门禁",
             mapOf(IMUX_TAB_ENV to "tab-1"),
             launchEnvironment(AgentType.CODEX, "tab-1", endpoint),
         )
         assertEquals(
+            "不传端点时同样只有 IMUX_TAB",
             mapOf(IMUX_TAB_ENV to "tab-1"),
             launchEnvironment(AgentType.CODEX, "tab-1"),
+        )
+
+        // 上面两条只覆盖「传不传 endpoint」这一个轴。「任何平台」这句话由下面这条兑现：
+        // 函数签名里没有平台形参，平台分支因此在构造上不可能存在。
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentCommand.kt")
+        source.assertSameCode(
+            "重新加回平台形参就意味着又要按平台决定令牌发不发——那是上报接口唯一的" +
+                "门禁，必须有人当场重新审视，而不是让一条名为「任何平台」的用例走默认" +
+                "实参悄悄绿过去。若只是动了排版，照下面的「期望」抄回去即可。",
+            """
+            (
+                agentType: AgentType,
+                tabId: String,
+                piReport: PiReportEndpoint? = null,
+            )
+            """,
+            source.bodyAfter("internal fun launchEnvironment", '('),
         )
     }
 
