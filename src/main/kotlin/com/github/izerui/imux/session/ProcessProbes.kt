@@ -110,9 +110,9 @@ internal fun readTabId(
  * 读一个进程正持有的 rollout 文件。
  *
  * 三条路，按平台分派，与 [readTabId] 同一个形状：
- * - Windows：**这条观测面根本不存在**——读不到别的进程打开的文件句柄（要
- *   Sysinternals 的 `handle.exe`，不自带且要管理员权限）。codex 那侧改由 codex 自己
- *   的 SessionStart hook 上报，见 `terminal/CodexHookOverride.kt`。直接返回空。
+ * - Windows：读不到别的进程打开的文件句柄（要 Sysinternals 的 `handle.exe`，不自带
+ *   且要管理员权限），但 codex 把 pid &amp;rarr; thread 写进了自己的运行态 sqlite，因此
+ *   改读它，见 [CodexRuntimeIndex]。
  * - Linux：读 `/proc/&lt;pid&gt;/fd/`（不起子进程、也不依赖 `lsof`）
  * - 其余（macOS）：`lsof -p`
  *
@@ -121,7 +121,12 @@ internal fun readTabId(
  * 带完整堆栈的 `LOG.warn`——功能不坏，但 Windows 用户排障时唯一的线索来源被刷屏淹掉，
  * 包括 [readTabId] 那条专门留下的三态 debug 日志。
  *
- * [runCommand] 注入的理由见 [readTabId]。
+ * **查询代价**：`readHeldRollouts` 由 `SessionMonitor.probeSessionDrift` 调用，
+ * 跑在 `Dispatchers.IO`（池线程）上——不会阻塞 EDT。Windows 分支的
+ * [CodexRuntimeIndex.rolloutPathOf] 在大库上约 0.3 秒墙钟，只要不在 EDT 上就没问题。
+ *
+ * [runCommand] 与 [rolloutOfPid] 注入的理由见 [readTabId]：分派选错分支是这一层最难
+ * 发现的错，症状与「没有漂移」不可区分。
  */
 internal fun readHeldRollouts(
     pid: Long,
@@ -129,14 +134,24 @@ internal fun readHeldRollouts(
     isWindows: Boolean = SystemInfo.isWindows,
     procRoot: Path = PROC_ROOT,
     runCommand: (List<String>) -> String? = ::runCommandForOutput,
+    rolloutOfPid: (Long) -> String? = ::codexRolloutOfPid,
 ): List<String> =
     when {
-        isWindows -> emptyList()
+        isWindows -> listOfNotNull(rolloutOfPid(pid))
 
         isLinux -> readHeldRolloutsFromProc(pid, procRoot)
 
         else -> rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
     }
+
+/**
+ * Windows 上的生产入口：读 codex 自己的运行态 sqlite。
+ *
+ * 参数化（而不是在 [readHeldRollouts] 里直接 new）只为让分派本身可测——
+ * 「分派选错分支」是这一层最难发现的错，症状与「没有漂移」不可区分。
+ */
+private fun codexRolloutOfPid(pid: Long): String? =
+    CodexRuntimeIndex(Path.of(System.getProperty("user.home"), ".codex")).rolloutPathOf(pid)
 
 /** 生产入口。参数化只为让分派本身可测——分派选错分支是这一层最难发现的错。 */
 internal val PROC_ROOT: Path = Path.of("/proc")

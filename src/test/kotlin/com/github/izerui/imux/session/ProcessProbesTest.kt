@@ -358,6 +358,62 @@ class ProcessProbesTest {
     }
 
     @Test
+    fun `Windows 分支从运行态索引取 rollout 而不是碰 lsof 或 proc`() {
+        var ranCommand = false
+        val asked = mutableListOf<Long>()
+
+        val held =
+            readHeldRollouts(
+                4197,
+                isLinux = false,
+                isWindows = true,
+                procRoot = temp.root.toPath(),
+                runCommand = { ranCommand = true; null },
+                rolloutOfPid = { pid -> asked += pid; "/x/rollout-a.jsonl" },
+            )
+
+        assertEquals(listOf("/x/rollout-a.jsonl"), held)
+        assertEquals(listOf(4197L), asked)
+        assertFalse("Windows 上不该起 lsof", ranCommand)
+    }
+
+    @Test
+    fun `Windows 上运行态索引查不到时返回空而不是猜`() {
+        val held =
+            readHeldRollouts(
+                4197,
+                isLinux = false,
+                isWindows = true,
+                procRoot = temp.root.toPath(),
+                runCommand = { null },
+                rolloutOfPid = { null },
+            )
+
+        assertEquals(emptyList<String>(), held)
+    }
+
+    @Test
+    fun `非 Windows 一律不碰运行态索引`() {
+        // macOS 走 lsof、Linux 走 proc，两支都不该去查 codex 的 sqlite——
+        // 那是 Windows 独有的退路，在别处用等于换掉正在工作的观测面
+        var touched = false
+        val probe: (Long) -> String? = { touched = true; "/x.jsonl" }
+
+        readHeldRollouts(1, isLinux = true, isWindows = false, procRoot = temp.root.toPath(), rolloutOfPid = probe)
+        assertFalse("Linux 分支不该查运行态索引", touched)
+
+        readHeldRollouts(
+            1,
+            isLinux = false,
+            isWindows = false,
+            procRoot = temp.root.toPath(),
+            runCommand = { null },
+            rolloutOfPid = probe,
+        )
+        assertFalse("macOS 分支不该查运行态索引", touched)
+    }
+
+    @Test
     fun `PROC_ROOT 指向正确的系统路径`() {
         assertEquals(Path.of("/proc"), PROC_ROOT)
     }
