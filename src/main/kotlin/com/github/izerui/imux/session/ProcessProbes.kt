@@ -111,7 +111,7 @@ internal fun readTabId(
  *
  * 三条路，按平台分派，与 [readTabId] 同一个形状：
  * - Windows：读不到别的进程打开的文件句柄（要 Sysinternals 的 `handle.exe`，不自带
- *   且要管理员权限），但 codex 把 pid &amp;rarr; thread 写进了自己的运行态 sqlite，因此
+ *   且要管理员权限），但 codex 把 pid → thread 写进了自己的运行态 sqlite，因此
  *   改读它，见 [CodexRuntimeIndex]。
  * - Linux：读 `/proc/&lt;pid&gt;/fd/`（不起子进程、也不依赖 `lsof`）
  * - 其余（macOS）：`lsof -p`

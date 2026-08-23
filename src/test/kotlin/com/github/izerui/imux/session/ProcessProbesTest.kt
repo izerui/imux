@@ -317,9 +317,9 @@ class ProcessProbesTest {
     /**
      * **Windows 上一句 `lsof` 都不许跑。**
      *
-     * 那条观测面在 Windows 上根本不存在（读不到别的进程打开的文件句柄），codex 那侧
-     * 改由 codex 自己的 SessionStart hook 上报。少了这一支，Windows 会落到 `lsof` 那条
-     * 路：`GeneralCommandLine` 起不来 → **每一轮探测的每一个 codex pid** 都往
+     * Windows 读不到别的进程打开的文件句柄，改读 codex 自己的运行态 sqlite
+     * （见 [CodexRuntimeIndex]）。少了 Windows 分支，会落到 `lsof` 那条路：
+     * `GeneralCommandLine` 起不来 → **每一轮探测的每一个 codex pid** 都往
      * `idea.log` 写一条带完整堆栈的 `LOG.warn`。功能不坏，但 Windows 用户排障时唯一的
      * 线索来源被刷屏淹掉——包括 `readTabId` 那条专门为此留下的三态 debug 日志。
      */
@@ -339,6 +339,7 @@ class ProcessProbesTest {
                     ranCommand = true
                     null
                 },
+                rolloutOfPid = { null },
             ).isEmpty(),
         )
         assertFalse(
@@ -353,7 +354,7 @@ class ProcessProbesTest {
         Files.createSymbolicLink(fd.resolve("3"), rollout)
         assertTrue(
             "Windows 分支必须排在最前，否则平台判断的顺序一变就会落到别的路上",
-            readHeldRollouts(777, isLinux = true, isWindows = true, procRoot = procRoot).isEmpty(),
+            readHeldRollouts(777, isLinux = true, isWindows = true, procRoot = procRoot, rolloutOfPid = { null }).isEmpty(),
         )
     }
 
