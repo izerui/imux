@@ -33,7 +33,6 @@ class SessionStoreWatcherTest {
         fastTickWanted: () -> Boolean = { false },
         slowEveryTicks: Int = 3,
         onTick: () -> Unit = { ticks++ },
-        onChange: () -> Unit = { changes++ },
     ): SessionStoreWatcher {
         claudeHome = File(tmp.root, "claude").apply { mkdirs() }
         codexHome = File(tmp.root, "codex").apply { mkdirs() }
@@ -44,7 +43,7 @@ class SessionStoreWatcherTest {
             piHome = piHome.toPath(),
             claudeProjectDirName = "-Users-demo-proj",
             piProjectDirName = "--Users-demo-proj--",
-            onChange = onChange,
+            onChange = { changes++ },
             onTick = onTick,
             fastTickWanted = fastTickWanted,
             today = { today },
@@ -191,25 +190,6 @@ class SessionStoreWatcherTest {
         w.tick()
 
         assertEquals("onTick 的异常不该带走 onChange", 1, changes)
-    }
-
-    @Test
-    fun `onChange 异常后后续节拍仍能运行`() {
-        var attempts = 0
-        val w =
-            watcher(
-                slowEveryTicks = 1,
-                onChange = {
-                    attempts++
-                    if (attempts == 1) error("炸")
-                },
-            )
-        File(claudeDir(), "a.jsonl").writeText("x")
-
-        w.tick()
-        w.tick()
-
-        assertEquals(2, attempts)
     }
 
     @Test

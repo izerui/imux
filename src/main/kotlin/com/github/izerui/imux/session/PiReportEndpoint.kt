@@ -3,7 +3,6 @@ package com.github.izerui.imux.session
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -81,10 +80,7 @@ class PiReportEndpointCache(
     private fun compute(): PiReportEndpoint? =
         runCatching {
             val port = BuiltInServerManager.getInstance().waitForStart().port
-            if (port <= 0) {
-                LOG.warn("IDE 内置 HTTP 服务未返回有效端口，Pi 会话将不启用上报")
-                return@runCatching null
-            }
+            if (port <= 0) return@runCatching null
             PiReportEndpoint(
                 url = "http://127.0.0.1:$port$PI_REPORT_PATH",
                 token =
@@ -93,14 +89,9 @@ class PiReportEndpointCache(
                         .getService(PiReportTokenHolder::class.java)
                         .token,
             )
-        }.getOrElse {
-            LOG.warn("计算 Pi 会话上报端点失败，Pi 会话将不启用上报", it)
-            null
-        }
+        }.getOrNull()
 
     companion object {
-        private val LOG = logger<PiReportEndpointCache>()
-
         /**
          * 触发缓存计算但不等待。普通启动用它尽早预热；恢复 Pi 标签必须改用
          * [awaitReady]，不能假设异步计算已经完成。

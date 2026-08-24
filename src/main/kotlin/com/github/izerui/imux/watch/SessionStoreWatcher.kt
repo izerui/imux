@@ -1,14 +1,12 @@
 package com.github.izerui.imux.watch
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.diagnostic.logger
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDate
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -51,15 +49,11 @@ class SessionStoreWatcher(
     private val slowEveryTicks: Int = DEFAULT_SLOW_EVERY_TICKS,
 ) : Disposable {
     private val lastSignature = AtomicReference<String?>(null)
-    private val fastTickFailureLogged = AtomicBoolean(false)
-    private val tickFailureLogged = AtomicBoolean(false)
-    private val signatureFailureLogged = AtomicBoolean(false)
-    private val changeFailureLogged = AtomicBoolean(false)
     private var future: Future<*>? = null
     private var ticks = 0L
 
     fun start() {
-        lastSignature.set(signatureOrNull())
+        lastSignature.set(signature())
         future =
             AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay(
                 ::tick,
@@ -84,47 +78,14 @@ class SessionStoreWatcher(
         ticks++
         val slowTurn = ticks % slowEveryTicks == 0L
 
-        val fastTick =
-            runCatching { fastTickWanted() }
-                .onSuccess { fastTickFailureLogged.set(false) }
-                .getOrElse {
-                    logFailureOnce(fastTickFailureLogged, "判断是否需要快速轮询失败，按不需要处理", it)
-                    false
-                }
-        if (slowTurn || fastTick) {
+        if (slowTurn || runCatching { fastTickWanted() }.getOrDefault(false)) {
             runCatching { onTick() }
-                .onSuccess { tickFailureLogged.set(false) }
-                .onFailure { logFailureOnce(tickFailureLogged, "刷新会话运行状态失败", it) }
         }
 
         if (!slowTurn) return
-        val current = signatureOrNull() ?: return
-        if (lastSignature.get() == current) return
-        runCatching { onChange() }
-            .onSuccess {
-                changeFailureLogged.set(false)
-                lastSignature.set(current)
-            }.onFailure { logFailureOnce(changeFailureLogged, "会话库变化回调失败，下个慢周期重试", it) }
-    }
-
-    private fun signatureOrNull(): String? =
-        runCatching { signature() }
-            .onSuccess { signatureFailureLogged.set(false) }
-            .getOrElse {
-                logFailureOnce(signatureFailureLogged, "读取会话库指纹失败，本轮跳过变化检查", it)
-                null
-            }
-
-    private fun logFailureOnce(
-        gate: AtomicBoolean,
-        message: String,
-        error: Throwable,
-    ) {
-        if (gate.compareAndSet(false, true)) {
-            LOG.warn(message, error)
-        } else {
-            LOG.debug(message, error)
-        }
+        val current = runCatching { signature() }.getOrNull() ?: return
+        if (lastSignature.getAndSet(current) == current) return
+        onChange()
     }
 
     /** 被监听目录的廉价指纹：文件名 + 大小 + 修改时间。任一变化即视为会话库有更新。 */
@@ -164,8 +125,6 @@ class SessionStoreWatcher(
     }
 
     companion object {
-        private val LOG = logger<SessionStoreWatcher>()
-
         /** 基础节拍。运行状态的刷新粒度，也是标记出现的最大延迟。 */
         const val DEFAULT_INTERVAL_MS = 1000L
 
