@@ -175,6 +175,56 @@ class PiReporterBehaviorTest {
     }
 
     @Test
+    fun `宽度变化后用屏幕绝对坐标恢复输入光标`() {
+        assertEquals(
+            "relative:13:4:20|<ESC>[4;5H",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({
+                      getCursor: () => ({ line: 0, col: 4 }),
+                      getLines: () => ["text"],
+                      render: () => ["text\x1b_pi:c\x07\x1b[7m \x1b[0m"],
+                    });
+                    const ui = {
+                      factory: customFactory,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const writes = [];
+                    const tui = {
+                      mode: "regular",
+                      terminal: {
+                        columns: 80,
+                        rows: 10,
+                        write(value) {
+                          if (value !== "\x1b[5 q") writes.push(value.replaceAll("\x1b", "<ESC>"));
+                        },
+                      },
+                      setShowHardwareCursor() {},
+                      positionHardwareCursor(cursor, totalLines) {
+                        writes.push(`relative:${'$'}{cursor.row}:${'$'}{cursor.col}:${'$'}{totalLines}`);
+                      },
+                    };
+                    const editor = ui.factory(tui, {}, {});
+                    editor.render(80);
+                    tui.terminal.columns = 60;
+                    editor.render(60);
+                    tui.positionHardwareCursor({ row: 13, col: 4 }, 20);
+                    globalThis.__rendered = writes.join("|");
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
     fun `包装已有自定义 editor 且重复 session start 不叠加`() {
         assertEquals(
             "true|custom:<ESC>_pi:c<BEL>X",

@@ -3,6 +3,7 @@ import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 const CURSOR_MARKER = "\x1b_pi:c\x07";
 const BLINKING_BAR_CURSOR = "\x1b[5 q";
 const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
+const RESIZE_CURSOR_RECOVERY = Symbol.for("com.github.izerui.imux.pi-resize-cursor-recovery");
 
 /**
  * IDEA 必须看到 pi 的硬件光标，macOS 输入法候选窗才会跟随；pi 默认又会在同一位置
@@ -40,6 +41,64 @@ function configureHardwareCursor(tui) {
   terminal.write(BLINKING_BAR_CURSOR);
 }
 
+/**
+ * pi regular-screen 宽度变化时会清屏重画，随后用相对行移动把硬件光标从最后一行移回
+ * editor。IDEA 262 在终端 resize/reflow 的同一批输出里可能已改变物理 viewport，
+ * 使这次相对移动仍停在 footer。只在该帧补一次可见屏幕绝对定位；fullscreen 本来就
+ * 使用绝对 CUP，不需要介入。
+ *
+ * positionHardwareCursor 是当前 pi TUI 的实现方法，不存在时直接降级。补丁在每次
+ * editor render 前幂等安装，因此 pi 切换 renderer 后也会装到新的 regular renderer。
+ */
+function observeTerminalWidth(tui, renderWidth) {
+  if (!tui || tui.mode !== "regular" || typeof tui.positionHardwareCursor !== "function") return;
+
+  let state = tui[RESIZE_CURSOR_RECOVERY];
+  if (!state) {
+    const originalPositionHardwareCursor = tui.positionHardwareCursor;
+    state = {
+      lastWidth: undefined,
+      restoreAfterResize: false,
+    };
+    tui[RESIZE_CURSOR_RECOVERY] = state;
+    tui.positionHardwareCursor = function (cursorPosition, totalLines) {
+      const result = originalPositionHardwareCursor(cursorPosition, totalLines);
+      if (!state.restoreAfterResize) return result;
+      state.restoreAfterResize = false;
+
+      const terminal = this?.terminal;
+      const rows = Number(terminal?.rows);
+      const row = Number(cursorPosition?.row);
+      const col = Number(cursorPosition?.col);
+      if (
+        typeof terminal?.write !== "function"
+        || !Number.isFinite(rows)
+        || rows <= 0
+        || !Number.isFinite(totalLines)
+        || totalLines <= 0
+        || !Number.isFinite(row)
+        || !Number.isFinite(col)
+      ) {
+        return result;
+      }
+
+      const viewportTop = Math.max(0, totalLines - rows);
+      const screenRow = Math.max(0, Math.min(rows - 1, row - viewportTop));
+      const screenCol = Math.max(0, col);
+      terminal.write(`\x1b[${screenRow + 1};${screenCol + 1}H`);
+      return result;
+    };
+  }
+
+  const terminalWidth = Number(tui.terminal?.columns);
+  const width = Number.isFinite(terminalWidth) && terminalWidth > 0 ? terminalWidth : Number(renderWidth);
+  if (!Number.isFinite(width) || width <= 0) return;
+  if (state.lastWidth !== undefined && state.lastWidth !== width) {
+    state.restoreAfterResize = true;
+  }
+  state.lastWidth = width;
+}
+
 function installHardwareCursorEditor(ctx) {
   if (ctx?.mode !== "tui") return;
   if (typeof ctx.ui?.getEditorComponent !== "function" || typeof ctx.ui?.setEditorComponent !== "function") return;
@@ -61,6 +120,7 @@ function installHardwareCursorEditor(ctx) {
       : new CustomEditor(tui, theme, keybindings);
     const render = editor.render.bind(editor);
     editor.render = (width) => {
+      observeTerminalWidth(tui, width);
       const cursorAtLineEnd = isCursorAtLineEnd(editor);
       return render(width).map((line) => stripFakeCursor(line, cursorAtLineEnd));
     };
