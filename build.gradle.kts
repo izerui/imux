@@ -38,10 +38,10 @@ dependencies {
         // 业务代码因此不能产生直接调用 detachTab 的字节码，而是在一个受控位置按参数反射调用；
         // 具体原因和生命周期约束见 TerminalHost.detachTabAcross262。
         //
-        // 走 intellij-repository（cache-redirector 可达，download.jetbrains.com 不可达）。
-        create("IU", "262.10315.19-EAP-SNAPSHOT") {
-            useInstaller.set(false)
-        }
+        // 使用平台 installer，runIde 才会拿到当前系统需要的原生组件。通用仓库 ZIP
+        // 不包含 platform-daemon-plugin/jetbrainsd_mac_aarch64.tar.gz，IDE 虽能启动，
+        // 但 JetBrains OS Integration 会因 bundled daemon 缺失连续重试并报 SEVERE。
+        create("IU", "262.10315.19")
         bundledPlugin("org.jetbrains.plugins.terminal")
         // 暂不引入 testFramework(TestFrameworkType.Platform)：
         // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，

@@ -175,9 +175,9 @@ class PiReporterBehaviorTest {
     }
 
     @Test
-    fun `宽度变化后用屏幕绝对坐标恢复输入光标`() {
+    fun `清屏重绘把输入光标合并进同步输出`() {
         assertEquals(
-            "relative:13:4:20|<ESC>[4;5H",
+            "<ESC>[?2026h<ESC>[2J<ESC>[H<ESC>[3Jframe<ESC>[4;5H<ESC>[?2026l|show|row=13",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
@@ -198,25 +198,131 @@ class PiReporterBehaviorTest {
                       sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
                     });
                     const writes = [];
+                    const terminal = {
+                      columns: 60,
+                      rows: 10,
+                      write(value) {
+                        if (value !== "\x1b[5 q") writes.push(value.replaceAll("\x1b", "<ESC>"));
+                      },
+                      showCursor() { writes.push("show"); },
+                      hideCursor() { writes.push("hide"); },
+                    };
                     const tui = {
                       mode: "regular",
-                      terminal: {
-                        columns: 80,
-                        rows: 10,
-                        write(value) {
-                          if (value !== "\x1b[5 q") writes.push(value.replaceAll("\x1b", "<ESC>"));
-                        },
-                      },
+                      terminal,
+                      hardwareCursorRow: 19,
                       setShowHardwareCursor() {},
+                      getShowHardwareCursor() { return true; },
                       positionHardwareCursor(cursor, totalLines) {
                         writes.push(`relative:${'$'}{cursor.row}:${'$'}{cursor.col}:${'$'}{totalLines}`);
                       },
                     };
                     const editor = ui.factory(tui, {}, {});
-                    editor.render(80);
-                    tui.terminal.columns = 60;
                     editor.render(60);
+                    terminal.write("\x1b[?2026h\x1b[2J\x1b[H\x1b[3Jframe\x1b[?2026l");
                     tui.positionHardwareCursor({ row: 13, col: 4 }, 20);
+                    writes.push(`row=${'$'}{tui.hardwareCursorRow}`);
+                    globalThis.__rendered = writes.join("|");
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
+    fun `连续清屏重绘逐帧恢复输入光标`() {
+        assertEquals(
+            "A<ESC>[2J<ESC>[H<ESC>[3J<ESC>[4;5H<ESC>[?2026l|show|B<ESC>[2J<ESC>[H<ESC>[3J<ESC>[6;3H<ESC>[?2026l|show",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({
+                      getCursor: () => ({ line: 0, col: 0 }),
+                      getLines: () => [""],
+                      render: () => ["\x1b_pi:c\x07\x1b[7m \x1b[0m"],
+                    });
+                    const ui = {
+                      factory: customFactory,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const writes = [];
+                    const terminal = {
+                      columns: 60,
+                      rows: 10,
+                      write(value) {
+                        if (value !== "\x1b[5 q") writes.push(value.replaceAll("\x1b", "<ESC>"));
+                      },
+                      showCursor() { writes.push("show"); },
+                    };
+                    const tui = {
+                      mode: "regular",
+                      terminal,
+                      setShowHardwareCursor() {},
+                      getShowHardwareCursor() { return true; },
+                      positionHardwareCursor() { writes.push("relative"); },
+                    };
+                    const editor = ui.factory(tui, {}, {});
+                    editor.render(60);
+                    terminal.write("A\x1b[2J\x1b[H\x1b[3J\x1b[?2026l");
+                    tui.positionHardwareCursor({ row: 13, col: 4 }, 20);
+                    terminal.write("B\x1b[2J\x1b[H\x1b[3J\x1b[?2026l");
+                    tui.positionHardwareCursor({ row: 10, col: 2 }, 15);
+                    globalThis.__rendered = writes.join("|");
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
+    fun `增量渲染保留 pi 的相对光标定位`() {
+        assertEquals(
+            "relative:true:2:3:8",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({
+                      getCursor: () => ({ line: 0, col: 0 }),
+                      getLines: () => [""],
+                      render: () => ["\x1b_pi:c\x07\x1b[7m \x1b[0m"],
+                    });
+                    const ui = {
+                      factory: customFactory,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const writes = [];
+                    const terminal = {
+                      columns: 60,
+                      rows: 10,
+                      write(value) {
+                        if (value !== "\x1b[5 q") writes.push(value.replaceAll("\x1b", "<ESC>"));
+                      },
+                    };
+                    const tui = {
+                      mode: "regular",
+                      terminal,
+                      setShowHardwareCursor() {},
+                      positionHardwareCursor(cursor, totalLines) {
+                        writes.push(`relative:${'$'}{this === tui}:${'$'}{cursor.row}:${'$'}{cursor.col}:${'$'}{totalLines}`);
+                      },
+                    };
+                    const editor = ui.factory(tui, {}, {});
+                    editor.render(60);
+                    tui.positionHardwareCursor({ row: 2, col: 3 }, 8);
                     globalThis.__rendered = writes.join("|");
                     """.trimIndent(),
                 report = "globalThis.__rendered",

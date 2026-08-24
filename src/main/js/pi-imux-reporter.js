@@ -3,7 +3,10 @@ import * as PiCodingAgent from "@earendil-works/pi-coding-agent";
 const CURSOR_MARKER = "\x1b_pi:c\x07";
 const BLINKING_BAR_CURSOR = "\x1b[5 q";
 const FAKE_CURSOR_AFTER_MARKER = /\x1b_pi:c\x07\x1b\[7m(.*?)\x1b\[(?:0|27)m/g;
-const RESIZE_CURSOR_RECOVERY = Symbol.for("com.github.izerui.imux.pi-resize-cursor-recovery");
+const FULL_REDRAW_CLEAR = "\x1b[2J\x1b[H\x1b[3J";
+const SYNCHRONIZED_OUTPUT_END = "\x1b[?2026l";
+const FULL_REDRAW_OUTPUT = Symbol.for("com.github.izerui.imux.pi-full-redraw-output");
+const FULL_REDRAW_CURSOR = Symbol.for("com.github.izerui.imux.pi-full-redraw-cursor");
 
 /**
  * IDEA 必须看到 pi 的硬件光标，macOS 输入法候选窗才会跟随；pi 默认又会在同一位置
@@ -42,61 +45,98 @@ function configureHardwareCursor(tui) {
 }
 
 /**
- * pi regular-screen 宽度变化时会清屏重画，随后用相对行移动把硬件光标从最后一行移回
- * editor。IDEA 262 在终端 resize/reflow 的同一批输出里可能已改变物理 viewport，
- * 使这次相对移动仍停在 footer。只在该帧补一次可见屏幕绝对定位；fullscreen 本来就
- * 使用绝对 CUP，不需要介入。
+ * pi regular-screen 的 full redraw 会先清屏、从左上角重画全部内容，再用相对行移动
+ * 恢复硬件光标。IDEA 262 在 resize/reflow 时可能在这两个 write 之间发布 footer 的
+ * 光标位置，而且相对移动使用的旧 viewport 偶尔已经失效。
  *
- * positionHardwareCursor 是当前 pi TUI 的实现方法，不存在时直接降级。补丁在每次
- * editor render 前幂等安装，因此 pi 切换 renderer 后也会装到新的 regular renderer。
+ * 这里不再猜测「列数是否变化」：直接识别 pi 实际发出的清屏帧，等
+ * positionHardwareCursor 给出 marker 坐标后，把绝对 CUP 插进同一个 synchronized
+ * output 帧再一次写出。宽度、高度、连续 resize 与其它 full redraw 因而走同一路径；
+ * 普通 differential render 仍完整调用 pi 原实现。
  */
-function observeTerminalWidth(tui, renderWidth) {
+function installFullRedrawCursorRecovery(tui) {
   if (!tui || tui.mode !== "regular" || typeof tui.positionHardwareCursor !== "function") return;
 
-  let state = tui[RESIZE_CURSOR_RECOVERY];
-  if (!state) {
-    const originalPositionHardwareCursor = tui.positionHardwareCursor;
-    state = {
-      lastWidth: undefined,
-      restoreAfterResize: false,
-    };
-    tui[RESIZE_CURSOR_RECOVERY] = state;
-    tui.positionHardwareCursor = function (cursorPosition, totalLines) {
-      const result = originalPositionHardwareCursor(cursorPosition, totalLines);
-      if (!state.restoreAfterResize) return result;
-      state.restoreAfterResize = false;
+  const terminal = tui.terminal;
+  if (!terminal || typeof terminal.write !== "function") return;
 
-      const terminal = this?.terminal;
-      const rows = Number(terminal?.rows);
-      const row = Number(cursorPosition?.row);
-      const col = Number(cursorPosition?.col);
-      if (
-        typeof terminal?.write !== "function"
-        || !Number.isFinite(rows)
-        || rows <= 0
-        || !Number.isFinite(totalLines)
-        || totalLines <= 0
-        || !Number.isFinite(row)
-        || !Number.isFinite(col)
-      ) {
-        return result;
+  let output = terminal[FULL_REDRAW_OUTPUT];
+  if (!output) {
+    const rawWrite = terminal.write;
+    output = {
+      pendingFrame: undefined,
+      rawWrite,
+    };
+    terminal[FULL_REDRAW_OUTPUT] = output;
+    terminal.write = function (data) {
+      if (typeof data === "string" && data.includes(FULL_REDRAW_CLEAR)) {
+        if (output.pendingFrame !== undefined) {
+          output.rawWrite.call(this, output.pendingFrame);
+        }
+        output.pendingFrame = data;
+        return;
       }
 
-      const viewportTop = Math.max(0, totalLines - rows);
-      const screenRow = Math.max(0, Math.min(rows - 1, row - viewportTop));
-      const screenCol = Math.max(0, col);
-      terminal.write(`\x1b[${screenRow + 1};${screenCol + 1}H`);
-      return result;
+      // fullRender() 会同步调用 positionHardwareCursor()。若 pi 将来改变调用顺序，
+      // 先原样冲刷帧，宁可退回 pi 行为，也不能吞掉终端输出。
+      if (output.pendingFrame !== undefined) {
+        output.rawWrite.call(this, output.pendingFrame);
+        output.pendingFrame = undefined;
+      }
+      return output.rawWrite.call(this, data);
     };
   }
 
-  const terminalWidth = Number(tui.terminal?.columns);
-  const width = Number.isFinite(terminalWidth) && terminalWidth > 0 ? terminalWidth : Number(renderWidth);
-  if (!Number.isFinite(width) || width <= 0) return;
-  if (state.lastWidth !== undefined && state.lastWidth !== width) {
-    state.restoreAfterResize = true;
-  }
-  state.lastWidth = width;
+  if (tui[FULL_REDRAW_CURSOR]) return;
+
+  const originalPositionHardwareCursor = tui.positionHardwareCursor;
+  tui[FULL_REDRAW_CURSOR] = true;
+  tui.positionHardwareCursor = function (cursorPosition, totalLines) {
+    const frame = output.pendingFrame;
+    if (frame === undefined) {
+      return originalPositionHardwareCursor.call(this, cursorPosition, totalLines);
+    }
+    output.pendingFrame = undefined;
+
+    const activeTerminal = this?.terminal;
+    const rows = Number(activeTerminal?.rows);
+    const columns = Number(activeTerminal?.columns);
+    const row = Number(cursorPosition?.row);
+    const col = Number(cursorPosition?.col);
+    if (
+      activeTerminal !== terminal
+      || typeof output.rawWrite !== "function"
+      || !Number.isFinite(rows)
+      || rows <= 0
+      || !Number.isFinite(totalLines)
+      || totalLines <= 0
+      || !Number.isFinite(row)
+      || !Number.isFinite(col)
+    ) {
+      output.rawWrite.call(terminal, frame);
+      return originalPositionHardwareCursor.call(this, cursorPosition, totalLines);
+    }
+
+    const targetRow = Math.max(0, Math.min(totalLines - 1, row));
+    const viewportTop = Math.max(0, totalLines - rows);
+    const screenRow = Math.max(0, Math.min(rows - 1, targetRow - viewportTop));
+    const maxColumn = Number.isFinite(columns) && columns > 0 ? columns - 1 : Number.MAX_SAFE_INTEGER;
+    const screenCol = Math.max(0, Math.min(maxColumn, col));
+    const cursorSequence = `\x1b[${screenRow + 1};${screenCol + 1}H`;
+    const syncEnd = frame.lastIndexOf(SYNCHRONIZED_OUTPUT_END);
+    const positionedFrame = syncEnd >= 0
+      ? `${frame.slice(0, syncEnd)}${cursorSequence}${frame.slice(syncEnd)}`
+      : `${frame}${cursorSequence}`;
+
+    output.rawWrite.call(terminal, positionedFrame);
+    // 与 pi 的逻辑坐标保持一致，后续 differential render 才能继续计算相对移动。
+    this.hardwareCursorRow = targetRow;
+    if (this.getShowHardwareCursor?.()) {
+      activeTerminal.showCursor?.();
+    } else {
+      activeTerminal.hideCursor?.();
+    }
+  };
 }
 
 function installHardwareCursorEditor(ctx) {
@@ -120,7 +160,7 @@ function installHardwareCursorEditor(ctx) {
       : new CustomEditor(tui, theme, keybindings);
     const render = editor.render.bind(editor);
     editor.render = (width) => {
-      observeTerminalWidth(tui, width);
+      installFullRedrawCursorRecovery(tui);
       const cursorAtLineEnd = isCursorAtLineEnd(editor);
       return render(width).map((line) => stripFakeCursor(line, cursorAtLineEnd));
     };
