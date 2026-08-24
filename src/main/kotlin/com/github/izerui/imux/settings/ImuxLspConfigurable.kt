@@ -25,8 +25,8 @@ import com.intellij.icons.AllIcons
 import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.components.service
 import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.project.Project
@@ -76,16 +76,12 @@ import javax.swing.Scrollable
  * 纯只读页：没有任何可保存的状态，[isModified] 恒为 false。它只回答一个问题——
  * 「我的 CLI 现在能不能用 LSP，不能的话点哪个按钮」。
  *
- * **每门语言只占一行**：图标 · 语言名 · 状态 · 操作。命令不再铺在页面上，
- * 它收进了操作按钮的 tooltip。这一版是照用户原话改的——「体验感不好，激活后，
- * 就状态应该变了啊，而且也不需要复制了吧」。三句话指向同一个根因：那一整行原始命令
- * 是噪音，它占掉一整行、把按钮挤到右边，18 门语言 × 3 组之后整页密不透风；
- * 而按钮点下去之后页面纹丝不动，用户无从判断到底有没有发生什么。
+ * **每门语言只占一行**：图标、语言名、状态、操作。完整命令只出现在操作按钮的
+ * tooltip 中；按钮启动后仅就地更新对应行，保留滚动位置与焦点。
  *
- * 不做启动扫描、不弹通知：imux 已经有轮次完成提醒，再加一类噪音不划算。
+ * 不做启动扫描、不弹通知：只有用户打开本页或主动刷新时才执行探测。
  */
 internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
-
     private val content = JPanel(BorderLayout())
 
     /**
@@ -138,22 +134,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 每一行**就地可改**的那两个组件：[runRowKey] 给的行标识 &#8594; 状态图标与状态文案。
      *
-     * 存在的理由就是用户那句「点击激活就会刷新设置页，体验不好」。从前点一下按钮走的是
-     * `lastReport?.let(::showReport)`——把三个分组、54 行语言、整棵组件树全部重建一遍，
-     * 只为了让**一行**改个字。代价是整页闪一下、滚动位置回到顶部，而用户刚刚点的那一行
-     * 很可能已经滚出可视区，闪完他还得自己滚回去确认。
+     * 该映射只保存重算显示所需的模型与组件，不缓存“原图标/运行中图标”两套值；
+     * [refreshRow] 始终经 [rowIcon] / [statusText] 重算，因此进入和退出运行态共用同一路径。
      *
-     * 现在渲染时把组件本身留下来，状态一变就直接改这两个组件（外加被点的那个按钮，
-     * 它从 `ActionEvent.source` 现取，不必存）。滚动位置、焦点、展开状态全都不动。
-     *
-     * 存 [LanguageFinding] 与 [AgentType] 而不是存「该显示成什么样」：更新时原样回头调
-     * [rowIcon] / [statusText]，而那两个函数本来就会先查 [running]。于是「标记进行中」与
-     * 「撤回标记」两个方向共用同一段代码，不存在第二处「进行中长什么样」的判断——
-     * 那正是这一页反复栽过的那类第二处分支。
-     *
-     * 清空收在 [replaceContent] 这一个点上——它是本页唯一的重建原语，而且清空必须排在
-     * 新组件被构造**之前**（理由见那边）。留着旧条目的话，映射指向的是一批已经从界面上
-     * 摘掉的组件，改它们是彻底的静默无效果。
+     * [replaceContent] 在构造新组件之前清空映射，避免后续更新落到已从界面移除的组件。
      */
     private val rowCells = ConcurrentHashMap<String, RowCells>()
 
@@ -268,9 +252,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         ApplicationManager.getApplication().executeOnPooledThread {
             // 失败必须留痕：这一页唯一的诊断入口就是 idea.log，
             // 与 ShellBinaryProbe.locate() 的处理方式保持一致。
-            val report = runCatching { diagnostics().run() }
-                .onFailure { LOG.warn("LSP 体检失败，页面显示为检测未完成", it) }
-                .getOrNull()
+            val report =
+                runCatching { diagnostics().run() }
+                    .onFailure { LOG.warn("LSP 体检失败，页面显示为检测未完成", it) }
+                    .getOrNull()
             ApplicationManager.getApplication().invokeLater(
                 {
                     if (token == generation.get()) {
@@ -287,10 +272,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         }
     }
 
-    private fun diagnostics() = LspDiagnostics(
-        userHome = Path.of(System.getProperty("user.home")),
-        binaryProbe = ShellBinaryProbe(),
-    )
+    private fun diagnostics() =
+        LspDiagnostics(
+            userHome = Path.of(System.getProperty("user.home")),
+            binaryProbe = ShellBinaryProbe(),
+        )
 
     private fun showChecking() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.checking")) }
 
@@ -438,7 +424,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * JLabel 本体，之后点按钮时直接改它——整页重建那条老路的代价是滚动位置丢失、整页闪烁，
      * 而这两件事恰恰发生在用户最需要看清一行的时刻。
      */
-    private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =
+    private fun findingsPanel(
+        findings: List<LanguageFinding>,
+        agentType: AgentType,
+    ): JComponent =
         CappedHeightView(
             panel {
                 findings.forEach { finding ->
@@ -475,7 +464,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 绿勾、行末什么都没有，读出来的就是「这一行我不用管」。他从前读的是「按需安装」加
      * 一个信息图标，于是问「为什么还要按需安装？」。
      */
-    private fun Row.rowAction(finding: LanguageFinding, agentType: AgentType) {
+    private fun Row.rowAction(
+        finding: LanguageFinding,
+        agentType: AgentType,
+    ) {
         val remedy = finding.remedy ?: return
         val placed = runRemedyButton(runRowKey(agentType, finding.language), remedy)
         if (!placed) {
@@ -489,7 +481,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 与语言行走同一套闸门、同一套退路、同一套「跑完自动重新探测」，只是行标识不来自
      * 语言：它是整组的前置条件，用 CLI 名加一个不可能与语言 id 相撞的后缀。
      */
-    private fun Row.groupAction(agentType: AgentType, remedy: Remedy) {
+    private fun Row.groupAction(
+        agentType: AgentType,
+        remedy: Remedy,
+    ) {
         val placed = runRemedyButton(agentType.name + GROUP_ROW, remedy)
         if (!placed) {
             fallbackCell(remedy)
@@ -572,7 +567,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 按 `kind.ordinal` 分支，都是「加法」——逐条列举被禁 token 的黑名单永远漏得掉，
      * 整段比对漏不掉。代价是改动这几行要来测试里点头一次。
      */
-    private fun Row.runRemedyButton(key: String, remedy: Remedy): Boolean {
+    private fun Row.runRemedyButton(
+        key: String,
+        remedy: Remedy,
+    ): Boolean {
         if (!canRun(remedy, SystemInfo.isMac)) {
             return false
         }
@@ -582,8 +580,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         val command = remedy.chainFor(remedyShell()) ?: return false
         button(ImuxBundle.message(ENABLE_ACTION_KEY)) { event ->
             runInTerminal(key, command, event)
-        }
-            .enabled(!running.containsKey(key))
+        }.enabled(!running.containsKey(key))
             .applyToComponent { toolTipText = command }
         return true
     }
@@ -597,8 +594,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 它没有窗口、也没有终端工具窗口。所以判据只能是「有没有真项目开着」，
      * 不能是「问不问得出一个 Project」。
      */
-    private fun hasProjectWindow(): Boolean =
-        ProjectManager.getInstance().openProjects.any { !it.isDisposed && !it.isDefault }
+    private fun hasProjectWindow(): Boolean = ProjectManager.getInstance().openProjects.any { !it.isDisposed && !it.isDefault }
 
     /**
      * 这一页要用的 shell——**拼链与执行必须用同一个**。
@@ -711,7 +707,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `running.remove(key)`，「点下立刻变进行中」当场失效；在末尾之前插一句 `return`，
      * 自动重新探测整个失效——两种写法下三条 `contains` 断言全部照常命中。
      */
-    private fun runInTerminal(key: String, command: String, event: ActionEvent) {
+    private fun runInTerminal(
+        key: String,
+        command: String,
+        event: ActionEvent,
+    ) {
         // 渲染时 hasProjectWindow() 已经确认过有项目开着，这里再判一次是因为 262 的设置
         // 窗口是**非模态**的：从渲染到点击之间，用户完全可以把那个项目关掉。
         val project = targetProject(event)
@@ -721,23 +721,26 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         }
         running[key] = ENABLING_STATUS_KEY
         refreshRow(key, event)
-        val tab = runCatching {
-            ToolWindowManager.getInstance(project)
-                .getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)
-                ?.activate(null, false)
-            TerminalToolWindowTabsManager.getInstance(project)
-                .createTabBuilder()
-                .workingDirectory(project.basePath ?: System.getProperty("user.home"))
-                .shellCommand(runCommandLine(remedyShell(), command))
-                .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
-                .requestFocus(true)
-                .closeOnProcessTermination(false)
-                .createTab()
-        }.onFailure {
-            LOG.warn("开终端标签失败，撤回这一行的进行中标记：$command", it)
-            running.remove(key)
-            refreshRow(key, event)
-        }.getOrNull() ?: return
+        val tab =
+            runCatching {
+                ToolWindowManager
+                    .getInstance(project)
+                    .getToolWindow(TerminalToolWindowFactory.TOOL_WINDOW_ID)
+                    ?.activate(null, false)
+                TerminalToolWindowTabsManager
+                    .getInstance(project)
+                    .createTabBuilder()
+                    .workingDirectory(project.basePath ?: System.getProperty("user.home"))
+                    .shellCommand(runCommandLine(remedyShell(), command))
+                    .tabName(runTabName(ImuxBundle.message(ENABLE_ACTION_KEY), command))
+                    .requestFocus(true)
+                    .closeOnProcessTermination(false)
+                    .createTab()
+            }.onFailure {
+                LOG.warn("开终端标签失败，撤回这一行的进行中标记：$command", it)
+                running.remove(key)
+                refreshRow(key, event)
+            }.getOrNull() ?: return
         refreshWhenFinished(key, tab.view)
     }
 
@@ -754,11 +757,9 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *   共用同一段代码——这里绝不能再写一次「进行中该显示成什么」，那就是第二处判断，
      *   而这一页在第二处判断上栽过不止一次。
      *
-     * **已知缺口**：组级修复那一行（pi 没装 pi-lens、Codex 没挂 MCP）在 [rowCells] 里
-     * 没有条目，所以安装期间它只有「按钮变灰」，没有一句「正在安装…」。这不是本轮引入的
-     * ——从前整页重画时它同样不变，因为 [groupMessage] 压根不查 [running]。要补的话得让
-     * 组级那一行也有一个可更新的文本单元，不在这一轮的范围里。下面那句 `?: return`
-     * 是**顺带兜住**了这个缺口，不是为它设计的。
+     * **已知缺口**：组级修复行（pi 没装 pi-lens、Codex 没挂 MCP）没有 [rowCells]
+     * 条目，因此执行期间只禁用按钮，不显示“正在启用”。要补齐该状态，组级行也需要保存
+     * 可更新的文本组件；当前的 `?: return` 仅允许按钮更新后安全结束。
      *
      * `component.isEnabled` 是直接改 Swing 组件，**绕过了 UI DSL 的 `Cell.enabled()` 记账**。
      * 本页安全，因为没有任何 `Panel.enabled()` / `enabledIf()` 会在之后重新下发一遍父级
@@ -769,7 +770,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `runCatching` 失败分支。所以这里不必再 `invokeLater`，也不该——多绕一圈就意味着
      * 「点下去那一刻立刻变样」变成了「下一轮事件循环才变样」。
      */
-    private fun refreshRow(key: String, event: ActionEvent) {
+    private fun refreshRow(
+        key: String,
+        event: ActionEvent,
+    ) {
         (event.source as? JComponent)?.isEnabled = !running.containsKey(key)
         val cells = rowCells[key] ?: return
         cells.icon.icon = rowIcon(cells.finding, cells.agentType)
@@ -811,13 +815,19 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 重新探测走**完整**的一遍而不是只查这一条：探测本来就是一次批量 shell 调用，
      * 单独查一条既不更快，还要多写一条只在这里用到的窄路径。
      */
-    private fun refreshWhenFinished(key: String, view: TerminalView) {
+    private fun refreshWhenFinished(
+        key: String,
+        view: TerminalView,
+    ) {
         val pageScope = scope ?: return
         pageScope.launch {
-            val terminated = launch {
-                view.sessionState.first { it is TerminalViewSessionState.Terminated }
-            }
-            val closed = view.coroutineScope.coroutineContext.job.invokeOnCompletion { terminated.cancel() }
+            val terminated =
+                launch {
+                    view.sessionState.first { it is TerminalViewSessionState.Terminated }
+                }
+            val closed =
+                view.coroutineScope.coroutineContext.job
+                    .invokeOnCompletion { terminated.cancel() }
             try {
                 terminated.join()
             } finally {
@@ -854,8 +864,9 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `openProjects` 那一段是兜底，正常路径到不了。
      */
     private fun targetProject(event: ActionEvent): Project? {
-        val fromDialog = (event.source as? Component)
-            ?.let { CommonDataKeys.PROJECT.getData(DataManager.getInstance().getDataContext(it)) }
+        val fromDialog =
+            (event.source as? Component)
+                ?.let { CommonDataKeys.PROJECT.getData(DataManager.getInstance().getDataContext(it)) }
         val candidates = listOfNotNull(fromDialog) + ProjectManager.getInstance().openProjects
         return candidates.firstOrNull { !it.isDisposed && !it.isDefault }
     }
@@ -891,10 +902,14 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * `TypeScript/JavaScript`（21 字符）仍远在会撑宽对话框的量级之下，用 `label` 安全。
      * 若将来有译文明显变长，这一列必须改用 `comment` 或 `text`——见类顶部的折行教训。
      */
-    private fun statusText(finding: LanguageFinding, agentType: AgentType): String {
-        val key = running[runRowKey(agentType, finding.language)]
-            ?: statusMessageKey(finding.status)
-            ?: return readyServerText(finding.language, agentType)
+    private fun statusText(
+        finding: LanguageFinding,
+        agentType: AgentType,
+    ): String {
+        val key =
+            running[runRowKey(agentType, finding.language)]
+                ?: statusMessageKey(finding.status)
+                ?: return readyServerText(finding.language, agentType)
         return ImuxBundle.message(key)
     }
 
@@ -912,7 +927,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 取 8 帧 spinner 中段的 [AllIcons.Process.Step_4] 而不是首帧 `Step_1`：
      * 代码评审在真机上看到 `Step_1` 近乎空心圆，静态摆着看不出是「在转」。
      */
-    private fun rowIcon(finding: LanguageFinding, agentType: AgentType): Icon {
+    private fun rowIcon(
+        finding: LanguageFinding,
+        agentType: AgentType,
+    ): Icon {
         val inProgress = running.containsKey(runRowKey(agentType, finding.language))
         return if (inProgress) AllIcons.Process.Step_4 else statusIcon(finding.status)
     }
@@ -930,12 +948,13 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 删掉了：`AUTO_MANAGED` 现在与 `READY` 同为 `OK`（判据是用户视角——绿 = 我不用做
      * 任何事），`INFO` 于是没有任何状态映到它，枚举值一并删除。
      */
-    private fun statusIcon(status: LspStatus): Icon = when (statusIconKind(status)) {
-        StatusIconKind.OK -> AllIcons.General.InspectionsOK
-        StatusIconKind.WARNING -> AllIcons.General.Warning
-        StatusIconKind.NEUTRAL -> AllIcons.General.Note
-        StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
-    }
+    private fun statusIcon(status: LspStatus): Icon =
+        when (statusIconKind(status)) {
+            StatusIconKind.OK -> AllIcons.General.InspectionsOK
+            StatusIconKind.WARNING -> AllIcons.General.Warning
+            StatusIconKind.NEUTRAL -> AllIcons.General.Note
+            StatusIconKind.QUESTION -> AllIcons.General.QuestionDialog
+        }
 
     /**
      * 一行里**可以就地改**的那点东西：两个组件，加上重新算出「该显示成什么」所需的输入。
@@ -963,8 +982,10 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 该接口时取 [getPreferredScrollableViewportSize] 决定滚动面板的 preferred size，
      * 而直接改视图的 `preferredSize` 只会把内容压扁、连滚都滚不动。
      */
-    private class CappedHeightView(view: JComponent) : JPanel(BorderLayout()), Scrollable {
-
+    private class CappedHeightView(
+        view: JComponent,
+    ) : JPanel(BorderLayout()),
+        Scrollable {
         init {
             add(view, BorderLayout.CENTER)
             isOpaque = false
@@ -973,11 +994,17 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         override fun getPreferredScrollableViewportSize(): Dimension =
             Dimension(preferredSize.width, minOf(preferredSize.height, JBUI.scale(MAX_VISIBLE_HEIGHT)))
 
-        override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int =
-            JBUI.scale(UNIT_SCROLL)
+        override fun getScrollableUnitIncrement(
+            visibleRect: Rectangle,
+            orientation: Int,
+            direction: Int,
+        ): Int = JBUI.scale(UNIT_SCROLL)
 
-        override fun getScrollableBlockIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int =
-            visibleRect.height
+        override fun getScrollableBlockIncrement(
+            visibleRect: Rectangle,
+            orientation: Int,
+            direction: Int,
+        ): Int = visibleRect.height
 
         /**
          * 视口够宽就把内容拉满宽度，不够宽时交还横向滚动条。

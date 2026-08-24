@@ -32,6 +32,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.serviceOrNull
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -175,6 +176,7 @@ class SessionMonitor(
     private val listenerDispatcher = EventDispatcher.create(SessionMonitorListener::class.java)
     private val started = AtomicBoolean(false)
     private val scanning = AtomicBoolean(false)
+    private val scanFailureLogged = AtomicBoolean(false)
     private val refreshRequested = AtomicBoolean(false)
     private val checkingCompletedTurns = AtomicBoolean(false)
     private val probing = AtomicBoolean(false)
@@ -500,9 +502,7 @@ class SessionMonitor(
             }
             val snapshot =
                 withContext(Dispatchers.IO) {
-                    val sessions =
-                        runCatching { repository.scan(projectPath) }.getOrNull()
-                            ?: return@withContext null
+                    val sessions = scanSessions() ?: return@withContext null
                     sessions to runtimeIndex.load(projectPath)
                 } ?: return
             val (sessions, runtimeSnapshot) = snapshot
@@ -548,7 +548,7 @@ class SessionMonitor(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 while (!project.isDisposed && refreshRequested.getAndSet(false)) {
-                    val scanned = runCatching { repository.scan(projectPath) }.getOrNull()
+                    val scanned = scanSessions()
                     if (scanned != null && !project.isDisposed) {
                         withContext(Dispatchers.EDT) { model.applyScan(scanned) }
                     }
@@ -560,6 +560,18 @@ class SessionMonitor(
             }
         }
     }
+
+    private fun scanSessions() =
+        runCatching { repository.scan(projectPath) }
+            .onSuccess { scanFailureLogged.set(false) }
+            .getOrElse {
+                if (scanFailureLogged.compareAndSet(false, true)) {
+                    LOG.warn("扫描项目会话库失败，本轮保留上一份列表", it)
+                } else {
+                    LOG.debug("扫描项目会话库失败，本轮保留上一份列表", it)
+                }
+                null
+            }
 
     /**
      * 刷新运行状态，并检查有无刚完成的会话轮次——后者标记未读并弹通知。
@@ -741,6 +753,8 @@ class SessionMonitor(
     override fun dispose() = Unit
 
     companion object {
+        private val LOG = logger<SessionMonitor>()
+
         /**
          * 一次换 id 最多探测几轮。
          *

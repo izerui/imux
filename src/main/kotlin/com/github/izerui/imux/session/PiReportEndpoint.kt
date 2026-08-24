@@ -3,6 +3,7 @@ package com.github.izerui.imux.session
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -22,8 +23,10 @@ const val PI_REPORT_PATH: String = "/imux/pi-session"
  *
  * 令牌只存在于内存，随环境变量下发给 pi 进程——插件不写磁盘（见 README）。
  */
-data class PiReportEndpoint(val url: String, val token: String) {
-
+data class PiReportEndpoint(
+    val url: String,
+    val token: String,
+) {
     companion object {
         /**
          * 内置服务未就绪时返回 null，调用方据此退回「不上报」。
@@ -36,8 +39,7 @@ data class PiReportEndpoint(val url: String, val token: String) {
          * 端口在一次 IDE 运行期内不变、令牌是应用级单例，整个结果因此可以缓存。
          * 缓存由 [PiReportEndpointCache] 在后台算好，这里只取现成的。
          */
-        fun current(): PiReportEndpoint? =
-            ApplicationManager.getApplication().service<PiReportEndpointCache>().endpoint()
+        fun current(): PiReportEndpoint? = ApplicationManager.getApplication().service<PiReportEndpointCache>().endpoint()
     }
 }
 
@@ -47,8 +49,9 @@ data class PiReportEndpoint(val url: String, val token: String) {
  * 应用级：内置 HTTP 服务整个 IDE 一个，端口与令牌都没有项目维度。
  */
 @Service(Service.Level.APP)
-class PiReportEndpointCache(scope: CoroutineScope) {
-
+class PiReportEndpointCache(
+    scope: CoroutineScope,
+) {
     /**
      * 算好的端点；还没算好时为 null。
      *
@@ -75,18 +78,29 @@ class PiReportEndpointCache(scope: CoroutineScope) {
 
     internal suspend fun awaitEndpoint(): PiReportEndpoint? = computation.await()
 
-    private fun compute(): PiReportEndpoint? = runCatching {
-        val port = BuiltInServerManager.getInstance().waitForStart().port
-        if (port <= 0) return@runCatching null
-        PiReportEndpoint(
-            url = "http://127.0.0.1:$port$PI_REPORT_PATH",
-            token = ApplicationManager.getApplication()
-                .getService(PiReportTokenHolder::class.java)
-                .token,
-        )
-    }.getOrNull()
+    private fun compute(): PiReportEndpoint? =
+        runCatching {
+            val port = BuiltInServerManager.getInstance().waitForStart().port
+            if (port <= 0) {
+                LOG.warn("IDE 内置 HTTP 服务未返回有效端口，Pi 会话将不启用上报")
+                return@runCatching null
+            }
+            PiReportEndpoint(
+                url = "http://127.0.0.1:$port$PI_REPORT_PATH",
+                token =
+                    ApplicationManager
+                        .getApplication()
+                        .getService(PiReportTokenHolder::class.java)
+                        .token,
+            )
+        }.getOrElse {
+            LOG.warn("计算 Pi 会话上报端点失败，Pi 会话将不启用上报", it)
+            null
+        }
 
     companion object {
+        private val LOG = logger<PiReportEndpointCache>()
+
         /**
          * 触发缓存计算但不等待。普通启动用它尽早预热；恢复 Pi 标签必须改用
          * [awaitReady]，不能假设异步计算已经完成。
@@ -99,7 +113,8 @@ class PiReportEndpointCache(scope: CoroutineScope) {
         }
 
         suspend fun awaitReady(): PiReportEndpoint? =
-            ApplicationManager.getApplication()
+            ApplicationManager
+                .getApplication()
                 .service<PiReportEndpointCache>()
                 .awaitEndpoint()
     }

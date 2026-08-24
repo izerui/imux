@@ -1,8 +1,10 @@
 package com.github.izerui.imux.terminal
 
 import com.intellij.openapi.application.PathManager
+import com.intellij.openapi.diagnostic.logger
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** 打包时放进插件目录的上报脚本，见 build.gradle.kts 的 prepareSandbox 配置。 */
 private const val SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reporter.js"
@@ -62,7 +64,10 @@ internal fun piReporterScript(): Path? {
     val pluginPath =
         runCatching {
             PathManager.getPluginsDir().resolve(PLUGIN_DIRECTORY_NAME)
-        }.getOrNull()
+        }.getOrElse {
+            LOG.debug("读取插件目录失败，尝试从 classpath 定位 Pi reporter", it)
+            null
+        }
 
     val classPathEntry =
         runCatching {
@@ -70,6 +75,16 @@ internal fun piReporterScript(): Path? {
                 PiReporterScriptLocation::class.java.protectionDomain.codeSource
                     ?.location
             location?.toURI()?.let(Path::of)
-        }.getOrNull()
-    return locatePiReporterScript(pluginPath, classPathEntry)
+        }.getOrElse {
+            LOG.debug("读取插件 classpath 失败，无法使用 reporter 降级定位", it)
+            null
+        }
+    return locatePiReporterScript(pluginPath, classPathEntry).also { script ->
+        if (script == null && missingScriptWarned.compareAndSet(false, true)) {
+            LOG.warn("找不到随插件打包的 Pi reporter 脚本，Pi 会话将无法自动跟随会话切换")
+        }
+    }
 }
+
+private val LOG = logger<PiReporterScriptLocation>()
+private val missingScriptWarned = AtomicBoolean(false)

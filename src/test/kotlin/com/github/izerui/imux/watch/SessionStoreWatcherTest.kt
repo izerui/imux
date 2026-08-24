@@ -17,7 +17,6 @@ import java.time.LocalDate
  * 节奏逻辑本身与线程无关。
  */
 class SessionStoreWatcherTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -34,6 +33,7 @@ class SessionStoreWatcherTest {
         fastTickWanted: () -> Boolean = { false },
         slowEveryTicks: Int = 3,
         onTick: () -> Unit = { ticks++ },
+        onChange: () -> Unit = { changes++ },
     ): SessionStoreWatcher {
         claudeHome = File(tmp.root, "claude").apply { mkdirs() }
         codexHome = File(tmp.root, "codex").apply { mkdirs() }
@@ -44,7 +44,7 @@ class SessionStoreWatcherTest {
             piHome = piHome.toPath(),
             claudeProjectDirName = "-Users-demo-proj",
             piProjectDirName = "--Users-demo-proj--",
-            onChange = { changes++ },
+            onChange = onChange,
             onTick = onTick,
             fastTickWanted = fastTickWanted,
             today = { today },
@@ -52,15 +52,13 @@ class SessionStoreWatcherTest {
         )
     }
 
-    private fun claudeDir(): File =
-        File(claudeHome, "projects/-Users-demo-proj").apply { mkdirs() }
+    private fun claudeDir(): File = File(claudeHome, "projects/-Users-demo-proj").apply { mkdirs() }
 
     private fun codexDir(day: LocalDate = today): File =
         File(codexHome, "sessions/%04d/%02d/%02d".format(day.year, day.monthValue, day.dayOfMonth))
             .apply { mkdirs() }
 
-    private fun piDir(): File =
-        File(piHome, "agent/sessions/--Users-demo-proj--").apply { mkdirs() }
+    private fun piDir(): File = File(piHome, "agent/sessions/--Users-demo-proj--").apply { mkdirs() }
 
     // ---- 监听范围 ----
 
@@ -94,15 +92,16 @@ class SessionStoreWatcherTest {
     fun `月初回看上个月最后一天`() {
         claudeHome = File(tmp.root, "claude").apply { mkdirs() }
         codexHome = File(tmp.root, "codex").apply { mkdirs() }
-        val w = SessionStoreWatcher(
-            claudeHome = claudeHome.toPath(),
-            codexHome = codexHome.toPath(),
-            piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
-            claudeProjectDirName = "p",
-            piProjectDirName = "--p--",
-            onChange = {},
-            today = { LocalDate.of(2026, 8, 1) },
-        )
+        val w =
+            SessionStoreWatcher(
+                claudeHome = claudeHome.toPath(),
+                codexHome = codexHome.toPath(),
+                piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
+                claudeProjectDirName = "p",
+                piProjectDirName = "--p--",
+                onChange = {},
+                today = { LocalDate.of(2026, 8, 1) },
+            )
 
         assertTrue(w.watchedDirs()[2].toString().endsWith("sessions/2026/07/31"))
     }
@@ -192,6 +191,25 @@ class SessionStoreWatcherTest {
         w.tick()
 
         assertEquals("onTick 的异常不该带走 onChange", 1, changes)
+    }
+
+    @Test
+    fun `onChange 异常后后续节拍仍能运行`() {
+        var attempts = 0
+        val w =
+            watcher(
+                slowEveryTicks = 1,
+                onChange = {
+                    attempts++
+                    if (attempts == 1) error("炸")
+                },
+            )
+        File(claudeDir(), "a.jsonl").writeText("x")
+
+        w.tick()
+        w.tick()
+
+        assertEquals(2, attempts)
     }
 
     @Test

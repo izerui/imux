@@ -39,25 +39,14 @@ internal enum class LspStatus {
 }
 
 /**
- * 一条修复建议：**按顺序跑完就能用**的命令链，外加没法跑时的退路。
+ * 一条修复建议：按顺序执行即可补齐当前缺口的命令链，以及无法自动执行时的退路。
  *
- * 从前这里有一个 `RemedyKind`（ACTIVATE / INSTALL），按钮上的词跟着它变成「激活」或
- * 「安装」。那个区分是**按实现分的**——配置层（装 CLI 插件）与二进制层（装 language
- * server）——而不是按用户心智分的。用户原话：「虽然说我不知道你这两个是啥意思吧，
- * 你能让用户怎么方便怎么来就行了」。现在一行只有一个按钮、一个词「启用」，点下去把缺的
- * 每一层按顺序跑完，`kind` 于是没有任何消费者，整个删掉。
+ * 平台闸门检查 [commands] 本身是否包含 [LspCatalog.macOnlyCommands]，因为同一条链可能
+ * 同时包含平台专属安装命令和跨平台 CLI 配置命令。
  *
- * 平台闸门也不再看性质，改看命令本身在不在 [LspCatalog.macOnlyCommands] 里
- *（见 `canRun`）——一条链里可以同时含 `brew` 与跨平台的 `claude plugin install`，
- * 按性质根本分不出来。
- *
- * [commands] 串成一行交给终端，串法按 shell 方言取（见 [chainFor]）：
- * **哪一步失败就停在哪，用户在终端里看得见**。
- *
- * [blockingTool] 是「链根本组不出来」的那种情况：某条命令依赖的工具不在 PATH，而我们
- * 又没有可靠的安装方式（`brew` 本身、`go`、`npm`、`gem`）。此时 [commands] 必为空，
- * UI 那一格显示「需要先安装 &lt;工具&gt;」+ 该工具的官网链接（[docsUrl] 换成工具的）。
- * 编一条 `brew install brew` 出来，坏的是用户的开发环境。
+ * [commands] 由 [chainFor] 按 shell 方言串接，保证任一步失败即停止，且输出保留在用户
+ * 可见的终端中。[blockingTool] 表示链依赖一个当前不在 PATH、且 imux 没有可靠安装方式的
+ * 工具；此时命令必须为空，[docsUrl] 指向该工具的官方安装说明。
  */
 internal data class Remedy(
     val commands: List<String>,
@@ -116,9 +105,12 @@ internal data class CliReport(
      *
      * 这两个派生属性现在只用于计数与图标选择，逐行渲染走完整的 [findings]。
      */
-    val gaps: List<LanguageFinding> get() = findings.filter {
-        it.status == LspStatus.MISSING_CONFIG || it.status == LspStatus.MISSING_BINARY
-    }
+    val gaps: List<LanguageFinding> get() =
+        findings.filter {
+            it.status == LspStatus.MISSING_CONFIG || it.status == LspStatus.MISSING_BINARY
+        }
 }
 
-internal data class LspReport(val cliReports: List<CliReport>)
+internal data class LspReport(
+    val cliReports: List<CliReport>,
+)

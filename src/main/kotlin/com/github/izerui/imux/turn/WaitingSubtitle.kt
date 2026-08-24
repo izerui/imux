@@ -24,14 +24,6 @@ internal fun waitingSubtitle(
     ).joinToString(" · ")
 
 /**
- * 把 CLI 的 `waitingFor` 译成人话。
- *
- * 只单列日常真会遇到的三种。`worker request`（子代理请求）与
- * `sandbox request`（沙箱请求）走兜底：它们几乎不出现，单列的文案没人会读到。
- * 未知取值同样落到兜底，CLI 将来新增取值时不至于显示成空白。
- */
-
-/**
  * 这条等待提醒该不该弹气泡。
  *
  * 与「轮次完成」刻意不同：完成时即使用户正看着该标签页也要提醒，因为
@@ -46,6 +38,12 @@ internal fun waitingNotificationWanted(
     selectedSessionKeys: Set<String>,
 ): Boolean = sessionId !in selectedSessionKeys
 
+/**
+ * 把 CLI 的 `waitingFor` 译成人话。
+ *
+ * 只单列日常会遇到的三种；`worker request`、`sandbox request` 和未知的新取值统一走
+ * 兜底，避免 CLI 扩展枚举后通知显示为空。
+ */
 private fun waitingReason(
     waitingFor: String?,
     language: PluginLanguage,

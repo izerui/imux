@@ -7,7 +7,7 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.StoragePathMacros
 import com.intellij.openapi.project.Project
 
-/** Project-workspace state used to resume Imux tabs after the project is reopened. */
+/** 项目工作区状态，用于项目重新打开后恢复 imux 终端标签。 */
 @Service(Service.Level.PROJECT)
 @State(
     name = "ImuxRestorableSessionTabs",
@@ -41,6 +41,12 @@ class RestorableSessionTabs : SerializablePersistentStateComponent<RestorableSes
 }
 
 internal class SessionTabRestorationState {
+    /**
+     * 仅在启动恢复正在逐个打开快照标签时为 true。
+     *
+     * 此窗口内暂停持久化，避免中间的 editor-open 事件用“只恢复了一部分”的列表覆盖完整
+     * 工作区快照；[finish] 之后恢复正常持久化。
+     */
     var active: Boolean = false
         private set
 

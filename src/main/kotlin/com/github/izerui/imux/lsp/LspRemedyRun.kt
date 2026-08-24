@@ -4,48 +4,22 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.dialectOf
 import com.github.izerui.imux.terminal.shellArgs
 
-// 「一条修复建议能不能点一下就跑、跑起来长什么样」的纯逻辑。
-//
-// 与 LspStatusPresentation 同样的理由单独成文件、且**一行平台 API 都不碰**：
-// 设置页只能做源码文本断言，而文本断言总能被「保留被钉住的字面量、在别处改语义」绕开。
-// 搬到这里之后，这几个函数能被普通 JUnit 4 **真正调用**——把 canRun 改成恒 true，
-// LspRemedyRunTest 当场变红，而设置页那一侧只剩一个调用点，壳里不许再有平台判断。
-//
-// isMac 作为**参数注入**而不是在这里读 SystemInfo，正是为了这一点：
-// SystemInfo 是平台类，一旦在纯函数里读，这个函数就只能在开发者自己的机器上被测到
-// 一半——而这里最要命的分支恰恰是「不在 macOS 上会怎样」。
-//
-// toolAvailability 同理：enableCommands 的正确性全在「哪一层已经在了、哪一层还缺」上，
-// 一旦在函数里直接读探测结果，能被测到的就只有开发者这台机器当下的那一种组合。
-// 注入之后三层的每一种在/缺组合都能被真调用断言。
-//
-// 用行注释而不是 KDoc：这段说的是文件用途，不挂在任何声明上。
+// Pure policy for deciding whether an LSP remedy is executable and which command chain it needs.
+// Platform state and binary availability are injected so every branch remains testable without IntelliJ classes.
 
 /**
- * 执行按钮上那个词的 bundle 键——**只剩一个**。
+ * 执行按钮唯一使用的 bundle 键。
  *
- * 从前这里是 `runActionKey(kind)`，按修复性质映到「激活」或「安装」两个词。用户原话：
- * 「虽然说我不知道你这两个是啥意思吧，你能让用户怎么方便怎么来就行了」。那个区分是按
- * **实现**分的（配置层 vs 二进制层），不是按用户心智分的——用户要的是「一行一个按钮，
- * 点了就能用」，而不是在两个词之间猜自己缺的是哪一层。
- *
- * 做成常量而不是在设置页里写字面量，是为了让「壳里不得自己拼这个键」继续可查：
- * 设置页那一侧只能做源码文本断言，而 `ImuxLspUiSourceTest` 的 import 检查会盯着这个
- * 名字——删掉 import 再在本文件补一个同名声明会被当场抓住。
+ * 所有可执行缺口统一为“启用”；具体将安装插件、server 还是前置工具，由按钮 tooltip
+ * 中的完整命令链说明，设置页不得再按实现类型分叉文案。
  */
 internal const val ENABLE_ACTION_KEY = "settings.lsp.action.enable"
 
 /**
- * 命令**正在跑**的时候，那一行状态列显示的 bundle 键——同样**只剩一个**。
+ * 命令执行期间状态列使用的 bundle 键。
  *
- * 这一列平时说的是「未启用插件」「服务器不在 PATH 中」。点下按钮之后如果它一动不动，
- * 用户看到的就是「我点了，什么也没发生」——用户原话是「激活后，就状态应该变了啊」。
- * 所以点击那一刻这一列必须当场换词，等命令跑完再由重新探测覆盖回真实状态。
- *
- * 从前分成「正在激活…」与「正在安装…」两条，理由是「前者一两秒、后者几百兆下载」。
- * 那个理由在链式命令下**不再成立**：同一条链里既有 `claude plugin install`（秒级）
- * 也可能有 `brew install --cask dotnet-sdk`（几百兆），说成哪一种都是假话。
- * 真正的知情途径是按钮 tooltip 里那条完整命令链——用户点之前就看得到会跑什么。
+ * 点击后立即覆盖旧探测结果，命令结束后再由完整探测写回真实状态。安装链可能同时包含
+ * 快速配置与大体积下载，因此不再伪装成“正在激活”或“正在安装”中的某一种。
  */
 internal const val ENABLING_STATUS_KEY = "settings.lsp.status.enabling"
 
@@ -68,14 +42,7 @@ internal const val ENABLING_STATUS_KEY = "settings.lsp.status.enabling"
  * 后面一条都跑不到。「前半段能跑」这种中间态不存在，
  * 而一个跑到一半就红着停下的终端标签，比一开始就没有按钮更让人以为是插件坏了。
  *
- * **原先的第三个维度 `hasPosixShell` 已删除。** 它挡的是「Windows 上 `resolveShell`
- * 退回 `/bin/zsh`，按钮点下去报 `Cannot run program /bin/zsh`」——[resolveShell] 支持
- * Windows 之后这个前提消失了，本函数的旧 KDoc 亲口写着「`resolveShell` 支持 Windows
- * 之后，第 1 条该去掉」。
- *
- * [isMac] 作为**参数注入**而不是在这里读 `SystemInfo`：SystemInfo 是平台类，一旦在纯
- * 函数里读，这个函数就只能在开发者自己的机器上被测到一半——而这里最要命的分支恰恰
- * 是「不在 macOS 上会怎样」。
+ * [isMac] 作为参数注入，使 macOS 放行和其它平台拦截两条路径都能直接测试。
  */
 internal fun canRun(
     remedy: Remedy,

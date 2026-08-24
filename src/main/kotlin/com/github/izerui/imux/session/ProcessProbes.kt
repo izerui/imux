@@ -7,23 +7,14 @@ import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Path
 
 /**
- * 向操作系统问两件事：某个进程的环境变量、它打开着哪些文件。
+ * 操作系统进程观测的日志归属锚点。
  *
- * 都得靠外部命令：JDK 的 [ProcessHandle] 只给命令行与启动时刻，不给别的进程的
- * 环境变量，更不给打开的文件句柄；macOS 也没有 `/proc` 可读。
- *
- * 解析与执行分开写，是为了让解析可测——命令输出的形状是这里最容易出错的地方。
- */
-private val LOG = logger<ProcessProbesLocation>()
-
-/**
- * 日志归属锚点。
- *
- * 从前这里写的是 `logger<LiveSessionProbe>()`——本文件的日志会记到**另一个类**名下，
- * 排障时按类名过滤 `idea.log` 直接漏掉。隔壁 `ProcLinuxProbe.kt` 与
- * `WindowsTabPidFile.kt` 各有一个 `*Location` object 专门解决这件事，这里跟它们统一。
+ * 本文件同时封装环境变量与打开文件查询；解析与执行分离，以便用固定命令输出覆盖
+ * 平台分派和格式边界。独立锚点确保相关日志归到本文件，而不是误记在调用方类名下。
  */
 private object ProcessProbesLocation
+
+private val LOG = logger<ProcessProbesLocation>()
 
 /**
  * 读进程的环境变量，取出 [IMUX_TAB_ENV]。
@@ -37,7 +28,11 @@ private object ProcessProbesLocation
  * 取到的值再过一遍 [isTabId]——三条读取通道共用同一条判据，见那个函数的 KDoc。
  */
 internal fun tabIdFromPsOutput(output: String): String? =
-    TAB_ENV_PATTERN.find(output)?.groupValues?.get(1)?.takeIf(::isTabId)
+    TAB_ENV_PATTERN
+        .find(output)
+        ?.groupValues
+        ?.get(1)
+        ?.takeIf(::isTabId)
 
 /**
  * 从 `lsof -p` 的输出里挑出 codex 正在写的 rollout 文件。
@@ -49,12 +44,12 @@ internal fun tabIdFromPsOutput(output: String): String? =
  * 具体的形状校验交给 [threadIdOfRollout]。
  */
 internal fun rolloutPathsFromLsof(output: String): List<String> =
-    output.lineSequence()
+    output
+        .lineSequence()
         // 必须先 trim：行首多一个空格就会切出一个空段，后面所有列整体右移一位
         .mapNotNull { line ->
             line.trim().split(WHITESPACE, limit = LSOF_NAME_COLUMN).getOrNull(LSOF_NAME_COLUMN - 1)
-        }
-        .filter { threadIdOfRollout(it) != null }
+        }.filter { threadIdOfRollout(it) != null }
         .toList()
 
 /**
@@ -101,9 +96,13 @@ internal fun readTabId(
             )
         }
 
-        isLinux -> readTabIdFromProc(pid, procRoot)
+        isLinux -> {
+            readTabIdFromProc(pid, procRoot)
+        }
 
-        else -> tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
+        else -> {
+            tabIdFromPsOutput(runCommand(listOf("ps", "eww", "-p", pid.toString())) ?: return null)
+        }
     }
 
 /**
@@ -147,9 +146,7 @@ internal fun readHeldRollouts(
 ): List<String> =
     when {
         isWindows -> listOfNotNull(rolloutOfPid(pid))
-
         isLinux -> readHeldRolloutsFromProc(pid, procRoot)
-
         else -> rolloutPathsFromLsof(runCommand(listOf("lsof", "-p", pid.toString())) ?: return emptyList())
     }
 
@@ -159,8 +156,7 @@ internal fun readHeldRollouts(
  * 参数化（而不是在 [readHeldRollouts] 里直接 new）只为让分派本身可测——
  * 「分派选错分支」是这一层最难发现的错，症状与「没有漂移」不可区分。
  */
-private fun codexRolloutOfPid(pid: Long): String? =
-    CodexRuntimeIndex(Path.of(System.getProperty("user.home"), ".codex")).rolloutPathOf(pid)
+private fun codexRolloutOfPid(pid: Long): String? = CodexRuntimeIndex(Path.of(System.getProperty("user.home"), ".codex")).rolloutPathOf(pid)
 
 /** 生产入口。参数化只为让分派本身可测——分派选错分支是这一层最难发现的错。 */
 internal val PROC_ROOT: Path = Path.of("/proc")
@@ -200,16 +196,23 @@ internal fun executableMatches(
  * 按可执行文件名匹配而不是整条命令行包含 "codex"——后者会把
  * `tail -f codex.log`、乃至本插件自己的 `zsh -c "codex resume ..."` 外壳都算进来。
  */
-internal fun codexPids(): List<Long> = runCatching {
-    val isWindows = SystemInfo.isWindows
-    ProcessHandle.allProcesses()
-        .filter { handle -> handle.info().command().map { executableMatches(it, "codex", isWindows) }.orElse(false) }
-        .map { it.pid() }
-        .toList()
-}.getOrElse {
-    LOG.warn("扫描 codex 进程失败", it)
-    emptyList()
-}
+internal fun codexPids(): List<Long> =
+    runCatching {
+        val isWindows = SystemInfo.isWindows
+        ProcessHandle
+            .allProcesses()
+            .filter { handle ->
+                handle
+                    .info()
+                    .command()
+                    .map { executableMatches(it, "codex", isWindows) }
+                    .orElse(false)
+            }.map { it.pid() }
+            .toList()
+    }.getOrElse {
+        LOG.warn("扫描 codex 进程失败", it)
+        emptyList()
+    }
 
 /**
  * 跑一条命令并取标准输出。生产默认值，测试从参数注入一个假的。
@@ -217,18 +220,19 @@ internal fun codexPids(): List<Long> = runCatching {
  * 超时必须设：`lsof` 在挂载点无响应（网络盘、睡眠中的外置盘）时会长时间卡住，
  * 而调用方在轮询链路上。宁可这一轮探测不出来。
  */
-private fun runCommandForOutput(command: List<String>): String? = runCatching {
-    val output = ExecUtil.execAndGetOutput(GeneralCommandLine(command), COMMAND_TIMEOUT_MS)
-    if (output.isTimeout) {
-        LOG.warn("探测命令超时：${command.joinToString(" ")}")
+private fun runCommandForOutput(command: List<String>): String? =
+    runCatching {
+        val output = ExecUtil.execAndGetOutput(GeneralCommandLine(command), COMMAND_TIMEOUT_MS)
+        if (output.isTimeout) {
+            LOG.warn("探测命令超时：${command.joinToString(" ")}")
+            null
+        } else {
+            output.stdout
+        }
+    }.getOrElse {
+        LOG.warn("探测命令失败：${command.joinToString(" ")}", it)
         null
-    } else {
-        output.stdout
     }
-}.getOrElse {
-    LOG.warn("探测命令失败：${command.joinToString(" ")}", it)
-    null
-}
 
 private val TAB_ENV_PATTERN = Regex("""(?<![\w])$IMUX_TAB_ENV=(\S+)""")
 private val WHITESPACE = Regex("""\s+""")

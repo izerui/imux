@@ -8,9 +8,18 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import javax.swing.Icon
 
+/**
+ * 根据当前监控状态解析终端标签图标。
+ *
+ * 此处不缓存图标选择：状态变化后 [SessionMonitor] 会请求平台重新查询 provider，忙碌与未读
+ * 修饰始终从虚拟文件最新的 session key 推导。
+ */
 class AgentTerminalFileIconProvider : FileIconProvider {
-
-    override fun getIcon(file: VirtualFile, flags: Int, project: Project?): Icon? {
+    override fun getIcon(
+        file: VirtualFile,
+        flags: Int,
+        project: Project?,
+    ): Icon? {
         val terminalFile = file as? AgentTerminalVirtualFile ?: return null
         val monitor =
             if (project == null || project.isDisposed) null else SessionMonitor.getInstance(project)
@@ -30,5 +39,8 @@ class AgentTerminalFileIconProvider : FileIconProvider {
  *
  * 忙碌与未读可以同时成立：跑起来之前留下的新结果还没看，两个标记就都该在。
  */
-internal fun terminalTabIcon(agentType: AgentType, running: Boolean, unread: Boolean): Icon =
-    AgentIcons.forTab(agentType, running, unread)
+internal fun terminalTabIcon(
+    agentType: AgentType,
+    running: Boolean,
+    unread: Boolean,
+): Icon = AgentIcons.forTab(agentType, running, unread)
