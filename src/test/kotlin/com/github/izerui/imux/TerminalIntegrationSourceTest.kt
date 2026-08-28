@@ -221,6 +221,34 @@ class TerminalIntegrationSourceTest {
         )
     }
 
+    @Test
+    fun `应用切回时合并终端积压的跟随滚动`() {
+        val fileEditor =
+            File(
+                "src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt",
+            ).readText()
+
+        assertTrue(
+            "必须使用平台应用激活事件，且订阅生命周期绑定 FileEditor",
+            fileEditor.contains("messageBus.connect(this).subscribe(") &&
+                fileEditor.contains("ApplicationActivationListener.TOPIC"),
+        )
+        assertTrue(
+            "离开 IDEA 时必须记录当前终端是否原本跟随底部",
+            fileEditor.contains("override fun applicationDeactivated(ideFrame: IdeFrame)") &&
+                fileEditor.contains(
+                    "followBottomOnActivation = editor != null && host.isScrolledToBottom(editor)",
+                ),
+        )
+        assertTrue(
+            "切回时必须只对仍选中的原终端同步一次最新位置",
+            fileEditor.contains("override fun applicationActivated(ideFrame: IdeFrame)") &&
+                fileEditor.contains("!followBottomOnActivation") &&
+                fileEditor.contains("manager.selectedFiles.none { it === virtualFile }") &&
+                fileEditor.contains("scrollToBottom(virtualFile.terminalView)"),
+        )
+    }
+
     /**
      * 输入法候选窗的位置只有在焦点落到 EditorComponentImpl 上时才跟随光标，
      * 落在外层 TerminalPanel 上就会退回窗口原点（左上角）。

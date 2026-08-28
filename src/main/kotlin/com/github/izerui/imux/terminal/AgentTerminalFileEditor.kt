@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataSink
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.UiDataProvider
+import com.intellij.openapi.application.ApplicationActivationListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.editor.Editor
@@ -18,6 +19,7 @@ import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.fileEditor.FileEditor
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
@@ -27,6 +29,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.IdeFocusManager
+import com.intellij.openapi.wm.IdeFrame
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.Dispatchers
@@ -90,6 +93,7 @@ class AgentTerminalFileEditor(
         }
     private var activeModelJob: Job? = null
     private var keyEventsJob: Job? = null
+    private var followBottomOnActivation = false
     private var disposed = false
 
     /**
@@ -134,6 +138,32 @@ class AgentTerminalFileEditor(
                 ImuxBundle.message("action.scroll.bottom.description")
             scrollToolbar?.updateActionsAsync()
         }
+
+        // 终端输出在应用后台仍会为每次光标变化排 EDT 滚动任务。激活时先同步到
+        // 最新位置，随后积压任务因不能向上回滚而全部成为 no-op，避免逐次追到底部。
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            ApplicationActivationListener.TOPIC,
+            object : ApplicationActivationListener {
+                override fun applicationDeactivated(ideFrame: IdeFrame) {
+                    if (ideFrame.project !== project || disposed) return
+                    val manager = FileEditorManager.getInstance(project)
+                    if (manager.selectedFiles.none { it === virtualFile }) return
+
+                    val host = TerminalHost.getInstance(project)
+                    val editor = host.currentTerminalEditor(virtualFile.terminalView)
+                    followBottomOnActivation = editor != null && host.isScrolledToBottom(editor)
+                }
+
+                override fun applicationActivated(ideFrame: IdeFrame) {
+                    if (ideFrame.project !== project || !followBottomOnActivation || disposed) return
+                    followBottomOnActivation = false
+                    val manager = FileEditorManager.getInstance(project)
+                    if (manager.selectedFiles.none { it === virtualFile }) return
+
+                    TerminalHost.getInstance(project).scrollToBottom(virtualFile.terminalView)
+                }
+            },
+        )
     }
 
     private val editorComponent: JComponent by lazy(::createEditorComponent)
