@@ -2,6 +2,7 @@ package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -16,6 +17,9 @@ import java.nio.file.Path
 internal class LspDiagnostics(
     private val userHome: Path,
     private val binaryProbe: BinaryProbe,
+    private val handshake: (List<String>) -> Boolean = ::spawnMcpHandshake,
+    // 与 ShellBinaryProbe 同源：平台从构造参数进来，纯函数那侧才测得住两条分支。
+    private val isWindows: Boolean = SystemInfo.isWindows,
 ) {
     fun run(): LspReport {
         // 一次问完：语言服务器 + 它们的安装命令依赖的工具链（brew/go/npm/gem/dotnet/
@@ -44,22 +48,14 @@ internal class LspDiagnostics(
                 cliInstalled = isInstalled(located, AgentType.PI),
             )
 
-        val standardPiLensMcp = standardPiLensMcp(userHome)
-        val locatedPiLensMcp =
-            located[PI_LENS_MCP_BIN]
-                ?.let { value -> runCatching { Path.of(value) }.getOrNull() }
-                ?.takeIf(Path::isAbsolute)
-        val standardPiLensMcpAvailable = Files.isExecutable(standardPiLensMcp)
-        val piLensMcpExecutable =
-            if (standardPiLensMcpAvailable) standardPiLensMcp else locatedPiLensMcp ?: standardPiLensMcp
         val codex =
             codexReport(
-                mounted = mountsPiLensMcp(read(".codex/config.toml"), userHome, located),
-                // 挂载后与 pi 是同一套 server，语言结果原样复用
-                piFindings = pi.findings,
+                mounted = mountsPiLensMcp(read(".codex/config.toml"), userHome, located, handshake),
+                // 与 pi 共用同一张 pi-lens 能力矩阵，但各自算各自的：两份安装彼此独立
+                binaries = located,
                 cliInstalled = isInstalled(located, AgentType.CODEX),
-                piLensMcpExecutable = piLensMcpExecutable,
-                piLensMcpAvailable = standardPiLensMcpAvailable || locatedPiLensMcp != null,
+                userHome = userHome,
+                isWindows = isWindows,
             )
 
         return LspReport(listOf(claude, pi, codex))

@@ -14,6 +14,16 @@ class CodexLspProbeTest {
 
     private val home get() = temp.root.toPath()
 
+    /**
+     * pi 自己那份 pi-lens 安装的 `.bin` 路径。
+     *
+     * 只有测试还需要它——用来把「pi 侧装了 pi-lens」这个状态造出来，验证 Codex 的
+     * 修复建议不再随它漂移。生产代码不能再指向这里：那份安装缺 host-provided 依赖，
+     * 被 Codex 当独立子进程 spawn 必崩。
+     */
+    private fun piOwnedPiLensMcp(userHome: java.nio.file.Path) =
+        userHome.resolve(".pi/agent/npm/node_modules/.bin/$PI_LENS_MCP_BIN")
+
     @Test
     fun `PATH 中可解析的裸命令算有效挂载`() {
         val toml =
@@ -53,7 +63,121 @@ class CodexLspProbeTest {
         assertTrue(executable.toFile().setExecutable(true))
         val toml = "[mcp_servers.lens]\ncommand = \"$executable\""
 
-        assertTrue(mountsPiLensMcp(toml, home, emptyMap()))
+        assertTrue(mountsPiLensMcp(toml, home, emptyMap()) { true })
+    }
+
+    /**
+     * 文件可执行 ≠ server 起得来。
+     *
+     * pi-lens 把 `typebox` 与 `@earendil-works/pi-tui` 列为 optional peer 交给宿主
+     * 解析（`scripts/lib/host-provided-deps.mjs`），pi 之外的宿主直接 spawn 会
+     * `ERR_MODULE_NOT_FOUND` 立即退出——而文件位始终是可执行的。只验文件位就会报
+     * 「已挂载 ✓」，Codex 每次启动却在拉起一个必崩的进程。
+     */
+    @Test
+    fun `可执行但起不来的 server 不算挂载`() {
+        val executable = temp.newFile("pi-lens-mcp").toPath()
+        assertTrue(executable.toFile().setExecutable(true))
+        val toml = "[mcp_servers.lens]\ncommand = \"$executable\""
+
+        assertFalse(mountsPiLensMcp(toml, home, emptyMap()) { false })
+    }
+
+    /**
+     * 启动器形态必须连 args 一起交给握手。
+     *
+     * `command = "/usr/bin/npx"` + `args = ["-y", "pi-lens-mcp"]` 只 spawn 那个 npx，
+     * 等于拿半条命令去判活：npx 不带参数根本不会应答 `initialize`，一份完全正常的
+     * 配置会被判成损坏，然后催用户去「修」一个没坏的东西。
+     */
+    @Test
+    fun `启动器形态把完整启动命令交给握手`() {
+        val npx = temp.newFile("npx").toPath()
+        assertTrue(npx.toFile().setExecutable(true))
+        val toml = "[mcp_servers.lens]\ncommand = \"$npx\"\nargs = [\"-y\", \"pi-lens-mcp\"]"
+        var received: List<String>? = null
+
+        mountsPiLensMcp(toml, home, emptyMap()) { argv ->
+            received = argv
+            true
+        }
+
+        assertEquals(listOf(npx.toString(), "-y", "pi-lens-mcp"), received)
+    }
+
+    /** 裸命令同样要握手——PATH 解析出的绝对路径就是可 spawn 的完整命令。 */
+    @Test
+    fun `裸命令用 PATH 解析出的绝对路径握手`() {
+        val toml = "[mcp_servers.lens]\ncommand = \"pi-lens-mcp\""
+        var received: List<String>? = null
+
+        mountsPiLensMcp(toml, home, mapOf(PI_LENS_MCP_BIN to "/usr/local/bin/pi-lens-mcp")) { argv ->
+            received = argv
+            true
+        }
+
+        assertEquals(listOf("/usr/local/bin/pi-lens-mcp"), received)
+    }
+
+    /**
+     * PATH 里那个也可能是坏的。
+     *
+     * 把 pi 的私有 `.bin` 加进 PATH 是常见做法，而那份安装恰恰缺 host-provided 依赖。
+     * 「PATH 里查得到」只说明文件在，不说明它起得来。
+     */
+    @Test
+    fun `PATH 中的损坏安装不算挂载`() {
+        val toml = "[mcp_servers.lens]\ncommand = \"pi-lens-mcp\""
+
+        assertFalse(mountsPiLensMcp(toml, home, mapOf(PI_LENS_MCP_BIN to "/usr/local/bin/pi-lens-mcp")) { false })
+    }
+
+    /** 本机实测的真实成功响应，逐字节取自 `pi-lens-mcp` 0.1.0。 */
+    @Test
+    fun `带 result 的 initialize 响应算握手成功`() {
+        val stdout =
+            """{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",""" +
+                """"capabilities":{"tools":{}},"serverInfo":{"name":"pi-lens-mcp","version":"0.1.0"}}}"""
+
+        assertTrue(handshakeSucceeded(stdout))
+    }
+
+    /**
+     * 崩溃时 stdout 一个字节都没有——`ERR_MODULE_NOT_FOUND` 整段走的是 stderr。
+     * 这正是本次 Codex 启动报错的现场形态。
+     */
+    @Test
+    fun `崩溃退出没有任何响应算握手失败`() {
+        assertFalse(handshakeSucceeded(""))
+        assertFalse(handshakeSucceeded("\n\n"))
+    }
+
+    @Test
+    fun `error 响应算握手失败`() {
+        val stdout = """{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}"""
+
+        assertFalse(handshakeSucceeded(stdout))
+    }
+
+    /**
+     * server 启动时往 stdout 混入的非 JSON 噪音不能被当成握手成功。
+     *
+     * pi-lens 自己把 `console.log` 改道到了 stderr 正是为了这个，但 imux 不能假定
+     * 每个被挂上来的 server 都这么自律。
+     */
+    @Test
+    fun `非 JSON 噪音不算握手成功`() {
+        assertFalse(handshakeSucceeded("[pi-lens-mcp] ready (cwd=/tmp)\nlistening on socket\n"))
+    }
+
+    /** 噪音与真响应混在一起时，仍要认出那一行真响应。 */
+    @Test
+    fun `噪音之后的真响应仍算握手成功`() {
+        val stdout =
+            "some startup banner\n" +
+                """{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{}}}"""
+
+        assertTrue(handshakeSucceeded(stdout))
     }
 
     @Test
@@ -110,21 +234,30 @@ class CodexLspProbeTest {
         assertFalse(mountsPiLensMcp("""[mcp_servers.x]${"\n"}command = "gopls"""", home, binaries))
     }
 
+    /**
+     * 修复建议必须产出一份**自包含**的安装，而不是复用 pi 的那份。
+     *
+     * `npm --prefix` 会自行创建目录，所以不需要先 mkdir；把 `typebox` 与
+     * `@earendil-works/pi-tui` 一并装进来，正是 pi 宿主替 pi-lens 解析的那两个
+     * host-provided 包（pi-lens `scripts/lib/host-provided-deps.mjs`）。
+     */
     @Test
-    fun `未安装 pi-lens 时先安装再用绝对路径挂载`() {
-        val executable = standardPiLensMcp(home)
+    fun `未挂载时给出自包含的隔离安装与挂载`() {
         val report =
             codexReport(
                 mounted = false,
-                piFindings = emptyList(),
+                binaries = emptyMap(),
                 cliInstalled = true,
-                piLensMcpExecutable = executable,
+                userHome = home,
+                isWindows = false,
             )
 
+        val dir = home.resolve(".codex/mcp/pi-lens")
+        val bin = dir.resolve("node_modules/.bin/pi-lens-mcp")
         assertEquals(
             listOf(
-                "pi install npm:pi-lens",
-                "codex mcp add pi-lens -- '$executable'",
+                "npm --prefix '$dir' i pi-lens typebox @earendil-works/pi-tui",
+                "codex mcp add pi-lens -- '$bin'",
             ),
             report.groupRemedy?.commands,
         )
@@ -132,49 +265,116 @@ class CodexLspProbeTest {
         assertTrue(report.findings.isEmpty())
     }
 
+    /**
+     * Windows 上必须挂 `.cmd`，不能沿用 POSIX 那个无后缀路径。
+     *
+     * npm 在 Windows 的 `.bin` 下为每个 bin 写三个文件：无后缀的 `#!/bin/sh` 脚本
+     * （只给 Git Bash 用）、`.ps1`、以及 `.cmd`。三者里只有 `.cmd` 能被 CreateProcess
+     * 原生执行——挂无后缀那个，Codex 拉起的是一个非 PE 文件，当场失败。
+     */
     @Test
-    fun `标准可执行文件已存在时不重复安装`() {
-        val executable = standardPiLensMcp(home)
-        Files.createDirectories(executable.parent)
-        Files.createFile(executable)
-        assertTrue(executable.toFile().setExecutable(true))
+    fun `Windows 上挂载 npm 生成的 cmd 包装器`() {
+        val report = codexReport(false, emptyMap(), true, home, isWindows = true)
 
-        val report = codexReport(false, emptyList(), true, executable)
-
-        assertEquals(listOf("codex mcp add pi-lens -- '$executable'"), report.groupRemedy?.commands)
+        val bin = home.resolve(".codex/mcp/pi-lens/node_modules/.bin/pi-lens-mcp.cmd")
+        assertEquals("codex mcp add pi-lens -- '$bin'", report.groupRemedy?.commands?.last())
     }
 
+    /**
+     * npm 确认不在 PATH 时，安装那条命令跑下去必然是 `npm: command not found`。
+     *
+     * 目录表把 npm 登记成 [LspTool]`(installCommand = null)`——安装方式牵扯 nvm/asdf
+     * 与系统包管理器，imux 猜一条命令下去坏的是用户的开发环境。这正是 `blockingTool`
+     * 服务的情形：命令清空，改指 Node.js 官网。旧建议用的是 `pi install`（pi 在就能跑），
+     * 换成 npm 之后这道闸门才成为必需。
+     */
     @Test
-    fun `PATH 中已有可执行文件时直接使用探测到的绝对路径`() {
-        val executable = home.resolve("custom/bin/pi-lens-mcp")
+    fun `npm 确认缺失时挡下安装修复`() {
+        val report = codexReport(false, mapOf("npm" to null), true, home, isWindows = false)
 
-        val report =
-            codexReport(
-                mounted = false,
-                piFindings = emptyList(),
-                cliInstalled = true,
-                piLensMcpExecutable = executable,
-                piLensMcpAvailable = true,
-            )
-
-        assertEquals(listOf("codex mcp add pi-lens -- '$executable'"), report.groupRemedy?.commands)
+        val remedy = report.groupRemedy!!
+        assertEquals(emptyList<String>(), remedy.commands)
+        assertEquals("npm", remedy.blockingTool)
+        assertEquals(LspCatalog.tool("npm")!!.docsUrl, remedy.docsUrl)
+        // 闸门真正的出口：按钮压根渲染不出来，退化成 fallbackCell 的「要先装什么」+ 官网。
+        assertFalse("命令必然失败，按钮不能可点", canRun(remedy, isMac = true))
     }
 
-    /** 挂载后 Codex 用的是同一套 pi-lens server，语言状态与 pi 完全一致。 */
+    /**
+     * 探测超时时键根本不存在（UNKNOWN），那不是「没有 npm」。
+     *
+     * 与 `LspDiagnostics.isInstalled` 同一把尺子：只有**确认查过且没查到**才算缺失。
+     * 把 UNKNOWN 也挡掉，会在一次 shell 探测超时后把唯一能点的按钮也收走。
+     */
     @Test
-    fun `挂载后复用 pi 的语言结果`() {
-        val kotlin = LspCatalog.languages.single { it.id == "kotlin" }
-        val piFindings = listOf(LanguageFinding(kotlin, LspStatus.MISSING_BINARY, Remedy(emptyList(), "https://x")))
+    fun `npm 探测结果未知时不挡`() {
+        val remedy = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy!!
 
-        val report = codexReport(true, piFindings, true, standardPiLensMcp(home))
+        assertTrue(remedy.commands.isNotEmpty())
+        assertEquals(null, remedy.blockingTool)
+    }
 
-        assertEquals(piFindings, report.findings)
+    /** 安装那条命令与平台无关：npm 自己跨平台，目录路径也不带后缀。 */
+    @Test
+    fun `安装命令不随平台变化`() {
+        val posix = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy!!.commands.first()
+        val windows = codexReport(false, emptyMap(), true, home, isWindows = true).groupRemedy!!.commands.first()
+
+        assertEquals(posix, windows)
+    }
+
+    /**
+     * 绝不能把 Codex 指向 pi 的私有 `.bin`。
+     *
+     * 那份安装缺 host-provided 依赖，pi 宿主内加载没事，被 Codex 当独立子进程 spawn
+     * 就是 `ERR_MODULE_NOT_FOUND` 立即退出——这正是这次 Codex 启动报错的成因。
+     */
+    @Test
+    fun `修复建议不指向 pi 的私有 bin`() {
+        val commands = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy!!.commands
+
+        assertFalse(commands.any { it.contains(".pi/agent/npm") })
+    }
+
+    /**
+     * 隔离安装与 pi 侧装没装 pi-lens 无关，建议恒定。
+     *
+     * 旧实现按 pi 的 `.bin` 是否存在来决定要不要先 `pi install npm:pi-lens`，
+     * 于是同一台机器上的建议会随 pi 的状态漂移；隔离安装之后这条耦合必须断掉。
+     */
+    @Test
+    fun `修复建议不随 pi 侧安装状态变化`() {
+        val withoutPiLens = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy?.commands
+
+        val piLensBin = piOwnedPiLensMcp(home)
+        Files.createDirectories(piLensBin.parent)
+        Files.createFile(piLensBin)
+        assertTrue(piLensBin.toFile().setExecutable(true))
+
+        assertEquals(withoutPiLens, codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy?.commands)
+    }
+
+    /**
+     * 挂载后 Codex 跑的是同一个 pi-lens 扩展，语言状态按同一张能力矩阵**自己算**。
+     *
+     * 关键是「自己算」：旧实现直接照抄 pi 那份报告的 findings，于是 pi 侧没装 pi-lens
+     * 时会把空列表一并抄过来，一个挂载成功的 Codex 显示成一门语言都没有。
+     */
+    @Test
+    fun `挂载后按 pi-lens 能力矩阵给出语言状态`() {
+        val gated = LspCatalog.languages.first { it.piLensBinary != null }
+        val binary = gated.piLensBinary!!
+
+        val report = codexReport(true, mapOf(binary to "/usr/bin/$binary"), true, home, isWindows = false)
+
         assertEquals(null, report.groupRemedy)
+        assertEquals(LspCatalog.languages.size, report.findings.size)
+        assertEquals(LspStatus.READY, report.findings.single { it.language.id == gated.id }.status)
     }
 
     @Test
     fun `CLI 未安装时不产出任何缺口或建议`() {
-        val report = codexReport(false, emptyList(), false, standardPiLensMcp(home))
+        val report = codexReport(false, emptyMap(), false, home, isWindows = false)
 
         assertFalse(report.installed)
         assertTrue(report.findings.isEmpty())

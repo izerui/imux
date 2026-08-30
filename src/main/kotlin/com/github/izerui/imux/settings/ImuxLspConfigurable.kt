@@ -358,8 +358,11 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             return
         }
 
-        // 装了、没有前置修复、却一条语言结果都没有：Codex 挂了 pi-lens-mcp 但本机没装
-        // pi（或 pi 没装 pi-lens）就是这个状态。不兜底的话这里会是个只有标题的空分组。
+        // 装了、没有前置修复、却一条语言结果都没有。三个 CLI 眼下都到不了这里：
+        // Claude Code 恒给全量目录表；pi 与 Codex 在前置未满足时已经在上面的 groupRemedy
+        // 分支返回了，而前置满足时两者都走 `piLensFindings`，同样是全量。保留纯属防御——
+        // 目录表被过滤空、或哪天某个 probe 改成按需产出 findings，不兜底这里就会是个
+        // 只有标题的空分组。
         //
         // 用 comment 而不是 label：这是本页最长的几句之一（德语 122 字符、俄语 118），
         // 而 UI DSL 的 label 产出不折行的 JLabel，它的 preferred width 会直接抬高整页的
@@ -500,7 +503,8 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * - [hasProjectWindow] 这道闸门在**所有平台**都会关——这一页是 `applicationConfigurable`，
      *   从欢迎页打开设置是完全正常的路径。macOS 用户一样撞得上。
      * - 撞上的行不是少数：Claude Code 组 13 门带官方插件的语言只要没启用都算，
-     *   Codex 组的 `groupRemedy` 更是连 `docsUrl` 都没有。只给文档链接的话，
+     *   Codex 组那条挂载建议更是连 `docsUrl` 都没有（npm 缺失时那条走 `blockingTool`，
+     *   带的是 Node.js 官网）。只给文档链接的话，
      *   那一整组会退化成「一句警告 + 什么也没有」。
      *
      * 三样东西，各答一个问题，**有几样给几样，绝不二选一**（二选一就是第二处闸门）：
@@ -874,7 +878,8 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     /**
      * 组级修复的说明文案。
      *
-     * 两个分支都只在「前置条件没满足」时才走得到：Codex 是没挂 MCP，pi 是没装 pi-lens
+     * 两个分支都只在「前置条件没满足」时才走得到：Codex 是没挂上一个**起得来**的 MCP
+     * （配置里压根没有，或挂了却过不了 `initialize` 握手），pi 是没装 pi-lens
      * ——`codexReport` 与 `piReport` 都只在否定分支上设 groupRemedy。所以这里说的必须是
      * 「未挂载 / 未安装」，绝不能是「已安装」。Claude Code 从不产生组级修复，落不到这里。
      */

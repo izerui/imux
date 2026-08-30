@@ -68,22 +68,34 @@ internal fun piReport(
         )
     }
 
-    val toolAvailability: (String) -> BinaryAvailability = { binaryAvailability(binaries, it) }
+    return CliReport(AgentType.PI, installed = true, findings = piLensFindings(binaries))
+}
 
-    val findings =
-        LspCatalog.languages.map { language ->
-            // piLensBinary 非空 ⟺ piLensGated（LspCatalogTest 钉住），判空即「非 gated」。
-            val binary = language.piLensBinary
-            val status =
-                when {
-                    binary == null -> LspStatus.AUTO_MANAGED
-                    !binaries.containsKey(binary) -> LspStatus.UNKNOWN
-                    binaries[binary] == null -> LspStatus.MISSING_BINARY
-                    else -> LspStatus.READY
-                }
-            // 只有 MISSING_BINARY 有可执行的下一步，而这一条由 remedyFor 自己判断——
-            // AUTO_MANAGED 尤其不能给建议：pi-lens 会自己装，让用户再手动装一遍是纯噪音。
-            LanguageFinding(language, status, remedyFor(language, AgentType.PI, status, toolAvailability))
-        }
-    return CliReport(AgentType.PI, installed = true, findings = findings)
+/**
+ * pi-lens 覆盖到的语言状态。
+ *
+ * pi 与 Codex 各自持有一份自包含的 pi-lens 安装（见 [codexPiLensHome]），但跑的是同一个
+ * 扩展、同一张能力矩阵，语言层面的判定与建议完全一致，因此恒按 [AgentType.PI] 计算——
+ * `remedyFor` 那条链上没有 Codex 专属的 server 映射，把 [AgentType.CODEX] 传进去只会
+ * 让本来有下一步的行变成无建议。
+ *
+ * **不能再由 `piLensInstalled` 把守。** 隔离安装之后 pi 侧装没装 pi-lens 与 Codex 无关，
+ * 让 Codex 的语言列表跟着 pi 的状态一起塌成空列表，是把两份独立安装又粘回了一起。
+ */
+internal fun piLensFindings(binaries: Map<String, String?>): List<LanguageFinding> {
+    val toolAvailability: (String) -> BinaryAvailability = { binaryAvailability(binaries, it) }
+    return LspCatalog.languages.map { language ->
+        // piLensBinary 非空 ⟺ piLensGated（LspCatalogTest 钉住），判空即「非 gated」。
+        val binary = language.piLensBinary
+        val status =
+            when {
+                binary == null -> LspStatus.AUTO_MANAGED
+                !binaries.containsKey(binary) -> LspStatus.UNKNOWN
+                binaries[binary] == null -> LspStatus.MISSING_BINARY
+                else -> LspStatus.READY
+            }
+        // 只有 MISSING_BINARY 有可执行的下一步，而这一条由 remedyFor 自己判断——
+        // AUTO_MANAGED 尤其不能给建议：pi-lens 会自己装，让用户再手动装一遍是纯噪音。
+        LanguageFinding(language, status, remedyFor(language, AgentType.PI, status, toolAvailability))
+    }
 }

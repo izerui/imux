@@ -22,11 +22,20 @@ class LspDiagnosticsTest {
         Files.writeString(file, content)
     }
 
-    /** [installed] 里的 CLI 会在探测结果中带上一个路径，其余带 null（= 确认未安装）。 */
+    /**
+     * [installed] 里的 CLI 会在探测结果中带上一个路径，其余带 null（= 确认未安装）。
+     *
+     * [handshake] 必须注入：默认实参是真去 spawn 进程的 [spawnMcpHandshake]，
+     * 留给单测会让结果取决于跑测试这台机器上装没装 pi-lens。`isWindows` 同理钉成
+     * false——默认实参读的是 `SystemInfo`，会让 Codex 那条建议的路径后缀随跑测试的
+     * 机器变化。
+     */
     private fun diagnostics(
         locatedBinaries: Map<String, String?> = emptyMap(),
         installed: Set<AgentType> = AgentType.entries.toSet(),
+        handshake: (List<String>) -> Boolean = { true },
     ) = LspDiagnostics(
+        isWindows = false,
         userHome = temp.root.toPath(),
         binaryProbe =
             object : BinaryProbe {
@@ -36,6 +45,7 @@ class LspDiagnosticsTest {
                             type.cli to if (type in installed) "/usr/local/bin/${type.cli}" else null
                         }
             },
+        handshake = handshake,
     )
 
     private fun LspReport.of(type: AgentType) = cliReports.single { it.agentType == type }
@@ -75,6 +85,84 @@ class LspDiagnosticsTest {
         assertEquals("挂了 MCP 就不该再给整组建议", null, report.of(AgentType.CODEX).groupRemedy)
     }
 
+    /**
+     * 本次 Codex 启动报错的完整形态。
+     *
+     * 配置里挂着一个真实存在、可执行的 `pi-lens-mcp`，但它被 spawn 后因缺
+     * host-provided 依赖立刻退出。只验文件位会报「已挂载 ✓」，用户看到一切正常，
+     * 而 Codex 每次启动都在拉起一个必崩的进程。
+     */
+    @Test
+    fun `挂载的 server 起不来时报未挂载并给出修复建议`() {
+        val broken = temp.root.toPath().resolve("broken/pi-lens-mcp")
+        Files.createDirectories(broken.parent)
+        Files.createFile(broken)
+        assertTrue(broken.toFile().setExecutable(true))
+        write(".codex/config.toml", "[mcp_servers.pi-lens]\ncommand = \"$broken\"")
+
+        val report = diagnostics(handshake = { false }).run()
+
+        assertEquals(
+            listOf(
+                "npm --prefix '${codexPiLensHome(temp.root.toPath())}' i pi-lens typebox @earendil-works/pi-tui",
+                "codex mcp add pi-lens -- '${codexPiLensMcp(temp.root.toPath(), isWindows = false)}'",
+            ),
+            report.of(AgentType.CODEX).groupRemedy?.commands,
+        )
+    }
+
+    /**
+     * 隔离安装之后，Codex 那份 pi-lens 与 pi 那份彼此独立。
+     *
+     * pi 侧没装 pi-lens，不该让一个挂载成功的 Codex 显示成「一门语言都没有」——
+     * 它跑的是自己 `~/.codex/mcp/pi-lens` 下那份，pi 装没装与它无关。
+     */
+    @Test
+    fun `pi 未装 pi-lens 不影响已挂载 Codex 的语言列表`() {
+        val codexOwned = temp.root.toPath().resolve("codex/pi-lens-mcp")
+        Files.createDirectories(codexOwned.parent)
+        Files.createFile(codexOwned)
+        assertTrue(codexOwned.toFile().setExecutable(true))
+        write(".codex/config.toml", "[mcp_servers.pi-lens]\ncommand = \"$codexOwned\"")
+        // 刻意不写 .pi/agent/settings.json ⟹ pi 侧未装 pi-lens
+
+        val report = diagnostics(handshake = { true }).run()
+
+        assertEquals("pi 未装 pi-lens", listOf("pi install npm:pi-lens"), report.of(AgentType.PI).groupRemedy?.commands)
+        assertEquals("Codex 已挂载，不该再给建议", null, report.of(AgentType.CODEX).groupRemedy)
+        assertEquals(LspCatalog.languages.size, report.of(AgentType.CODEX).findings.size)
+    }
+
+    /**
+     * npm 是隔离安装那条链的第一步，必须真的被探测到、并且结果传得到 Codex 那一组。
+     *
+     * 这条钉的是接线而不是判据：`codexReport` 自己的两条分支已由 CodexLspProbeTest
+     * 覆盖，这里防的是 npm 压根没进 `allProbeTargets`、或 `located` 没传下去——那样
+     * 闸门永远看到 UNKNOWN，等于不存在。
+     */
+    @Test
+    fun `npm 缺失时 Codex 组给出被挡下的修复`() {
+        val report = diagnostics(locatedBinaries = mapOf("npm" to null)).run()
+
+        val remedy = report.of(AgentType.CODEX).groupRemedy!!
+        assertEquals(emptyList<String>(), remedy.commands)
+        assertEquals("npm", remedy.blockingTool)
+    }
+
+    /** 同一份配置，server 真起得来时就不该再给建议——否则修好了也一直催。 */
+    @Test
+    fun `挂载的 server 起得来时不再给建议`() {
+        val working = temp.root.toPath().resolve("working/pi-lens-mcp")
+        Files.createDirectories(working.parent)
+        Files.createFile(working)
+        assertTrue(working.toFile().setExecutable(true))
+        write(".codex/config.toml", "[mcp_servers.pi-lens]\ncommand = \"$working\"")
+
+        val report = diagnostics(handshake = { true }).run()
+
+        assertEquals(null, report.of(AgentType.CODEX).groupRemedy)
+    }
+
     /** 配置文件一个都不存在是全新机器的正常状态，不能抛异常。 */
     @Test
     fun `配置文件全部缺失时仍产出完整报告`() {
@@ -83,8 +171,8 @@ class LspDiagnosticsTest {
         assertEquals(listOf("pi install npm:pi-lens"), report.of(AgentType.PI).groupRemedy?.commands)
         assertEquals(
             listOf(
-                "pi install npm:pi-lens",
-                "codex mcp add pi-lens -- '${standardPiLensMcp(temp.root.toPath())}'",
+                "npm --prefix '${codexPiLensHome(temp.root.toPath())}' i pi-lens typebox @earendil-works/pi-tui",
+                "codex mcp add pi-lens -- '${codexPiLensMcp(temp.root.toPath(), isWindows = false)}'",
             ),
             report.of(AgentType.CODEX).groupRemedy?.commands,
         )

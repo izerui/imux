@@ -240,7 +240,8 @@ private const val WINDOWS_FALLBACK_SHELL = "powershell.exe"
  * 两个调用点，性质不同：
  *
  * - `lsp/CodexLspProbe.kt` 用它拼的是**给用户看的命令文本**
- *   （`codex mcp add pi-lens -- '<路径>'`），与终端方言无关。
+ *   （`npm --prefix '<目录>' i …` 与 `codex mcp add pi-lens -- '<路径>'`），
+ *   与终端方言无关。
  * - `lsp/BinaryProbe.kt` 的 [buildProbeScript] 用它拼的是**真正交给
  *   `ProcessBuilder` 执行**的探测脚本。`ShellBinaryProbe` 经 [probeScript] 分派后，
  *   POSIX 方言仍然调用 [buildProbeScript] &#8594; 本函数；Windows 上 Git Bash
