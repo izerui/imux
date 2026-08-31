@@ -16,7 +16,7 @@ import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.codexPids
 import com.github.izerui.imux.session.driftOf
-import com.github.izerui.imux.session.interactivePids
+import com.github.izerui.imux.session.claudeDriftPids
 import com.github.izerui.imux.session.readHeldRollouts
 import com.github.izerui.imux.session.readTabId
 import com.github.izerui.imux.session.stillApplicable
@@ -297,8 +297,9 @@ class SessionMonitor(
                 // 而 CLI 换 id 后运行态文件立刻就更新了，用旧快照会慢一拍。
                 val runtimeSessions = runtimeIndex.load(projectPath).values
                 val byPid = runtimeSessions.associateBy { it.pid }
-                // 后台 agent 继承了父进程的 IMUX_TAB，却有自己独立的会话 id，必须排除
-                val claudePids = interactivePids(runtimeSessions)
+                // daemon 接管后的用户会话也标成 bg，不能按 kind 排除；真后台 agent 与
+                // 前台并存时由 driftOf 的「同一 tabId 多个 id 不迁移」闸门处理。
+                val claudePids = claudeDriftPids(runtimeSessions)
                 val live =
                     LiveSessionProbe(
                         pidsOf = { type ->

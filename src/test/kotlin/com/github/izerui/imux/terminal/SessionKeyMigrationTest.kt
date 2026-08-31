@@ -169,7 +169,7 @@ class SessionKeyMigrationTest {
     }
 
     @Test
-    fun `探测只认交互式进程并在应用前复核`() {
+    fun `探测允许 daemon 接管并在应用前复核`() {
         val monitor =
             File(
                 "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
@@ -180,8 +180,8 @@ class SessionKeyMigrationTest {
             ).readText()
 
         assertTrue(
-            "后台 agent 继承了父进程的 IMUX_TAB 却有独立的会话 id，必须排除",
-            monitor.contains("interactivePids(runtimeSessions)"),
+            "daemon 接管后的用户会话也标成 bg，必须进入探测并由歧义闸门决定是否迁移",
+            monitor.contains("claudeDriftPids(runtimeSessions)"),
         )
         assertTrue(
             "探测是异步的，结果落地前标签页可能已经关掉或被重新打开成另一个终端",

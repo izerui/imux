@@ -145,7 +145,6 @@ internal fun threadIdOfRollout(
  * 同一个 tabId 报出多个**不同**会话时一条都不产出。claude 的后台 agent 会继承父进程
  * 的环境变量，于是带着同一个 IMUX_TAB 却报出它自己那个独立的会话 id；真去迁就可能
  * 迁到后台 agent 的会话上，且结果取决于遍历顺序。分不清就别动。
- * （上游还会用 [interactivePids] 把 bg 进程挡在外面，这里是最后一道防线。）
  */
 internal fun driftOf(
     openTabs: Map<String, String>,
@@ -158,16 +157,19 @@ internal fun driftOf(
     }
 
 /**
- * 可用于探测的 claude 进程：只要交互式终端，不要后台 agent。
+ * 可用于漂移探测的 claude 进程。
  *
- * 后台 agent（`kind=bg`）是 claude 主进程派生的，**会继承 IMUX_TAB**——实测 claude
- * 的子进程确实能读到 imux 注入的变量。但它有自己独立的会话 id，认领它就会把终端
- * 迁到一个用户根本没在看的会话上。
+ * 不能按 `kind=bg` 一刀切：Claude Code 2.1.226 会把用户正在交互的终端自动交给
+ * daemon，内部命令形态是 `--fork-session --resume <原会话>`，新进程同样标成 `bg`，
+ * 但它持有真实的新会话 id 并继续接收用户输入。排除它会让终端永远记着旧 id：
+ * 会话列表出现一条打不开的新记录，转移时也会把旧 id 交给目标 CLI。
  *
- * `kind` 缺失时按交互式对待：漏掉一个真正的终端，比多认一个的代价大。
+ * 真后台 agent 与前台进程同时继承同一个 IMUX_TAB 时也不在这里猜：[driftOf] 会看到
+ * 同一 tabId 下两个不同 id 并拒绝迁移。只有像 daemon 接管那样只剩一个权威 id 时
+ * 才会迁移，因此把全部运行态 pid 交下去仍保持「认不出就不动」。
  */
-internal fun interactivePids(runtime: Collection<ClaudeRuntimeSession>): List<Long> =
-    runtime.filterNot { it.isBackground }.map { it.pid }
+internal fun claudeDriftPids(runtime: Collection<ClaudeRuntimeSession>): List<Long> =
+    runtime.map { it.pid }
 
 /**
  * 探测是异步的，结果落地前世界可能已经变了。只保留仍然成立的那些：

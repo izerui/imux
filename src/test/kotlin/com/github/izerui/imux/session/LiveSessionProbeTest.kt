@@ -210,8 +210,7 @@ class LiveSessionProbeTest {
     fun `同一终端探测出多个不同会话时一个都不认领`() {
         // claude 的后台 agent 会继承父进程的环境变量，于是带着同一个 IMUX_TAB
         // 却报出自己那个独立的会话 id。真要迁就可能迁到后台 agent 的会话上，
-        // 而且顺序不确定。分不清就别动——这是最后一道防线，
-        // 上游还会用 interactivePids 把 bg 进程挡掉。
+        // 而且顺序不确定。分不清就别动。
         val drift = driftOf(
             openTabs = mapOf("tab-1" to "旧id"),
             live = listOf(LiveTab("tab-1", "交互会话"), LiveTab("tab-1", "后台agent会话")),
@@ -231,24 +230,53 @@ class LiveSessionProbeTest {
         assertEquals(listOf(KeyDrift("tab-1", from = "旧id", to = "新id")), drift)
     }
 
-    // ---- 只认交互式进程 ----
+    // ---- Claude daemon 接管 ----
 
     private fun runtime(pid: Long, kind: String) =
         ClaudeRuntimeSession("会话$pid", pid, kind, "idle", "/tmp")
 
     @Test
-    fun `后台 agent 的进程不参与探测`() {
-        val pids = interactivePids(
+    fun `daemon 接管的 bg 进程参与漂移探测`() {
+        val pids = claudeDriftPids(
             listOf(runtime(1L, "interactive"), runtime(2L, "bg")),
         )
 
-        assertEquals(listOf(1L), pids)
+        assertEquals(listOf(1L, 2L), pids)
     }
 
     @Test
-    fun `kind 缺失的进程按交互式对待`() {
-        // 老版本 CLI 可能不写这个字段，漏掉真正的终端比多认一个更糟
-        assertEquals(listOf(1L), interactivePids(listOf(runtime(1L, kind = "null").copy(kind = null))))
+    fun `仅剩 daemon 会话时终端从旧 id 迁到真实 id`() {
+        val daemon = runtime(2L, "bg").copy(sessionId = "daemon新id")
+        val probe = probe(
+            claudePids = claudeDriftPids(listOf(daemon)),
+            env = mapOf(2L to "tab-1"),
+            claudeSession = mapOf(2L to daemon.sessionId),
+        )
+
+        val live = probe.probe()
+        assertEquals(listOf(LiveTab("tab-1", "daemon新id")), live)
+        assertEquals(
+            listOf(KeyDrift("tab-1", from = "旧id", to = "daemon新id")),
+            driftOf(mapOf("tab-1" to "旧id"), live),
+        )
+    }
+
+    @Test
+    fun `前台与后台同时报告不同 id 时保持原会话`() {
+        val foreground = runtime(1L, "interactive").copy(sessionId = "前台id")
+        val background = runtime(2L, "bg").copy(sessionId = "后台id")
+        val probe = probe(
+            claudePids = claudeDriftPids(listOf(foreground, background)),
+            env = mapOf(1L to "tab-1", 2L to "tab-1"),
+            claudeSession = mapOf(1L to foreground.sessionId, 2L to background.sessionId),
+        )
+
+        val live = probe.probe()
+        assertEquals(
+            setOf(LiveTab("tab-1", "前台id"), LiveTab("tab-1", "后台id")),
+            live.toSet(),
+        )
+        assertTrue(driftOf(mapOf("tab-1" to "旧id"), live).isEmpty())
     }
 
     // ---- 应用前复核 ----
