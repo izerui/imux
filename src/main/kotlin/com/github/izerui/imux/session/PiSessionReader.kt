@@ -69,7 +69,12 @@ class PiSessionReader(private val piHome: Path) {
             agentType = AgentType.PI,
             // 与另外两个 reader 同一口径：优先用记录自带的时刻而非 mtime，
             // 理由见 lastTimestampOf 的注释。
-            lastActiveAt = lastTimestampOf(file) ?: Files.getLastModifiedTime(file).toInstant(),
+            // `/name` 与 imux 的标题重新生成都会追加 session_info；那只是显示元数据，
+            // 不能把一个几周没说话的会话顶到“刚刚”。活动时间只认非命名记录。
+            lastActiveAt =
+                lastTimestampOf(file) { line ->
+                    JsonLineScanner.topLevelStringValue(line, "type") != SESSION_INFO_TYPE
+                } ?: Files.getLastModifiedTime(file).toInstant(),
             createdAt = creationTimeOf(file),
             filePath = file,
         )
@@ -132,6 +137,7 @@ class PiSessionReader(private val piHome: Path) {
 
         const val SESSION_HEAD_MARKER = "\"type\":\"session\""
         const val SESSION_INFO_MARKER = "\"type\":\"session_info\""
+        const val SESSION_INFO_TYPE = "session_info"
         const val USER_ROLE_MARKER = "\"role\":\"user\""
         const val MESSAGE_TYPE = "message"
         const val USER_ROLE = "user"

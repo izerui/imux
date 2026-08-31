@@ -97,10 +97,11 @@ Codex · 耗时 2 分 13 秒
 | `~/.claude/projects/<项目目录>/*.jsonl` | 会话标题、时间、首条消息 | 列出本项目的 Claude 会话 |
 | `~/.claude/sessions/*.json` | 进程 pid、状态、cwd | 判断哪些会话正在跑 |
 | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | 首行的 cwd、标题、轮次信号 | 列出本项目的 Codex 会话、检测轮次完成 |
-| `~/.codex/state_5.sqlite` | `threads` 表的 `id, title` | 取 Codex 会话的正式标题 |
+| `~/.codex/state_5.sqlite` | `threads` 表的 `id, name, title` | 取 Codex 会话的正式标题 |
 | `~/.pi/agent/sessions/<项目目录>/*.jsonl` | 会话名、时间、首条消息、轮次信号 | 列出本项目的 pi 会话、检测轮次完成 |
 
-**全部是只读的**，一个字节都不往里写；sqlite 用的是只读连接。插件自己不存任何会话数据。
+正常扫描全部只读。只有你主动点击“重新生成会话标题”时，插件才调用对应 CLI
+生成一条新标题，并写回该 CLI 自己的标题元数据；不会修改或追加会话正文。插件自己不存任何会话数据。
 
 还会查两样进程信息，**只针对 imux 自己启动的 CLI 进程**，用来认出你在终端里 `/clear`、`/new` 之后换了哪个会话（见下一节）：
 

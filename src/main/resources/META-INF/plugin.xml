@@ -23,8 +23,9 @@
       <p>imux notifies you when an agent finishes a turn or needs input. Notifications include the
       agent, elapsed time, and session title, and can take you directly to the latest output.</p>
 
-      <p><b>imux does not host or modify your sessions.</b> It is a read-only view of each CLI's own
-      session store. Uninstalling the plugin leaves all session history intact.</p>
+      <p><b>imux does not host your conversations.</b> Session history remains in each CLI's own
+      store; title regeneration only updates that CLI's display-name metadata. Uninstalling the
+      plugin leaves all session history intact.</p>
 
       <p><b>Features</b></p>
       <ul>
@@ -126,6 +127,14 @@
                 text="Copy Session Info"
                 description="Copy the imux session type and ID to the clipboard"
                 icon="AllIcons.Actions.Copy">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </action>
+        <action
+                id="imux.RegenerateSessionTitle"
+                class="com.github.izerui.imux.terminal.RegenerateSessionTitleAction"
+                text="Regenerate Session Title"
+                description="Use the current CLI model to regenerate this session title"
+                icon="AllIcons.Actions.Refresh">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </action>
         <group

@@ -10,6 +10,7 @@ import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.handoffActionGroup
+import com.github.izerui.imux.terminal.regenerateSessionTitleAction
 import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.terminal.sessionClipboardText
 import com.github.izerui.imux.turn.TurnNotifier
@@ -363,6 +364,7 @@ class AgentSessionTree(
                         }
                     val actions = DefaultActionGroup(copyAction)
                     model.sessionOf(session.id)?.let { source ->
+                        actions.add(regenerateSessionTitleAction(project, source))
                         actions.addSeparator()
                         actions.add(handoffActionGroup(project, source))
                     }

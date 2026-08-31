@@ -55,6 +55,19 @@ class ClaudeSessionReaderTest {
         assertEquals(AgentType.CLAUDE, sessions[0].agentType)
     }
 
+    @Test
+    fun `custom-title 优先于后续自动生成的 ai-title`() {
+        File(projectDir(), "renamed.jsonl").writeText(
+            """
+            {"type":"ai-title","aiTitle":"原自动标题","sessionId":"renamed"}
+            {"type":"custom-title","customTitle":"模型重新生成标题","sessionId":"renamed"}
+            {"type":"ai-title","aiTitle":"后续自动标题","sessionId":"renamed"}
+            """.trimIndent(),
+        )
+
+        assertEquals("模型重新生成标题", reader().read("/Users/demo/proj").single().title)
+    }
+
     /**
      * 实测并非每个会话都有 ai-title（同项目 6 个会话有 3 个没有，且与轮数无关），
      * 退到 id 短码毫无信息量，因此改为退到首条用户消息——与 codex 侧一致。

@@ -38,11 +38,21 @@ class CodexThreadIndex(private val codexHome: Path) {
             val titles = HashMap<String, String>()
             // 只读打开：codex 可能正在写这个库，我们绝不能干扰它
             readOnlyDataSource(file).connection.use { conn ->
+                val hasName =
+                    conn.createStatement().use { statement ->
+                        statement.executeQuery("PRAGMA table_info(threads)").use { rows ->
+                            generateSequence { if (rows.next()) rows.getString("name") else null }
+                                .any { it == "name" }
+                        }
+                    }
+                val query = if (hasName) "SELECT id, name, title FROM threads" else "SELECT id, title FROM threads"
                 conn.createStatement().use { statement ->
-                    statement.executeQuery("SELECT id, title FROM threads").use { rows ->
+                    statement.executeQuery(query).use { rows ->
                         while (rows.next()) {
                             val id = rows.getString("id") ?: continue
-                            val title = rows.getString("title")?.trim()
+                            val title =
+                                rows.takeIf { hasName }?.getString("name")?.trim()?.takeIf(String::isNotEmpty)
+                                    ?: rows.getString("title")?.trim()
                             if (!title.isNullOrEmpty()) titles[id] = title
                         }
                     }

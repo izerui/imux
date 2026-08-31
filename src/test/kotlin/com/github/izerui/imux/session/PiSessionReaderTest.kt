@@ -7,6 +7,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.time.Instant
 
 class PiSessionReaderTest {
 
@@ -96,6 +97,21 @@ class PiSessionReaderTest {
         )
 
         assertEquals("新名字", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `改名记录不更新会话最近活动时间`() {
+        writeSession(
+            "uuid-renamed-time",
+            "/Users/demo/proj",
+            userMessage("开始处理", at = "2026-08-13T08:03:20.000Z") + "\n" +
+                sessionInfo("新名字", at = "2026-08-31T04:00:00.000Z"),
+        )
+
+        assertEquals(
+            Instant.parse("2026-08-13T08:03:20.000Z"),
+            reader().read("/Users/demo/proj").single().lastActiveAt,
+        )
     }
 
     @Test

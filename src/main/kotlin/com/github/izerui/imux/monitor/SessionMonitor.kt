@@ -1,6 +1,7 @@
 package com.github.izerui.imux.monitor
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
@@ -14,6 +15,7 @@ import com.github.izerui.imux.session.PiSessionReader
 import com.github.izerui.imux.session.PiSessionReport
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
+import com.github.izerui.imux.session.SessionTitleRegenerator
 import com.github.izerui.imux.session.codexPids
 import com.github.izerui.imux.session.driftOf
 import com.github.izerui.imux.session.claudeDriftPids
@@ -23,11 +25,14 @@ import com.github.izerui.imux.session.stillApplicable
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
+import com.github.izerui.imux.terminal.resolveShell
 import com.github.izerui.imux.turn.RunningSessions
 import com.github.izerui.imux.turn.RuntimeStatusTracker
 import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.turn.waitingNotificationWanted
 import com.github.izerui.imux.watch.SessionStoreWatcher
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
@@ -53,6 +58,7 @@ import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 
 fun interface SessionMonitorListener : EventListener {
     fun stateChanged()
@@ -178,6 +184,19 @@ class SessionMonitor(
     private val refreshRequested = AtomicBoolean(false)
     private val checkingCompletedTurns = AtomicBoolean(false)
     private val probing = AtomicBoolean(false)
+    private val regeneratingTitles = ConcurrentHashMap.newKeySet<String>()
+
+    private val titleRegenerator by lazy {
+        SessionTitleRegenerator(
+            userHome = Paths.get(System.getProperty("user.home")),
+            shell =
+                resolveShell(
+                    System.getenv("SHELL"),
+                    isWindows = SystemInfo.isWindows,
+                    configuredShell = TerminalLocalOptions.getInstance().shellPath,
+                ),
+        )
+    }
 
     /** 还允许尝试几次会话漂移探测，见 [requestDriftProbe]。 */
     private val driftProbeAttempts = AtomicInteger(0)
@@ -426,6 +445,54 @@ class SessionMonitor(
             updateFrameTitle()
             notifyListeners()
         }
+    }
+
+    fun isRegeneratingTitle(sessionId: String): Boolean = sessionId in regeneratingTitles
+
+    /**
+     * 用对应 CLI 的一次性模型请求重新生成标题，再写回它自己的会话标题字段。
+     *
+     * 不复用正在运行的终端：向原会话输入 `/rename` 或提示词会污染对话，还可能撞上
+     * 正在执行的一轮。独立的非持久化调用只负责产出一行标题，源会话正文一个字不动。
+     */
+    fun regenerateTitle(session: AgentSession) {
+        if (!regeneratingTitles.add(session.id)) return
+        notifyListeners()
+
+        coroutineScope.launch(Dispatchers.IO) {
+            val result = runCatching { titleRegenerator.regenerate(session, projectPath) }
+            withContext(Dispatchers.EDT) {
+                regeneratingTitles.remove(session.id)
+                if (project.isDisposed) return@withContext
+                if (result.isSuccess) {
+                    refresh()
+                    titleNotification(
+                        ImuxBundle.message("notification.title.regenerated", result.getOrThrow()),
+                        NotificationType.INFORMATION,
+                    )
+                } else {
+                    titleNotification(
+                        ImuxBundle.message(
+                            "notification.title.failed",
+                            result.exceptionOrNull()?.message ?: ImuxBundle.message("notification.title.unknown.error"),
+                        ),
+                        NotificationType.WARNING,
+                    )
+                }
+                notifyListeners()
+            }
+        }
+    }
+
+    private fun titleNotification(
+        content: String,
+        type: NotificationType,
+    ) {
+        NotificationGroupManager
+            .getInstance()
+            .getNotificationGroup(TITLE_NOTIFICATION_GROUP)
+            .createNotification(ImuxBundle.message("action.regenerate.title.text"), content, type)
+            .notify(project)
     }
 
     /** 标签关闭后立即撤销运行态，不能让窗口标题再等下一轮文件轮询。 */
@@ -742,6 +809,8 @@ class SessionMonitor(
     override fun dispose() = Unit
 
     companion object {
+        private const val TITLE_NOTIFICATION_GROUP = "imux.turnCompleted"
+
         /**
          * 一次换 id 最多探测几轮。
          *

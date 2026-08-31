@@ -75,20 +75,26 @@ class ClaudeSessionReader(
         }.onFailure { LOG.warn("跳过无法解析的 Claude 会话文件 $file", it) }.getOrNull()
 
     /**
-     * 取最后一条 ai-title 记录。
+     * 用户通过 `/rename` 或 SDK 生成的 custom-title 优先于自动 ai-title。
      *
-     * 逐行扫描而非 JSON 反序列化：会话文件单行可达数 MB（含完整工具输出），
-     * 只为取一个标题就解析整行不划算，而 ai-title 记录本身结构极简、可靠。
+     * 两者都可能出现多次，分别取最后一条；custom-title 只要存在就一直是权威标题，
+     * 后续自动生成的 ai-title 不能把用户明确设置的名字盖回去。
      */
     private fun extractTitle(file: Path): String? {
-        var title: String? = null
+        var generated: String? = null
+        var custom: String? = null
         file.useLines { lines ->
             for (line in lines) {
-                if (!line.contains(TITLE_MARKER)) continue
-                JsonLineScanner.stringValue(line, "aiTitle")?.let { title = it }
+                when {
+                    line.contains(CUSTOM_TITLE_MARKER) ->
+                        JsonLineScanner.stringValue(line, "customTitle")?.let { custom = it }
+
+                    line.contains(AI_TITLE_MARKER) ->
+                        JsonLineScanner.stringValue(line, "aiTitle")?.let { generated = it }
+                }
             }
         }
-        return title
+        return custom ?: generated
     }
 
     private fun fallbackTitle(id: String) = ImuxBundle.message("session.default", id.take(8))
@@ -116,7 +122,8 @@ class ClaudeSessionReader(
 
     private companion object {
         val LOG = logger<ClaudeSessionReader>()
-        const val TITLE_MARKER = "\"ai-title\""
+        const val AI_TITLE_MARKER = "\"ai-title\""
+        const val CUSTOM_TITLE_MARKER = "\"custom-title\""
         const val USER_RECORD = "\"type\":\"user\""
         const val TOOL_RESULT = "tool_result"
         const val MAX_SCAN_LINES = 50

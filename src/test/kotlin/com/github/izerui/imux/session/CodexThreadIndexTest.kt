@@ -21,9 +21,11 @@ class CodexThreadIndexTest {
         val file = File(tmp.root, "state_5.sqlite")
         DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
             conn.createStatement().use {
-                it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, updated_at_ms INTEGER)")
+                it.executeUpdate(
+                    "CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, updated_at_ms INTEGER)",
+                )
             }
-            conn.prepareStatement("INSERT INTO threads (id, title, updated_at_ms) VALUES (?, ?, ?)")
+            conn.prepareStatement("INSERT INTO threads (id, name, title, updated_at_ms) VALUES (?, NULL, ?, ?)")
                 .use { stmt ->
                     rows.forEach { (id, title, updated) ->
                         stmt.setString(1, id)
@@ -40,6 +42,20 @@ class CodexThreadIndexTest {
         createDb(Triple("019faba2-379e-7333-a4bd-9dc6f7ec81ed", "分析工程结构", 1_000L))
 
         assertEquals("分析工程结构", index().load()["019faba2-379e-7333-a4bd-9dc6f7ec81ed"])
+    }
+
+    @Test
+    fun `用户设置的 name 优先于自动 title`() {
+        createDb(Triple("thread-1", "自动标题", 1_000L))
+        DriverManager.getConnection("jdbc:sqlite:${File(tmp.root, "state_5.sqlite").absolutePath}").use { conn ->
+            conn.prepareStatement("UPDATE threads SET name = ? WHERE id = ?").use { stmt ->
+                stmt.setString(1, "重新生成的标题")
+                stmt.setString(2, "thread-1")
+                stmt.executeUpdate()
+            }
+        }
+
+        assertEquals("重新生成的标题", index().load()["thread-1"])
     }
 
     @Test
@@ -69,6 +85,19 @@ class CodexThreadIndexTest {
     @Test
     fun `数据库不存在时返回空表`() {
         assertTrue(index().load().isEmpty())
+    }
+
+    @Test
+    fun `旧表没有 name 列时仍读取 title`() {
+        val file = File(tmp.root, "state_5.sqlite")
+        DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT)")
+                it.executeUpdate("INSERT INTO threads VALUES ('old-1', '旧版标题')")
+            }
+        }
+
+        assertEquals("旧版标题", index().load()["old-1"])
     }
 
     /** codex 换版本时表结构可能变，不能因此让整个会话列表崩掉。 */

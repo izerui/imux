@@ -29,8 +29,9 @@ internal fun lastTimestampOf(
     file: Path,
     initialTailBytes: Long = DEFAULT_TAIL_BYTES,
     maxTailBytes: Long = MAX_TAIL_BYTES,
+    acceptLine: (String) -> Boolean = { true },
 ): Instant? = scanTail(file, initialTailBytes, maxTailBytes) { lines ->
-    lines.asReversed().firstNotNullOfOrNull(::timestampOf)
+    lines.asReversed().filter(acceptLine).firstNotNullOfOrNull(::timestampOf)
 }
 
 /**
