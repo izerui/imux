@@ -15,13 +15,19 @@ print_command() {
 }
 
 release_base() {
-  git log --format='%H%x09%s' |
-    awk -F '\t' '
-      !found && ($2 ~ /^chore\(release\): 发布 [0-9]/ || $2 ~ /^发布 ?[0-9].*版本/ || $2 ~ /并发布 ?[0-9].*版本/) {
-        print $1
-        found = 1
-      }
-    '
+  local current_version
+  current_version=$(plugin_version)
+  [[ -z "$current_version" ]] && return 1
+
+  local commit v
+  while IFS= read -r commit; do
+    v=$(git show "${commit}:build.gradle.kts" 2>/dev/null |
+      awk -F '"' '/^version = "[^"]+"/ { print $2; exit }')
+    if [[ -n "$v" && "$v" != "$current_version" ]]; then
+      echo "$commit"
+      return 0
+    fi
+  done < <(git log --format='%H' -- build.gradle.kts)
 }
 
 plugin_version() {
