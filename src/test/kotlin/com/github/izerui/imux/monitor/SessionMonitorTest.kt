@@ -1,5 +1,6 @@
 package com.github.izerui.imux.monitor
 
+import com.github.izerui.imux.SourceCode
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.PiReportType
 import com.github.izerui.imux.session.PiSessionReport
@@ -12,12 +13,12 @@ import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Proxy
 import java.util.concurrent.atomic.AtomicBoolean
 
 class SessionMonitorTest {
-
     @Test
     fun `model 变化会透传给 monitor 监听器`() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
@@ -57,15 +58,46 @@ class SessionMonitorTest {
 
     @Test
     fun `pi 上报只属于 cwd 完全相同的项目`() {
-        val report = PiSessionReport(
-            PiReportType.SESSION_START,
-            "imux-1",
-            "session-1",
-            "/Users/demo/project-a",
-        )
+        val report =
+            PiSessionReport(
+                PiReportType.SESSION_START,
+                "imux-1",
+                "session-1",
+                "/Users/demo/project-a",
+            )
 
         assertEquals(true, piReportBelongsToProject(report, "/Users/demo/project-a"))
         assertFalse(piReportBelongsToProject(report, "/Users/demo/project-b"))
+    }
+
+    @Test
+    fun `pi 启动上报触发扫描且扫描后立即刷新运行态`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt")
+        val reportBody = source.bodyAfter("fun onPiSessionReported(report: PiSessionReport)", '{')
+        val refreshWorkerBody = source.bodyAfter("private fun startRefreshWorker()", '{')
+
+        assertTrue(
+            "session_start 必须主动扫描，否则新会话仍要等最多 3 秒才进入模型",
+            source.compact(reportBody).contains(
+                source.compact(
+                    """
+                    PiReportType.SESSION_START -> {
+                        val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
+                        if (drifts.isNotEmpty()) applyDrifts(drifts)
+                        refresh()
+                    }
+                    """.trimIndent(),
+                ),
+            ),
+        )
+        assertTrue(
+            "扫描挂上 TurnWatcher 后必须当场重算运行态，否则标记还要再等下一拍",
+            source.compact(refreshWorkerBody).contains(
+                source.compact(
+                    "withContext(Dispatchers.EDT) { model.applyScan(scanned) } checkCompletedTurns()",
+                ),
+            ),
+        )
     }
 
     /**
@@ -146,15 +178,16 @@ class SessionMonitorTest {
             }
         } as Project
 
-    private fun defaultValue(type: Class<*>): Any? = when (type) {
-        java.lang.Boolean.TYPE -> false
-        java.lang.Byte.TYPE -> 0.toByte()
-        java.lang.Short.TYPE -> 0.toShort()
-        java.lang.Integer.TYPE -> 0
-        java.lang.Long.TYPE -> 0L
-        java.lang.Float.TYPE -> 0f
-        java.lang.Double.TYPE -> 0.0
-        java.lang.Character.TYPE -> '\u0000'
-        else -> null
-    }
+    private fun defaultValue(type: Class<*>): Any? =
+        when (type) {
+            java.lang.Boolean.TYPE -> false
+            java.lang.Byte.TYPE -> 0.toByte()
+            java.lang.Short.TYPE -> 0.toShort()
+            java.lang.Integer.TYPE -> 0
+            java.lang.Long.TYPE -> 0L
+            java.lang.Float.TYPE -> 0f
+            java.lang.Double.TYPE -> 0.0
+            java.lang.Character.TYPE -> '\u0000'
+            else -> null
+        }
 }

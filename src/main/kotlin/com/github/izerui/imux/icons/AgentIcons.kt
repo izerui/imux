@@ -24,6 +24,20 @@ private const val SPIN_FRAMES = 24
 private const val SPIN_FRAME_MS = 85
 
 /**
+ * 编辑器标签通过 [javax.swing.CellRendererPane] 绘制图标，但其 owner 没有设置
+ * [AnimatedIcon.ANIMATION_IN_RENDERER_ALLOWED]。默认实现因此不会安排下一帧重绘；
+ * 标签创建和标题变化带来的偶发重绘会让动画短暂移动，随后便停住。
+ *
+ * 这个动画只用于编辑器标签，直接返回 renderer owner，让平台自带的帧调度器重绘它。
+ */
+internal class EditorTabAnimatedIcon(
+    delay: Int,
+    vararg frames: Icon,
+) : AnimatedIcon(delay, *frames) {
+    public override fun getRendererOwner(component: Component?): Component? = component
+}
+
+/**
  * `AllIcons` 没有 OpenAI / Claude / pi 的品牌标志，无法用语义匹配的平台图标替代；
  * 资源仍交给 [IconLoader] 选择主题与 HiDPI 变体。
  *
@@ -51,18 +65,20 @@ internal object AgentIcons {
         val unread: Boolean,
     )
 
-    fun forAgent(agentType: AgentType): Icon = when (agentType) {
-        AgentType.CLAUDE -> claude
-        AgentType.CODEX -> codex
-        AgentType.PI -> pi
-    }
+    fun forAgent(agentType: AgentType): Icon =
+        when (agentType) {
+            AgentType.CLAUDE -> claude
+            AgentType.CODEX -> codex
+            AgentType.PI -> pi
+        }
 
     /** 品牌图标原地转圈，表示这个会话正在跑。 */
-    fun busy(agentType: AgentType): Icon = when (agentType) {
-        AgentType.CLAUDE -> claudeBusy
-        AgentType.CODEX -> codexBusy
-        AgentType.PI -> piBusy
-    }
+    fun busy(agentType: AgentType): Icon =
+        when (agentType) {
+            AgentType.CLAUDE -> claudeBusy
+            AgentType.CODEX -> codexBusy
+            AgentType.PI -> piBusy
+        }
 
     /**
      * 标签页图标：未读标记在最左边，品牌图标跟在它和标题之间。
@@ -76,7 +92,11 @@ internal object AgentIcons {
      * 没有未读时不留空位，图标就是品牌图标本身。代价是标记出现与消失时后面整块会横移一格；
      * 留空位能免掉这一下，但换来每个标签常年空着半截，权衡后选了前者。
      */
-    fun forTab(agentType: AgentType, running: Boolean, unread: Boolean): Icon =
+    fun forTab(
+        agentType: AgentType,
+        running: Boolean,
+        unread: Boolean,
+    ): Icon =
         tabIcons.getOrPut(TabIconKey(agentType, running, unread)) {
             val brand = if (running) busy(agentType) else forAgent(agentType)
             if (!unread) {
@@ -99,12 +119,13 @@ internal object AgentIcons {
      * 图案必须落在声明区域的内切圆里，否则转到 45° 会削角——pi 的图标为此特意
      * 画得比另外两个小一圈，见 IconResourceTest「Pi 图标留出旋转所需的余量」。
      */
-    private fun spinning(base: Icon): Icon = AnimatedIcon(
-        SPIN_FRAME_MS,
-        *Array<Icon>(SPIN_FRAMES) { frame ->
-            if (frame == 0) base else RotatedIcon(base, 2 * Math.PI * frame / SPIN_FRAMES)
-        },
-    )
+    private fun spinning(base: Icon): Icon =
+        EditorTabAnimatedIcon(
+            SPIN_FRAME_MS,
+            *Array<Icon>(SPIN_FRAMES) { frame ->
+                if (frame == 0) base else RotatedIcon(base, 2 * Math.PI * frame / SPIN_FRAMES)
+            },
+        )
 
     /**
      * 绕中心旋转绘制，对外仍报原来的尺寸。
@@ -112,8 +133,16 @@ internal object AgentIcons {
      * 尺寸必须保持不变：一是 [AnimatedIcon] 要求各帧同尺寸，二是尺寸一变标签里的
      * 标题就会跟着横移。图案本身在内切圆范围内，转到任何角度都不会被声明区域裁掉。
      */
-    private class RotatedIcon(private val base: Icon, private val radians: Double) : Icon {
-        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+    private class RotatedIcon(
+        private val base: Icon,
+        private val radians: Double,
+    ) : Icon {
+        override fun paintIcon(
+            c: Component?,
+            g: Graphics,
+            x: Int,
+            y: Int,
+        ) {
             val g2 = g.create() as Graphics2D
             try {
                 // 旋转会让像素落在半像素上，不开插值的话边缘是硬切的锯齿。

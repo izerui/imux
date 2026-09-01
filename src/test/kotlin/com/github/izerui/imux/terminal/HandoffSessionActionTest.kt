@@ -28,8 +28,10 @@ class HandoffSessionActionTest {
     @Test
     fun `英文交接提示只有一句引导语和复制内容`() {
         assertEquals(
-            "Take over the task from the session below, read its full context, and assess the current progress; " +
-                "report the results and wait for further instructions.\n\n" +
+            "Your first action must be a shell tool call that runs `rg -l session-abc-123 ~/.pi/agent/sessions " +
+                "~/.codex/sessions ~/.claude/projects 2>/dev/null || true` to locate the source record. Read that " +
+                "record and inspect the current workspace with tools. Then report the current progress, completed work, " +
+                "remaining work, and relevant local changes. Stop after reporting without implementing the source task.\n\n" +
                 "Session type: Claude Code\nSession ID: session-abc-123",
             handoffPrompt(session, PluginLanguage.ENGLISH),
         )
@@ -38,8 +40,9 @@ class HandoffSessionActionTest {
     @Test
     fun `中文交接提示只有一句引导语和复制内容`() {
         assertEquals(
-            "接手以下会话中的任务，读取完整上下文并梳理当前进展；" +
-                "反馈结果并等待下一步指示。\n\n" +
+            "第一项动作必须调用 shell 工具执行 `rg -l session-abc-123 ~/.pi/agent/sessions ~/.codex/sessions " +
+                "~/.claude/projects 2>/dev/null || true`，定位源会话记录。读取该记录并用工具检查当前工作区，" +
+                "然后汇报当前进展、已完成事项、剩余事项和相关本地改动。汇报后结束，不要实施源任务。\n\n" +
                 "会话类型：Claude Code\n会话 ID：session-abc-123",
             handoffPrompt(session, PluginLanguage.SIMPLIFIED_CHINESE),
         )

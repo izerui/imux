@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
 import com.intellij.ide.actions.CloseAction
@@ -37,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.event.FocusAdapter
@@ -254,9 +256,17 @@ class AgentTerminalFileEditor(
     private fun startInputTracking() {
         keyEventsJob =
             virtualFile.terminalView.coroutineScope.launch {
-                virtualFile.terminalView.keyEventsFlow.collect {
+                val monitor = SessionMonitor.getInstance(project)
+                virtualFile.terminalView.keyEventsFlow.conflate().collect {
+                    if (!monitor.isUnread(virtualFile.sessionKey)) return@collect
                     withContext(Dispatchers.EDT) {
-                        if (!disposed && !project.isDisposed) clearUnread()
+                        if (
+                            !disposed &&
+                            !project.isDisposed &&
+                            monitor.isUnread(virtualFile.sessionKey)
+                        ) {
+                            monitor.clearUnread(virtualFile.sessionKey)
+                        }
                     }
                 }
             }
@@ -296,7 +306,7 @@ class AgentTerminalFileEditor(
     }
 
     private fun clearUnread() {
-        com.github.izerui.imux.monitor.SessionMonitor
+        SessionMonitor
             .getInstance(project)
             .clearUnread(virtualFile.sessionKey)
     }

@@ -25,6 +25,7 @@ internal fun handoffPrompt(
         language,
         "handoff.prompt",
         sessionClipboardText(session.agentType, session.id, language),
+        session.id,
     )
 
 internal fun handoffActions(

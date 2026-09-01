@@ -281,7 +281,12 @@ class PlatformApiAlignmentSourceTest {
                 "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
             )
 
-        assertTrue(editor.contains("keyEventsFlow.collect"))
+        assertTrue(editor.contains("keyEventsFlow.conflate().collect"))
+        assertTrue(
+            editor.indexOf("if (!monitor.isUnread(virtualFile.sessionKey)) return@collect") <
+                editor.indexOf("withContext(Dispatchers.EDT)"),
+        )
+        assertFalse(editor.contains("keyEventsFlow.collect"))
         assertFalse(editor.contains("addInputInterceptor("))
         assertTrue(editor.contains("EditorMouseListener"))
         assertFalse(monitor.contains("addAWTEventListener"))
@@ -309,7 +314,7 @@ class PlatformApiAlignmentSourceTest {
         assertFalse(terminalHost.contains("manager.detachTab(tab)"))
         assertFalse(terminalHost.contains("getDeclaredMethod("))
         assertTrue(terminalHost.contains("requestFocus(false)"))
-        assertTrue(terminalHost.contains("deferSessionStartUntilUiShown(false)"))
+        assertFalse(terminalHost.contains("deferSessionStartUntilUiShown"))
         assertFalse(reporterScript.contains("PluginManagerCore"))
         assertFalse(reporterScript.contains("PluginManager.getPlugin("))
         assertFalse(reporterScript.contains("getPluginByClass("))

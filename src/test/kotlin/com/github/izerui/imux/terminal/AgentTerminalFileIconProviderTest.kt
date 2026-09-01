@@ -1,19 +1,20 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.icons.AgentIcons
+import com.github.izerui.imux.icons.EditorTabAnimatedIcon
 import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
-import com.intellij.ui.RowIcon
 import com.intellij.testFramework.LightVirtualFile
+import com.intellij.ui.RowIcon
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import javax.swing.JPanel
 
 class AgentTerminalFileIconProviderTest {
-
     @Test
     fun `Claude 与 Codex 使用不同的 16 像素图标`() {
         val claude = AgentIcons.forAgent(AgentType.CLAUDE)
@@ -28,19 +29,21 @@ class AgentTerminalFileIconProviderTest {
 
     @Test
     fun `忽略非 imux 虚拟文件`() {
-        val icon = AgentTerminalFileIconProvider()
-            .getIcon(LightVirtualFile("notes.txt"), 0, null)
+        val icon =
+            AgentTerminalFileIconProvider()
+                .getIcon(LightVirtualFile("notes.txt"), 0, null)
 
         assertNull(icon)
     }
 
     /** 四种组合，逐个取一遍。 */
-    private fun tabIcons(agentType: AgentType = AgentType.CLAUDE) = listOf(
-        terminalTabIcon(agentType, running = false, unread = false),
-        terminalTabIcon(agentType, running = true, unread = false),
-        terminalTabIcon(agentType, running = false, unread = true),
-        terminalTabIcon(agentType, running = true, unread = true),
-    )
+    private fun tabIcons(agentType: AgentType = AgentType.CLAUDE) =
+        listOf(
+            terminalTabIcon(agentType, running = false, unread = false),
+            terminalTabIcon(agentType, running = true, unread = false),
+            terminalTabIcon(agentType, running = false, unread = true),
+            terminalTabIcon(agentType, running = true, unread = true),
+        )
 
     /**
      * 状态修饰品牌图标，而不是取代它。
@@ -89,6 +92,19 @@ class AgentTerminalFileIconProviderTest {
             terminalTabIcon(AgentType.CLAUDE, running = true, unread = false),
             terminalTabIcon(AgentType.CLAUDE, running = true, unread = false),
         )
+    }
+
+    /**
+     * 编辑器标签的图标由 CellRendererPane 绘制。若动画不返回 renderer owner，只有新建
+     * 标签、改标题等偶发刷新能推进帧，因此动画会先动一下再停住。
+     */
+    @Test
+    fun `运行图标允许编辑器标签渲染器自行刷新`() {
+        val icon = terminalTabIcon(AgentType.CODEX, running = true, unread = false)
+        val owner = JPanel()
+
+        assertTrue(icon is EditorTabAnimatedIcon)
+        assertSame(owner, (icon as EditorTabAnimatedIcon).getRendererOwner(owner))
     }
 
     /** 忙碌不改变尺寸：只绕中心转，标题不会一忙起来就横移。 */

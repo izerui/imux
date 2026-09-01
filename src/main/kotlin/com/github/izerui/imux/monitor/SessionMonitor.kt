@@ -16,9 +16,9 @@ import com.github.izerui.imux.session.PiSessionReport
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.SessionTitleRegenerator
+import com.github.izerui.imux.session.claudeDriftPids
 import com.github.izerui.imux.session.codexPids
 import com.github.izerui.imux.session.driftOf
-import com.github.izerui.imux.session.claudeDriftPids
 import com.github.izerui.imux.session.readHeldRollouts
 import com.github.izerui.imux.session.readTabId
 import com.github.izerui.imux.session.stillApplicable
@@ -52,13 +52,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.nio.file.Paths
 import java.time.Instant
 import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 
 fun interface SessionMonitorListener : EventListener {
     fun stateChanged()
@@ -375,6 +375,9 @@ class SessionMonitor(
                 PiReportType.SESSION_START -> {
                     val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
                     if (drifts.isNotEmpty()) applyDrifts(drifts)
+                    // session_start 到达时 pi 已经创建会话文件，立即扫描即可拿到 watcher
+                    // 所需路径，不必再等会话库 3 秒一轮的全量比对。
+                    refresh()
                 }
 
                 PiReportType.AGENT_SETTLED -> {
@@ -619,6 +622,9 @@ class SessionMonitor(
                     val scanned = runCatching { repository.scan(projectPath) }.getOrNull()
                     if (scanned != null && !project.isDisposed) {
                         withContext(Dispatchers.EDT) { model.applyScan(scanned) }
+                        // applyScan 的监听器会先完成 key 迁移并补挂 TurnWatcher；随后当场
+                        // 重算运行态，避免新 pi 会话再等下一次 1 秒状态节拍才亮起标记。
+                        checkCompletedTurns()
                     }
                 }
             } finally {

@@ -140,6 +140,10 @@ class TerminalHost(
     /**
      * 恢复上次项目关闭前仍打开的标签。只恢复有真实 session id 的会话；pending 会话
      * 没有可传给 CLI 的 resume id，不能可靠重建。
+     *
+     * 这里只恢复标签状态，不立即启动所有后台 CLI。未选中的标签保留平台默认的
+     * initOnShow 懒启动行为，用户首次显示该标签时才恢复进程，避免项目启动时同时
+     * 拉起大量暂时不会使用的 agent。
      */
     fun restoreTabs(
         saved: List<RestorableSessionTabs.Tab>,
@@ -571,7 +575,6 @@ class TerminalHost(
                     ),
                 ).tabName(tabTitle)
                 .requestFocus(false)
-                .deferSessionStartUntilUiShown(false)
                 .createTab()
 
         detachTabAcross262(manager, tab)

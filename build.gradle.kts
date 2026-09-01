@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.github.izerui"
-version = "0.3.14"
+version = "0.3.15"
 
 repositories {
     // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。
@@ -83,6 +83,14 @@ intellijPlatform {
             // 代价是终端 API 漂移时会在运行时抛 NoSuchMethodError 而非安装期拒绝。
             untilBuild = provider { null }
         }
+
+        // dev.sh 在打包前让只读 pi 根据最近一次发布以来的 Git 变化生成当前版本日志。
+        // 通过 Gradle Provider 接入，文件内容会成为 patchPluginXml 的任务输入；直接在脚本里
+        // 改 build/tmp 下的 plugin.xml 会绕过增量构建，命中缓存时反而把旧日志装进 ZIP。
+        changeNotes =
+            providers.gradleProperty("changeNotesFile").flatMap { path ->
+                providers.fileContents(layout.projectDirectory.file(path)).asText
+            }
     }
 }
 
