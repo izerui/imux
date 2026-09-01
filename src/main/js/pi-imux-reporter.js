@@ -68,12 +68,23 @@ function installFullRedrawCursorRecovery(tui) {
       rawWrite,
     };
     terminal[FULL_REDRAW_OUTPUT] = output;
+
     terminal.write = function (data) {
       if (typeof data === "string" && data.includes(FULL_REDRAW_CLEAR)) {
         if (output.pendingFrame !== undefined) {
           output.rawWrite.call(this, output.pendingFrame);
         }
         output.pendingFrame = data;
+        // positionHardwareCursor 应在同步调用链中紧接着消费这帧。
+        // 若 pi 版本变化导致调用顺序改变，microtask 在同步链结束后立即冲刷，
+        // 不依赖任何超时猜测，也不会无限期挂起。
+        const self = this;
+        Promise.resolve().then(() => {
+          if (output.pendingFrame !== undefined) {
+            output.rawWrite.call(self, output.pendingFrame);
+            output.pendingFrame = undefined;
+          }
+        });
         return;
       }
 
