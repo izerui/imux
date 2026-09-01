@@ -26,6 +26,7 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.IdeFocusManager
@@ -84,7 +85,12 @@ class AgentTerminalFileEditor(
     private var scrollButtonVisible = false
     private var observedEditor: Editor? = null
     private var imeCompositionSupport: AgentImeCompositionSupport? = null
-    private val visibleAreaListener = VisibleAreaListener { refreshScrollButton() }
+    private val messageNavigator = SessionMessageNavigator(project, virtualFile, this)
+    private val visibleAreaListener =
+        VisibleAreaListener {
+            refreshScrollButton()
+            messageNavigator.viewportChanged()
+        }
     private val editorMouseListener =
         object : EditorMouseListener {
             override fun mousePressed(event: EditorMouseEvent) {
@@ -193,6 +199,7 @@ class AgentTerminalFileEditor(
         scrollToolbar = toolbar
         val toolbarComponent = toolbar.component.apply { isOpaque = false }
         scrollToolbarComponent = toolbarComponent
+        val navigatorComponent = messageNavigator.component
         startScrollTracking()
         startInputTracking()
 
@@ -203,6 +210,8 @@ class AgentTerminalFileEditor(
                 setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
                 add(toolbarComponent)
                 setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)
+                add(navigatorComponent)
+                setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
             }
 
             override fun uiDataSnapshot(sink: DataSink) {
@@ -224,6 +233,11 @@ class AgentTerminalFileEditor(
                 val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)
                 val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
                 toolbarComponent.setBounds(x, y, toolbarWidth, toolbarHeight)
+
+                val navigatorWidth = messageNavigator.preferredWidth
+                val navigatorX =
+                    (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
+                navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
             }
         }
     }
@@ -267,6 +281,7 @@ class AgentTerminalFileEditor(
             observedEditor = editor
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
             editor?.addEditorMouseListener(editorMouseListener)
+            messageNavigator.bind(editor)
             if (editor != null && virtualFile.agentType.needsImeCompositionOverlay) {
                 imeCompositionSupport =
                     AgentImeCompositionSupport(
@@ -317,6 +332,7 @@ class AgentTerminalFileEditor(
         }
         imeCompositionSupport?.dispose()
         imeCompositionSupport = null
+        Disposer.dispose(messageNavigator)
         observedEditor = null
         scrollToolbar = null
         scrollToolbarComponent = null
@@ -335,5 +351,9 @@ class AgentTerminalFileEditor(
         com.github.izerui.imux.monitor.SessionMonitor
             .getInstance(project)
             .sessionClosed(sessionKey)
+    }
+
+    private companion object {
+        const val NAVIGATOR_RIGHT_INSET = 14
     }
 }
