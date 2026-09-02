@@ -12,6 +12,9 @@ internal const val NPX_BIN = "npx"
 /** 隔离安装那条链的第一步；缺了整条链跑不动，因此单独设闸。 */
 internal const val NPM_BIN = "npm"
 
+/** MCP 由 Node 直接启动，避免依赖 npm 包是否保留了 server 脚本的执行位。 */
+internal const val NODE_BIN = "node"
+
 private data class McpLaunch(
     val command: String,
     val args: List<String>,
@@ -97,7 +100,6 @@ private fun resolveExecutable(
 /** 只解析 Codex 自己会写出的单行 MCP 形状，不冒充通用 TOML 解析器。 */
 private fun mcpLaunches(configToml: String?): List<McpLaunch> {
     if (configToml.isNullOrBlank()) return emptyList()
-    if (!tomlSectionContains(configToml, "mcp_servers", PI_LENS_MCP_BIN)) return emptyList()
 
     val launches = mutableListOf<McpLaunch>()
     var inMcpSection = false
@@ -128,7 +130,7 @@ private fun mcpLaunches(configToml: String?): List<McpLaunch> {
             val value = line.substringAfter('=')
             val inlineCommand = TOML_COMMAND.find(value)?.groupValues?.get(1)
             if (inlineCommand != null) {
-                launches += McpLaunch(inlineCommand, tomlStringArray(value), value.contains(PI_LENS_MCP_BIN))
+                launches += McpLaunch(inlineCommand, tomlStringArray(value), referencesPiLens(value))
             }
             inMcpSection = false
             return@forEach
@@ -141,10 +143,24 @@ private fun mcpLaunches(configToml: String?): List<McpLaunch> {
             ?.get(1)
             ?.let { command = it }
         TOML_ARGS.matchEntire(line)?.let { args = tomlStringArray(line) }
-        if (line.substringAfter('=', "").contains(PI_LENS_MCP_BIN)) referencesPiLens = true
+        if (referencesPiLens(line.substringAfter('=', ""))) referencesPiLens = true
     }
     flush()
     return launches
+}
+
+/**
+ * 同时兼容两种启动形态：
+ *
+ * - 旧配置直接启动 `pi-lens-mcp`；
+ * - imux 生成的新配置由 Node 启动包内的 `dist/mcp/server.js`。
+ *
+ * Windows TOML 会把反斜杠转义成 `\\`，归一成 `/` 后再认稳定的包内后缀。
+ */
+private fun referencesPiLens(value: String): Boolean {
+    val normalized = value.replace("\\\\", "/").replace('\\', '/')
+    return normalized.contains(PI_LENS_MCP_BIN) ||
+        normalized.contains("node_modules/pi-lens/dist/mcp/server.js")
 }
 
 /**
@@ -193,18 +209,15 @@ private val TOML_QUOTED = Regex(""""([^"]*)"""")
 internal fun codexPiLensHome(userHome: Path): Path = userHome.resolve(".codex/mcp/pi-lens")
 
 /**
- * 隔离安装里那个真正能被拉起的 `pi-lens-mcp`。
+ * 隔离安装里 pi-lens MCP 的 Node 入口。
  *
- * **Windows 上必须是 `.cmd`。** npm 在 `.bin` 下为每个 bin 写三个文件：无后缀的
- * `#!/bin/sh` 脚本（只给 Git Bash）、`.ps1`、以及 `.cmd`；三者里只有 `.cmd` 能被
- * CreateProcess 原生执行。POSIX 上则相反，`.bin` 里只有那个无后缀的 symlink。
- * 平台从参数进来而不是就地读 `SystemInfo`，理由与本模块其余闸门一致：一个纯函数
- * 才测得住两条分支。
+ * 不再直接启动 `node_modules/.bin/pi-lens-mcp`：pi-lens 4.1.3 的 npm 包曾把目标
+ * `server.js` 发布成 0644，`.bin` 虽然存在却会在 POSIX 上直接报 `permission denied`；
+ * 再跑 `npm install` 又因为依赖已经最新而不会修权限，设置页因此每次都继续显示“启用”。
+ * 交给已探测出的 Node 解释器读取脚本，不依赖执行位，也避开 Windows 的 `.cmd` 分支。
  */
-internal fun codexPiLensMcp(
-    userHome: Path,
-    isWindows: Boolean,
-): Path = codexPiLensHome(userHome).resolve("node_modules/.bin/$PI_LENS_MCP_BIN${if (isWindows) ".cmd" else ""}")
+internal fun codexPiLensServerScript(userHome: Path): Path =
+    codexPiLensHome(userHome).resolve("node_modules/pi-lens/dist/mcp/server.js")
 
 /**
  * Codex 这一组的报告。
@@ -220,7 +233,6 @@ internal fun codexReport(
     binaries: Map<String, String?>,
     cliInstalled: Boolean,
     userHome: Path,
-    isWindows: Boolean,
 ): CliReport {
     if (!cliInstalled) {
         return CliReport(AgentType.CODEX, installed = false, findings = emptyList())
@@ -233,22 +245,27 @@ internal fun codexReport(
         //
         // 只挡 MISSING，不挡 UNKNOWN：键不存在意味着那一轮 shell 探测超时了，而不是
         // 「没有 npm」。与 LspDiagnostics.isInstalled 同一把尺子。
-        LspCatalog.tool(NPM_BIN)?.takeIf { binaryAvailability(binaries, NPM_BIN) == BinaryAvailability.MISSING }
-            ?.let { npm ->
+        listOf(NPM_BIN, NODE_BIN)
+            .firstNotNullOfOrNull { name ->
+                LspCatalog.tool(name)?.takeIf { binaryAvailability(binaries, name) == BinaryAvailability.MISSING }
+            }?.let { tool ->
                 return CliReport(
                     AgentType.CODEX,
                     installed = true,
                     findings = emptyList(),
-                    groupRemedy = Remedy(emptyList(), npm.docsUrl, npm.name),
+                    groupRemedy = Remedy(emptyList(), tool.docsUrl, tool.name),
                 )
             }
         // `npm --prefix` 自行创建目录，不需要先 mkdir；两个 host-provided 包必须与
-        // pi-lens 一起装，否则装出来的仍是一个 spawn 即崩的 server。
+        // pi-lens 一起装，否则装出来的仍是一个 spawn 即崩的 server。Node 用登录 shell
+        // 探测出的绝对路径写进 Codex 配置，避免从桌面启动的 Codex 找不到 nvm/asdf PATH。
+        val node = binaries[NODE_BIN] ?: NODE_BIN
         val commands =
             listOf(
                 "npm --prefix ${singleQuote(codexPiLensHome(userHome).toString())} " +
                     "i pi-lens typebox @earendil-works/pi-tui",
-                "codex mcp add pi-lens -- ${singleQuote(codexPiLensMcp(userHome, isWindows).toString())}",
+                "codex mcp add pi-lens -- ${singleQuote(node)} " +
+                    singleQuote(codexPiLensServerScript(userHome).toString()),
             )
         return CliReport(
             AgentType.CODEX,

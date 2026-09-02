@@ -105,6 +105,28 @@ class CodexLspProbeTest {
         assertEquals(listOf(npx.toString(), "-y", "pi-lens-mcp"), received)
     }
 
+    /**
+     * pi-lens 4.1.3 曾把 server.js 发布成 0644。Node 读取脚本不要求执行位，
+     * 因此新配置必须把脚本放在 args，而不是继续直接 spawn `.bin/pi-lens-mcp`。
+     */
+    @Test
+    fun `Node 启动方式把不可执行的 server 脚本作为参数握手`() {
+        val node = temp.newFile("node").toPath()
+        assertTrue(node.toFile().setExecutable(true))
+        val script = home.resolve(".codex/mcp/pi-lens/node_modules/pi-lens/dist/mcp/server.js")
+        Files.createDirectories(script.parent)
+        Files.createFile(script)
+        val toml = "[mcp_servers.pi-lens]\ncommand = \"$node\"\nargs = [\"$script\"]"
+        var received: List<String>? = null
+
+        mountsPiLensMcp(toml, home, emptyMap()) { argv ->
+            received = argv
+            true
+        }
+
+        assertEquals(listOf(node.toString(), script.toString()), received)
+    }
+
     /** 裸命令同样要握手——PATH 解析出的绝对路径就是可 spawn 的完整命令。 */
     @Test
     fun `裸命令用 PATH 解析出的绝对路径握手`() {
@@ -243,21 +265,21 @@ class CodexLspProbeTest {
      */
     @Test
     fun `未挂载时给出自包含的隔离安装与挂载`() {
+        val node = "/usr/local/bin/node"
         val report =
             codexReport(
                 mounted = false,
-                binaries = emptyMap(),
+                binaries = mapOf(NODE_BIN to node),
                 cliInstalled = true,
                 userHome = home,
-                isWindows = false,
             )
 
         val dir = home.resolve(".codex/mcp/pi-lens")
-        val bin = dir.resolve("node_modules/.bin/pi-lens-mcp")
+        val script = dir.resolve("node_modules/pi-lens/dist/mcp/server.js")
         assertEquals(
             listOf(
                 "npm --prefix '$dir' i pi-lens typebox @earendil-works/pi-tui",
-                "codex mcp add pi-lens -- '$bin'",
+                "codex mcp add pi-lens -- '$node' '$script'",
             ),
             report.groupRemedy?.commands,
         )
@@ -266,18 +288,15 @@ class CodexLspProbeTest {
     }
 
     /**
-     * Windows 上必须挂 `.cmd`，不能沿用 POSIX 那个无后缀路径。
-     *
-     * npm 在 Windows 的 `.bin` 下为每个 bin 写三个文件：无后缀的 `#!/bin/sh` 脚本
-     * （只给 Git Bash 用）、`.ps1`、以及 `.cmd`。三者里只有 `.cmd` 能被 CreateProcess
-     * 原生执行——挂无后缀那个，Codex 拉起的是一个非 PE 文件，当场失败。
+     * Windows 同样由 Node 启动包内脚本，不再依赖 npm 生成的 `.cmd` 包装器。
      */
     @Test
-    fun `Windows 上挂载 npm 生成的 cmd 包装器`() {
-        val report = codexReport(false, emptyMap(), true, home, isWindows = true)
+    fun `Windows 挂载命令由 Node 启动 server 脚本`() {
+        val node = "C:\\Program Files\\nodejs\\node.exe"
+        val report = codexReport(false, mapOf(NODE_BIN to node), true, home)
 
-        val bin = home.resolve(".codex/mcp/pi-lens/node_modules/.bin/pi-lens-mcp.cmd")
-        assertEquals("codex mcp add pi-lens -- '$bin'", report.groupRemedy?.commands?.last())
+        val script = codexPiLensServerScript(home)
+        assertEquals("codex mcp add pi-lens -- '$node' '$script'", report.groupRemedy?.commands?.last())
     }
 
     /**
@@ -290,7 +309,7 @@ class CodexLspProbeTest {
      */
     @Test
     fun `npm 确认缺失时挡下安装修复`() {
-        val report = codexReport(false, mapOf("npm" to null), true, home, isWindows = false)
+        val report = codexReport(false, mapOf(NPM_BIN to null), true, home)
 
         val remedy = report.groupRemedy!!
         assertEquals(emptyList<String>(), remedy.commands)
@@ -308,17 +327,29 @@ class CodexLspProbeTest {
      */
     @Test
     fun `npm 探测结果未知时不挡`() {
-        val remedy = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy!!
+        val remedy = codexReport(false, emptyMap(), true, home).groupRemedy!!
 
         assertTrue(remedy.commands.isNotEmpty())
         assertEquals(null, remedy.blockingTool)
     }
 
-    /** 安装那条命令与平台无关：npm 自己跨平台，目录路径也不带后缀。 */
     @Test
-    fun `安装命令不随平台变化`() {
-        val posix = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy!!.commands.first()
-        val windows = codexReport(false, emptyMap(), true, home, isWindows = true).groupRemedy!!.commands.first()
+    fun `Node 确认缺失时挡下挂载修复`() {
+        val remedy = codexReport(false, mapOf(NODE_BIN to null), true, home).groupRemedy!!
+
+        assertEquals(emptyList<String>(), remedy.commands)
+        assertEquals(NODE_BIN, remedy.blockingTool)
+    }
+
+    /** 安装那条命令只由 npm 与目录决定，不受 Node 路径影响。 */
+    @Test
+    fun `安装命令不随 Node 路径变化`() {
+        val posix = codexReport(false, mapOf(NODE_BIN to "/usr/bin/node"), true, home).groupRemedy!!.commands.first()
+        val windows =
+            codexReport(false, mapOf(NODE_BIN to "C:\\Program Files\\nodejs\\node.exe"), true, home)
+                .groupRemedy!!
+                .commands
+                .first()
 
         assertEquals(posix, windows)
     }
@@ -331,7 +362,7 @@ class CodexLspProbeTest {
      */
     @Test
     fun `修复建议不指向 pi 的私有 bin`() {
-        val commands = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy!!.commands
+        val commands = codexReport(false, emptyMap(), true, home).groupRemedy!!.commands
 
         assertFalse(commands.any { it.contains(".pi/agent/npm") })
     }
@@ -344,14 +375,14 @@ class CodexLspProbeTest {
      */
     @Test
     fun `修复建议不随 pi 侧安装状态变化`() {
-        val withoutPiLens = codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy?.commands
+        val withoutPiLens = codexReport(false, emptyMap(), true, home).groupRemedy?.commands
 
         val piLensBin = piOwnedPiLensMcp(home)
         Files.createDirectories(piLensBin.parent)
         Files.createFile(piLensBin)
         assertTrue(piLensBin.toFile().setExecutable(true))
 
-        assertEquals(withoutPiLens, codexReport(false, emptyMap(), true, home, isWindows = false).groupRemedy?.commands)
+        assertEquals(withoutPiLens, codexReport(false, emptyMap(), true, home).groupRemedy?.commands)
     }
 
     /**
@@ -365,7 +396,7 @@ class CodexLspProbeTest {
         val gated = LspCatalog.languages.first { it.piLensBinary != null }
         val binary = gated.piLensBinary!!
 
-        val report = codexReport(true, mapOf(binary to "/usr/bin/$binary"), true, home, isWindows = false)
+        val report = codexReport(true, mapOf(binary to "/usr/bin/$binary"), true, home)
 
         assertEquals(null, report.groupRemedy)
         assertEquals(LspCatalog.languages.size, report.findings.size)
@@ -374,7 +405,7 @@ class CodexLspProbeTest {
 
     @Test
     fun `CLI 未安装时不产出任何缺口或建议`() {
-        val report = codexReport(false, emptyMap(), false, home, isWindows = false)
+        val report = codexReport(false, emptyMap(), false, home)
 
         assertFalse(report.installed)
         assertTrue(report.findings.isEmpty())

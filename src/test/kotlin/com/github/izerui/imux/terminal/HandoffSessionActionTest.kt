@@ -23,29 +23,46 @@ class HandoffSessionActionTest {
             lastActiveAt = Instant.EPOCH,
             createdAt = Instant.EPOCH,
             filePath = Paths.get("/tmp/claude/session-abc-123.jsonl"),
-        )
+    )
 
     @Test
-    fun `英文交接提示只有一句引导语和复制内容`() {
+    fun `英文交接提示包含精确源记录路径和复制内容`() {
+        val path = session.filePath.toAbsolutePath().normalize().toString()
+
         assertEquals(
-            "Your first action must be a shell tool call that runs `rg -l session-abc-123 ~/.pi/agent/sessions " +
-                "~/.codex/sessions ~/.claude/projects 2>/dev/null || true` to locate the source record. Read that " +
-                "record and inspect the current workspace with tools. Then report the current progress, completed work, " +
-                "remaining work, and relevant local changes. Stop after reporting without implementing the source task.\n\n" +
+            "Take over the task from the session below. First use tools to read the complete source session record " +
+                "at the exact path `$path`, then inspect the current workspace and assess " +
+                "the current progress. Report the completed work, remaining work, and relevant local changes, then " +
+                "wait for further instructions.\n\n" +
                 "Session type: Claude Code\nSession ID: session-abc-123",
             handoffPrompt(session, PluginLanguage.ENGLISH),
         )
     }
 
     @Test
-    fun `中文交接提示只有一句引导语和复制内容`() {
+    fun `中文交接提示包含精确源记录路径和复制内容`() {
+        val path = session.filePath.toAbsolutePath().normalize().toString()
+
         assertEquals(
-            "第一项动作必须调用 shell 工具执行 `rg -l session-abc-123 ~/.pi/agent/sessions ~/.codex/sessions " +
-                "~/.claude/projects 2>/dev/null || true`，定位源会话记录。读取该记录并用工具检查当前工作区，" +
-                "然后汇报当前进展、已完成事项、剩余事项和相关本地改动。汇报后结束，不要实施源任务。\n\n" +
+            "接手以下会话中的任务。先使用工具完整读取精确路径 `$path` 下的源会话记录，" +
+                "再检查当前工作区并梳理当前进展。反馈已完成事项、剩余事项和相关本地改动，然后等待下一步指示。\n\n" +
                 "会话类型：Claude Code\n会话 ID：session-abc-123",
             handoffPrompt(session, PluginLanguage.SIMPLIFIED_CHINESE),
         )
+    }
+
+    @Test
+    fun `其余本地化交接提示分别包含精确源记录路径`() {
+        val path = session.filePath.toAbsolutePath().normalize().toString()
+
+        assertTrue(handoffPrompt(session, PluginLanguage.TRADITIONAL_CHINESE).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.JAPANESE).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.KOREAN).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.GERMAN).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.FRENCH).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.SPANISH).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.PORTUGUESE_BRAZIL).contains(path))
+        assertTrue(handoffPrompt(session, PluginLanguage.RUSSIAN).contains(path))
     }
 
     @Test

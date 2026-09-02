@@ -42,7 +42,7 @@ internal data class LspServer(
  *
  * [installCommand] 为 null 表示**我们没有可靠的安装方式**，此时不给按钮，改在那一格里
  * 说「需要先安装 &lt;工具&gt;」并给 [docsUrl]。`brew` 是这一类的典型：不能用 brew 装 brew。
- * `go` / `npm` / `gem` 同理——它们的安装方式牵扯到版本管理器（nvm / rbenv / asdf）
+ * `go` / `npm` / `node` / `gem` 同理——它们的安装方式牵扯到版本管理器（nvm / rbenv / asdf）
  * 与系统包管理器，猜一条命令跑下去，坏的是用户的开发环境。
  */
 internal data class LspTool(
@@ -98,7 +98,7 @@ internal object LspCatalog {
      * .NET SDK 在 Homebrew 里是 **cask**（`brew install --cask dotnet-sdk`），
      * 写成 formula 的 `brew install dotnet-sdk` 直接报 `No available formula`。
      *
-     * `brew` / `go` / `npm` / `gem` 四条留空 [LspTool.installCommand]：
+     * `brew` / `go` / `npm` / `node` / `gem` 五条留空 [LspTool.installCommand]：
      * 见 [LspTool] 的说明——猜一条命令去装它们，坏的是用户的开发环境。
      */
     val tools: Map<String, LspTool> =
@@ -106,6 +106,7 @@ internal object LspCatalog {
             LspTool("brew", null, "https://brew.sh"),
             LspTool("go", null, "https://go.dev/dl/"),
             LspTool("npm", null, "https://nodejs.org/en/download"),
+            LspTool("node", null, "https://nodejs.org/en/download"),
             LspTool("gem", null, "https://www.ruby-lang.org/en/documentation/installation/"),
             LspTool("dotnet", "brew install --cask dotnet-sdk", "https://dotnet.microsoft.com/download"),
             LspTool("rustup", "brew install rustup", "https://rustup.rs"),

@@ -25,7 +25,7 @@ internal fun handoffPrompt(
         language,
         "handoff.prompt",
         sessionClipboardText(session.agentType, session.id, language),
-        session.id,
+        session.filePath.toAbsolutePath().normalize().toString(),
     )
 
 internal fun handoffActions(

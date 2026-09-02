@@ -135,14 +135,22 @@ class TerminalIntegrationSourceTest {
             ).readText()
 
         assertTrue(
-            "会话 editor 必须使用平台 Action Toolbar 提供按钮",
-            fileEditor.contains("createActionToolbar(") &&
-                fileEditor.contains(""""imuxTerminalEditor""""),
+            "会话 editor 必须使用平台 ActionButton 提供原生交互状态",
+            fileEditor.contains("ActionButton(") &&
+                fileEditor.contains("setLook(ActionButtonLook.SYSTEM_LOOK)"),
         )
         assertTrue(
-            "按钮必须使用接近 OpenAI 样式的简洁向下箭头并提供本地化 tooltip",
+            "按钮必须使用简洁向下箭头并提供本地化 tooltip",
             fileEditor.contains("action.scroll.bottom.description") &&
                 fileEditor.contains("AllIcons.General.ArrowDown"),
+        )
+        assertTrue(
+            "平台 ActionButton 必须按浮层行宽布局",
+            fileEditor.contains("scrollButton.setBounds(x, y, toolbarWidth, toolbarHeight)"),
+        )
+        assertTrue(
+            "滚动按钮隐藏时必须同步隐藏整行浮层，不能拦截终端鼠标事件",
+            fileEditor.contains("scrollButton?.isVisible = visible"),
         )
         assertTrue(
             "点击按钮必须复用 TerminalHost 的动态终端 Editor 滚动逻辑",
@@ -180,8 +188,14 @@ class TerminalIntegrationSourceTest {
             ),
         )
         assertTrue(
-            "滚动事件必须刷新 Action Presentation，由 Action System 决定按钮显隐",
-            fileEditor.contains("scrollToolbar?.updateActionsAsync()"),
+            "滚动事件必须同步 ActionButton 的显隐状态",
+            fileEditor.contains(
+                "setScrollButtonVisible(editor != null && !host.isScrolledToBottom(editor))",
+            ),
+        )
+        assertTrue(
+            "显隐状态变化后必须刷新 Action Presentation",
+            fileEditor.contains("scrollButton?.update()"),
         )
         assertTrue(
             "按钮必须以浮层形式放进终端 editor，不能挤占终端内容尺寸",
@@ -212,12 +226,12 @@ class TerminalIntegrationSourceTest {
         )
         assertTrue(
             "滚动按钮必须显式放在调色板层，否则会被终端组件覆盖",
-            fileEditor.contains("setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)"),
+            fileEditor.contains("setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)"),
         )
         assertFalse(
             "不能把图层常量传给 add(Component, int)，JBLayeredPane 会把它解释为组件索引",
             fileEditor.contains("add(terminal, JLayeredPane.DEFAULT_LAYER)") ||
-                fileEditor.contains("add(toolbarComponent, JLayeredPane.PALETTE_LAYER)"),
+                fileEditor.contains("add(scrollButton, JLayeredPane.PALETTE_LAYER)"),
         )
     }
 

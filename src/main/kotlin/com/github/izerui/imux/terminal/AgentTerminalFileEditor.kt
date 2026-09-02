@@ -5,13 +5,13 @@ import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
 import com.intellij.ide.actions.CloseAction
-import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataSink
-import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.UiDataProvider
+import com.intellij.openapi.actionSystem.ex.ActionButtonLook
+import com.intellij.openapi.actionSystem.impl.ActionButton
 import com.intellij.openapi.application.ApplicationActivationListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
@@ -82,8 +82,7 @@ class AgentTerminalFileEditor(
     /** 已挂上转发器的面板。用它保证只挂一次，也用于 [dispose] 时摘除。 */
     private var focusHost: JComponent? = null
 
-    private var scrollToolbar: ActionToolbar? = null
-    private var scrollToolbarComponent: JComponent? = null
+    private var scrollButton: ActionButton? = null
     private var scrollButtonVisible = false
     private var observedEditor: Editor? = null
     private var imeCompositionSupport: AgentImeCompositionSupport? = null
@@ -134,8 +133,7 @@ class AgentTerminalFileEditor(
             override fun actionPerformed(event: AnActionEvent) {
                 val host = TerminalHost.getInstance(project)
                 host.scrollToBottom(virtualFile.terminalView)
-                scrollButtonVisible = false
-                scrollToolbar?.updateActionsAsync()
+                setScrollButtonVisible(false)
             }
         }
 
@@ -144,7 +142,7 @@ class AgentTerminalFileEditor(
             scrollToBottomAction.templatePresentation.text = ImuxBundle.message("action.scroll.bottom.text")
             scrollToBottomAction.templatePresentation.description =
                 ImuxBundle.message("action.scroll.bottom.description")
-            scrollToolbar?.updateActionsAsync()
+            scrollButton?.update()
         }
 
         // 终端输出在应用后台仍会为每次光标变化排 EDT 滚动任务。激活时先同步到
@@ -187,20 +185,17 @@ class AgentTerminalFileEditor(
             focusHost = terminal
         }
 
-        val toolbar =
-            ActionManager
-                .getInstance()
-                .createActionToolbar(
-                    "imuxTerminalEditor",
-                    DefaultActionGroup(scrollToBottomAction),
-                    true,
-                ).apply {
-                    targetComponent = terminal
-                    setMiniMode(true)
-                }
-        scrollToolbar = toolbar
-        val toolbarComponent = toolbar.component.apply { isOpaque = false }
-        scrollToolbarComponent = toolbarComponent
+        val scrollButton =
+            ActionButton(
+                scrollToBottomAction,
+                scrollToBottomAction.templatePresentation.clone(),
+                SCROLL_ACTION_PLACE,
+                ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE,
+            ).apply {
+                setLook(ActionButtonLook.SYSTEM_LOOK)
+                isVisible = scrollButtonVisible
+            }
+        this.scrollButton = scrollButton
         val navigatorComponent = messageNavigator.component
         startScrollTracking()
         startInputTracking()
@@ -210,8 +205,8 @@ class AgentTerminalFileEditor(
                 isOpaque = false
                 add(terminal)
                 setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
-                add(toolbarComponent)
-                setLayer(toolbarComponent, JLayeredPane.PALETTE_LAYER)
+                add(scrollButton)
+                setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
                 add(navigatorComponent)
                 setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
             }
@@ -228,13 +223,15 @@ class AgentTerminalFileEditor(
             override fun doLayout() {
                 terminal.setBounds(0, 0, width, height)
 
-                val preferred = toolbarComponent.preferredSize
-                val buttonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE
-                val toolbarWidth = maxOf(preferred.width, buttonSize.width)
-                val toolbarHeight = maxOf(preferred.height, buttonSize.height)
+                val horizontalInset = JBUI.scale(SCROLL_ROW_HORIZONTAL_INSET)
+                val minimumButtonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE
+                val toolbarWidth =
+                    maxOf(width - horizontalInset * 2, minimumButtonSize.width)
+                        .coerceAtMost(width.coerceAtLeast(0))
+                val toolbarHeight = minimumButtonSize.height
                 val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)
                 val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
-                toolbarComponent.setBounds(x, y, toolbarWidth, toolbarHeight)
+                scrollButton.setBounds(x, y, toolbarWidth, toolbarHeight)
 
                 val navigatorWidth = messageNavigator.preferredWidth
                 val navigatorX =
@@ -304,8 +301,13 @@ class AgentTerminalFileEditor(
             }
         }
 
-        scrollButtonVisible = editor != null && !host.isScrolledToBottom(editor)
-        scrollToolbar?.updateActionsAsync()
+        setScrollButtonVisible(editor != null && !host.isScrolledToBottom(editor))
+    }
+
+    private fun setScrollButtonVisible(visible: Boolean) {
+        scrollButtonVisible = visible
+        scrollButton?.isVisible = visible
+        scrollButton?.update()
     }
 
     private fun clearUnread() {
@@ -347,8 +349,7 @@ class AgentTerminalFileEditor(
         imeCompositionSupport = null
         Disposer.dispose(messageNavigator)
         observedEditor = null
-        scrollToolbar = null
-        scrollToolbarComponent = null
+        scrollButton = null
 
         // 摘监听器必须在下面的早退之前：拖动标签页会销毁本实例再建一个新的，
         // 早退时不摘就会把已死实例的转发器留在面板上，拖几次叠一串。
@@ -368,5 +369,7 @@ class AgentTerminalFileEditor(
 
     private companion object {
         const val NAVIGATOR_RIGHT_INSET = 14
+        const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
+        const val SCROLL_ROW_HORIZONTAL_INSET = 12
     }
 }

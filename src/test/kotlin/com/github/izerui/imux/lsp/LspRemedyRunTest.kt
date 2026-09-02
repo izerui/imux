@@ -722,7 +722,14 @@ class LspRemedyRunTest {
         assertEquals("gopls", runTabTarget("go install golang.org/x/tools/gopls@latest"))
         assertEquals("gopls-lsp", runTabTarget("claude plugin install gopls-lsp@claude-plugins-official"))
         assertEquals("npm:pi-lens", runTabTarget("pi install npm:pi-lens"))
-        assertEquals("pi-lens-mcp", runTabTarget("codex mcp add pi-lens -- pi-lens-mcp"))
+        assertEquals("pi-lens", runTabTarget("codex mcp add pi-lens -- pi-lens-mcp"))
+        assertEquals(
+            "pi-lens",
+            runTabTarget(
+                "npm --prefix '/tmp/pi-lens' i pi-lens && " +
+                    "codex mcp add pi-lens -- '/usr/bin/node' '/tmp/pi-lens/node_modules/pi-lens/dist/mcp/server.js'",
+            ),
+        )
         assertEquals("rust-analyzer", runTabTarget("rustup component add rust-analyzer"))
     }
 

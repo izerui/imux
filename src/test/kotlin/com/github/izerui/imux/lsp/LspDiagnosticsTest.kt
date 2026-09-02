@@ -26,16 +26,13 @@ class LspDiagnosticsTest {
      * [installed] 里的 CLI 会在探测结果中带上一个路径，其余带 null（= 确认未安装）。
      *
      * [handshake] 必须注入：默认实参是真去 spawn 进程的 [spawnMcpHandshake]，
-     * 留给单测会让结果取决于跑测试这台机器上装没装 pi-lens。`isWindows` 同理钉成
-     * false——默认实参读的是 `SystemInfo`，会让 Codex 那条建议的路径后缀随跑测试的
-     * 机器变化。
+     * 留给单测会让结果取决于跑测试这台机器上装没装 pi-lens。
      */
     private fun diagnostics(
         locatedBinaries: Map<String, String?> = emptyMap(),
         installed: Set<AgentType> = AgentType.entries.toSet(),
         handshake: (List<String>) -> Boolean = { true },
     ) = LspDiagnostics(
-        isWindows = false,
         userHome = temp.root.toPath(),
         binaryProbe =
             object : BinaryProbe {
@@ -105,7 +102,7 @@ class LspDiagnosticsTest {
         assertEquals(
             listOf(
                 "npm --prefix '${codexPiLensHome(temp.root.toPath())}' i pi-lens typebox @earendil-works/pi-tui",
-                "codex mcp add pi-lens -- '${codexPiLensMcp(temp.root.toPath(), isWindows = false)}'",
+                "codex mcp add pi-lens -- 'node' '${codexPiLensServerScript(temp.root.toPath())}'",
             ),
             report.of(AgentType.CODEX).groupRemedy?.commands,
         )
@@ -142,11 +139,22 @@ class LspDiagnosticsTest {
      */
     @Test
     fun `npm 缺失时 Codex 组给出被挡下的修复`() {
-        val report = diagnostics(locatedBinaries = mapOf("npm" to null)).run()
+        val report = diagnostics(locatedBinaries = mapOf(NPM_BIN to null)).run()
 
         val remedy = report.of(AgentType.CODEX).groupRemedy!!
         assertEquals(emptyList<String>(), remedy.commands)
         assertEquals("npm", remedy.blockingTool)
+    }
+
+    @Test
+    fun `Node 路径传到 Codex 挂载命令`() {
+        val node = "/opt/node/bin/node"
+        val report = diagnostics(locatedBinaries = mapOf(NODE_BIN to node)).run()
+
+        assertEquals(
+            "codex mcp add pi-lens -- '$node' '${codexPiLensServerScript(temp.root.toPath())}'",
+            report.of(AgentType.CODEX).groupRemedy?.commands?.last(),
+        )
     }
 
     /** 同一份配置，server 真起得来时就不该再给建议——否则修好了也一直催。 */
@@ -172,7 +180,7 @@ class LspDiagnosticsTest {
         assertEquals(
             listOf(
                 "npm --prefix '${codexPiLensHome(temp.root.toPath())}' i pi-lens typebox @earendil-works/pi-tui",
-                "codex mcp add pi-lens -- '${codexPiLensMcp(temp.root.toPath(), isWindows = false)}'",
+                "codex mcp add pi-lens -- 'node' '${codexPiLensServerScript(temp.root.toPath())}'",
             ),
             report.of(AgentType.CODEX).groupRemedy?.commands,
         )

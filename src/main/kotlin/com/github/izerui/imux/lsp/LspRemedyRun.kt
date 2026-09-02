@@ -281,6 +281,9 @@ internal fun runCommandLine(
  * - 去 `&#64;版本`：`gopls-lsp&#64;claude-plugins-official` &#8594; `gopls-lsp`
  * - 去路径前缀：`golang.org/x/tools/gopls` &#8594; `gopls`
  *
+ * `codex mcp add <name> -- <command> <args>` 是一个例外：最后一个 token 是启动脚本，
+ * 用户要辨认的是 MCP 名而不是内部的 `server.js`，因此直接取 `add` 后面的名字。
+ *
  * **喂给它的是整条命令链**（`a && b && c`），取的因此是**最后一步**的目标。
  * 这正是想要的：一条链的意义由它的终点决定——
  * `brew install --cask dotnet-sdk && dotnet tool install --global csharp-ls &&
@@ -290,12 +293,18 @@ internal fun runCommandLine(
  * 认不出来时退回整条命令：标签名难看远好过一个空标签。
  */
 internal fun runTabTarget(command: String): String =
-    command
-        .trim()
-        .substringAfterLast(' ')
-        .substringBefore('@')
-        .substringAfterLast('/')
-        .ifEmpty { command.trim() }
+    CODEX_MCP_ADD_TARGET
+        .find(command)
+        ?.groupValues
+        ?.get(1)
+        ?: command
+            .trim()
+            .substringAfterLast(' ')
+            .substringBefore('@')
+            .substringAfterLast('/')
+            .ifEmpty { command.trim() }
+
+private val CODEX_MCP_ADD_TARGET = Regex("""\bcodex\s+mcp\s+add\s+([^\s]+)""")
 
 /**
  * 终端标签的名字：动词 + 目标，例如「启用 kotlin-lsp」。

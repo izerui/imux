@@ -2,7 +2,6 @@ package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -18,12 +17,10 @@ internal class LspDiagnostics(
     private val userHome: Path,
     private val binaryProbe: BinaryProbe,
     private val handshake: (List<String>) -> Boolean = ::spawnMcpHandshake,
-    // 与 ShellBinaryProbe 同源：平台从构造参数进来，纯函数那侧才测得住两条分支。
-    private val isWindows: Boolean = SystemInfo.isWindows,
 ) {
     fun run(): LspReport {
-        // 一次问完：语言服务器 + 它们的安装命令依赖的工具链（brew/go/npm/gem/dotnet/
-        // rustup/opam）+ 三个 CLI 自身。登录 shell 要读 profile，那份开销每次都要付，
+        // 一次问完：语言服务器 + 它们的安装命令依赖的工具链（brew/go/npm/node/gem/
+        // dotnet/rustup/opam）+ 三个 CLI 自身。登录 shell 要读 profile，那份开销每次都要付，
         // 没有理由为查几个名字再起第二个 shell。
         val located =
             binaryProbe.locate(
@@ -55,7 +52,6 @@ internal class LspDiagnostics(
                 binaries = located,
                 cliInstalled = isInstalled(located, AgentType.CODEX),
                 userHome = userHome,
-                isWindows = isWindows,
             )
 
         return LspReport(listOf(claude, pi, codex))
