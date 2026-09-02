@@ -248,7 +248,7 @@ class AgentTerminalFileEditor(
         activeModelJob =
             virtualFile.terminalView.coroutineScope.launch {
                 virtualFile.terminalView.outputModels.active.collect {
-                    scheduleScrollButtonRefresh()
+                    scheduleScrollButtonRefresh(outputModelChanged = true)
                 }
             }
     }
@@ -272,9 +272,12 @@ class AgentTerminalFileEditor(
             }
     }
 
-    private fun scheduleScrollButtonRefresh() {
+    private fun scheduleScrollButtonRefresh(outputModelChanged: Boolean = false) {
         ApplicationManager.getApplication().invokeLater {
-            if (!disposed && !project.isDisposed) refreshScrollButton()
+            if (!disposed && !project.isDisposed) {
+                if (outputModelChanged) messageNavigator.outputModelChanged()
+                refreshScrollButton()
+            }
         }
     }
 

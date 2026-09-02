@@ -50,16 +50,19 @@ internal fun titleGenerationCommand(
     val dialect = dialectOf(shell)
     val script =
         when (agentType) {
-            AgentType.CLAUDE ->
+            AgentType.CLAUDE -> {
                 "claude -p --safe-mode --tools ${quote(dialect, "")} --no-session-persistence " +
                     quote(dialect, prompt)
+            }
 
-            AgentType.CODEX ->
+            AgentType.CODEX -> {
                 "codex exec --ephemeral --skip-git-repo-check --sandbox read-only --color never " +
                     "-C ${quote(dialect, projectPath)} ${quote(dialect, prompt)}"
+            }
 
-            AgentType.PI ->
+            AgentType.PI -> {
                 "pi -p --no-session --no-tools ${quote(dialect, prompt)}"
+            }
         }
     return listOf(shell) + shellArgs(dialect) + script
 }
@@ -80,7 +83,7 @@ internal fun titleGenerationPrompt(session: AgentSession): String {
         <conversation>
         $conversation
         </conversation>
-    """.trimIndent()
+        """.trimIndent()
 }
 
 internal fun normalizeGeneratedTitle(output: String): String? {
@@ -143,7 +146,14 @@ internal fun writeGeneratedTitle(
                 session.filePath,
                 JsonObject().apply {
                     addProperty("type", "session_info")
-                    addProperty("id", UUID.randomUUID().toString().replace("-", "").take(8))
+                    addProperty(
+                        "id",
+                        UUID
+                            .randomUUID()
+                            .toString()
+                            .replace("-", "")
+                            .take(8),
+                    )
                     addProperty("parentId", parentId)
                     addProperty("timestamp", Instant.now().toString())
                     addProperty("name", title)
@@ -153,8 +163,8 @@ internal fun writeGeneratedTitle(
     }
 }
 
-private fun conversationExcerpt(session: AgentSession): String {
-    return sessionTranscriptMessages(
+private fun conversationExcerpt(session: AgentSession): String =
+    sessionTranscriptMessages(
         session,
         maxLines = MAX_TRANSCRIPT_LINES,
         maxMessages = MAX_MESSAGES,
@@ -162,7 +172,6 @@ private fun conversationExcerpt(session: AgentSession): String {
     ).joinToString("\n\n") { "${it.role.uppercase()}: ${it.text}" }
         .take(MAX_CONVERSATION_CHARS)
         .ifBlank { "TITLE: ${session.title}" }
-}
 
 internal data class SessionTranscriptMessage(
     val role: String,
@@ -219,14 +228,21 @@ internal fun recentExchanges(
  * 只取第一条：一轮里 CLI 常连发多条消息，后面的多是工具汇报和收尾语，
  * 开头那条才是对提问的正面回答。末轮还在生成时没有 assistant，回复留空。
  */
-private fun pairExchanges(messages: List<SessionTranscriptMessage>): List<SessionExchange> {
+internal fun pairExchanges(messages: List<SessionTranscriptMessage>): List<SessionExchange> {
     val exchanges = mutableListOf<SessionExchange>()
     messages.forEach { message ->
         when {
-            message.hiddenFromTerminal -> Unit
-            message.role == "user" -> exchanges += SessionExchange(message.text, "")
-            exchanges.lastOrNull()?.assistantReply?.isEmpty() == true ->
+            message.hiddenFromTerminal -> {
+                Unit
+            }
+
+            message.role == "user" -> {
+                exchanges += SessionExchange(message.text, "")
+            }
+
+            exchanges.lastOrNull()?.assistantReply?.isEmpty() == true -> {
                 exchanges[exchanges.lastIndex] = exchanges.last().copy(assistantReply = message.text)
+            }
         }
     }
     return exchanges
@@ -238,7 +254,7 @@ private fun pairExchanges(messages: List<SessionTranscriptMessage>): List<Sessio
  * Claude 的图片数据在 `source.data`，Codex 在 `image_url`。先线性替换这些字符串载荷，
  * 替换后仍超过上限说明大的不是图片而是正文或未知结构，继续按普通保护规则丢弃。
  */
-private fun parseNavigatorTranscriptMessage(
+internal fun parseNavigatorTranscriptMessage(
     line: String,
     agentType: AgentType,
     maxMessageChars: Int,
@@ -267,17 +283,24 @@ private fun parseTranscriptMessage(
     val root = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() ?: return null
     val message =
         when (agentType) {
-            AgentType.CLAUDE, AgentType.PI -> root.getAsJsonObject("message")
-            AgentType.CODEX ->
+            AgentType.CLAUDE, AgentType.PI -> {
+                root.getAsJsonObject("message")
+            }
+
+            AgentType.CODEX -> {
                 root
                     .takeIf { it.string("type") == "response_item" }
                     ?.getAsJsonObject("payload")
+            }
         } ?: return null
     val role = message.string("role")?.takeIf { it == "user" || it == "assistant" } ?: return null
     val text =
         (
-            if (navigatorVisibleTextOnly) navigatorContentText(message.get("content"))
-            else contentText(message.get("content"))
+            if (navigatorVisibleTextOnly) {
+                navigatorContentText(message.get("content"))
+            } else {
+                contentText(message.get("content"))
+            }
         )?.trim()?.takeIf(String::isNotEmpty) ?: return null
     if (role == "user" && text.startsWith("<") && text.endsWith(">")) return null
     return SessionTranscriptMessage(
@@ -294,8 +317,7 @@ private fun parseTranscriptMessage(
     )
 }
 
-private fun contentText(element: JsonElement?): String? =
-    contentText(element) { true }
+private fun contentText(element: JsonElement?): String? = contentText(element) { true }
 
 private fun navigatorContentText(element: JsonElement?): String? =
     contentText(element) { value ->
@@ -309,15 +331,20 @@ private fun contentText(
     includeText: (String) -> Boolean,
 ): String? =
     when {
-        element == null || element.isJsonNull -> null
-        element.isJsonPrimitive && element.asJsonPrimitive.isString ->
-            element.asString.takeIf(includeText)
+        element == null || element.isJsonNull -> {
+            null
+        }
 
-        element.isJsonArray ->
+        element.isJsonPrimitive && element.asJsonPrimitive.isString -> {
+            element.asString.takeIf(includeText)
+        }
+
+        element.isJsonArray -> {
             element.asJsonArray
                 .mapNotNull { contentText(it, includeText) }
                 .joinToString("\n")
                 .takeIf(String::isNotBlank)
+        }
 
         element.isJsonObject -> {
             val objectValue = element.asJsonObject
@@ -327,7 +354,9 @@ private fun contentText(
                 ?: contentText(objectValue.get("content"), includeText)
         }
 
-        else -> null
+        else -> {
+            null
+        }
     }
 
 private fun redactNavigatorImagePayloads(line: String): String {

@@ -1,11 +1,15 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.model.AgentSession
+import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.SessionExchange
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.awt.Point
+import java.nio.file.Path
+import java.time.Instant
 
 class SessionMessageNavigatorTest {
     private fun asked(vararg texts: String) = texts.map { SessionExchange(it, "") }
@@ -142,6 +146,29 @@ class SessionMessageNavigatorTest {
     }
 
     @Test
+    fun `活动时间变化唤醒增量检查且文件路径变化会重绑定`() {
+        val tracker = NavigationSessionChangeTracker()
+        val created = Instant.parse("2026-09-01T00:00:00Z")
+        val first =
+            AgentSession("session-1", "标题", AgentType.PI, created, created, Path.of("/tmp/one.jsonl"))
+        tracker.changed(NavigationSessionState("session-1", first))
+
+        val activityOnly = first.copy(lastActiveAt = created.plusSeconds(1))
+        val movedFile = first.copy(filePath = Path.of("/tmp/two.jsonl"))
+
+        assertTrue("活动时间变化要兜住晚于 Terminal 事件的落盘", tracker.changed(NavigationSessionState("session-1", activityOnly)))
+        assertTrue("会话文件切换必须重新读取", tracker.changed(NavigationSessionState("session-1", movedFile)))
+    }
+
+    @Test
+    fun `Pi 用户消息 generation 变化会触发刷新`() {
+        val tracker = NavigationSessionChangeTracker()
+        tracker.changed(NavigationSessionState("pi-1", null, transcriptGeneration = 1L))
+
+        assertTrue(tracker.changed(NavigationSessionState("pi-1", null, transcriptGeneration = 2L)))
+    }
+
+    @Test
     fun `锚点回复更新后重新绑定活动预览`() {
         val current = UserMessageAnchor(12, "继续", "")
         val updated = UserMessageAnchor(12, "继续", "新的回复")
@@ -222,20 +249,87 @@ class SessionMessageNavigatorTest {
         assertEquals("回答二", anchors.single().replyPreview)
     }
 
-    /**
-     * 终端会裁剪历史，文档随时可能变短，而锚点是上一轮算出来的：刷新有防抖和 IO 延迟，
-     * 这段窗口里拿越界 offset 去问行号会直接抛到 EDT（实测 `Wrong offset: 5648`）。
-     *
-     * 这条只管判据本身；「绘制和命中确实过了这道判据」由
-     * `SessionMessageNavigatorSourceTest` 守——纯函数测试覆盖不到调用点，
-     * 实测把调用点摘掉后这条依然是绿的。
-     */
     @Test
-    fun `越界的 offset 判定为无效`() {
-        assertEquals(null, validOffset(5648, textLength = 5430))
-        assertEquals(null, validOffset(-1, textLength = 5430))
-        assertEquals(100, validOffset(100, textLength = 5430))
-        assertEquals(5430, validOffset(5430, textLength = 5430))
+    fun `截图里的两条 Pi 用户消息分别生成锚点`() {
+        val first = "原生 TradingAgents 引擎 是啥意思？"
+        val second =
+            "我的意思是让你就是针对这个仓库它拥有的这些分析的功能，然后统一整合，" +
+                "就是统一用这个skills来去实现。"
+        val document = "$first\n第一轮回复\n$second\n第二轮回复"
+
+        val anchors =
+            locateUserMessageAnchors(
+                document,
+                listOf(
+                    SessionExchange(first, "第一轮回复"),
+                    SessionExchange(second, "第二轮回复"),
+                ),
+            )
+
+        assertEquals("第一条 Pi 输入应有独立锚点", document.indexOf(first), anchors[0].offset)
+        assertEquals("第二条 Pi 输入应有独立锚点", document.indexOf(second), anchors[1].offset)
+    }
+
+    @Test
+    fun `终端快照起点计入锚点绝对位置`() {
+        val document = "前缀\n用户问题\n回复"
+
+        val anchor =
+            locateUserMessageAnchors(
+                document,
+                asked("用户问题"),
+                documentStartOffset = 50_000L,
+            ).single()
+
+        assertEquals(document.indexOf("用户问题"), anchor.offset)
+        assertEquals(50_000L + document.indexOf("用户问题"), anchor.absoluteOffset)
+    }
+
+    @Test
+    fun `历史裁剪后绝对锚点换算到当前窗口`() {
+        val anchor = UserMessageAnchor(110, "问题", "回复", absoluteOffset = 1_110L)
+
+        assertEquals(110, relativeOffset(anchor, outputStartOffset = 1_000L, textLength = 500))
+        assertEquals(10, relativeOffset(anchor, outputStartOffset = 1_100L, textLength = 400))
+        assertEquals(null, relativeOffset(anchor, outputStartOffset = 1_111L, textLength = 400))
+    }
+
+    @Test
+    fun `锚点之后追加输出不要求重定位而前方改写会要求`() {
+        val anchors =
+            listOf(
+                UserMessageAnchor(10, "问题一", "", absoluteOffset = 1_010L),
+                UserMessageAnchor(20, "问题二", "", absoluteOffset = 1_020L),
+            )
+
+        assertFalse(changeCanMoveAnchors(changeOffset = 30, anchors, outputStartOffset = 1_000L))
+        assertTrue(changeCanMoveAnchors(changeOffset = 15, anchors, outputStartOffset = 1_000L))
+    }
+
+    @Test
+    fun `重复文本的表面命中仍等待确认轮次`() {
+        assertTrue(
+            "尚有确认轮次时不能把旧文本命中当作完成",
+            locateRetryWanted(latestResolved = true, contentChanged = false, confirmationsRemaining = 1),
+        )
+        assertTrue(
+            "定位期间文档变化时必须纠正",
+            locateRetryWanted(latestResolved = true, contentChanged = true, confirmationsRemaining = 0),
+        )
+        assertFalse(
+            "稳定命中且确认完成后才停止",
+            locateRetryWanted(latestResolved = true, contentChanged = false, confirmationsRemaining = 0),
+        )
+    }
+
+    @Test
+    fun `最新用户轮次出现后停止待定位重试`() {
+        val exchanges = asked("较早问题", "最新问题")
+        val earlierOnly = listOf(UserMessageAnchor(10, "较早问题", ""))
+        val includingLatest = earlierOnly + UserMessageAnchor(20, "最新问题", "")
+
+        assertFalse(latestExchangeResolved(exchanges, earlierOnly))
+        assertTrue(latestExchangeResolved(exchanges, includingLatest))
     }
 
     @Test

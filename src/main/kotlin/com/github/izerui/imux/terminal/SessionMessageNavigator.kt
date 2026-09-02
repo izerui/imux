@@ -1,9 +1,10 @@
 package com.github.izerui.imux.terminal
 
-import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.model.AgentSession
+import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.session.NavigationTranscriptIndex
 import com.github.izerui.imux.session.SessionExchange
-import com.github.izerui.imux.session.recentExchanges
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
@@ -27,9 +28,11 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Cursor
@@ -41,33 +44,60 @@ import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
+import java.nio.file.Path
+import java.time.Instant
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JComponent
 
 internal data class UserMessageAnchor(
+    /** 定位当次快照中的相对位置，保留给纯函数测试与预览身份比较。 */
     val offset: Int,
     val userPreview: String,
     val replyPreview: String,
+    /** Platform TerminalOutputModel 中不受 history trimming 平移影响的绝对位置。 */
+    val absoluteOffset: Long = offset.toLong(),
 )
 
 internal data class NavigationSessionState(
     val sessionId: String?,
     val session: AgentSession?,
+    val transcriptGeneration: Long = 0L,
 )
+
+internal data class NavigationSessionIdentity(
+    val sessionId: String?,
+    val agentType: AgentType?,
+    val filePath: Path?,
+    val lastActiveAt: Instant?,
+    val transcriptGeneration: Long,
+)
+
+internal fun NavigationSessionState.identity(): NavigationSessionIdentity =
+    NavigationSessionIdentity(
+        sessionId,
+        session?.agentType,
+        session?.filePath,
+        session?.lastActiveAt,
+        transcriptGeneration,
+    )
 
 internal class NavigationSessionChangeTracker {
     private var initialized = false
-    private var state: NavigationSessionState? = null
+    private var identity: NavigationSessionIdentity? = null
 
     fun changed(next: NavigationSessionState): Boolean {
-        if (initialized && state == next) return false
+        val nextIdentity = next.identity()
+        if (initialized && identity == nextIdentity) return false
         initialized = true
-        state = next
+        identity = nextIdentity
         return true
     }
 
     fun remember(next: NavigationSessionState) {
         initialized = true
-        state = next
+        identity = next.identity()
     }
 }
 
@@ -76,7 +106,7 @@ internal fun refreshedAnchor(
     anchors: List<UserMessageAnchor>,
 ): UserMessageAnchor? =
     anchors.firstOrNull {
-        it.offset == current.offset && it.userPreview == current.userPreview
+        it.absoluteOffset == current.absoluteOffset && it.userPreview == current.userPreview
     }
 
 internal fun nextCollocatedAnchor(
@@ -93,8 +123,7 @@ internal fun previewNeedsRebuild(
     refreshed: UserMessageAnchor,
     currentScreenPoint: Point?,
     refreshedScreenPoint: Point,
-): Boolean =
-    current != refreshed || currentScreenPoint != refreshedScreenPoint
+): Boolean = current != refreshed || currentScreenPoint != refreshedScreenPoint
 
 private data class NormalizedText(
     val text: String,
@@ -121,6 +150,7 @@ private data class NormalizedText(
 internal fun locateUserMessageAnchors(
     documentText: String,
     exchanges: List<SessionExchange>,
+    documentStartOffset: Long = 0L,
 ): List<UserMessageAnchor> {
     val document = normalizedWithOffsets(documentText)
     if (document.text.isEmpty()) return emptyList()
@@ -142,12 +172,34 @@ internal fun locateUserMessageAnchors(
                     offset = document.offsets[found],
                     userPreview = truncated(normalized, USER_PREVIEW_CHARS),
                     replyPreview = truncated(normalizeWhitespace(exchange.assistantReply), REPLY_PREVIEW_CHARS),
+                    absoluteOffset = documentStartOffset + document.offsets[found],
                 )
         }
         searchBefore = found - 1
     }
     return anchors.asReversed()
 }
+
+internal fun changeCanMoveAnchors(
+    changeOffset: Int,
+    anchors: List<UserMessageAnchor>,
+    outputStartOffset: Long,
+): Boolean = anchors.any { it.absoluteOffset - outputStartOffset >= changeOffset }
+
+internal fun latestExchangeResolved(
+    exchanges: List<SessionExchange>,
+    anchors: List<UserMessageAnchor>,
+): Boolean {
+    val latest = exchanges.lastOrNull() ?: return true
+    val expectedPreview = truncated(normalizeWhitespace(latest.userText), USER_PREVIEW_CHARS)
+    return anchors.lastOrNull()?.userPreview == expectedPreview
+}
+
+internal fun locateRetryWanted(
+    latestResolved: Boolean,
+    contentChanged: Boolean,
+    confirmationsRemaining: Int,
+): Boolean = contentChanged || !latestResolved || confirmationsRemaining > 0
 
 private fun truncated(
     value: String,
@@ -162,6 +214,15 @@ internal class SessionMessageNavigator(
     private var editor: Editor? = null
     private var anchors = emptyList<UserMessageAnchor>()
     private var refreshJob: Job? = null
+    private val refreshRequested = AtomicBoolean()
+    private val locateRequested = AtomicBoolean(true)
+    private val locateConfirmationPasses = AtomicInteger(1)
+    private val contentGeneration = AtomicLong()
+    private val transcriptIndex = NavigationTranscriptIndex()
+
+    @Volatile
+    private var disposed = false
+
     private var documentListenerDisposable: Disposable? = null
     private val sessionChangeTracker = NavigationSessionChangeTracker()
     private var previewAnchor: UserMessageAnchor? = null
@@ -176,6 +237,10 @@ internal class SessionMessageNavigator(
     private val documentListener =
         object : DocumentListener {
             override fun documentChanged(event: DocumentEvent) {
+                contentGeneration.incrementAndGet()
+                if (changeCanMoveAnchors(event.offset, anchors, currentOutputStart())) {
+                    locateRequested.set(true)
+                }
                 scheduleRefresh()
             }
         }
@@ -200,6 +265,8 @@ internal class SessionMessageNavigator(
             return
         }
         unbind()
+        locateRequested.set(true)
+        locateConfirmationPasses.set(1)
         this.editor = editor
         editor?.let {
             val listenerDisposable = Disposer.newDisposable("imux-session-message-document")
@@ -210,33 +277,78 @@ internal class SessionMessageNavigator(
     }
 
     fun scheduleRefresh() {
-        refreshJob?.cancel()
+        refreshRequested.set(true)
+        if (refreshJob?.isActive == true) return
+
         refreshJob =
             virtualFile.terminalView.coroutineScope.launch(Dispatchers.IO) {
-                delay(REFRESH_DEBOUNCE_MS)
-                val snapshot = withContext(Dispatchers.EDT) { navigationSnapshot() }
-                if (snapshot == null) {
-                    withContext(Dispatchers.EDT) { clearHighlighters() }
-                    return@launch
-                }
-                val exchanges = recentExchanges(snapshot.session)
-                val document =
-                    ReadAction.computeBlocking<DocumentSnapshot, RuntimeException> {
-                        DocumentSnapshot(
-                            snapshot.editor.document.text,
-                            snapshot.editor.document.modificationStamp,
-                        )
+                try {
+                    var delayMillis = REFRESH_DEBOUNCE_MS
+                    while (refreshRequested.get()) {
+                        delay(delayMillis)
+                        // 合并等待期间的变化；计算期间的新变化会重新置 true，再跑一轮。
+                        refreshRequested.set(false)
+                        refreshAnchors()
+                        // 首次尽快补出圆点；持续输出时降低整篇终端扫描频率，避免争抢文档读锁。
+                        delayMillis = CONTINUOUS_REFRESH_INTERVAL_MS
                     }
-                val anchors = locateUserMessageAnchors(document.text, exchanges)
-                withContext(Dispatchers.EDT) {
-                    if (editor !== snapshot.editor || snapshot.editor.isDisposed) return@withContext
-                    if (snapshot.editor.document.modificationStamp != document.modificationStamp) {
-                        scheduleRefresh()
-                        return@withContext
+                } finally {
+                    withContext(NonCancellable + Dispatchers.EDT) {
+                        refreshJob = null
+                        // 补住「while 判空之后、Job 真正结束之前」到达的最后一次变化。
+                        if (!disposed && refreshRequested.get()) scheduleRefresh()
                     }
-                    applyAnchors(snapshot.editor, anchors)
                 }
             }
+    }
+
+    private suspend fun refreshAnchors() {
+        val snapshot = withContext(Dispatchers.EDT) { navigationSnapshot() }
+        if (snapshot == null) {
+            withContext(Dispatchers.EDT) { clearHighlighters() }
+            return
+        }
+        val transcript = transcriptIndex.refresh(snapshot.session)
+        if (transcript.changed) {
+            locateRequested.set(true)
+            // 重复文本可能暂时命中上一轮；至少等下一次 Terminal 变化再确认一遍。
+            locateConfirmationPasses.set(2)
+        }
+        if (!locateRequested.get()) return
+
+        val outputSnapshot =
+            ReadAction.computeBlocking<org.jetbrains.plugins.terminal.view.TerminalOutputModelSnapshot, RuntimeException> {
+                snapshot.outputModel.takeSnapshot()
+            }
+        val documentText = outputSnapshot.getText(outputSnapshot.startOffset, outputSnapshot.endOffset).toString()
+        val locatedAnchors =
+            locateUserMessageAnchors(
+                documentText,
+                transcript.exchanges,
+                documentStartOffset = outputSnapshot.startOffset.toAbsolute(),
+            )
+        val latestResolved = latestExchangeResolved(transcript.exchanges, locatedAnchors)
+        withContext(Dispatchers.EDT) {
+            if (editor !== snapshot.editor || snapshot.editor.isDisposed) return@withContext
+            if (virtualFile.terminalView.outputModels.active.value !== snapshot.outputModel) {
+                scheduleRefresh()
+                return@withContext
+            }
+            val changedDuringLocate = contentGeneration.get() != snapshot.contentGeneration
+            val confirmationsRemaining = locateConfirmationPasses.updateAndGet { (it - 1).coerceAtLeast(0) }
+            locateRequested.set(
+                locateRetryWanted(latestResolved, changedDuringLocate, confirmationsRemaining),
+            )
+            applyAnchors(snapshot.editor, snapshot.outputModel, locatedAnchors)
+            if (changedDuringLocate) scheduleRefresh()
+        }
+    }
+
+    fun outputModelChanged() {
+        contentGeneration.incrementAndGet()
+        locateRequested.set(true)
+        locateConfirmationPasses.set(1)
+        scheduleRefresh()
     }
 
     fun viewportChanged() {
@@ -250,10 +362,16 @@ internal class SessionMessageNavigator(
         scheduleRefresh()
     }
 
+    private fun currentOutputStart(): Long =
+        virtualFile.terminalView.outputModels.active.value.startOffset
+            .toAbsolute()
+
     private fun currentSessionState(): NavigationSessionState {
         val sessionId = virtualFile.sessionId
-        val session = sessionId?.let(SessionMonitor.getInstance(project).model::sessionOf)
-        return NavigationSessionState(sessionId, session)
+        val monitor = SessionMonitor.getInstance(project)
+        val session = sessionId?.let(monitor.model::sessionOf)
+        val generation = sessionId?.let(monitor::transcriptGeneration) ?: 0L
+        return NavigationSessionState(sessionId, session, generation)
     }
 
     private fun navigationSnapshot(): NavigationSnapshot? {
@@ -261,16 +379,23 @@ internal class SessionMessageNavigator(
         val state = currentSessionState()
         sessionChangeTracker.remember(state)
         val session = state.session ?: return null
-        return NavigationSnapshot(currentEditor, session)
+        val outputModel = virtualFile.terminalView.outputModels.active.value
+        return NavigationSnapshot(currentEditor, session, outputModel, contentGeneration.get())
     }
 
     private fun applyAnchors(
         currentEditor: Editor,
+        outputModel: TerminalOutputModel,
         anchors: List<UserMessageAnchor>,
     ) {
         this.anchors =
-            if (currentEditor.document.textLength == 0) emptyList()
-            else anchors.filter { it.offset in 0..<currentEditor.document.textLength }
+            if (currentEditor.document.textLength == 0) {
+                emptyList()
+            } else {
+                anchors.filter {
+                    relativeOffset(it, outputModel.startOffset.toAbsolute(), currentEditor.document.textLength) != null
+                }
+            }
         component.isVisible = this.anchors.isNotEmpty()
         refreshOpenPreview()
         component.repaint()
@@ -308,12 +433,6 @@ internal class SessionMessageNavigator(
         component.repaint()
     }
 
-    /**
-     * 悬停卡片走平台弹窗而不是 tooltip：要在一张卡里分两段排「提问 + 回复」，
-     * tooltip 给不了这个结构，也控制不了宽度和配色。
-     *
-     * 同一条刻度上直接返回：鼠标微动会连发 mouseMoved，每次重建弹窗会肉眼可见地闪。
-     */
     /**
      * 把预览做成一张指向圆点的对话气泡。
      *
@@ -409,6 +528,9 @@ internal class SessionMessageNavigator(
             "</body></html>"
 
     override fun dispose() {
+        disposed = true
+        refreshRequested.set(false)
+        locateRequested.set(false)
         refreshJob?.cancel()
         refreshJob = null
         unbind()
@@ -418,17 +540,14 @@ internal class SessionMessageNavigator(
     private data class NavigationSnapshot(
         val editor: Editor,
         val session: AgentSession,
+        val outputModel: TerminalOutputModel,
+        val contentGeneration: Long,
     )
 
     private data class AnchorPoint(
         val anchor: UserMessageAnchor,
         val line: Int,
         val y: Int,
-    )
-
-    private data class DocumentSnapshot(
-        val text: String,
-        val modificationStamp: Long,
     )
 
     private inner class NavigatorRail : JComponent() {
@@ -478,8 +597,13 @@ internal class SessionMessageNavigator(
                         clickGroup = group
                         clickedAnchor = anchor
                         showPreview(anchor)
+                        val outputModel = virtualFile.terminalView.outputModels.active.value
                         val offset =
-                            validOffset(anchor.offset, currentEditor.document.textLength) ?: return
+                            relativeOffset(
+                                anchor,
+                                outputModel.startOffset.toAbsolute(),
+                                currentEditor.document.textLength,
+                            ) ?: return
                         // 不关气泡：鼠标还停在这颗点上，关掉就只能等鼠标微动再弹回来，
                         // 那是一次可见的「消失再显示」。收起交给移开轨道时的延迟隐藏。
                         currentEditor.scrollingModel.scrollTo(
@@ -496,8 +620,11 @@ internal class SessionMessageNavigator(
                     override fun mouseMoved(event: MouseEvent) {
                         val anchor = nearestAnchor(event.y)
                         cursor =
-                            if (anchor == null) Cursor.getDefaultCursor()
-                            else Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                            if (anchor == null) {
+                                Cursor.getDefaultCursor()
+                            } else {
+                                Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                            }
                         if (anchor == null) {
                             scheduleHide()
                             return
@@ -568,21 +695,23 @@ internal class SessionMessageNavigator(
         }
 
         /** 到最近那颗点的纵向距离，供 [contains] 判命中；一颗有效的点都没有时返回 null。 */
-        private fun nearestAnchorDistance(mouseY: Int): Int? =
-            anchorPoints().minOfOrNull { kotlin.math.abs(it.y - mouseY) }
+        private fun nearestAnchorDistance(mouseY: Int): Int? = anchorPoints().minOfOrNull { kotlin.math.abs(it.y - mouseY) }
 
         /**
          * 当前文档里仍然有效的锚点，连同它的行号和纵坐标。
          *
-         * 越界的直接略过（见 [validOffset]）：终端裁剪历史后文档会变短，而锚点是上一轮
-         * 算出来的，这一帧宁可少画一颗点，也不能拿旧 offset 去问行号把异常抛到 EDT。
+         * 绝对 offset 落在当前窗口之外时直接略过（见 [relativeOffset]），不能拿它访问
+         * Editor；窗口内的剩余锚点不受 history trimming 的相对平移影响。
          */
         private fun anchorPoints(): List<AnchorPoint> {
             val currentEditor = editor?.takeIf { !it.isDisposed } ?: return emptyList()
             val padding = JBUI.scale(RAIL_PADDING)
             val document = currentEditor.document
+            val outputStart =
+                virtualFile.terminalView.outputModels.active.value.startOffset
+                    .toAbsolute()
             return anchors.mapNotNull { anchor ->
-                val offset = validOffset(anchor.offset, document.textLength) ?: return@mapNotNull null
+                val offset = relativeOffset(anchor, outputStart, document.textLength) ?: return@mapNotNull null
                 val line = document.getLineNumber(offset)
                 AnchorPoint(anchor, line, markerY(line, document.lineCount, height, padding))
             }
@@ -591,6 +720,7 @@ internal class SessionMessageNavigator(
 
     private companion object {
         const val REFRESH_DEBOUNCE_MS = 250L
+        const val CONTINUOUS_REFRESH_INTERVAL_MS = 1_000L
         const val RAIL_WIDTH = 22
         const val RAIL_PADDING = 10
 
@@ -637,8 +767,8 @@ private fun normalizeWhitespace(value: String): String =
  * 归一化整篇终端文档，并保留「归一化后第 i 个字符原本在第几位」。
  *
  * 两处都必须是预分配的原始数组，不能图省事用 `ArrayList<Int>`：那样每个字符都要装一个
- * `Integer`，一份 4MB 的终端输出就是四百万个临时对象，而这段代码在终端持续输出时
- * 每 250ms 就重跑一次——实测光是这一处装箱就占掉整个定位耗时的大头。
+ * `Integer`，一份 4MB 的终端输出就是四百万个临时对象。这里仅在 transcript 语义变化、
+ * 待定位消息确认、reflow 或 buffer 切换时运行，仍要避免一次恢复制造大量垃圾。
  */
 private fun normalizedWithOffsets(value: String): NormalizedText {
     val text = StringBuilder(value.length)
@@ -685,16 +815,20 @@ private const val USER_PREVIEW_CHARS = 60
 private const val REPLY_PREVIEW_CHARS = 160
 
 /**
- * 锚点 offset 在当前文档里还有效吗？无效返回 null。
+ * 把 Platform 绝对 offset 换算到当前 Terminal 窗口。
  *
- * 终端会裁剪历史，文档随时变短，而锚点是上一轮算出来的——刷新有防抖和 IO 延迟，
- * 这段窗口里直接拿旧 offset 去问行号会抛 `Wrong offset` 到 EDT，弹出报错对话框。
- * 越界的那颗点这一帧就不画、也不响应，等下一次刷新自然会重新对上。
+ * history trimming 只推进 [outputStartOffset]，未被裁掉的锚点仍保持原绝对位置；已经落在
+ * 窗口之前或之后的锚点返回 null，绘制与点击路径都不会拿它访问 Editor。
  */
-internal fun validOffset(
-    offset: Int,
+internal fun relativeOffset(
+    anchor: UserMessageAnchor,
+    outputStartOffset: Long,
     textLength: Int,
-): Int? = offset.takeIf { it in 0..textLength }
+): Int? {
+    val relative = anchor.absoluteOffset - outputStartOffset
+    if (relative !in 0..textLength.toLong()) return null
+    return relative.toInt()
+}
 
 internal fun markerY(
     line: Int,

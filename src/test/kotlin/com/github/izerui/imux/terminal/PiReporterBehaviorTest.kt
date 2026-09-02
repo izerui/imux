@@ -43,7 +43,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `API 正常时注册会话切换与最终结束回调`() {
         assertEquals(
-            "ok:session_start,agent_settled",
+            "ok:session_start,message_end,agent_settled",
             runReporter(
                 piExpression = "({ on(name) { (globalThis.__registered ??= []).push(name); } })",
                 report = """"ok:" + (globalThis.__registered?.join(",") ?? "none")""",
@@ -230,6 +230,47 @@ class PiReporterBehaviorTest {
     }
 
     @Test
+    fun `硬件光标回调缺席时微任务冲刷重绘帧`() {
+        assertEquals(
+            "frame<ESC>[2J<ESC>[H<ESC>[3J<ESC>[?2026l",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    const customFactory = () => ({ render: () => ["editor"] });
+                    const ui = {
+                      factory: customFactory,
+                      getEditorComponent() { return this.factory; },
+                      setEditorComponent(factory) { this.factory = factory; },
+                    };
+                    await globalThis.__handlers.session_start({}, {
+                      mode: "tui",
+                      ui,
+                      sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" },
+                    });
+                    const writes = [];
+                    const terminal = {
+                      write(value) {
+                        if (value !== "\x1b[5 q") writes.push(value.replaceAll("\x1b", "<ESC>"));
+                      },
+                    };
+                    const tui = {
+                      mode: "regular",
+                      terminal,
+                      setShowHardwareCursor() {},
+                      positionHardwareCursor() {},
+                    };
+                    ui.factory(tui, {}, {}).render(60);
+                    terminal.write("frame\x1b[2J\x1b[H\x1b[3J\x1b[?2026l");
+                    await Promise.resolve();
+                    globalThis.__rendered = writes.join("|");
+                    """.trimIndent(),
+                report = "globalThis.__rendered",
+            ),
+        )
+    }
+
+    @Test
     fun `连续清屏重绘逐帧恢复输入光标`() {
         assertEquals(
             "A<ESC>[2J<ESC>[H<ESC>[3J<ESC>[4;5H<ESC>[?2026l|show|B<ESC>[2J<ESC>[H<ESC>[3J<ESC>[6;3H<ESC>[?2026l|show",
@@ -356,6 +397,29 @@ class PiReporterBehaviorTest {
                       .replaceAll("\x1b", "<ESC>")
                       .replaceAll("\x07", "<BEL>");
                     globalThis.__result = `${'$'}{installedOnce === ui.factory}|${'$'}{rendered}`;
+                    """.trimIndent(),
+                report = "globalThis.__result",
+            ),
+        )
+    }
+
+    @Test
+    fun `用户消息提示不携带正文且不等待请求完成`() {
+        assertEquals(
+            "returned|{\"type\":\"user_message\",\"tabId\":\"imux-tab\",\"sessionId\":\"s1\",\"cwd\":\"/tmp\"}",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport =
+                    """
+                    globalThis.fetch = (_url, options) => {
+                      globalThis.__body = JSON.parse(options.body);
+                      return new Promise(() => {});
+                    };
+                    const result = globalThis.__handlers.message_end(
+                      { message: { role: "user", content: "敏感正文" } },
+                      { sessionManager: { getSessionId: () => "s1", getCwd: () => "/tmp" } },
+                    );
+                    globalThis.__result = `${'$'}{result === undefined ? "returned" : "blocked"}|${'$'}{JSON.stringify(globalThis.__body)}`;
                     """.trimIndent(),
                 report = "globalThis.__result",
             ),

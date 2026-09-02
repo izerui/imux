@@ -75,13 +75,9 @@ function installFullRedrawCursorRecovery(tui) {
           output.rawWrite.call(this, output.pendingFrame);
         }
         output.pendingFrame = data;
-        // positionHardwareCursor 应在同步调用链中紧接着消费这帧。
-        // 若 pi 版本变化导致调用顺序改变，microtask 在同步链结束后立即冲刷，
-        // 不依赖任何超时猜测，也不会无限期挂起。
-        const self = this;
         Promise.resolve().then(() => {
           if (output.pendingFrame !== undefined) {
-            output.rawWrite.call(self, output.pendingFrame);
+            output.rawWrite.call(this, output.pendingFrame);
             output.pendingFrame = undefined;
           }
         });
@@ -229,17 +225,18 @@ export default function (pi) {
         const sessionId = ctx?.sessionManager?.getSessionId?.();
         const cwd = ctx?.sessionManager?.getCwd?.();
         if (!sessionId || !cwd) return;
+        const body = {
+          type,
+          tabId: credentials.tabId,
+          sessionId,
+          cwd,
+        };
+        if (stopReason) body.stopReason = stopReason;
+        if (messageId) body.messageId = messageId;
         fetch(credentials.url, {
           method: "POST",
           headers: { "content-type": "application/json", "x-imux-token": credentials.token },
-          body: JSON.stringify({
-            type,
-            tabId: credentials.tabId,
-            sessionId,
-            cwd,
-            ...(stopReason ? { stopReason } : {}),
-            ...(messageId ? { messageId } : {}),
-          }),
+          body: JSON.stringify(body),
           signal: AbortSignal.timeout(1000),
         }).catch(() => {});
       } catch {
@@ -259,6 +256,13 @@ export default function (pi) {
 
     // 没有凭据时只保留光标适配，不注册无意义的终态上报。
     if (!credentials?.url || !credentials?.token || !credentials?.tabId) return;
+
+    // message_end 已经过最终消息归一化；同步 handler 里只发起 fire-and-forget，
+    // 不 await、不读 transcript，也不把用户正文带出进程。失败仍由文件增量索引兜底。
+    pi.on("message_end", (event, ctx) => {
+      if (event?.message?.role !== "user") return;
+      report("user_message", ctx);
+    });
 
     // error / length 可能先触发 pi 的自动重试或自动压缩，不能在会话文件刚写下时
     // 就当作整轮结束。agent_settled 是 pi 明确提供给状态集成的最终信号：

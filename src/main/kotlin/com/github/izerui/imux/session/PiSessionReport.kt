@@ -10,8 +10,11 @@ data class PiSessionReport(
     val messageId: String? = null,
 )
 
-enum class PiReportType(val wireValue: String) {
+enum class PiReportType(
+    val wireValue: String,
+) {
     SESSION_START("session_start"),
+    USER_MESSAGE("user_message"),
     AGENT_SETTLED("agent_settled"),
     ;
 
@@ -20,7 +23,9 @@ enum class PiReportType(val wireValue: String) {
     }
 }
 
-enum class PiStopReason(val wireValue: String) {
+enum class PiStopReason(
+    val wireValue: String,
+) {
     STOP("stop"),
     LENGTH("length"),
     TOOL_USE("toolUse"),
@@ -43,29 +48,38 @@ enum class PiStopReason(val wireValue: String) {
 internal fun parsePiReport(body: String): PiSessionReport? {
     val type = PiReportType.fromWire(JsonLineScanner.topLevelStringValue(body, "type")) ?: return null
     val tabId = JsonLineScanner.topLevelStringValue(body, "tabId")?.takeIf { it.isNotBlank() } ?: return null
-    val sessionId = JsonLineScanner.topLevelStringValue(body, "sessionId")
-        ?.takeIf(::looksLikePiSessionId)
-        ?: return null
+    val sessionId =
+        JsonLineScanner
+            .topLevelStringValue(body, "sessionId")
+            ?.takeIf(::looksLikePiSessionId)
+            ?: return null
     val cwd = JsonLineScanner.topLevelStringValue(body, "cwd")?.takeIf { it.isNotBlank() } ?: return null
     val rawStopReason = JsonLineScanner.topLevelStringValue(body, "stopReason")
     val stopReason = rawStopReason?.let(PiStopReason::fromWire)
     if (rawStopReason != null && stopReason == null) return null
     val messageId = JsonLineScanner.topLevelStringValue(body, "messageId")?.takeIf { it.isNotBlank() }
 
-    if (
-        type == PiReportType.AGENT_SETTLED &&
-        (
-            stopReason != PiStopReason.ERROR &&
-                stopReason != PiStopReason.LENGTH ||
+    when (type) {
+        PiReportType.SESSION_START -> {
+            Unit
+        }
+
+        PiReportType.USER_MESSAGE -> {
+            if (stopReason != null) return null
+        }
+
+        PiReportType.AGENT_SETTLED -> {
+            if (
+                (stopReason != PiStopReason.ERROR && stopReason != PiStopReason.LENGTH) ||
                 messageId == null
-            )
-    ) {
-        return null
+            ) {
+                return null
+            }
+        }
     }
     return PiSessionReport(type, tabId, sessionId, cwd, stopReason, messageId)
 }
 
-private fun looksLikePiSessionId(value: String): Boolean =
-    PI_SESSION_ID.matches(value)
+private fun looksLikePiSessionId(value: String): Boolean = PI_SESSION_ID.matches(value)
 
 private val PI_SESSION_ID = Regex("^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")

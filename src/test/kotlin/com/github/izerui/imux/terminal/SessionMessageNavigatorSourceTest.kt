@@ -24,6 +24,28 @@ class SessionMessageNavigatorSourceTest {
     }
 
     @Test
+    fun `Terminal active buffer 切换会请求消息重定位`() {
+        assertTrue(
+            editor.compactArgs(editor.normalized).contains(
+                editor.compactArgs("messageNavigator.outputModelChanged()"),
+            ),
+        )
+        assertTrue(
+            editor.compactArgs(editor.normalized).contains(
+                editor.compactArgs("scheduleScrollButtonRefresh(outputModelChanged = true)"),
+            ),
+        )
+        assertTrue(
+            editor.compactArgs(editor.normalized).contains(
+                editor.compactArgs("if (outputModelChanged) messageNavigator.outputModelChanged()"),
+            ),
+        )
+        val body = navigator.bodyAfter("fun outputModelChanged()", '{')
+        assertTrue(body.contains("locateRequested.set(true)"))
+        assertTrue(body.contains("scheduleRefresh()"))
+    }
+
+    @Test
     fun `运行态回调经过会话状态去重后再刷新`() {
         assertTrue(
             navigator.compactArgs(navigator.normalized).contains(
@@ -32,7 +54,59 @@ class SessionMessageNavigatorSourceTest {
         )
         val body = navigator.bodyAfter("private fun sessionStateChanged()", '{')
         assertTrue(body.contains("sessionChangeTracker.changed"))
+        assertFalse("状态通知只唤醒增量索引，不能直接要求全文定位", body.contains("locateRequested"))
         assertTrue(body.contains("scheduleRefresh()"))
+    }
+
+    @Test
+    fun `持续输出时刷新请求被合并而不取消排队任务`() {
+        val body = navigator.bodyAfter("fun scheduleRefresh()", '{')
+
+        assertTrue("文档变化先登记为待刷新", body.contains("refreshRequested.set(true)"))
+        assertTrue("已有任务时复用它", body.contains("refreshJob?.isActive == true"))
+        assertFalse("持续输出不能反复取消防抖任务", body.contains("refreshJob?.cancel()"))
+        assertTrue("执行期间收到新变化后要继续刷新", body.contains("while (refreshRequested.get())"))
+        assertTrue("首轮之后要降低整篇终端扫描频率", body.contains("CONTINUOUS_REFRESH_INTERVAL_MS"))
+        assertTrue(navigator.normalized.contains("CONTINUOUS_REFRESH_INTERVAL_MS = 1_000L"))
+    }
+
+    @Test
+    fun `transcript 语义未变化时跳过终端全文快照`() {
+        val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
+        val unchangedReturn = body.indexOf("if (!locateRequested.get()) return")
+        val terminalSnapshot = body.indexOf("outputModel.takeSnapshot()")
+
+        assertTrue("未变化分支必须存在", unchangedReturn >= 0)
+        assertTrue("必须先返回再读取终端全文", terminalSnapshot > unchangedReturn)
+        assertTrue(body.contains("transcriptIndex.refresh(snapshot.session)"))
+    }
+
+    @Test
+    fun `定位期间持续输出时先应用锚点并安排纠正`() {
+        val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
+        val apply = body.indexOf("applyAnchors(snapshot.editor, snapshot.outputModel, locatedAnchors)")
+        val retry = body.indexOf("if (changedDuringLocate) scheduleRefresh()")
+
+        assertFalse("不能再因持续变化丢弃整轮结果", body.contains("modificationStamp"))
+        assertTrue("必须先应用可用的绝对锚点", apply >= 0)
+        assertTrue("变化期间还要安排纠正", retry > apply)
+        assertTrue(body.contains("contentGeneration.get() != snapshot.contentGeneration"))
+    }
+
+    @Test
+    fun `transcript 变化后保留下一次终端确认`() {
+        val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
+
+        assertTrue(body.contains("locateConfirmationPasses.set(2)"))
+        assertTrue(body.contains("locateRetryWanted(latestResolved, changedDuringLocate, confirmationsRemaining)"))
+    }
+
+    @Test
+    fun `释放导航器后不再补排刷新任务`() {
+        val body = navigator.bodyAfter("override fun dispose()", '{')
+
+        assertTrue(body.contains("disposed = true"))
+        assertTrue(body.contains("refreshRequested.set(false)"))
     }
 
     @Test
@@ -40,7 +114,8 @@ class SessionMessageNavigatorSourceTest {
         val body = navigator.bodyAfter("private fun applyAnchors(", '{')
         assertTrue(body.contains("refreshOpenPreview()"))
         assertTrue(
-            navigator.bodyAfter("private fun refreshOpenPreview()", '{')
+            navigator
+                .bodyAfter("private fun refreshOpenPreview()", '{')
                 .contains("showPreview(refreshed)"),
         )
     }
@@ -48,7 +123,8 @@ class SessionMessageNavigatorSourceTest {
     @Test
     fun `可视区域与轨道尺寸变化时重新校准预览位置`() {
         assertTrue(
-            navigator.bodyAfter("fun viewportChanged()", '{')
+            navigator
+                .bodyAfter("fun viewportChanged()", '{')
                 .contains("refreshOpenPreview()"),
         )
         val rail = navigator.bodyAfter("private inner class NavigatorRail : JComponent()", '{')
@@ -85,7 +161,8 @@ class SessionMessageNavigatorSourceTest {
     @Test
     fun `悬停出现与消失都会重绘轨道`() {
         assertTrue(
-            navigator.bodyAfter("private fun showPreview(anchor: UserMessageAnchor)", '{')
+            navigator
+                .bodyAfter("private fun showPreview(anchor: UserMessageAnchor)", '{')
                 .contains("repaint()"),
         )
         assertTrue(navigator.bodyAfter("private fun hidePreview()", '{').contains("repaint()"))
@@ -199,7 +276,8 @@ class SessionMessageNavigatorSourceTest {
     @Test
     fun `回到轨道上会撤销待执行的隐藏`() {
         assertTrue(
-            navigator.bodyAfter("private fun showPreview(anchor: UserMessageAnchor)", '{')
+            navigator
+                .bodyAfter("private fun showPreview(anchor: UserMessageAnchor)", '{')
                 .contains("cancelScheduledHide()"),
         )
     }
@@ -210,15 +288,24 @@ class SessionMessageNavigatorSourceTest {
      * 三条路径都必须先过 [validOffset]。
      */
     @Test
-    fun `绘制与点击都先校验锚点 offset 是否越界`() {
+    fun `绘制与点击都先把绝对锚点换算到当前窗口`() {
         assertTrue(
-            "绘制与命中共用的 anchorPoints 要挡住越界锚点",
-            navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{').contains("validOffset"),
+            "绘制与命中共用的 anchorPoints 要按当前 Terminal 起点换算",
+            navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{').contains("relativeOffset"),
         )
         assertTrue(
-            "点击跳转前也要挡一道",
-            navigator.bodyAfter("override fun mouseClicked(event: MouseEvent)", '{').contains("validOffset"),
+            "点击跳转前也要按当前 Terminal 起点换算",
+            navigator.bodyAfter("override fun mouseClicked(event: MouseEvent)", '{').contains("relativeOffset"),
         )
+    }
+
+    @Test
+    fun `定位读取平台终端快照并保存绝对起点`() {
+        val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
+
+        assertTrue(body.contains("outputModel.takeSnapshot()"))
+        assertTrue(body.contains("outputSnapshot.startOffset.toAbsolute()"))
+        assertTrue(body.contains("outputModels.active.value !== snapshot.outputModel"))
     }
 
     /**

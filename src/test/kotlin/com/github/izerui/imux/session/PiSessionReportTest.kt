@@ -5,7 +5,6 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PiSessionReportTest {
-
     @Test
     fun `解析会话切换上报体`() {
         val body =
@@ -16,6 +15,22 @@ class PiSessionReportTest {
                 PiReportType.SESSION_START,
                 "imux-1",
                 "team.custom_1",
+                "/Users/demo/proj",
+            ),
+            parsePiReport(body),
+        )
+    }
+
+    @Test
+    fun `解析不含正文的用户消息提示`() {
+        val body =
+            """{"type":"user_message","tabId":"imux-1","sessionId":"abc-123","cwd":"/Users/demo/proj"}"""
+
+        assertEquals(
+            PiSessionReport(
+                PiReportType.USER_MESSAGE,
+                "imux-1",
+                "abc-123",
                 "/Users/demo/proj",
             ),
             parsePiReport(body),
@@ -53,8 +68,7 @@ class PiSessionReportTest {
 
     @Test
     fun `会话 id 只接受 pi 官方允许的字符与边界`() {
-        fun report(id: String) =
-            """{"type":"session_start","tabId":"imux-1","sessionId":"$id","cwd":"/tmp"}"""
+        fun report(id: String) = """{"type":"session_start","tabId":"imux-1","sessionId":"$id","cwd":"/tmp"}"""
 
         assertEquals("a", parsePiReport(report("a"))?.sessionId)
         assertEquals("A0._-z", parsePiReport(report("A0._-z"))?.sessionId)

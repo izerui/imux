@@ -1,5 +1,36 @@
 # 会话内消息导航：悬停预览卡片
 
+## 2026-09-01 增量定位实施更新
+
+本文件后续章节保留最初的预览卡片设计背景；消息发现与定位主路径已经升级：
+
+- `NavigationTranscriptIndex` 首次读取会话尾部 4MB，之后只续读新增字节；半行保留为
+  原始 UTF-8 字节，文件截短、替换或会话切换时自动重建。
+- Pi 按 `id/parentId`、Claude 按 `uuid/parentUuid` 重建当前 leaf lineage，废弃分支不进入
+  轨道；Codex rollout 没有同类稳定父链，继续按过滤后的物理顺序解析。
+- 三家仍复用同一个 `parseNavigatorTranscriptMessage` 可见文本规则和 `SessionExchange`
+  配对规则。`recentExchanges` 保留给既有调用与恢复测试，不再是实时导航主路径。
+- 锚点同时记录定位快照中的相对位置和 Platform 262 `TerminalOutputModel` 绝对 offset。
+  绘制、命中和点击时按当前 `startOffset` 换算，history trimming 不再让剩余锚点漂移。
+- transcript 语义未变化且没有待定位消息时，只做文件属性/增量检查，不创建终端全文
+  snapshot；新增用户轮次、首条回复、reflow 或 active buffer 切换才执行全文逆序关联。
+- Pi 扩展用同步 `message_end` handler 发起不等待的 `user_message` 提示，报文不含正文；
+  提示失败由 JSONL 增量读取兜底。Claude/Codex 不注入 hook，不修改用户配置。
+- 持续输出采用非饿死的合并调度：首轮 250ms，仍有待处理变化时最多每 1 秒一轮。
+  Pi 的 full-redraw 微任务冲刷、硬件光标和输入法链路保持独立且未改动。
+
+当前数据流：
+
+```text
+Pi message_end hint / Terminal document change / active buffer change / SessionMonitor change
+  -> NavigationTranscriptIndex.refresh()       只读取 JSONL 增量
+  -> transcript 未变且无待定位                 直接返回
+  -> TerminalOutputModel.takeSnapshot()         不可变快照 + 绝对起点
+  -> locateUserMessageAnchors()                 有界全文恢复/关联
+  -> 校验 active model；记录定位期间 content generation 是否变化
+  -> [EDT] 先应用绝对锚点，变化期间保留确认轮次并继续纠正
+```
+
 ## 背景
 
 `SessionMessageNavigator` 已经在终端右侧画了一条刻度轨道，刻度对应 transcript 里的用户消息，点击滚动过去，悬停出一个 tooltip。实机看下来问题不在醒目程度，而在**刻度不携带语义**：几个灰点，看不出代表什么、是第几轮、聊的什么，得先猜到它能悬停才拿得到信息。

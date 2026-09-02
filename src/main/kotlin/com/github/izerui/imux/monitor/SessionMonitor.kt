@@ -59,6 +59,7 @@ import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 fun interface SessionMonitorListener : EventListener {
     fun stateChanged()
@@ -185,6 +186,7 @@ class SessionMonitor(
     private val checkingCompletedTurns = AtomicBoolean(false)
     private val probing = AtomicBoolean(false)
     private val regeneratingTitles = ConcurrentHashMap.newKeySet<String>()
+    private val transcriptGenerations = ConcurrentHashMap<String, AtomicLong>()
 
     private val titleRegenerator by lazy {
         SessionTitleRegenerator(
@@ -380,6 +382,14 @@ class SessionMonitor(
                     refresh()
                 }
 
+                PiReportType.USER_MESSAGE -> {
+                    if (host.openTabsByTabId()[report.tabId] != report.sessionId) return@launch
+                    transcriptGenerations
+                        .computeIfAbsent(report.sessionId) { AtomicLong() }
+                        .incrementAndGet()
+                    notifyListeners()
+                }
+
                 PiReportType.AGENT_SETTLED -> {
                     if (host.openTabsByTabId()[report.tabId] != report.sessionId) return@launch
                     val reason = report.stopReason ?: return@launch
@@ -425,6 +435,8 @@ class SessionMonitor(
     ) {
         listenerDispatcher.addListener(listener, parentDisposable)
     }
+
+    fun transcriptGeneration(sessionId: String): Long = transcriptGenerations[sessionId]?.get() ?: 0L
 
     fun hasUnread(): Boolean = unread.isNotEmpty()
 
@@ -501,6 +513,7 @@ class SessionMonitor(
     /** 标签关闭后立即撤销运行态，不能让窗口标题再等下一轮文件轮询。 */
     fun sessionClosed(key: String) {
         model.cancelPending(key)
+        transcriptGenerations.remove(key)
         if (key !in runningIds) return
         runningIds = runningIds - key
         updateOpenTabIcons(setOf(key))

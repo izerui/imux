@@ -100,6 +100,18 @@ class SessionMonitorTest {
         )
     }
 
+    @Test
+    fun `Pi 用户消息提示递增 transcript generation 并通知导航器`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt")
+        val reportBody = source.bodyAfter("fun onPiSessionReported(report: PiSessionReport)", '{')
+        val userMessageBranch = source.bodyAfter("PiReportType.USER_MESSAGE ->", '{')
+
+        assertTrue(reportBody.contains("PiReportType.USER_MESSAGE"))
+        assertTrue(userMessageBranch.contains("transcriptGenerations"))
+        assertTrue(userMessageBranch.contains("incrementAndGet()"))
+        assertTrue(userMessageBranch.contains("notifyListeners()"))
+    }
+
     /**
      * 恢复 pi 标签必须等端点算好，所有平台都一样——这是改动前就有的行为。
      */
