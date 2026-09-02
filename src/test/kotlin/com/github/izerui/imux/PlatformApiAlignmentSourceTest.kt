@@ -348,7 +348,8 @@ class PlatformApiAlignmentSourceTest {
 
         assertTrue(editor.contains("DumbAwareAction("))
         assertTrue(editor.contains("event.presentation.isEnabledAndVisible"))
-        assertTrue(editor.contains("updateActionsAsync()"))
+        assertTrue(editor.contains("scrollButton?.update()"))
+        assertTrue(editor.contains("override fun getActionUpdateThread(): ActionUpdateThread"))
         assertFalse(editor.contains("toolbarComponent.isVisible ="))
         assertTrue(factory.contains("DumbAwareAction"))
         assertTrue(factory.contains("ActionUpdateThread"))
