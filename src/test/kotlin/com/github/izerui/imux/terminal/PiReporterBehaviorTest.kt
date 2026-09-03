@@ -175,9 +175,9 @@ class PiReporterBehaviorTest {
     }
 
     @Test
-    fun `清屏重绘把输入光标合并进同步输出`() {
+    fun `普通清屏重绘原样透传并保留相对光标定位`() {
         assertEquals(
-            "<ESC>[?2026h<ESC>[2J<ESC>[H<ESC>[3Jframe<ESC>[4;5H<ESC>[?2026l|show|row=13",
+            "<ESC>[?2026h<ESC>[2J<ESC>[H<ESC>[3Jframe<ESC>[?2026l|relative:13:4:20|row=19",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
@@ -271,9 +271,9 @@ class PiReporterBehaviorTest {
     }
 
     @Test
-    fun `连续清屏重绘逐帧恢复输入光标`() {
+    fun `连续普通清屏重绘不额外改写光标位置`() {
         assertEquals(
-            "A<ESC>[2J<ESC>[H<ESC>[3J<ESC>[4;5H<ESC>[?2026l|show|B<ESC>[2J<ESC>[H<ESC>[3J<ESC>[6;3H<ESC>[?2026l|show",
+            "A<ESC>[2J<ESC>[H<ESC>[3J<ESC>[?2026l|relative|B<ESC>[2J<ESC>[H<ESC>[3J<ESC>[?2026l|relative",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
