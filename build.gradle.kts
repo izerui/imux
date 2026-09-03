@@ -77,11 +77,11 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            // detachTab 的返回类型漂移由 TerminalHost 中的窄反射桥接隔离，产物支持整个 262。
+            // detachTab 的返回类型漂移由 TerminalHost 中的窄反射桥接隔离，产物支持 262 及以上版本。
             sinceBuild = "262"
-            // 0.3.18 只针对 262 编译和验证。设置上界可避免 Marketplace 把插件
-            // 自动拿到 263 EAP 做安装回归；263 的 Terminal/UI 行为需单独验证后再支持。
-            untilBuild = "262.*"
+            // 不设置上界，允许 Marketplace 和 IDE 安装器将插件匹配到后续版本。
+            // 未来平台 API 若发生不兼容，应通过针对性验证和新版本修复，而不是提前拒绝安装。
+            untilBuild = provider { null }
         }
 
         // dev.sh 在打包前让只读 pi 根据最近一次发布以来的 Git 变化生成当前版本日志。
