@@ -5,10 +5,9 @@ import com.github.izerui.imux.terminal.probeScript
 import com.github.izerui.imux.terminal.resolveShell
 import com.github.izerui.imux.terminal.shellArgs
 import com.github.izerui.imux.terminal.singleQuote
-import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.util.SystemInfo
-import org.jetbrains.plugins.terminal.TerminalOptionsProvider
+import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.util.concurrent.TimeUnit
 
 /** 二进制探测结果；键不存在与确认不存在必须保持可区分。 */
@@ -107,7 +106,7 @@ internal class ShellBinaryProbe(
         resolveShell(
             System.getenv("SHELL"),
             isWindows = SystemInfo.isWindows,
-            configuredShell = service<TerminalOptionsProvider>().shellPath,
+            configuredShell = TerminalLocalOptions.getInstance().shellPath,
         ),
     private val timeoutSeconds: Long = TIMEOUT_SECONDS,
 ) : BinaryProbe {

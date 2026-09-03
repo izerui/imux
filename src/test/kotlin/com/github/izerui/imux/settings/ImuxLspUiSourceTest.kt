@@ -195,7 +195,7 @@ class ImuxLspUiSourceTest {
                 resolveShell(
                     System.getenv("SHELL"),
                     isWindows = SystemInfo.isWindows,
-                    configuredShell = service<TerminalOptionsProvider>().shellPath,
+                    configuredShell = TerminalLocalOptions.getInstance().shellPath,
                 )
             """,
             bodyAfter("private fun remedyShell(): String", '('),

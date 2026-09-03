@@ -26,7 +26,6 @@ import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.project.Project
@@ -52,8 +51,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
-import org.jetbrains.plugins.terminal.TerminalOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
+import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
@@ -614,7 +613,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         resolveShell(
             System.getenv("SHELL"),
             isWindows = SystemInfo.isWindows,
-            configuredShell = service<TerminalOptionsProvider>().shellPath,
+            configuredShell = TerminalLocalOptions.getInstance().shellPath,
         )
 
     /**

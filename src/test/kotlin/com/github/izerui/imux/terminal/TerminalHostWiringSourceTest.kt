@@ -18,7 +18,7 @@ import org.junit.Test
  *   都靠它（`tabPidFileFor` 只看 `SystemInfo.isWindows`，不看 agent 类型）
  * - 删掉 `closeSession` 里那句 `deleteTabPidFile`：pid 文件泄漏 → pid 被系统复用 →
  *   **把一个毫不相干的新进程认成某标签的 shell**，正是「认错比不迁移更糟」那一类
- * - `configuredShell = service<TerminalOptionsProvider>().shellPath` → `null`：
+ * - `configuredShell = TerminalLocalOptions.getInstance().shellPath` → `null`：
  *   Windows 上永远退回 `powershell.exe`，Git Bash 用户配的东西被无声忽略
  *
  * 归一化与整段比对的工具全部复用 [SourceCode]（规则见那一侧的 KDoc），
@@ -55,7 +55,7 @@ class TerminalHostWiringSourceTest {
                     resolveShell(
                         System.getenv("SHELL"),
                         isWindows = SystemInfo.isWindows,
-                        configuredShell = service<TerminalOptionsProvider>().shellPath,
+                        configuredShell = TerminalLocalOptions.getInstance().shellPath,
                     ),
                     agentType,
                     resumeId = sessionId,
@@ -92,7 +92,7 @@ class TerminalHostWiringSourceTest {
                     resolveShell(
                         System.getenv("SHELL"),
                         isWindows = SystemInfo.isWindows,
-                        configuredShell = service<TerminalOptionsProvider>().shellPath,
+                        configuredShell = TerminalLocalOptions.getInstance().shellPath,
                     ),
                     agentType,
                     resumeId = sessionId,
