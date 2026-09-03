@@ -24,25 +24,26 @@ class SessionMessageNavigatorSourceTest {
     }
 
     @Test
-    fun `Terminal active buffer 切换会请求消息重定位`() {
+    fun `Terminal active buffer 切换不进入消息导航刷新链路`() {
+        assertFalse(editor.normalized.contains("messageNavigator.outputModelChanged()"))
+        assertFalse(editor.normalized.contains("outputModelChanged = true"))
+        assertFalse(navigator.normalized.contains("fun outputModelChanged()"))
+    }
+
+    @Test
+    fun `终端内容只在导航等待消息落屏时触发一次重定位`() {
+        val listener = navigator.bodyAfter("override fun afterContentChanged(event: TerminalContentChangeEvent)", '{')
+
+        assertTrue(listener.contains("awaitingTerminalContent.compareAndSet(true, false)"))
+        assertTrue(listener.contains("outputGeneration.incrementAndGet()"))
+        assertTrue(listener.contains("locateRequested.set(true)"))
+        assertTrue(listener.contains("scheduleRefresh()"))
         assertTrue(
-            editor.compactArgs(editor.normalized).contains(
-                editor.compactArgs("messageNavigator.outputModelChanged()"),
-            ),
+            "必须监听官方 TerminalOutputModel，而不是重新监听 Editor Document",
+            navigator.normalized.contains("TerminalOutputModelListener") &&
+                navigator.normalized.contains("outputModels.active.value.addListener"),
         )
-        assertTrue(
-            editor.compactArgs(editor.normalized).contains(
-                editor.compactArgs("scheduleScrollButtonRefresh(outputModelChanged = true)"),
-            ),
-        )
-        assertTrue(
-            editor.compactArgs(editor.normalized).contains(
-                editor.compactArgs("if (outputModelChanged) messageNavigator.outputModelChanged()"),
-            ),
-        )
-        val body = navigator.bodyAfter("fun outputModelChanged()", '{')
-        assertTrue(body.contains("locateRequested.set(true)"))
-        assertTrue(body.contains("scheduleRefresh()"))
+        assertFalse(navigator.normalized.contains("DocumentListener"))
     }
 
     @Test
@@ -89,16 +90,8 @@ class SessionMessageNavigatorSourceTest {
 
         assertFalse("不能再因持续变化丢弃整轮结果", body.contains("modificationStamp"))
         assertTrue("必须先应用可用的绝对锚点", apply >= 0)
-        assertTrue("变化期间还要安排纠正", retry > apply)
-        assertTrue(body.contains("contentGeneration.get() != snapshot.contentGeneration"))
-    }
-
-    @Test
-    fun `transcript 变化后保留下一次终端确认`() {
-        val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
-
-        assertTrue(body.contains("locateConfirmationPasses.set(2)"))
-        assertTrue(body.contains("locateRetryWanted(latestResolved, changedDuringLocate, confirmationsRemaining)"))
+        assertTrue("不再依赖终端文档变化监听触发纠正", retry < 0)
+        assertFalse(body.contains("contentGeneration"))
     }
 
     @Test
@@ -304,8 +297,13 @@ class SessionMessageNavigatorSourceTest {
         val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
 
         assertTrue(body.contains("outputModel.takeSnapshot()"))
-        assertTrue(body.contains("outputSnapshot.startOffset.toAbsolute()"))
+        assertTrue(body.contains("outputSnapshot.endOffset - NAVIGATION_SCAN_MAX_CHARS.toLong()"))
+        assertTrue(body.contains("scanStart.toAbsolute()"))
         assertTrue(body.contains("outputModels.active.value !== snapshot.outputModel"))
+        assertTrue(navigator.normalized.contains("NAVIGATION_SCAN_MAX_CHARS = 256_000"))
+        assertTrue(body.contains("outputGeneration.get() != snapshot.outputGeneration"))
+        assertTrue(body.contains("awaitingTerminalContent.set(!outputChangedDuringLocate"))
+        assertTrue(body.contains("if (outputChangedDuringLocate) scheduleRefresh()"))
     }
 
     /**

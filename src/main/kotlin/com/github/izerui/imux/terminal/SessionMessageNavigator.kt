@@ -10,8 +10,6 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ScrollType
-import com.intellij.openapi.editor.event.DocumentEvent
-import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -32,6 +30,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent
+import org.jetbrains.plugins.terminal.view.TerminalOutputModelListener
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import java.awt.BasicStroke
 import java.awt.BorderLayout
@@ -47,7 +47,6 @@ import java.awt.event.MouseMotionAdapter
 import java.nio.file.Path
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JComponent
 
@@ -195,12 +194,6 @@ internal fun latestExchangeResolved(
     return anchors.lastOrNull()?.userPreview == expectedPreview
 }
 
-internal fun locateRetryWanted(
-    latestResolved: Boolean,
-    contentChanged: Boolean,
-    confirmationsRemaining: Int,
-): Boolean = contentChanged || !latestResolved || confirmationsRemaining > 0
-
 private fun truncated(
     value: String,
     limit: Int,
@@ -216,14 +209,14 @@ internal class SessionMessageNavigator(
     private var refreshJob: Job? = null
     private val refreshRequested = AtomicBoolean()
     private val locateRequested = AtomicBoolean(true)
-    private val locateConfirmationPasses = AtomicInteger(1)
-    private val contentGeneration = AtomicLong()
+    private val awaitingTerminalContent = AtomicBoolean()
+    private val outputGeneration = AtomicLong()
     private val transcriptIndex = NavigationTranscriptIndex()
 
     @Volatile
     private var disposed = false
 
-    private var documentListenerDisposable: Disposable? = null
+    private var outputListenerDisposable: Disposable? = null
     private val sessionChangeTracker = NavigationSessionChangeTracker()
     private var previewAnchor: UserMessageAnchor? = null
     private var previewBalloon: Balloon? = null
@@ -234,13 +227,12 @@ internal class SessionMessageNavigator(
     private val rail = NavigatorRail()
     val component: JComponent get() = rail
     val preferredWidth: Int get() = JBUI.scale(RAIL_WIDTH)
-    private val documentListener =
-        object : DocumentListener {
-            override fun documentChanged(event: DocumentEvent) {
-                contentGeneration.incrementAndGet()
-                if (changeCanMoveAnchors(event.offset, anchors, currentOutputStart())) {
-                    locateRequested.set(true)
-                }
+    private val outputModelListener =
+        object : TerminalOutputModelListener {
+            override fun afterContentChanged(event: TerminalContentChangeEvent) {
+                outputGeneration.incrementAndGet()
+                if (!awaitingTerminalContent.compareAndSet(true, false)) return
+                locateRequested.set(true)
                 scheduleRefresh()
             }
         }
@@ -266,12 +258,14 @@ internal class SessionMessageNavigator(
         }
         unbind()
         locateRequested.set(true)
-        locateConfirmationPasses.set(1)
         this.editor = editor
-        editor?.let {
-            val listenerDisposable = Disposer.newDisposable("imux-session-message-document")
-            documentListenerDisposable = listenerDisposable
-            it.document.addDocumentListener(documentListener, listenerDisposable)
+        if (editor != null) {
+            val listenerDisposable = Disposer.newDisposable("imux-session-message-output")
+            outputListenerDisposable = listenerDisposable
+            virtualFile.terminalView.outputModels.active.value.addListener(
+                listenerDisposable,
+                outputModelListener,
+            )
         }
         scheduleRefresh()
     }
@@ -311,8 +305,6 @@ internal class SessionMessageNavigator(
         val transcript = transcriptIndex.refresh(snapshot.session)
         if (transcript.changed) {
             locateRequested.set(true)
-            // 重复文本可能暂时命中上一轮；至少等下一次 Terminal 变化再确认一遍。
-            locateConfirmationPasses.set(2)
         }
         if (!locateRequested.get()) return
 
@@ -320,12 +312,20 @@ internal class SessionMessageNavigator(
             ReadAction.computeBlocking<org.jetbrains.plugins.terminal.view.TerminalOutputModelSnapshot, RuntimeException> {
                 snapshot.outputModel.takeSnapshot()
             }
-        val documentText = outputSnapshot.getText(outputSnapshot.startOffset, outputSnapshot.endOffset).toString()
+        // 用户输入总在终端 buffer 尾部。不要为一次回车读取数 MB 的完整历史：
+        // 262 的 hyperlink 处理也会在同一份大文档上创建 range marker，全文读锁会把
+        // terminal 的回显和重绘排在后面。保留绝对起点，裁剪只影响导航扫描范围。
+        val scanStart =
+            maxOf(
+                outputSnapshot.startOffset,
+                outputSnapshot.endOffset - NAVIGATION_SCAN_MAX_CHARS.toLong(),
+            )
+        val documentText = outputSnapshot.getText(scanStart, outputSnapshot.endOffset).toString()
         val locatedAnchors =
             locateUserMessageAnchors(
                 documentText,
                 transcript.exchanges,
-                documentStartOffset = outputSnapshot.startOffset.toAbsolute(),
+                documentStartOffset = scanStart.toAbsolute(),
             )
         val latestResolved = latestExchangeResolved(transcript.exchanges, locatedAnchors)
         withContext(Dispatchers.EDT) {
@@ -334,21 +334,14 @@ internal class SessionMessageNavigator(
                 scheduleRefresh()
                 return@withContext
             }
-            val changedDuringLocate = contentGeneration.get() != snapshot.contentGeneration
-            val confirmationsRemaining = locateConfirmationPasses.updateAndGet { (it - 1).coerceAtLeast(0) }
-            locateRequested.set(
-                locateRetryWanted(latestResolved, changedDuringLocate, confirmationsRemaining),
-            )
+            val outputChangedDuringLocate = outputGeneration.get() != snapshot.outputGeneration
+            locateRequested.set(outputChangedDuringLocate)
+            // message_end 可能早于 Terminal 把用户消息画出来。只在这种待补齐状态下
+            // 等下一次 output model 内容事件；普通持续输出不会触发导航扫描。
+            awaitingTerminalContent.set(!outputChangedDuringLocate && (transcript.changed || !latestResolved))
             applyAnchors(snapshot.editor, snapshot.outputModel, locatedAnchors)
-            if (changedDuringLocate) scheduleRefresh()
+            if (outputChangedDuringLocate) scheduleRefresh()
         }
-    }
-
-    fun outputModelChanged() {
-        contentGeneration.incrementAndGet()
-        locateRequested.set(true)
-        locateConfirmationPasses.set(1)
-        scheduleRefresh()
     }
 
     fun viewportChanged() {
@@ -361,10 +354,6 @@ internal class SessionMessageNavigator(
         if (!sessionChangeTracker.changed(currentSessionState())) return
         scheduleRefresh()
     }
-
-    private fun currentOutputStart(): Long =
-        virtualFile.terminalView.outputModels.active.value.startOffset
-            .toAbsolute()
 
     private fun currentSessionState(): NavigationSessionState {
         val sessionId = virtualFile.sessionId
@@ -380,7 +369,7 @@ internal class SessionMessageNavigator(
         sessionChangeTracker.remember(state)
         val session = state.session ?: return null
         val outputModel = virtualFile.terminalView.outputModels.active.value
-        return NavigationSnapshot(currentEditor, session, outputModel, contentGeneration.get())
+        return NavigationSnapshot(currentEditor, session, outputModel, outputGeneration.get())
     }
 
     private fun applyAnchors(
@@ -420,8 +409,9 @@ internal class SessionMessageNavigator(
 
     private fun unbind() {
         hidePreview()
-        documentListenerDisposable?.let(Disposer::dispose)
-        documentListenerDisposable = null
+        awaitingTerminalContent.set(false)
+        outputListenerDisposable?.let(Disposer::dispose)
+        outputListenerDisposable = null
         clearHighlighters()
         editor = null
     }
@@ -541,7 +531,7 @@ internal class SessionMessageNavigator(
         val editor: Editor,
         val session: AgentSession,
         val outputModel: TerminalOutputModel,
-        val contentGeneration: Long,
+        val outputGeneration: Long,
     )
 
     private data class AnchorPoint(
@@ -719,6 +709,7 @@ internal class SessionMessageNavigator(
     }
 
     private companion object {
+        const val NAVIGATION_SCAN_MAX_CHARS = 256_000
         const val REFRESH_DEBOUNCE_MS = 250L
         const val CONTINUOUS_REFRESH_INTERVAL_MS = 1_000L
         const val RAIL_WIDTH = 22

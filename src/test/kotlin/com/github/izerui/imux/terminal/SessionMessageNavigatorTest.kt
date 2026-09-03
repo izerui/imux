@@ -307,22 +307,6 @@ class SessionMessageNavigatorTest {
     }
 
     @Test
-    fun `重复文本的表面命中仍等待确认轮次`() {
-        assertTrue(
-            "尚有确认轮次时不能把旧文本命中当作完成",
-            locateRetryWanted(latestResolved = true, contentChanged = false, confirmationsRemaining = 1),
-        )
-        assertTrue(
-            "定位期间文档变化时必须纠正",
-            locateRetryWanted(latestResolved = true, contentChanged = true, confirmationsRemaining = 0),
-        )
-        assertFalse(
-            "稳定命中且确认完成后才停止",
-            locateRetryWanted(latestResolved = true, contentChanged = false, confirmationsRemaining = 0),
-        )
-    }
-
-    @Test
     fun `最新用户轮次出现后停止待定位重试`() {
         val exchanges = asked("较早问题", "最新问题")
         val earlierOnly = listOf(UserMessageAnchor(10, "较早问题", ""))

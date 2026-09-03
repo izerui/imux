@@ -77,11 +77,11 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            // detachTab 的返回类型漂移由 TerminalHost 中的窄反射桥接隔离，同一产物支持整个 262。
+            // detachTab 的返回类型漂移由 TerminalHost 中的窄反射桥接隔离，产物支持整个 262。
             sinceBuild = "262"
-            // 刻意不设 untilBuild：见 docs/superpowers/plans 中的决策记录。
-            // 代价是终端 API 漂移时会在运行时抛 NoSuchMethodError 而非安装期拒绝。
-            untilBuild = provider { null }
+            // 0.3.18 只针对 262 编译和验证。设置上界可避免 Marketplace 把插件
+            // 自动拿到 263 EAP 做安装回归；263 的 Terminal/UI 行为需单独验证后再支持。
+            untilBuild = "262.*"
         }
 
         // dev.sh 在打包前让只读 pi 根据最近一次发布以来的 Git 变化生成当前版本日志。
