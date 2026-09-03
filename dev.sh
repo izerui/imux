@@ -53,6 +53,39 @@ html_change_notes() {
   '
 }
 
+limit_change_notes_context() {
+  local context_file=$1
+  local max_bytes="${CHANGE_NOTES_CONTEXT_MAX_BYTES:-120000}"
+  local marker=$'\n\n[... 修改日志上下文过大，后续差异已截断 ...]\n'
+  local marker_bytes
+  local context_bytes
+  local keep_bytes
+  local truncated_file
+
+  if ! [[ "$max_bytes" =~ ^[1-9][0-9]*$ ]]; then
+    echo "无法生成修改日志：CHANGE_NOTES_CONTEXT_MAX_BYTES 必须是正整数。" >&2
+    return 1
+  fi
+
+  context_bytes=$(wc -c < "$context_file" | tr -d ' ')
+  if (( context_bytes <= max_bytes )); then
+    return 0
+  fi
+
+  marker_bytes=$(printf '%s' "$marker" | wc -c | tr -d ' ')
+  keep_bytes=$((max_bytes - marker_bytes))
+  if (( keep_bytes < 1 )); then
+    echo "无法生成修改日志：CHANGE_NOTES_CONTEXT_MAX_BYTES 太小。" >&2
+    return 1
+  fi
+
+  truncated_file="${context_file}.tmp.$$"
+  head -c "$keep_bytes" "$context_file" > "$truncated_file"
+  printf '%s' "$marker" >> "$truncated_file"
+  mv "$truncated_file" "$context_file"
+  echo "⚠ 修改日志上下文超过 ${max_bytes} 字节，已截断后续差异。" >&2
+}
+
 generate_change_notes() {
   local base
   local version
@@ -88,6 +121,7 @@ generate_change_notes() {
     printf '\n=== 实际差异（包含尚未提交的工作区）===\n'
     git diff --no-ext-diff --unified=2 "$base" -- .
   } > "$context_file"
+  limit_change_notes_context "$context_file"
 
   echo "▶ 正在让 pi 根据最近一次发布以来的 Git 变化生成 ${version} 修改日志…"
   if ! generated=$(

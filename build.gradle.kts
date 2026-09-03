@@ -139,4 +139,8 @@ tasks.test {
         .file("build.gradle.kts")
         .withPropertyName("buildScriptReadAtRuntime")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs
+        .file("dev.sh")
+        .withPropertyName("devScriptReadAtRuntime")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }

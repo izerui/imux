@@ -60,6 +60,28 @@ class DevScriptTest {
     }
 
     @Test
+    fun `修改日志上下文超过上限时会截断发送内容`() {
+        val script = SourceCode("dev.sh").normalized
+
+        assertTrue(
+            "应提供可配置的修改日志上下文上限",
+            script.contains("""CHANGE_NOTES_CONTEXT_MAX_BYTES:-120000"""),
+        )
+        assertTrue(
+            "应在调用 pi 前按字节数截断上下文",
+            script.contains("head -c \"\$keep_bytes\" \"\$context_file\""),
+        )
+        assertTrue(
+            "截断必须向模型明确说明后续差异已省略",
+            script.contains("修改日志上下文过大，后续差异已截断"),
+        )
+        assertTrue(
+            "配置错误不能静默发送不受限请求",
+            script.contains("CHANGE_NOTES_CONTEXT_MAX_BYTES 必须是正整数"),
+        )
+    }
+
+    @Test
     fun `pi 以只读一次性模式生成修改日志`() {
         val script = SourceCode("dev.sh").normalized
 
