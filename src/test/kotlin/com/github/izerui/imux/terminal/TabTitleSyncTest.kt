@@ -14,7 +14,7 @@ import java.lang.reflect.Proxy
 class TabTitleSyncTest {
 
     @Test
-    fun `虚拟文件展示名带类型前缀而标签标题与 hover 保持简洁`() {
+    fun `状态栏使用原始文件名而标签标题与 hover 保持简洁`() {
         val file =
             AgentTerminalVirtualFile(
                 name = "创建时标题",
@@ -26,13 +26,13 @@ class TabTitleSyncTest {
         file.tabTitle = "更新后的标题"
         val provider = AgentTerminalTabTitleProvider()
 
-        assertEquals("codex: 更新后的标题", file.name)
+        assertEquals("创建时标题", file.name)
         assertEquals("更新后的标题", provider.getEditorTabTitle(proxy(), file))
         assertEquals("更新后的标题", provider.getEditorTabTooltipHtml(proxy(), file)?.toString())
     }
 
     @Test
-    fun `三种 Agent 使用各自的 CLI 名称作为展示前缀`() {
+    fun `状态栏不使用 Agent 前缀`() {
         AgentType.entries.forEach { agentType ->
             val file =
                 AgentTerminalVirtualFile(
@@ -43,7 +43,7 @@ class TabTitleSyncTest {
                     tabId = "tab-${agentType.cli}",
                 )
 
-            assertEquals("${agentType.cli}: 会话标题", file.name)
+            assertEquals("会话标题", file.name)
         }
     }
 

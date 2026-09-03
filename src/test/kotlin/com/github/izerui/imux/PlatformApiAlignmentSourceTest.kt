@@ -36,7 +36,7 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(terminalHost.contains("updateFilePresentation(file)"))
         assertTrue(terminalHost.contains("terminalView.title.change"))
         assertTrue(virtualFile.contains("""get() = "${'$'}{agentType.cli}: ${'$'}tabTitle""""))
-        assertTrue(virtualFile.contains("override fun getName(): String = displayName"))
+        assertFalse(virtualFile.contains("override fun getName(): String = displayName"))
         assertTrue(titleProvider.contains("EditorTabTitleProvider"))
         assertTrue(titleProvider.contains("getEditorTabTooltipHtml"))
         assertTrue(titleProvider.contains("HtmlChunk.text(it.tabTitle)"))
