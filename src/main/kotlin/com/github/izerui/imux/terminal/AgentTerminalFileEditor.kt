@@ -369,6 +369,6 @@ class AgentTerminalFileEditor(
     private companion object {
         const val NAVIGATOR_RIGHT_INSET = 14
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
-        const val SCROLL_ROW_HORIZONTAL_INSET = 12
+        const val SCROLL_ROW_HORIZONTAL_INSET = 30
     }
 }
