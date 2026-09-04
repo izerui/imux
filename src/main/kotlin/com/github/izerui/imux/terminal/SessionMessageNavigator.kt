@@ -59,6 +59,16 @@ internal data class UserMessageAnchor(
     val absoluteOffset: Long = offset.toLong(),
 )
 
+private data class IndexedUserMessageAnchor(
+    val exchangeIndex: Int,
+    val anchor: UserMessageAnchor,
+)
+
+internal data class PreferredTextRange(
+    val startAbsoluteOffset: Long,
+    val endAbsoluteOffset: Long,
+)
+
 internal data class NavigationSessionState(
     val sessionId: String?,
     val session: AgentSession?,
@@ -135,48 +145,104 @@ private data class NormalizedText(
  * 终端会软换行、窗口缩放后也会重新排版，因此先把两边空白折叠，同时保留归一化字符
  * 到原文 offset 的映射。
  *
- * 定位只用一条各家 CLI 通用的规律：**对话按 transcript 的顺序自上而下渲染**。
- * 于是把提问和回复展平成一条消息链，从文档尾部反向逐条匹配，每定位一条就把游标
- * 压到它之前——回复虽然不产出锚点，但同样推游标。三件事因此一起解决：
+ * 新消息优先在 Terminal 已标记的非默认背景区间内匹配，再按 transcript 顺序与终端文本
+ * 配对。这样 AI 普通输出中复述同样文字不会抢走 anchor。只有没有可用标记的旧会话，
+ * 才使用一条各家 CLI 通用的 fallback：从文档尾部反向逐条匹配。
+ *
+ * fallback 的三件事：
  *
  * - 助手复述提问抢不走锚点：复述在回复内部，必然落在游标之后，够不着；
  * - 重复提问按轮次分开：游标单调递减，n 轮相同提问必然落在 n 个不同位置；
  * - 终端裁剪历史后只剩一处时，归给较新的那轮——裁掉的总是更早的内容。
  *
- * 不认识任何渲染符号，因此换一版 TUI 前缀不会让整轮消息从轨道上消失。已知局限见
- * `末轮回复尚未写入时锚点可能落在后续输出上`。
+ * 不认识任何渲染符号，因此换一版 TUI 前缀不会让整轮消息从 fallback 轨道上消失。
  */
 internal fun locateUserMessageAnchors(
     documentText: String,
     exchanges: List<SessionExchange>,
     documentStartOffset: Long = 0L,
-): List<UserMessageAnchor> {
+    preferredRanges: List<PreferredTextRange> = emptyList(),
+): List<UserMessageAnchor> =
+    locateUserMessageAnchorsIndexed(documentText, exchanges, documentStartOffset, preferredRanges)
+        .map(IndexedUserMessageAnchor::anchor)
+
+private fun locateUserMessageAnchorsIndexed(
+    documentText: String,
+    exchanges: List<SessionExchange>,
+    documentStartOffset: Long,
+    preferredRanges: List<PreferredTextRange>,
+): List<IndexedUserMessageAnchor> {
     val document = normalizedWithOffsets(documentText)
     if (document.text.isEmpty()) return emptyList()
 
     // 提问、回复、提问、回复……展平成一条与渲染顺序一致的链，回复只推游标不产出锚点
     val chain =
-        exchanges.flatMap { listOf(it.userText to it, it.assistantReply to null) }
+        exchanges.flatMapIndexed { index, exchange ->
+            listOf(
+                Triple(exchange.userText, index, exchange),
+                Triple(exchange.assistantReply, null, null),
+            )
+        }
 
     var searchBefore = document.text.lastIndex
-    val anchors = mutableListOf<UserMessageAnchor>()
-    chain.asReversed().forEach { (text, exchange) ->
+    val anchors = mutableListOf<IndexedUserMessageAnchor>()
+    chain.asReversed().forEach { (text, exchangeIndex, exchange) ->
         val normalized = normalizeWhitespace(text)
         if (normalized.isEmpty()) return@forEach
-        val found = document.text.lastIndexOf(normalized.take(MATCH_PREFIX_CHARS), searchBefore)
+        val needle = normalized.take(MATCH_PREFIX_CHARS)
+        val found =
+            if (exchangeIndex != null && preferredRanges.isNotEmpty()) {
+                lastIndexOfPreferredOccurrence(
+                    document,
+                    needle,
+                    searchBefore,
+                    documentStartOffset,
+                    preferredRanges,
+                ) ?: document.text.lastIndexOf(needle, searchBefore)
+            } else {
+                document.text.lastIndexOf(needle, searchBefore)
+            }
         if (found < 0) return@forEach
-        if (exchange != null) {
+        if (exchangeIndex != null && exchange != null) {
             anchors +=
-                UserMessageAnchor(
-                    offset = document.offsets[found],
-                    userPreview = truncated(normalized, USER_PREVIEW_CHARS),
-                    replyPreview = truncated(normalizeWhitespace(exchange.assistantReply), REPLY_PREVIEW_CHARS),
-                    absoluteOffset = documentStartOffset + document.offsets[found],
+                IndexedUserMessageAnchor(
+                    exchangeIndex,
+                    UserMessageAnchor(
+                        offset = document.offsets[found],
+                        userPreview = truncated(normalized, USER_PREVIEW_CHARS),
+                        replyPreview = truncated(normalizeWhitespace(exchange.assistantReply), REPLY_PREVIEW_CHARS),
+                        absoluteOffset = documentStartOffset + document.offsets[found],
+                    ),
                 )
         }
         searchBefore = found - 1
     }
     return anchors.asReversed()
+}
+
+private fun lastIndexOfPreferredOccurrence(
+    document: NormalizedText,
+    needle: String,
+    searchBefore: Int,
+    documentStartOffset: Long,
+    preferredRanges: List<PreferredTextRange>,
+): Int? {
+    var cursor = searchBefore
+    while (cursor >= 0) {
+        val found = document.text.lastIndexOf(needle, cursor)
+        if (found < 0) return null
+        val absoluteOffset = documentStartOffset + document.offsets[found]
+        if (
+            preferredRanges.any { range ->
+                absoluteOffset >= range.startAbsoluteOffset &&
+                    absoluteOffset + needle.length <= range.endAbsoluteOffset
+            }
+        ) {
+            return found
+        }
+        cursor = found - 1
+    }
+    return null
 }
 
 internal fun changeCanMoveAnchors(
@@ -193,6 +259,23 @@ internal fun latestExchangeResolved(
     val expectedPreview = truncated(normalizeWhitespace(latest.userText), USER_PREVIEW_CHARS)
     return anchors.lastOrNull()?.userPreview == expectedPreview
 }
+
+/**
+ * 末轮没有 assistant 记录时，不能把它当成可点击锚点。
+ *
+ * 这时定位器没有「用户输入之后、下一轮之前」的右边界；如果用户文本又出现在后续
+ * 工具输出里，反向匹配会把点绑定到文档尾部，点击后看起来像是“跳到底部”。等末轮
+ * assistant 落盘后，下一次 transcript generation 刷新会重新加入这颗点。
+ */
+internal fun stableAnchorsForNavigation(
+    exchanges: List<SessionExchange>,
+    anchors: List<UserMessageAnchor>,
+): List<UserMessageAnchor> =
+    if (exchanges.lastOrNull()?.assistantReply?.isEmpty() == true) {
+        anchors.dropLast(1)
+    } else {
+        anchors
+    }
 
 private fun truncated(
     value: String,
@@ -321,12 +404,45 @@ internal class SessionMessageNavigator(
                 outputSnapshot.endOffset - NAVIGATION_SCAN_MAX_CHARS.toLong(),
             )
         val documentText = outputSnapshot.getText(scanStart, outputSnapshot.endOffset).toString()
+        val preferredRanges =
+            ReadAction.computeBlocking<List<PreferredTextRange>, RuntimeException> {
+                val ranges = mutableListOf<PreferredTextRange>()
+                var offset = scanStart.toAbsolute()
+                while (offset < outputSnapshot.endOffset.toAbsolute()) {
+                    val highlighting =
+                        snapshot.outputModel.getHighlightingAt(
+                            org.jetbrains.plugins.terminal.view.TerminalOffset.of(offset),
+                        )
+                    if (highlighting == null) {
+                        offset++
+                        continue
+                    }
+                    val end = snapshot.outputModel.getEndOfLine(
+                        snapshot.outputModel.getLineByOffset(
+                            org.jetbrains.plugins.terminal.view.TerminalOffset.of(offset),
+                        ),
+                        false,
+                    ).toAbsolute().coerceAtMost(outputSnapshot.endOffset.toAbsolute())
+                    if (
+                        highlighting
+                            .component3()
+                            .getTextAttributes()
+                            .backgroundColor != null
+                    ) {
+                        ranges += PreferredTextRange(offset, end)
+                    }
+                    offset = maxOf(offset + 1, end)
+                }
+                ranges
+            }
         val locatedAnchors =
             locateUserMessageAnchors(
                 documentText,
                 transcript.exchanges,
                 documentStartOffset = scanStart.toAbsolute(),
+                preferredRanges = preferredRanges,
             )
+        val stableAnchors = stableAnchorsForNavigation(transcript.exchanges, locatedAnchors)
         val latestResolved = latestExchangeResolved(transcript.exchanges, locatedAnchors)
         withContext(Dispatchers.EDT) {
             if (editor !== snapshot.editor || snapshot.editor.isDisposed) return@withContext
@@ -339,7 +455,7 @@ internal class SessionMessageNavigator(
             // message_end 可能早于 Terminal 把用户消息画出来。只在这种待补齐状态下
             // 等下一次 output model 内容事件；普通持续输出不会触发导航扫描。
             awaitingTerminalContent.set(!outputChangedDuringLocate && (transcript.changed || !latestResolved))
-            applyAnchors(snapshot.editor, snapshot.outputModel, locatedAnchors)
+            applyAnchors(snapshot.editor, snapshot.outputModel, stableAnchors)
             if (outputChangedDuringLocate) scheduleRefresh()
         }
     }
@@ -369,7 +485,12 @@ internal class SessionMessageNavigator(
         sessionChangeTracker.remember(state)
         val session = state.session ?: return null
         val outputModel = virtualFile.terminalView.outputModels.active.value
-        return NavigationSnapshot(currentEditor, session, outputModel, outputGeneration.get())
+        return NavigationSnapshot(
+            currentEditor,
+            session,
+            outputModel,
+            outputGeneration.get(),
+        )
     }
 
     private fun applyAnchors(
@@ -652,10 +773,10 @@ internal class SessionMessageNavigator(
                 g.drawLine(center, padding, center, (height - padding).coerceAtLeast(padding))
 
                 val visible = currentEditor.scrollingModel.visibleArea
-                val firstVisibleLine = currentEditor.xyToLogicalPosition(Point(0, visible.y)).line
+                val firstVisibleLine = currentEditor.xyToVisualPosition(Point(0, visible.y)).line
                 val lastVisibleLine =
                     currentEditor
-                        .xyToLogicalPosition(Point(0, visible.y + visible.height))
+                        .xyToVisualPosition(Point(0, visible.y + visible.height))
                         .line
                 points.forEach { (anchor, line, y) ->
                     // 鼠标划过的那颗和当前视口所在的那颗放大到同一尺寸：点击跳转后鼠标
@@ -700,10 +821,12 @@ internal class SessionMessageNavigator(
             val outputStart =
                 virtualFile.terminalView.outputModels.active.value.startOffset
                     .toAbsolute()
+            val visualLineCount =
+                currentEditor.offsetToVisualPosition(document.textLength).line + 1
             return anchors.mapNotNull { anchor ->
                 val offset = relativeOffset(anchor, outputStart, document.textLength) ?: return@mapNotNull null
-                val line = document.getLineNumber(offset)
-                AnchorPoint(anchor, line, markerY(line, document.lineCount, height, padding))
+                val line = currentEditor.offsetToVisualPosition(offset).line
+                AnchorPoint(anchor, line, markerY(line, visualLineCount, height, padding))
             }
         }
     }
@@ -801,6 +924,17 @@ internal const val ACTIVE_MARK_RADIUS = 6
 /** 命中区在最大那颗点之外再留这么点余量，仅此而已——多留一分就多吃一分终端的鼠标事件。 */
 internal const val MARK_HIT_SLACK = 2
 
+internal fun markerY(
+    line: Int,
+    lineCount: Int,
+    height: Int,
+    padding: Int,
+): Int {
+    if (height <= padding * 2 || lineCount <= 1) return height / 2
+    val usable = height - padding * 2
+    return padding + (line.coerceIn(0, lineCount - 1).toLong() * usable / (lineCount - 1)).toInt()
+}
+
 private const val MATCH_PREFIX_CHARS = 120
 private const val USER_PREVIEW_CHARS = 60
 private const val REPLY_PREVIEW_CHARS = 160
@@ -819,15 +953,4 @@ internal fun relativeOffset(
     val relative = anchor.absoluteOffset - outputStartOffset
     if (relative !in 0..textLength.toLong()) return null
     return relative.toInt()
-}
-
-internal fun markerY(
-    line: Int,
-    lineCount: Int,
-    height: Int,
-    padding: Int,
-): Int {
-    if (height <= padding * 2 || lineCount <= 1) return height / 2
-    val usable = height - padding * 2
-    return padding + (line.coerceIn(0, lineCount - 1).toLong() * usable / (lineCount - 1)).toInt()
 }

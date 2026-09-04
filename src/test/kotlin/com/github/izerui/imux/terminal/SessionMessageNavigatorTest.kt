@@ -317,9 +317,29 @@ class SessionMessageNavigatorTest {
     }
 
     @Test
-    fun `轨道标记按文档行数等比例分布`() {
+    fun `助手回复未落盘时不展示最新用户输入的可点击圆点`() {
+        val exchanges =
+            listOf(
+                SessionExchange("较早问题", "较早回复"),
+                SessionExchange("最新问题", ""),
+            )
+        val anchors =
+            listOf(
+                UserMessageAnchor(10, "较早问题", "较早回复"),
+                UserMessageAnchor(20, "最新问题", ""),
+            )
+
+        assertEquals(
+            listOf("较早问题"),
+            stableAnchorsForNavigation(exchanges, anchors).map(UserMessageAnchor::userPreview),
+        )
+    }
+
+    @Test
+    fun `轨道标记按可视行数等比例分布`() {
         assertEquals(10, markerY(line = 0, lineCount = 101, height = 220, padding = 10))
         assertEquals(110, markerY(line = 50, lineCount = 101, height = 220, padding = 10))
         assertEquals(210, markerY(line = 100, lineCount = 101, height = 220, padding = 10))
     }
+
 }

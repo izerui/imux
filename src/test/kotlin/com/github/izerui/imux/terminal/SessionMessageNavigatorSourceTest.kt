@@ -85,7 +85,7 @@ class SessionMessageNavigatorSourceTest {
     @Test
     fun `定位期间持续输出时先应用锚点并安排纠正`() {
         val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
-        val apply = body.indexOf("applyAnchors(snapshot.editor, snapshot.outputModel, locatedAnchors)")
+        val apply = body.indexOf("applyAnchors(snapshot.editor, snapshot.outputModel, stableAnchors)")
         val retry = body.indexOf("if (changedDuringLocate) scheduleRefresh()")
 
         assertFalse("不能再因持续变化丢弃整轮结果", body.contains("modificationStamp"))
@@ -145,6 +145,7 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(body.contains("fillOval"))
         assertTrue("悬停要参与强调判定", body.contains("previewAnchor"))
         assertTrue("当前视口也要参与强调判定", body.contains("firstVisibleLine"))
+        assertTrue("视口判定必须使用可视行，覆盖软换行", body.contains("xyToVisualPosition"))
         assertTrue("两种强调共用一个半径", body.contains("ACTIVE_MARK_RADIUS"))
         assertFalse("不该再有第二档强调半径", navigator.normalized.contains("HOVER_MARK_RADIUS"))
         assertTrue("常态与强调两档要不同，否则放大看不出来", MARK_RADIUS != ACTIVE_MARK_RADIUS)
@@ -293,16 +294,28 @@ class SessionMessageNavigatorSourceTest {
     }
 
     @Test
+    fun `圆点位置按编辑器可视行而不是逻辑行计算`() {
+        val body = navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{')
+
+        assertTrue("圆点应按 offset 映射到可视行", body.contains("offsetToVisualPosition(offset).line"))
+        assertTrue("总高度应按文档末尾的可视行数计算", body.contains("offsetToVisualPosition(document.textLength).line"))
+        assertFalse("不能再用逻辑行号决定圆点位置", body.contains("document.getLineNumber(offset)"))
+    }
+
+    @Test
     fun `定位读取平台终端快照并保存绝对起点`() {
         val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
 
         assertTrue(body.contains("outputModel.takeSnapshot()"))
         assertTrue(body.contains("outputSnapshot.endOffset - NAVIGATION_SCAN_MAX_CHARS.toLong()"))
         assertTrue(body.contains("scanStart.toAbsolute()"))
+        assertTrue(body.contains("preferredRanges = preferredRanges"))
+        assertTrue(body.contains("backgroundColor != null"))
         assertTrue(body.contains("outputModels.active.value !== snapshot.outputModel"))
         assertTrue(navigator.normalized.contains("NAVIGATION_SCAN_MAX_CHARS = 256_000"))
         assertTrue(body.contains("outputGeneration.get() != snapshot.outputGeneration"))
         assertTrue(body.contains("awaitingTerminalContent.set(!outputChangedDuringLocate"))
+        assertTrue(body.contains("stableAnchorsForNavigation"))
         assertTrue(body.contains("if (outputChangedDuringLocate) scheduleRefresh()"))
     }
 

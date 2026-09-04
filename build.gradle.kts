@@ -30,7 +30,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        // 用最新 262.10315 平台编译并做 verifier 基线，同时保证产物能装到整个 262 系列。
+        // 用最新 262.10315 Community 平台编译并做 verifier 基线，同时保证产物能装到整个 262 系列。
         //
         // 262 生命周期内 JetBrains 改了 Experimental detachTab 的 JVM 签名：
         //   262.8665 / 262.9437: fun detachTab(tab): TerminalView
@@ -41,7 +41,9 @@ dependencies {
         // 使用平台 installer，runIde 才会拿到当前系统需要的原生组件。通用仓库 ZIP
         // 不包含 platform-daemon-plugin/jetbrainsd_mac_aarch64.tar.gz，IDE 虽能启动，
         // 但 JetBrains OS Integration 会因 bundled daemon 缺失连续重试并报 SEVERE。
-        create("IU", "262.10315.19")
+        // imux 只依赖 Platform 与捆绑 Terminal，不需要 Java、数据库、Spring 等
+        // Ultimate 专属插件。使用 Community 发行版可避免依赖报告展开整套 IU 插件及其可选缺失模块。
+        intellijIdea("262.10315.19")
         bundledPlugin("org.jetbrains.plugins.terminal")
         // 暂不引入 testFramework(TestFrameworkType.Platform)：
         // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，
