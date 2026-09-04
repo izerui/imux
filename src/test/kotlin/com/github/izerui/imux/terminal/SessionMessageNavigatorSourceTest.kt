@@ -311,6 +311,7 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(body.contains("scanStart.toAbsolute()"))
         assertTrue(body.contains("preferredRanges = preferredRanges"))
         assertTrue(body.contains("backgroundColor != null"))
+        assertTrue(body.contains("isUserPromptLine(lineText)"))
         assertTrue(body.contains("outputModels.active.value !== snapshot.outputModel"))
         assertTrue(navigator.normalized.contains("NAVIGATION_SCAN_MAX_CHARS = 256_000"))
         assertTrue(body.contains("outputGeneration.get() != snapshot.outputGeneration"))
