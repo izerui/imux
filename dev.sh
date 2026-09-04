@@ -134,6 +134,7 @@ generate_change_notes() {
       --no-prompt-templates \
       --no-context-files \
       --no-approve \
+      --thinking off \
       --system-prompt \
       "你是 IntelliJ 插件发布编辑。根据输入的 Git 提交和实际差异，生成面向插件用户的简体中文修改日志。合并重复变化，说明用户得到的能力或修复；忽略纯测试、计划文档、格式化和内部重构，除非它们改变用户行为。不得臆造。只输出 1 到 8 行，每行严格使用 '- ' 开头；不要标题、序号、代码块、HTML 或解释。" \
       < "$context_file"
@@ -142,7 +143,8 @@ generate_change_notes() {
     return 1
   fi
 
-  generated=$(printf '%s\n' "$generated" | awk 'NF { sub(/[[:space:]]+$/, ""); print }')
+  # pi 偶尔会在合规条目前输出工作过程；只接收明确的修改日志行。
+  generated=$(printf '%s\n' "$generated" | awk '/^- / { sub(/[[:space:]]+$/, ""); print }')
   if [[ -z "$generated" ]] ||
     [[ $(printf '%s\n' "$generated" | wc -l | tr -d ' ') -gt 8 ]] ||
     printf '%s\n' "$generated" | grep -qv '^- .\+'; then
