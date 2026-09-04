@@ -245,11 +245,6 @@ private fun lastIndexOfPreferredOccurrence(
     return null
 }
 
-private fun isUserPromptLine(text: CharSequence): Boolean {
-    val first = text.trimStart().firstOrNull() ?: return false
-    return first == '›' || first == '❯' || first == '>' || first == '»' || first == '⏵'
-}
-
 internal fun changeCanMoveAnchors(
     changeOffset: Int,
     anchors: List<UserMessageAnchor>,
@@ -414,37 +409,29 @@ internal class SessionMessageNavigator(
                 val ranges = mutableListOf<PreferredTextRange>()
                 var offset = scanStart.toAbsolute()
                 while (offset < outputSnapshot.endOffset.toAbsolute()) {
-                    val lineIndex =
-                        snapshot.outputModel.getLineByOffset(
-                            org.jetbrains.plugins.terminal.view.TerminalOffset.of(offset),
-                        )
-                    val lineStart =
-                        snapshot.outputModel.getStartOfLine(lineIndex).toAbsolute()
-                    val lineEnd =
-                        snapshot.outputModel
-                            .getEndOfLine(lineIndex, false)
-                            .toAbsolute()
-                            .coerceAtMost(outputSnapshot.endOffset.toAbsolute())
                     val highlighting =
                         snapshot.outputModel.getHighlightingAt(
                             org.jetbrains.plugins.terminal.view.TerminalOffset.of(offset),
                         )
-                    val lineText =
-                        snapshot.outputModel.getText(
-                            org.jetbrains.plugins.terminal.view.TerminalOffset.of(lineStart),
-                            org.jetbrains.plugins.terminal.view.TerminalOffset.of(lineEnd),
-                        )
-                    if (
-                        highlighting != null &&
-                            highlighting
-                                .component3()
-                                .getTextAttributes()
-                                .backgroundColor != null &&
-                            isUserPromptLine(lineText)
-                    ) {
-                        ranges += PreferredTextRange(lineStart, lineEnd)
+                    if (highlighting == null) {
+                        offset++
+                        continue
                     }
-                    offset = maxOf(offset + 1, lineEnd + 1)
+                    val end = snapshot.outputModel.getEndOfLine(
+                        snapshot.outputModel.getLineByOffset(
+                            org.jetbrains.plugins.terminal.view.TerminalOffset.of(offset),
+                        ),
+                        false,
+                    ).toAbsolute().coerceAtMost(outputSnapshot.endOffset.toAbsolute())
+                    if (
+                        highlighting
+                            .component3()
+                            .getTextAttributes()
+                            .backgroundColor != null
+                    ) {
+                        ranges += PreferredTextRange(offset, end)
+                    }
+                    offset = maxOf(offset + 1, end)
                 }
                 ranges
             }
