@@ -3,6 +3,7 @@ package com.github.izerui.imux.session
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -297,7 +298,39 @@ class SessionTitleRegeneratorTest {
         val home = temp.newFolder("codex-home").toPath()
         val codexHome = home.resolve(".codex")
         Files.createDirectories(codexHome)
-        val db = codexHome.resolve("state_5.sqlite")
+        val oldDb = codexHome.resolve("state_5.sqlite")
+        val latestDb = codexHome.resolve("state_10.sqlite")
+        listOf(oldDb, latestDb).forEach { db ->
+            DriverManager.getConnection("jdbc:sqlite:$db").use { connection ->
+                connection.createStatement().use {
+                    it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT)")
+                    it.executeUpdate("INSERT INTO threads VALUES ('codex-1', NULL, '旧标题')")
+                }
+            }
+        }
+        val rollout = temp.newFile("rollout.jsonl").toPath()
+
+        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", home)
+
+        assertEquals("新标题", CodexThreadIndex(codexHome).load()["codex-1"])
+        DriverManager.getConnection("jdbc:sqlite:$oldDb").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT name FROM threads WHERE id = 'codex-1'").use { rows ->
+                    assertTrue(rows.next())
+                    assertNull(rows.getString(1))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `Codex 标题写回遵循 sqlite_home`() {
+        val home = temp.newFolder("codex-config-home").toPath()
+        val codexHome = home.resolve(".codex")
+        val sqliteHome = temp.newFolder("codex-sqlite-home").toPath()
+        Files.createDirectories(codexHome)
+        Files.writeString(codexHome.resolve("config.toml"), "sqlite_home = \"$sqliteHome\"\n")
+        val db = sqliteHome.resolve("state_7.sqlite")
         DriverManager.getConnection("jdbc:sqlite:$db").use { connection ->
             connection.createStatement().use {
                 it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT)")

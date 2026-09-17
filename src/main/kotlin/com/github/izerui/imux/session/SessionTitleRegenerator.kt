@@ -2,7 +2,6 @@ package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
-import com.github.izerui.imux.terminal.ShellDialect
 import com.github.izerui.imux.terminal.dialectOf
 import com.github.izerui.imux.terminal.quote
 import com.github.izerui.imux.terminal.shellArgs
@@ -122,7 +121,10 @@ internal fun writeGeneratedTitle(
         }
 
         AgentType.CODEX -> {
-            val db = userHome.resolve(".codex/state_5.sqlite")
+            val codexHome = userHome.resolve(".codex")
+            val db =
+                latestVersionedDbIn(codexSqliteDir(codexHome), "state")
+                    ?: error("Codex 会话数据库不存在")
             check(Files.isRegularFile(db)) { "Codex 会话数据库不存在" }
             val config = SQLiteConfig().apply { setBusyTimeout(SQLITE_BUSY_TIMEOUT_MS) }
             SQLiteDataSource(config)

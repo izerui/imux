@@ -50,7 +50,7 @@ internal class CodexRuntimeIndex(
 
     /** 该进程此刻在写的 rollout 路径；查不到返回 null。 */
     fun rolloutPathOf(pid: Long): String? {
-        val dir = sqliteDir()
+        val dir = codexSqliteDir(codexHome)
         val thread = latestThreadOf(pid, dir) ?: return null
         return rolloutOf(thread, dir)
     }
@@ -76,7 +76,7 @@ internal class CodexRuntimeIndex(
      * 两个子情形各由一步负责，合起来才完整。
      */
     private fun latestThreadOf(pid: Long, dir: Path): String? {
-        val db = versionedDbIn(dir, "logs") ?: return null
+        val db = latestVersionedDbIn(dir, "logs") ?: return null
         // 前缀整段匹配：`pid:419:` 不能命中 `pid:4197:`，反之亦然。
         // LIKE 的 `%` 与 `_` 仍是元字符，此处安全仅因为 pid 是 Long——
         // 将来如果有人把 pid 改成 String，必须转义或换用 GLOB。
@@ -118,25 +118,9 @@ internal class CodexRuntimeIndex(
     }
 
     private fun rolloutOf(threadId: String, dir: Path): String? {
-        val db = versionedDbIn(dir, "state") ?: return null
+        val db = latestVersionedDbIn(dir, "state") ?: return null
         val sql = "SELECT rollout_path FROM threads WHERE id = ? LIMIT 1"
         return queryRow(db, sql, threadId) { rows -> rows.getString(1) }
-    }
-
-    /**
-     * `sqlite_home` 是 codex 管六个 sqlite 库存放目录的配置键（`codex doctor` 输出证实
-     * `log DB` 与 `state DB` 均跟随此键变化，而 `log_dir` 管的是 `codex-tui.log`
-     * 文本日志——两者无关）。读不到就用 `codexHome` 默认值。
-     */
-    private fun sqliteDir(): Path {
-        val configured =
-            runCatching {
-                val file = codexHome.resolve("config.toml")
-                if (Files.isRegularFile(file)) Files.readString(file) else null
-            }.getOrNull()
-        return codexSqliteHomeFrom(configured)
-            ?.let { runCatching { Path.of(it) }.getOrNull() }
-            ?: codexHome
     }
 
     private fun <T> queryRow(
@@ -169,16 +153,6 @@ internal class CodexRuntimeIndex(
         config.setReadOnly(true)
         return SQLiteDataSource(config).apply { url = "jdbc:sqlite:${file.toAbsolutePath()}" }
     }
-
-    private fun versionedDbIn(
-        dir: Path,
-        stem: String,
-    ): Path? =
-        runCatching {
-            Files.list(dir).use { entries ->
-                latestVersionedDb(entries.toList().map { it.fileName.toString() }, stem)
-            }
-        }.getOrNull()?.let(dir::resolve)
 
     private companion object {
         val LOG = logger<CodexRuntimeIndex>()
@@ -241,6 +215,39 @@ private const val QUERY_TIMEOUT_MS = 3_000L
 
 /** 允许日志时间戳比进程启动时刻早这么多秒，见 `CodexRuntimeIndex.isStaleRun`。 */
 private const val CLOCK_SLACK_SECONDS = 5L
+
+/**
+ * Codex 实际存放版本化 SQLite 库的目录。
+ *
+ * `sqlite_home` 同时控制 logs、state 等库；未配置、配置不可读或路径非法时退回
+ * [codexHome]。标题索引、标题写回和运行态查询必须共用这条规则，否则自定义目录下会
+ * 出现「会话漂移正常，但标题读写失效」的半工作状态。
+ */
+internal fun codexSqliteDir(codexHome: Path): Path {
+    val configured =
+        runCatching {
+            val file = codexHome.resolve("config.toml")
+            if (Files.isRegularFile(file)) Files.readString(file) else null
+        }.getOrNull()
+    return codexSqliteHomeFrom(configured)
+        ?.let { runCatching { Path.of(it) }.getOrNull() }
+        ?: codexHome
+}
+
+/**
+ * 在目录中选择版本号最大的 `<stem>_<n>.sqlite`。
+ *
+ * 目录读取失败时返回 null，由调用方按各自语义降级；不会猜固定版本。
+ */
+internal fun latestVersionedDbIn(
+    dir: Path,
+    stem: String,
+): Path? =
+    runCatching {
+        Files.list(dir).use { entries ->
+            latestVersionedDb(entries.toList().map { it.fileName.toString() }, stem)
+        }
+    }.getOrNull()?.let(dir::resolve)
 
 /**
  * 从一批文件名里挑出版本号最大的那个 `&lt;stem&gt;_&lt;n&gt;.sqlite`。

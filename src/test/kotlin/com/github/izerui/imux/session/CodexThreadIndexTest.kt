@@ -16,9 +16,15 @@ class CodexThreadIndexTest {
 
     private fun index() = CodexThreadIndex(tmp.root.toPath())
 
+    private fun createDb(vararg rows: Triple<String, String?, Long>) =
+        createDb("state_5.sqlite", *rows)
+
     /** 用同一个驱动造一个结构一致的库，比塞二进制夹具可读得多。 */
-    private fun createDb(vararg rows: Triple<String, String?, Long>) {
-        val file = File(tmp.root, "state_5.sqlite")
+    private fun createDb(
+        name: String,
+        vararg rows: Triple<String, String?, Long>,
+    ) {
+        val file = File(tmp.root, name)
         DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
             conn.createStatement().use {
                 it.executeUpdate(
@@ -116,5 +122,30 @@ class CodexThreadIndexTest {
         File(tmp.root, "state_5.sqlite").writeText("这不是 sqlite 文件")
 
         assertTrue(index().load().isEmpty())
+    }
+
+    @Test
+    fun `读取数值版本最高的 state 数据库`() {
+        createDb("state_5.sqlite", Triple("thread-1", "旧库标题", 1_000L))
+        createDb("state_10.sqlite", Triple("thread-1", "新库标题", 2_000L))
+
+        assertEquals("新库标题", index().load()["thread-1"])
+    }
+
+    @Test
+    fun `sqlite_home 指向外部目录时从外部最新版本读取`() {
+        val sqliteDir = tmp.newFolder("sqlite-home")
+        val configuredDb = File(sqliteDir, "state_8.sqlite")
+        DriverManager.getConnection("jdbc:sqlite:${configuredDb.absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate(
+                    "CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, updated_at_ms INTEGER)",
+                )
+                it.executeUpdate("INSERT INTO threads VALUES ('thread-1', NULL, '外部目录标题', 1)")
+            }
+        }
+        File(tmp.root, "config.toml").writeText("sqlite_home = \"${sqliteDir.absolutePath}\"\n")
+
+        assertEquals("外部目录标题", index().load()["thread-1"])
     }
 }

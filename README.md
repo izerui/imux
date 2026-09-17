@@ -181,7 +181,7 @@ Claude Code 与 pi 的语言服务器配置体检。检查每门语言的服务�
 | `~/.claude/projects/<项目目录>/*.jsonl` | 会话标题、时间、首条消息 | 列出本项目的 Claude 会话 |
 | `~/.claude/sessions/*.json` | 进程 pid、状态、cwd | 判断哪些会话正在跑 |
 | `~/.codex/sessions/YYYY/MM/DD/*.jsonl` | 首行的 cwd、标题、轮次信号 | 列出本项目的 Codex 会话 |
-| `~/.codex/state_5.sqlite` | `threads` 表的 `id, name, title` | 取 Codex 会话的正式标题 |
+| `~/.codex/state_<n>.sqlite`（或 `sqlite_home`） | 最新版本库中 `threads` 表的 `id, name, title` | 取 Codex 会话的正式标题 |
 | `~/.pi/agent/sessions/<项目目录>/*.jsonl` | 会话名、时间、首条消息 | 列出本项目的 pi 会话 |
 
 正常扫描全部只读。只有你主动点击"重新生成会话标题"时，插件才调用对应 CLI 生成一条新标题。

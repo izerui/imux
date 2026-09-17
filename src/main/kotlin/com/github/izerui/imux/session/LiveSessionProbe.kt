@@ -60,7 +60,7 @@ data class KeyDrift(val tabId: String, val from: String, val to: String)
  *   是一手权威信息；但它**不持有**会话文件句柄（open-append-close，实测 lsof 为空）
  * - codex **有**运行态映射，只是不像 claude 那样是一个按 pid 命名的文件：
  *   `logs_&lt;n&gt;.sqlite` 的 `logs.process_uuid` 字面格式是 `pid:&lt;PID&gt;:&lt;uuid&gt;`，
- *   同一行带 `thread_id`（`state_5.sqlite` 的 `threads` 表确实无 pid 列，
+ *   同一行带 `thread_id`（最新 `state_<n>.sqlite` 的 `threads` 表确实无 pid 列，
  *   当初只查了那张表才得出「codex 没有运行态文件」的错误结论）。
  *   它同时**长期持有** rollout 文件句柄（实测一个跑了一天多的进程仍持有）
  *
