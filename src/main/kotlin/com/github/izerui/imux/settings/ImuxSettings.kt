@@ -18,7 +18,7 @@ import java.util.Locale
 internal const val DEFAULT_IDEA_MCP_PORT = 64342
 internal val DEFAULT_IDEA_MCP_GUIDANCE =
     """
-    IDEA MCP connects you to the IDE running this project. Use it instead of your own tools when the task needs code semantics, and keep using rg/grep, file reads, shell, and git for plain-text work.
+    The "idea" MCP server connects you to the IDE running this project. Use its tools instead of your own when the task needs code semantics, and keep using rg/grep, file reads, shell, and git for plain-text work.
 
     Always use IDEA MCP for these — your own tools cannot do them safely or at all:
     - Renaming symbols: use IDEA MCP instead of text find-and-replace. It updates all references by semantic identity, safely skipping comments, strings, and unrelated same-name variables.
