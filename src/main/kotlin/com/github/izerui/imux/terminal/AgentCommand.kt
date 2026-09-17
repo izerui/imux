@@ -34,6 +34,7 @@ internal fun launchCommand(
     resumeId: String?,
     piExtensions: List<java.nio.file.Path> = emptyList(),
     ideaMcp: IdeaMcpEndpoint? = null,
+    ideaMcpGuidance: String? = null,
     initialPrompt: String? = null,
     pidFile: String? = null,
 ): List<String> {
@@ -50,7 +51,12 @@ internal fun launchCommand(
             when (agentType) {
                 AgentType.CLAUDE -> {
                     val config = claudeIdeaMcpConfig(endpoint)
-                    "--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}"
+                    buildString {
+                        append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}")
+                        ideaMcpGuidance
+                            ?.takeIf(String::isNotBlank)
+                            ?.let { append(" --append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, it)}") }
+                    }
                 }
 
                 AgentType.CODEX -> {
@@ -58,8 +64,16 @@ internal fun launchCommand(
                     val header =
                         "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=" +
                             tomlBasicString(endpoint.projectPath)
-                    "-c ${quoteEmbeddingDoubleQuotes(dialect, url)} " +
-                        "-c ${quoteEmbeddingDoubleQuotes(dialect, header)}"
+                    buildString {
+                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, url)} ")
+                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, header)}")
+                        ideaMcpGuidance
+                            ?.takeIf(String::isNotBlank)
+                            ?.let { guidance ->
+                                val instructions = "developer_instructions=${tomlBasicString(guidance)}"
+                                append(" -c ${quoteEmbeddingDoubleQuotes(dialect, instructions)}")
+                            }
+                    }
                 }
 
                 AgentType.PI -> null
@@ -193,6 +207,7 @@ internal fun launchEnvironment(
     tabId: String,
     piReport: PiReportEndpoint? = null,
     ideaMcp: IdeaMcpEndpoint? = null,
+    ideaMcpGuidance: String? = null,
 ): Map<String, String> =
     buildMap {
         put(IMUX_TAB_ENV, tabId)
@@ -211,6 +226,9 @@ internal fun launchEnvironment(
                 ideaMcp?.let {
                     put("IMUX_IDEA_MCP_URL", it.url)
                     put("IMUX_IDEA_MCP_PROJECT", it.projectPath)
+                    ideaMcpGuidance?.takeIf(String::isNotBlank)?.let { guidance ->
+                        put("IMUX_IDEA_MCP_GUIDANCE", guidance)
+                    }
                 }
             }
 

@@ -41,6 +41,7 @@ class TerminalHostWiringSourceTest {
      *   用户在 Terminal 设置里配的 Git Bash 被无声忽略
      * - `piExtensions` 传空 → pi 的标签不跟随，也拿不到 IDEA MCP
      * - `ideaMcp` 传 null → Claude 与 Codex 不会获得 IDEA 能力，也拿不到项目定向请求头
+     * - `ideaMcpGuidance` 传 null → 用户开启的提示词引导不生效
      *
      * 整段比对而不是逐条 `contains`：这些实参都是具名的，逐条 `contains("pidFile")`
      * 在改成 `pidFile = null` 之后照样命中。
@@ -53,6 +54,7 @@ class TerminalHostWiringSourceTest {
             """
             {
                 val ideaMcp = ideaMcpEndpoint()
+                val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
                 return launchCommand(
                     resolveShell(
                         System.getenv("SHELL"),
@@ -63,6 +65,7 @@ class TerminalHostWiringSourceTest {
                     resumeId = sessionId,
                     piExtensions = piExtensionsFor(agentType, ideaMcp),
                     ideaMcp = ideaMcp,
+                    ideaMcpGuidance = ideaMcpGuidance,
                     initialPrompt = initialPrompt,
                     pidFile = tabPidFileFor(tabId),
                 )
@@ -93,6 +96,7 @@ class TerminalHostWiringSourceTest {
             """
             {
                 val ideaMcp = ideaMcpEndpoint()
+                val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
                 return launchCommand(
                     resolveShell(
                         System.getenv("SHELL"),
@@ -103,6 +107,7 @@ class TerminalHostWiringSourceTest {
                     resumeId = sessionId,
                     piExtensions = piExtensionsFor(agentType, ideaMcp),
                     ideaMcp = ideaMcp,
+                    ideaMcpGuidance = ideaMcpGuidance,
                     pidFile = tabPidFileFor(tabId),
                 )
             }

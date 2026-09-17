@@ -168,9 +168,11 @@ export default function (pi) {
     const fromEnvironment = {
       url: process.env.IMUX_IDEA_MCP_URL,
       projectPath: process.env.IMUX_IDEA_MCP_PROJECT,
+      guidance: process.env.IMUX_IDEA_MCP_GUIDANCE,
     };
     delete process.env.IMUX_IDEA_MCP_URL;
     delete process.env.IMUX_IDEA_MCP_PROJECT;
+    delete process.env.IMUX_IDEA_MCP_GUIDANCE;
 
     if (!globalThis[STATE_KEY] && fromEnvironment.url) {
       globalThis[STATE_KEY] = {
@@ -191,7 +193,7 @@ export default function (pi) {
       description: "List or call IntelliJ IDEA MCP tools for symbol search, diagnostics, formatting, and refactoring.",
       promptSnippet: "Use IntelliJ IDEA code intelligence through its MCP tools",
       promptGuidelines: [
-        "Use idea_mcp for IDE-aware symbol search, diagnostics, call analysis, formatting, and refactoring.",
+        ...(state.guidance ? [state.guidance] : []),
         "Call idea_mcp with action=list when the required IDEA tool name or arguments are unknown.",
       ],
       parameters: Type.Object({

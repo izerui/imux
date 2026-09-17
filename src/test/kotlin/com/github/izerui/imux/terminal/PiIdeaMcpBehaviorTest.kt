@@ -86,6 +86,34 @@ class PiIdeaMcpBehaviorTest {
         )
     }
 
+    @Test
+    fun `pi 开启引导后追加自定义提示词`() {
+        val output =
+            runHarness(
+                """
+                process.env.IMUX_IDEA_MCP_GUIDANCE = "Prefer semantic IDEA tools";
+                globalThis.fetch = async (_url, options) => {
+                  const request = JSON.parse(options.body);
+                  return respond(request, defaultResult(request));
+                };
+
+                const tool = await load();
+                report({
+                  custom: tool.promptGuidelines[0],
+                  routing: tool.promptGuidelines[1],
+                  deleted: process.env.IMUX_IDEA_MCP_GUIDANCE === undefined,
+                });
+                """.trimIndent(),
+            )
+
+        assertEquals("Prefer semantic IDEA tools", jsonString(output, "custom"))
+        assertEquals(
+            "Call idea_mcp with action=list when the required IDEA tool name or arguments are unknown.",
+            jsonString(output, "routing"),
+        )
+        assertEquals(true, jsonBoolean(output, "deleted"))
+    }
+
     /**
      * **工具调用不套 10 秒超时。**
      *
@@ -402,6 +430,27 @@ class PiIdeaMcpBehaviorTest {
             ?.groupValues
             ?.get(1)
             ?.toInt()
+            ?: error("$key 不在输出中：$json")
+
+    private fun jsonString(
+        json: String,
+        key: String,
+    ): String =
+        Regex(""""$key":"([^"]*)"""")
+            .find(json)
+            ?.groupValues
+            ?.get(1)
+            ?: error("$key 不在输出中：$json")
+
+    private fun jsonBoolean(
+        json: String,
+        key: String,
+    ): Boolean =
+        Regex(""""$key":(true|false)""")
+            .find(json)
+            ?.groupValues
+            ?.get(1)
+            ?.toBooleanStrict()
             ?: error("$key 不在输出中：$json")
 
     private fun jsString(value: String): String =

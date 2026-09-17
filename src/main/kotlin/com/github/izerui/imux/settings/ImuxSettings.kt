@@ -16,6 +16,38 @@ import java.util.EventListener
 import java.util.Locale
 
 internal const val DEFAULT_IDEA_MCP_PORT = 64342
+internal val DEFAULT_IDEA_MCP_GUIDANCE =
+    """
+    When IDEA MCP is connected, prefer it over text-based alternatives in these scenarios:
+
+    Finding definitions, types, or overloads — IDEA MCP understands PSI, inheritance, and module boundaries; text search only matches strings and cannot distinguish same-name symbols across scopes.
+
+    Tracing who calls a method or what a method calls — IDEA MCP returns the real call hierarchy based on type resolution, not grep hits that include comments, strings, and unrelated matches.
+
+    Checking code for errors or warnings — IDEA MCP runs the same inspections shown in the editor, including type checks, nullability, deprecation, and framework-specific rules that a linter or compiler alone may miss.
+
+    Renaming a symbol — IDEA MCP updates all references by semantic identity, safely skipping comments, strings, and unrelated same-name variables; global text replacement cannot do this.
+
+    Formatting code — IDEA MCP applies the project's configured Code Style, not a guess based on surrounding code.
+
+    Understanding project structure — IDEA MCP knows modules, dependencies, and run configurations as the IDE sees them, without parsing build files manually.
+
+    Running or testing code — IDEA MCP can discover and execute run configurations and entry points directly inside the IDE, including passing arguments and environment overrides.
+
+    Debugging — IDEA MCP can start debug sessions, manage breakpoints (including non-suspending logpoints for capturing values without stopping), step through execution, inspect variables and the call stack, evaluate expressions, and mutate state at runtime.
+
+    Reading dependency or library source — IDEA MCP can read decompiled classes inside JARs and navigate into SDK sources without extracting archives manually.
+
+    Exploring or querying databases — IDEA MCP can use connections already configured in the IDE, explore schemas, run SQL, and preview table data without re-entering credentials.
+
+    Checking Git status or repository structure — IDEA MCP reflects the IDE's VCS model, useful in multi-root projects.
+
+    Checking or configuring Python environments — IDEA MCP knows which interpreter, venv, and package manager the IDE is using for the current module.
+
+    Writing or testing custom IntelliJ inspections — IDEA MCP can generate PSI trees and run inspection.kts scripts against project files.
+
+    Continue using rg/grep, file reads, and shell tools for plain-text exploration that does not need IDE semantics. If IDEA MCP is unavailable, fall back normally. Do not repeat a state-changing action (rename, execute, debug control, SQL, variable mutation) after an ambiguous timeout or transport failure.
+    """.trimIndent()
 
 /**
  * 插件的全局偏好。
@@ -59,6 +91,12 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         /** 用户是否明确修改过端口；明确值不得再被自动检测覆盖。 */
         var ideaMcpPortCustomized: Boolean by property(false)
 
+        /** 是否给 imux 启动的 Agent 增加 IDEA MCP 使用引导。 */
+        var ideaMcpGuidanceEnabled: Boolean by property(false)
+
+        /** null 表示使用随插件更新的默认引导词。 */
+        var ideaMcpGuidanceOverride: String? by string(null)
+
         /** Agent 开关使用显式字段持久化；枚举名不是配置文件契约。 */
         var claudeEnabled: Boolean by property(true)
         var codexEnabled: Boolean by property(true)
@@ -78,6 +116,9 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
 
     val language: PluginLanguage
         get() = state.languageId?.let(PluginLanguage::fromId) ?: detectedLanguage
+
+    val ideaMcpGuidance: String
+        get() = state.ideaMcpGuidanceOverride ?: DEFAULT_IDEA_MCP_GUIDANCE
 
     val enabledAgentTypes: List<AgentType>
         get() =
@@ -115,6 +156,10 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
     fun setIdeaMcpPort(port: Int) {
         state.ideaMcpPort = port
         state.ideaMcpPortCustomized = true
+    }
+
+    fun setIdeaMcpGuidance(guidance: String) {
+        state.ideaMcpGuidanceOverride = guidance.takeUnless { it == DEFAULT_IDEA_MCP_GUIDANCE }
     }
 
     fun addLanguageListener(

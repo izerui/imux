@@ -563,6 +563,7 @@ class TerminalHost(
         tabId: String,
     ): TerminalView {
         val ideaMcp = ideaMcpEndpoint()
+        val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab =
             manager
@@ -575,6 +576,7 @@ class TerminalHost(
                         tabId,
                         piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
                         ideaMcp = ideaMcp,
+                        ideaMcpGuidance = ideaMcpGuidance,
                     ),
                 ).tabName(tabTitle)
                 .requestFocus(false)
@@ -602,6 +604,7 @@ class TerminalHost(
         tabId: String,
     ): List<String> {
         val ideaMcp = ideaMcpEndpoint()
+        val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
         return launchCommand(
             resolveShell(
                 System.getenv("SHELL"),
@@ -612,6 +615,7 @@ class TerminalHost(
             resumeId = sessionId,
             piExtensions = piExtensionsFor(agentType, ideaMcp),
             ideaMcp = ideaMcp,
+            ideaMcpGuidance = ideaMcpGuidance,
             initialPrompt = initialPrompt,
             pidFile = tabPidFileFor(tabId),
         )
@@ -623,6 +627,7 @@ class TerminalHost(
         tabId: String,
     ): List<String> {
         val ideaMcp = ideaMcpEndpoint()
+        val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
         return launchCommand(
             resolveShell(
                 System.getenv("SHELL"),
@@ -633,6 +638,7 @@ class TerminalHost(
             resumeId = sessionId,
             piExtensions = piExtensionsFor(agentType, ideaMcp),
             ideaMcp = ideaMcp,
+            ideaMcpGuidance = ideaMcpGuidance,
             pidFile = tabPidFileFor(tabId),
         )
     }
@@ -684,6 +690,12 @@ class TerminalHost(
             configuredPort = settings.ideaMcpPort.takeIf { it in 1..65535 } ?: DEFAULT_IDEA_MCP_PORT,
             projectPath = projectPath(),
         )
+    }
+
+    private fun ideaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? {
+        if (endpoint == null) return null
+        val settings = ImuxSettings.getInstance()
+        return settings.ideaMcpGuidance.takeIf { settings.state.ideaMcpGuidanceEnabled }
     }
 
     private fun persistRestorableTabs() {

@@ -67,6 +67,31 @@ class ImuxSettingsTest {
     }
 
     @Test
+    fun `IDEA MCP 引导默认关闭并提供完整默认提示词`() {
+        val settings = ImuxSettings()
+
+        assertEquals(false, settings.state.ideaMcpGuidanceEnabled)
+        assertTrue(settings.ideaMcpGuidance.contains("Finding definitions"))
+        assertTrue(settings.ideaMcpGuidance.contains("call hierarchy"))
+        assertTrue(settings.ideaMcpGuidance.contains("Renaming a symbol"))
+        assertTrue(settings.ideaMcpGuidance.contains("Debugging"))
+        assertTrue(settings.ideaMcpGuidance.contains("rg/grep"))
+        assertTrue(settings.ideaMcpGuidance.contains("Do not repeat a state-changing"))
+    }
+
+    @Test
+    fun `IDEA MCP 引导支持自定义并恢复默认`() {
+        val settings = ImuxSettings()
+
+        settings.setIdeaMcpGuidance("custom")
+        assertEquals("custom", settings.ideaMcpGuidance)
+
+        settings.setIdeaMcpGuidance(DEFAULT_IDEA_MCP_GUIDANCE)
+        assertEquals(null, settings.state.ideaMcpGuidanceOverride)
+        assertEquals(DEFAULT_IDEA_MCP_GUIDANCE, settings.ideaMcpGuidance)
+    }
+
+    @Test
     fun `all agents are enabled by default`() {
         assertEquals(AgentType.entries, ImuxSettings().enabledAgentTypes)
     }

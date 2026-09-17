@@ -124,13 +124,18 @@ macOS 上把多个项目窗口合成标签栏后，这些状态就出现在标�
 | **会话打开方式** | 单击或双击打开会话（默认双击） |
 | **关闭运行中的会话前确认** | 关掉还在跑的会话标签页时是否弹确认框（默认开启） |
 | **Agent 开关** | 分别启用或禁用 Claude Code / Codex / Pi 的显示 |
-| **IDEA MCP 会话注入** | 只给 imux 启动的 Agent 临时添加 IDEA 代码分析、导航和重构工具（默认开启） |
-| **MCP Server 端口** | 首次自动读取 IDEA 的 MCP Server 端口；之后 Agent 始终使用这里显示的值 |
 | **在"新建"菜单中显示 AI 智能体** | 控制 Project 工具窗口的"新建"菜单里是否出现 Agent 入口 |
 
 设置全局生效（不跨机器同步）。
 
 ## IDEA MCP 集成
+
+独立设置页位于 **Settings → Tools → Imux → IDEA MCP**，包含：
+
+- 会话级 MCP 注入开关与端口
+- 当前输入端口的连接检测
+- 可选的 Agent 提示词引导
+- 可编辑的默认引导词与“恢复默认”按钮
 
 imux 会把 IDEA MCP 作为**会话级配置**注入它启动的 Claude Code、Codex 和 pi：
 
@@ -152,6 +157,15 @@ imux 不会修改 `~/.claude.json`、`~/.codex/config.toml` 或 pi 的全局设�
 JetBrains MCP Server 涉及读取打开的项目、触发 IDE 操作和执行命令，因此第一次仍需在
 **Settings → Tools → MCP Server** 完成平台原生授权。服务未运行时 Agent 仍按 Imux 端口
 加载这项可选 MCP，同时弹一次带设置入口的提示；服务启动后 CLI 会连接或重连。
+
+提示词引导默认关闭。启用后，默认内容会引导 Agent 在符号解析、调用层级、IDE inspections、
+安全重命名、IDE 格式化、项目模型、运行配置、调试、VCS、数据库和 Python 环境等语义任务中
+优先考虑 IDEA MCP，同时保留文本搜索和 Shell 作为普通文本工作与降级路径。你可以直接修改
+整段提示词，也可以一键恢复默认。
+
+Claude 使用 `--append-system-prompt` 真正追加该文本。Codex 当前没有对应的 append 参数，
+因此会把它设为本次会话的 `developer_instructions`；这可能覆盖用户配置中已有的同名值，
+但不会覆盖 `AGENTS.md`。设置页会明确显示这一限制。pi 会把文本追加到 `idea_mcp` 工具指引。
 
 ## LSP 语言服务器体检
 

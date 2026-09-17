@@ -76,6 +76,49 @@ class AgentCommandTest {
     }
 
     @Test
+    fun `Claude 开启引导时追加系统提示词`() {
+        val command =
+            launchCommand(
+                "/bin/zsh",
+                AgentType.CLAUDE,
+                null,
+                ideaMcp = IDEA_MCP,
+                ideaMcpGuidance = "Prefer IDEA MCP",
+            ).last()
+
+        assertTrue(command.contains("--append-system-prompt 'Prefer IDEA MCP'"))
+    }
+
+    @Test
+    fun `PowerShell 上 Claude 自定义引导的双引号安全抵达`() {
+        val command =
+            launchCommand(
+                "powershell.exe",
+                AgentType.CLAUDE,
+                null,
+                ideaMcp = IDEA_MCP,
+                ideaMcpGuidance = """Prefer "IDEA" MCP""",
+            ).last()
+
+        assertFalse("自定义引导里的裸双引号会被 Windows 命令行吃掉：$command", command.contains('"'))
+        assertTrue("双引号必须由 PowerShell 在进程内拼回去：$command", command.contains("[char]34"))
+    }
+
+    @Test
+    fun `Codex 开启引导时设置本次会话开发者指令`() {
+        val command =
+            launchCommand(
+                "/bin/zsh",
+                AgentType.CODEX,
+                null,
+                ideaMcp = IDEA_MCP,
+                ideaMcpGuidance = "Prefer IDEA MCP",
+            ).last()
+
+        assertTrue(command.contains("""-c 'developer_instructions="Prefer IDEA MCP"'"""))
+    }
+
+    @Test
     fun `Claude 配置保留 Windows 路径中的反斜杠与引号`() {
         val path = """C:\work\"quoted"\app"""
         val config = claudeIdeaMcpConfig(IdeaMcpEndpoint(64342, path))
@@ -636,6 +679,22 @@ class AgentCommandTest {
         assertNull(launchEnvironment(AgentType.CODEX, "tab-1", ideaMcp = endpoint)["IMUX_IDEA_MCP_URL"])
     }
 
+    @Test
+    fun `pi 开启引导时拿到自定义提示词`() {
+        val endpoint = IdeaMcpEndpoint(64342, "/workspace")
+        val env =
+            launchEnvironment(
+                AgentType.PI,
+                "tab-1",
+                ideaMcp = endpoint,
+                ideaMcpGuidance = "Prefer IDEA MCP",
+            )
+
+        assertEquals("Prefer IDEA MCP", env["IMUX_IDEA_MCP_GUIDANCE"])
+        assertNull(launchEnvironment(AgentType.CLAUDE, "tab-1", ideaMcp = endpoint, ideaMcpGuidance = "x")["IMUX_IDEA_MCP_GUIDANCE"])
+        assertNull(launchEnvironment(AgentType.CODEX, "tab-1", ideaMcp = endpoint, ideaMcpGuidance = "x")["IMUX_IDEA_MCP_GUIDANCE"])
+    }
+
     /** 令牌是这个接口唯一的门禁：平台在 HttpRequestHandler 这层不做任何校验。 */
     @Test
     fun `令牌不发给 pi 以外的 agent`() {
@@ -702,6 +761,7 @@ class AgentCommandTest {
                 tabId: String,
                 piReport: PiReportEndpoint? = null,
                 ideaMcp: IdeaMcpEndpoint? = null,
+                ideaMcpGuidance: String? = null,
             )
             """,
             source.bodyAfter("internal fun launchEnvironment", '('),

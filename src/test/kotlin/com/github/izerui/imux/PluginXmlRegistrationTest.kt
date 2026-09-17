@@ -111,6 +111,17 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `IDEA MCP 设置注册为 Imux 独立子页`() {
+        assertTrue(
+            pluginXml.contains("""instance="com.github.izerui.imux.settings.ImuxIdeaMcpConfigurable""""),
+        )
+        assertTrue(
+            pluginXml.contains("""id="com.github.izerui.imux.settings.ideaMcp"""") &&
+                pluginXml.contains("""parentId="com.github.izerui.imux.settings""""),
+        )
+    }
+
+    @Test
     fun `plugin xml 引用的本地实现类都必须存在`() {
         val classNames =
             Regex(
