@@ -67,16 +67,16 @@ class ImuxSettingsTest {
     }
 
     @Test
-    fun `IDEA MCP 引导默认关闭并提供完整默认提示词`() {
+    fun `IDEA MCP 引导默认开启并提供完整默认提示词`() {
         val settings = ImuxSettings()
 
-        assertEquals(false, settings.state.ideaMcpGuidanceEnabled)
-        assertTrue(settings.ideaMcpGuidance.contains("Always use IDEA MCP"))
-        assertTrue(settings.ideaMcpGuidance.contains("Renaming symbols"))
-        assertTrue(settings.ideaMcpGuidance.contains("Debugging"))
-        assertTrue(settings.ideaMcpGuidance.contains("Prefer IDEA MCP"))
-        assertTrue(settings.ideaMcpGuidance.contains("Keep using your own tools"))
-        assertTrue(settings.ideaMcpGuidance.contains("Do not repeat a state-changing"))
+        assertEquals(true, settings.state.ideaMcpGuidanceEnabled)
+        assertTrue(settings.ideaMcpGuidance.contains("MUST use IDEA MCP"))
+        assertTrue(settings.ideaMcpGuidance.contains("rename_refactoring"))
+        assertTrue(settings.ideaMcpGuidance.contains("xdebug_set_breakpoint"))
+        assertTrue(settings.ideaMcpGuidance.contains("SHOULD PREFER IDEA MCP"))
+        assertTrue(settings.ideaMcpGuidance.contains("MUST NOT use IDEA MCP"))
+        assertTrue(settings.ideaMcpGuidance.contains("NEVER retry"))
     }
 
     @Test

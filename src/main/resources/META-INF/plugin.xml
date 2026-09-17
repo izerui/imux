@@ -11,32 +11,45 @@
          若把它挪进 <p> 或删掉，PluginXmlRegistrationTest 会失败。
     -->
     <description><![CDATA[
-      imux manages your Claude Code, Codex, and pi sessions inside IntelliJ IDEA editor tabs.
+      imux turns your JetBrains IDE into a full AI coding cockpit — run Claude Code, Codex, and pi sessions in editor tabs, and give them the power of your IDE through IDEA MCP.
 
-      <p>Run AI coding sessions in <b>editor tabs</b> alongside your code. Tabs can be split,
-      rearranged, or moved to another window without crowding the Terminal tool window.</p>
+      <p><b>Why imux instead of running AI agents in a separate terminal?</b></p>
 
-      <p>The <b>AI Agents</b> tool window lists sessions for the current project by recent activity.
-      Open any session with <code>claude --resume</code>, <code>codex resume</code>, or
-      <code>pi --session-id</code> without looking up session IDs or terminal history.</p>
+      <p>AI coding agents are powerful, but on their own they work like a programmer with only a text
+      editor and a terminal — they can read files, write files, and run commands, but they cannot use
+      your IDE's refactoring, debugging, inspections, or run configurations. <b>imux bridges this
+      gap.</b></p>
 
-      <p>imux notifies you when an agent finishes a turn or needs input. Notifications include the
-      agent, elapsed time, and session title, and can take you directly to the latest output.</p>
-
-      <p><b>imux does not host your conversations.</b> Session history remains in each CLI's own
-      store; title regeneration only updates that CLI's display-name metadata. Uninstalling the
-      plugin leaves all session history intact.</p>
-
-      <p><b>Features</b></p>
+      <p><b>IDEA MCP: give AI agents full IDE capabilities</b></p>
+      <p>imux automatically injects the JetBrains MCP server into every AI session it launches.
+      This means your AI agents can:</p>
       <ul>
-        <li>Run sessions in editor tabs with split and multi-window support</li>
-        <li>Automatically show only sessions that belong to the current project</li>
-        <li>Distinct running, unread, and open states</li>
-        <li>IDE and system notifications for completed turns and input requests</li>
+        <li><b>Safe refactoring</b> — rename symbols across the entire project by semantic identity, not risky text replace</li>
+        <li><b>Interactive debugging</b> — set breakpoints, step through code, inspect variables, evaluate expressions — instead of print-debugging</li>
+        <li><b>IDE-level inspections</b> — catch framework-specific issues (Spring, Django, ESLint, Android…) that compilers and linters miss</li>
+        <li><b>Run configurations</b> — run tests and apps with the exact IDE settings (env vars, runtime args, working directory)</li>
+        <li><b>Database access</b> — query databases using your IDE's saved connections and credentials</li>
+        <li><b>Code formatting</b> — apply your project's configured Code Style, not an external formatter</li>
+        <li><b>Semantic navigation</b> — trace call hierarchies, find symbol definitions, and understand type relationships across modules</li>
+      </ul>
+      <p>Works with <b>all JetBrains IDEs</b> (IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion…)
+      and <b>all languages</b> they support. The injection is session-scoped — it does not modify your
+      CLI's global config.</p>
+
+      <p><b>Session management in editor tabs</b></p>
+      <ul>
+        <li>Run AI sessions in <b>editor tabs</b> alongside your code — split, rearrange, or move to another window</li>
+        <li>The <b>AI Agents</b> panel lists sessions for the current project, sorted by recent activity</li>
+        <li>Resume any session with one click — no need to look up session IDs</li>
+        <li><b>Notifications</b> when an agent finishes a turn or needs input, with elapsed time and session title</li>
+        <li><b>Handoff</b> between agents — continue work from Claude Code in Codex or Pi with context carried over</li>
       </ul>
 
-      <p><b>Requirements</b>: IntelliJ IDEA 2026.2+ and at least one supported CLI available in your
-      terminal: <code>claude</code>, <code>codex</code>, or <code>pi</code>.</p>
+      <p><b>imux does not host your conversations.</b> Session history stays in each CLI's own store.
+      Uninstalling the plugin leaves all session history intact.</p>
+
+      <p><b>Requirements</b>: Any JetBrains IDE 2026.2+ and at least one supported CLI:
+      <code>claude</code>, <code>codex</code>, or <code>pi</code>.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

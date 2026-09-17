@@ -18,22 +18,46 @@ import java.util.Locale
 internal const val DEFAULT_IDEA_MCP_PORT = 64342
 internal val DEFAULT_IDEA_MCP_GUIDANCE =
     """
-    The "idea" MCP server connects you to the IDE running this project. Use its tools instead of your own when the task needs code semantics, and keep using rg/grep, file reads, shell, and git for plain-text work.
+    You have access to a JetBrains IDE (IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion, or others) through its MCP server. This works for ALL languages the IDE supports — Java, Kotlin, Python, TypeScript, JavaScript, Go, Rust, C/C++, C#, PHP, Ruby, and more. It gives you the same capabilities a human developer uses in the IDE — refactoring, debugging, inspections, run configurations, and database access. Use the decision rules below to pick the right tool for each task.
 
-    Always use IDEA MCP for these — your own tools cannot do them safely or at all:
-    - Renaming symbols: use IDEA MCP instead of text find-and-replace. It updates all references by semantic identity, safely skipping comments, strings, and unrelated same-name variables.
-    - Refactoring validation: after any code change, use IDEA MCP to check for errors. Its inspections cover type checks, nullability, deprecation, and framework-specific rules that a compiler or single linter will miss.
-    - Debugging: when you need to understand runtime behavior, use IDEA MCP to set breakpoints, step through execution, inspect variables, and evaluate expressions — instead of adding print statements.
-    - Formatting: use IDEA MCP to apply the project's configured Code Style instead of guessing from surrounding code.
+    ## When you MUST use IDEA MCP (your own tools cannot do these safely)
 
-    Prefer IDEA MCP when it gives a better result than your default approach:
-    - Finding definitions, types, or callers: IDEA MCP resolves symbols by semantic identity across inheritance and modules. Use it instead of grep when you need to distinguish overloads, trace call chains, or understand type relationships.
-    - Running or testing code: IDEA MCP knows the IDE's run configurations, including environment variables, JVM options, and working directory that are hard to reconstruct from build files.
-    - Reading library source: IDEA MCP can decompile classes inside JARs. Use it when you need to read a dependency's implementation.
-    - Understanding project structure: IDEA MCP provides the resolved module graph and dependency tree without parsing build files.
-    - Querying databases: IDEA MCP can reuse connections configured in the IDE, including saved credentials.
+    | You want to…                        | Use this IDEA MCP tool                |
+    |--------------------------------------|---------------------------------------|
+    | Rename a variable, method, class, function, or any symbol | `rename_refactoring` |
+    | Debug a runtime bug (any language the IDE supports) | `xdebug_set_breakpoint` → `xdebug_start_debugger_session` → `xdebug_control_session` → `xdebug_get_frame_values` / `xdebug_evaluate_expression` |
+    | Check code for IDE-level issues (type errors, framework rules, lint warnings) | `lint_files` or `get_file_problems` |
+    | Format code to the project's Code Style | `reformat_file`                    |
+    | Write or run a custom inspection     | `generate_psi_tree` + `run_inspection_kts` |
+    | Read source inside a JAR, node_modules, or decompile a class | `read_file` (with archive path) |
 
-    Keep using your own tools for: text search (rg/grep is faster), file reads and writes, directory listing, git operations, and shell commands. Do not repeat a state-changing IDEA MCP action (rename, execute, debug control, SQL, variable mutation) after an ambiguous timeout or transport failure.
+    Why: text find-and-replace breaks on same-name symbols in different scopes. Print-debugging wastes edit-run cycles. Compiler-only checks miss IDE-level rules. External formatters diverge from team style.
+
+    ## When you SHOULD PREFER IDEA MCP (it gives better results)
+
+    | You want to…                                    | Use this IDEA MCP tool                        |
+    |-------------------------------------------------|-----------------------------------------------|
+    | Trace who calls a function, or what a function calls | `analyze_calls`                           |
+    | Find a symbol by name across the project         | `search_symbol`                              |
+    | Get a symbol's type, docs, or declaration        | `get_symbol_info`                            |
+    | Run or test with the exact IDE configuration     | `get_run_configurations` → `execute_run_configuration` |
+    | View the project's module graph or dependencies  | `get_project_modules` / `get_project_dependencies` |
+    | Query a database using IDE-saved credentials     | `list_database_connections` → `execute_sql_query` |
+    | Manage Python interpreters (venv, Conda, system) | `get_python_environment` / `configure_python_interpreter` |
+
+    Why: the IDE resolves symbols by semantic identity across inheritance, modules, and language boundaries — grep cannot distinguish overloads or trace through interfaces. IDE run configs carry env vars, runtime args, and working directories that are hard to reconstruct from build files. IDE database connections include saved credentials.
+
+    ## When you MUST NOT use IDEA MCP (your own tools are better)
+
+    - Text search → use grep/rg (faster, no IDE round-trip)
+    - File read/write/edit → use your native file tools (more direct)
+    - Directory listing → use ls/tree/Glob
+    - Git operations → use git commands (more complete)
+    - Shell commands → use your native shell (more flexible)
+
+    ## Safety rules
+
+    State-changing IDEA MCP calls — `rename_refactoring`, `execute_run_configuration`, `xdebug_control_session`, `xdebug_set_variable`, `execute_sql_query`, `apply_patch` — may have already executed on the IDE side even if the response times out or the connection drops. NEVER retry these after an ambiguous failure; check the result in the IDE first.
     """.trimIndent()
 
 /**
@@ -79,7 +103,7 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         var ideaMcpPortCustomized: Boolean by property(false)
 
         /** 是否给 imux 启动的 Agent 增加 IDEA MCP 使用引导。 */
-        var ideaMcpGuidanceEnabled: Boolean by property(false)
+        var ideaMcpGuidanceEnabled: Boolean by property(true)
 
         /** null 表示使用随插件更新的默认引导词。 */
         var ideaMcpGuidanceOverride: String? by string(null)
