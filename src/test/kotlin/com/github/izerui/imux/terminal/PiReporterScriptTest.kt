@@ -67,5 +67,14 @@ class PiReporterScriptTest {
     @Test
     fun `仓库里带着待打包的脚本`() {
         assertEquals(true, File("src/main/js/pi-imux-reporter.js").exists())
+        assertEquals(true, File("src/main/js/pi-imux-idea-mcp.js").exists())
+    }
+
+    @Test
+    fun `在插件目录下定位 IDEA MCP 扩展`() {
+        val scripts = File(tmp.root, "scripts").apply { mkdirs() }
+        val script = File(scripts, "pi-imux-idea-mcp.js").apply { writeText("// x") }
+
+        assertEquals(script.toPath(), piIdeaMcpScriptIn(tmp.root.toPath()))
     }
 }

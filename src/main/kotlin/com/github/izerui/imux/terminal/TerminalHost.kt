@@ -8,6 +8,8 @@ import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.session.deleteTabPidFile
 import com.github.izerui.imux.session.imuxTabPidDir
 import com.github.izerui.imux.session.tabPidFilePath
+import com.github.izerui.imux.settings.DEFAULT_IDEA_MCP_PORT
+import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.ide.DataManager
@@ -560,6 +562,7 @@ class TerminalHost(
         tabTitle: String,
         tabId: String,
     ): TerminalView {
+        val ideaMcp = ideaMcpEndpoint()
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab =
             manager
@@ -571,6 +574,7 @@ class TerminalHost(
                         agentType,
                         tabId,
                         piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
+                        ideaMcp = ideaMcp,
                     ),
                 ).tabName(tabTitle)
                 .requestFocus(false)
@@ -596,8 +600,9 @@ class TerminalHost(
         sessionId: String?,
         initialPrompt: String?,
         tabId: String,
-    ): List<String> =
-        launchCommand(
+    ): List<String> {
+        val ideaMcp = ideaMcpEndpoint()
+        return launchCommand(
             resolveShell(
                 System.getenv("SHELL"),
                 isWindows = SystemInfo.isWindows,
@@ -605,17 +610,20 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtension = piExtensionFor(agentType),
+            piExtensions = piExtensionsFor(agentType, ideaMcp),
+            ideaMcp = ideaMcp,
             initialPrompt = initialPrompt,
             pidFile = tabPidFileFor(tabId),
         )
+    }
 
     private fun resumeCommand(
         agentType: AgentType,
         sessionId: String,
         tabId: String,
-    ): List<String> =
-        launchCommand(
+    ): List<String> {
+        val ideaMcp = ideaMcpEndpoint()
+        return launchCommand(
             resolveShell(
                 System.getenv("SHELL"),
                 isWindows = SystemInfo.isWindows,
@@ -623,9 +631,11 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtension = piExtensionFor(agentType),
+            piExtensions = piExtensionsFor(agentType, ideaMcp),
+            ideaMcp = ideaMcp,
             pidFile = tabPidFileFor(tabId),
         )
+    }
 
     /**
      * Windows 上让 shell 自报 pid 的文件路径；其它平台返回 null。
@@ -649,8 +659,32 @@ class TerminalHost(
         }
     }
 
-    /** 只有 pi 需要上报扩展，别的 agent 一律不加。 */
-    private fun piExtensionFor(agentType: AgentType): java.nio.file.Path? = if (agentType == AgentType.PI) piReporterScript() else null
+    /** pi 的扩展都按能力独立降级：缺哪一个只少哪一项，不能拖垮整个会话。 */
+    private fun piExtensionsFor(
+        agentType: AgentType,
+        ideaMcp: IdeaMcpEndpoint?,
+    ): List<java.nio.file.Path> {
+        if (agentType != AgentType.PI) return emptyList()
+        return buildList {
+            piReporterScript()?.let(::add)
+            if (ideaMcp != null) piIdeaMcpScript()?.let(::add)
+        }
+    }
+
+    /**
+     * 可注入的 IDEA MCP 端点；关了开关或服务不可用都返回 null。
+     *
+     * Imux 设置是唯一真相。端口探测只负责提示，不决定是否注入：IDE 启动早期服务可能
+     * 尚未监听，若因此删掉启动参数，恢复出来的会话会永久缺少 IDEA 工具。
+     */
+    private fun ideaMcpEndpoint(): IdeaMcpEndpoint? {
+        val settings = ImuxSettings.getInstance().state
+        return IdeaMcpReadiness.getInstance(project).endpointFor(
+            injectEnabled = settings.injectIdeaMcp,
+            configuredPort = settings.ideaMcpPort.takeIf { it in 1..65535 } ?: DEFAULT_IDEA_MCP_PORT,
+            projectPath = projectPath(),
+        )
+    }
 
     private fun persistRestorableTabs() {
         if (!restorationState.canPersist(projectClosing, project.isDisposed)) return

@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.github.izerui"
-version = "1.0.2"
+version = "1.0.3"
 
 repositories {
     // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。
@@ -110,6 +110,7 @@ intellijPlatform {
 // withType 覆盖全部实例，脚本在所有沙箱里都在。
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
+    from("src/main/js/pi-imux-idea-mcp.js") { into("${project.name}/scripts") }
 }
 
 // 本项目有一批「源码级」测试：ImuxLspUiSourceTest、PluginXmlRegistrationTest、

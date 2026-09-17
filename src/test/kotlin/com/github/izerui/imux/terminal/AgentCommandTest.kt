@@ -4,6 +4,7 @@ import com.github.izerui.imux.SourceCode
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.IMUX_TAB_ENV
 import com.github.izerui.imux.session.PiReportEndpoint
+import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -12,6 +13,10 @@ import org.junit.Test
 import java.nio.file.Path
 
 class AgentCommandTest {
+    private companion object {
+        val IDEA_MCP = IdeaMcpEndpoint(port = 64342, projectPath = "/workspace")
+    }
+
     @Test
     fun `经登录且交互的 shell 启动，而不是直接 exec`() {
         // 直接 exec 拿不到用户的 PATH：IDE 从 Dock 启动时 PATH 只有系统那几个目录，
@@ -36,6 +41,181 @@ class AgentCommandTest {
             "codex resume 'abc-123'",
             launchCommand("/bin/zsh", AgentType.CODEX, "abc-123").last(),
         )
+    }
+
+    @Test
+    fun `Claude 新建与续聊都临时注入 IDEA MCP`() {
+        val config =
+            """{"mcpServers":{"idea":{"type":"http","url":"${IDEA_MCP.url}",""" +
+                """"headers":{"IJ_MCP_SERVER_PROJECT_PATH":"/workspace"}}}}"""
+
+        assertEquals(
+            "claude --mcp-config '$config'",
+            launchCommand("/bin/zsh", AgentType.CLAUDE, null, ideaMcp = IDEA_MCP).last(),
+        )
+        assertEquals(
+            "claude --mcp-config '$config' --resume 'abc-123'",
+            launchCommand("/bin/zsh", AgentType.CLAUDE, "abc-123", ideaMcp = IDEA_MCP).last(),
+        )
+    }
+
+    @Test
+    fun `Codex 新建与续聊都临时注入 IDEA MCP`() {
+        val args =
+            """-c 'mcp_servers.idea.url="${IDEA_MCP.url}"' """ +
+                """-c 'mcp_servers.idea.http_headers.IJ_MCP_SERVER_PROJECT_PATH="/workspace"'"""
+
+        assertEquals(
+            "codex $args",
+            launchCommand("/bin/zsh", AgentType.CODEX, null, ideaMcp = IDEA_MCP).last(),
+        )
+        assertEquals(
+            "codex $args resume 'abc-123'",
+            launchCommand("/bin/zsh", AgentType.CODEX, "abc-123", ideaMcp = IDEA_MCP).last(),
+        )
+    }
+
+    @Test
+    fun `Claude 配置保留 Windows 路径中的反斜杠与引号`() {
+        val path = """C:\work\"quoted"\app"""
+        val config = claudeIdeaMcpConfig(IdeaMcpEndpoint(64342, path))
+        val parsed =
+            JsonParser
+                .parseString(config)
+                .asJsonObject
+                .getAsJsonObject("mcpServers")
+                .getAsJsonObject("idea")
+                .getAsJsonObject("headers")
+                .get(IDEA_MCP_PROJECT_HEADER)
+                .asString
+
+        assertEquals(path, parsed)
+    }
+
+    @Test
+    fun `Codex 配置分别转义 Windows 路径的反斜杠与引号`() {
+        assertEquals(
+            """"C:\\work\\app"""",
+            tomlBasicString("""C:\work\app"""),
+        )
+        assertEquals(
+            """"C:\\work\\\"quoted\\\""""",
+            tomlBasicString("""C:\work\"quoted\""""),
+        )
+    }
+
+    /**
+     * **项目定向请求头必须随注入一起到位。**
+     *
+     * 本机开着 3 个项目时实测：不带这个头，`get_project_modules` 这类不写 projectPath
+     * 实参的调用会被服务端拒绝，返回「Unable to determine the target project」并要求模型
+     * 反过来问用户选项目；带上之后同一个调用直接落到正确项目。
+     *
+     * 两种 agent 各断一条：它们走的是完全不同的配置通道（Claude 的 JSON `headers`
+     * 与 Codex 的 `http_headers`），改坏一个不会牵动另一个。
+     */
+    @Test
+    fun `Claude 与 Codex 都带上项目定向请求头`() {
+        val claude = launchCommand("/bin/zsh", AgentType.CLAUDE, null, ideaMcp = IDEA_MCP).last()
+        val codex = launchCommand("/bin/zsh", AgentType.CODEX, null, ideaMcp = IDEA_MCP).last()
+
+        assertTrue(
+            "Claude 少了项目定向头，多项目窗口下工具调用会被服务端拒绝：$claude",
+            claude.contains(""""headers":{"IJ_MCP_SERVER_PROJECT_PATH":"/workspace"}"""),
+        )
+        assertTrue(
+            "Codex 少了项目定向头，多项目窗口下工具调用会被服务端拒绝：$codex",
+            codex.contains("""mcp_servers.idea.http_headers.IJ_MCP_SERVER_PROJECT_PATH="/workspace""""),
+        )
+    }
+
+    /**
+     * **PowerShell 上注入的两个参数里一个双引号都不许出现。**
+     *
+     * 两个参数内部都带双引号（JSON 与 TOML 的值）。用 [quote] 只加单引号，双引号原样留在
+     * 脚本里；而这条脚本还要过一层 Windows 的命令行拼接，`CommandLineToArgvW` 可能把内层
+     * 引号吃掉——CLI 收到非法 JSON / 非法 TOML 直接退出，而 MCP 注入默认开启，
+     * 症状是 Windows 上每个 Claude/Codex 标签**一片空白**，且不报错。
+     *
+     * 断言分成三条，各守各的：
+     * 1. 脚本里没有裸双引号（这是坑本身）
+     * 2. 双引号确实以 `[char]34` 的形式在（光删掉引号也能让第 1 条过）
+     * 3. 两种 agent 各断一次（只改一个分支时另一个不能跟着变绿）
+     */
+    @Test
+    fun `PowerShell 上 Claude 与 Codex 的注入参数都不含裸双引号`() {
+        val claude = launchCommand("powershell.exe", AgentType.CLAUDE, null, ideaMcp = IDEA_MCP).last()
+        val codex = launchCommand("powershell.exe", AgentType.CODEX, null, ideaMcp = IDEA_MCP).last()
+
+        assertFalse("Claude 的注入参数含裸双引号，Windows 上会被吃掉：$claude", claude.contains('"'))
+        assertFalse("Codex 的注入参数含裸双引号，Windows 上会被吃掉：$codex", codex.contains('"'))
+        assertTrue("Claude 的双引号必须以 [char]34 拼出来，而不是被删掉：$claude", claude.contains("[char]34"))
+        assertTrue("Codex 的双引号必须以 [char]34 拼出来，而不是被删掉：$codex", codex.contains("[char]34"))
+    }
+
+    /** PowerShell 求值那串拼接之后，CLI 真正收到的应当与 POSIX 上一模一样。 */
+    @Test
+    fun `PowerShell 拼出的注入参数求值后与 POSIX 等价`() {
+        assertEquals(
+            """--mcp-config {"mcpServers":{"idea":{"type":"http","url":"${IDEA_MCP.url}",""" +
+                """"headers":{"IJ_MCP_SERVER_PROJECT_PATH":"/workspace"}}}}""",
+            evaluatePowerShellLiterals(
+                launchCommand("powershell.exe", AgentType.CLAUDE, null, ideaMcp = IDEA_MCP)
+                    .last()
+                    .removePrefix("claude "),
+            ),
+        )
+        assertEquals(
+            """-c mcp_servers.idea.url="${IDEA_MCP.url}" """ +
+                """-c mcp_servers.idea.http_headers.IJ_MCP_SERVER_PROJECT_PATH="/workspace"""",
+            evaluatePowerShellLiterals(
+                launchCommand("powershell.exe", AgentType.CODEX, null, ideaMcp = IDEA_MCP)
+                    .last()
+                    .removePrefix("codex "),
+            ),
+        )
+    }
+
+    /**
+     * 把 `('a' + [char]34 + 'b')` 这种 PowerShell 字面量拼接求值成它实际会产生的字符串。
+     *
+     * 只认这一种形状——测试要验的就是 [quoteEmbeddingDoubleQuotes] 生成的东西，
+     * 写成通用 PowerShell 解释器反而会把「生成了别的形状」这类错误吞掉。
+     */
+    private fun evaluatePowerShellLiterals(argument: String): String =
+        Regex("""\(([^()]*)\)""").replace(argument) { match ->
+            match.groupValues[1].split(" + ").joinToString("") { part ->
+                when {
+                    part == "[char]34" -> "\""
+                    part.startsWith("'") && part.endsWith("'") -> part.removeSurrounding("'").replace("''", "'")
+                    else -> throw AssertionError("不认识的 PowerShell 片段：$part（整段：$argument）")
+                }
+            }
+        }
+
+    /**
+     * 两个扩展**各断一条**。
+     *
+     * 合成一条字符串断言时，只要整行对得上就绿——而这两个扩展守的是两件互不相干的事：
+     * 上报扩展没了，pi 标签的标题与未读状态全停；IDEA MCP 扩展没了，pi 少掉整个 IDE
+     * 能力。任一缺失都必须让一条断言单独变红（见 `AGENTS.md` 的用例命名规则）。
+     */
+    @Test
+    fun `pi 同时加载上报与 IDEA MCP 两个扩展`() {
+        val reporter = Path.of("/tmp/pi-imux-reporter.js")
+        val idea = Path.of("/tmp/pi-imux-idea-mcp.js")
+        val script =
+            launchCommand(
+                "/bin/zsh",
+                AgentType.PI,
+                "abc-123",
+                piExtensions = listOf(reporter, idea),
+                ideaMcp = IDEA_MCP,
+            ).last()
+
+        assertTrue("少了上报扩展，pi 标签的标题与未读状态会整个停更：$script", script.contains("-e '$reporter'"))
+        assertTrue("少了 IDEA MCP 扩展，pi 拿不到任何 IDE 能力：$script", script.contains("-e '$idea'"))
+        assertEquals("pi --session-id 'abc-123' -e '$reporter' -e '$idea'", script)
     }
 
     /**
@@ -112,10 +292,38 @@ class AgentCommandTest {
         )
     }
 
+    /**
+     * **初始 prompt 前必须有 `--`，否则 claude 的 variadic 选项会把它吞掉。**
+     *
+     * `--mcp-config` 可接多个配置，紧随其后的位置参数会被当成第二个配置**文件路径**。
+     * 实测（claude 2.1.236）：
+     * ```
+     * claude --mcp-config '<json>' '说 hi'
+     * Error: Invalid MCP configuration: MCP config file not found: /private/tmp/e2e/说 hi
+     * ```
+     * 而注入默认开启、新建时 claude 又没有别的 flag 垫在中间——「交接到…」开出来的
+     * 每个 Claude 标签都会**启动即失败**。
+     *
+     * 断言分开写：一条钉 claude 带注入这个真实炸点，另一条钉「没有注入时也照样加」
+     * ——否则把 `--` 挪进 `ideaMcpArgument` 分支里也能让第一条过，而那样一来
+     * 用户关掉注入后同一个位置又成了裸奔。
+     */
+    @Test
+    fun `初始 prompt 前有分隔符，不会被 variadic 选项吞掉`() {
+        val withMcp = launchCommand("/bin/zsh", AgentType.CLAUDE, null, ideaMcp = IDEA_MCP, initialPrompt = "说 hi").last()
+        val withoutMcp = launchCommand("/bin/zsh", AgentType.CLAUDE, null, initialPrompt = "说 hi").last()
+
+        assertTrue(
+            "prompt 紧跟在 --mcp-config 后面会被当成配置文件路径，标签启动即失败：$withMcp",
+            withMcp.endsWith(" -- '说 hi'"),
+        )
+        assertEquals("claude -- '说 hi'", withoutMcp)
+    }
+
     @Test
     fun `新会话可携带安全转义的初始提示`() {
         assertEquals(
-            "codex 'Read session '\\''abc'",
+            "codex -- 'Read session '\\''abc'",
             launchCommand(
                 "/bin/zsh",
                 AgentType.CODEX,
@@ -124,14 +332,16 @@ class AgentCommandTest {
             ).last(),
         )
         assertEquals(
-            "pi --session-id 'new-id' -e '${java.nio.file.Paths.get("/tmp/reporter.js")}' 'Continue the work'",
+            "pi --session-id 'new-id' -e '${java.nio.file.Paths.get("/tmp/reporter.js")}' -- 'Continue the work'",
             launchCommand(
                 "/bin/zsh",
                 AgentType.PI,
                 resumeId = "new-id",
-                piExtension =
-                    java.nio.file.Paths
-                        .get("/tmp/reporter.js"),
+                piExtensions =
+                    listOf(
+                        java.nio.file.Paths
+                            .get("/tmp/reporter.js"),
+                    ),
                 initialPrompt = "Continue the work",
             ).last(),
         )
@@ -254,10 +464,10 @@ class AgentCommandTest {
         )
         assertEquals(
             listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123' -e '${Path.of("/tmp/r.js")}'"),
-            launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", piExtension = Path.of("/tmp/r.js")),
+            launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", piExtensions = listOf(Path.of("/tmp/r.js"))),
         )
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "claude --resume 'abc-123' 'say hi'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude --resume 'abc-123' -- 'say hi'"),
             launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = "abc-123", initialPrompt = "say hi"),
         )
     }
@@ -277,13 +487,13 @@ class AgentCommandTest {
     fun `初始 prompt 里的单引号按方言转义`() {
         // prompt 是用户自由输入，是整条命令行里最不可信的一段
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "claude 'it'\\''s'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "claude -- 'it'\\''s'"),
             launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
         )
         assertEquals(
             listOf(
                 "pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-                "claude 'it''s'",
+                "claude -- 'it''s'",
             ),
             launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
         )
@@ -297,7 +507,7 @@ class AgentCommandTest {
 
         assertEquals(
             "pi --session-id 'abc-123' -e '$script'",
-            launchCommand("/bin/zsh", AgentType.PI, "abc-123", script).last(),
+            launchCommand("/bin/zsh", AgentType.PI, "abc-123", listOf(script)).last(),
         )
     }
 
@@ -309,7 +519,7 @@ class AgentCommandTest {
     fun `扩展脚本缺失时不加 -e`() {
         assertEquals(
             "pi --session-id 'abc-123'",
-            launchCommand("/bin/zsh", AgentType.PI, "abc-123", null).last(),
+            launchCommand("/bin/zsh", AgentType.PI, "abc-123", emptyList()).last(),
         )
     }
 
@@ -319,8 +529,8 @@ class AgentCommandTest {
             java.nio.file.Paths
                 .get("/plugins/imux/scripts/pi-imux-reporter.js")
 
-        assertEquals("claude --resume 'x'", launchCommand("/bin/zsh", AgentType.CLAUDE, "x", script).last())
-        assertEquals("codex resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", script).last())
+        assertEquals("claude --resume 'x'", launchCommand("/bin/zsh", AgentType.CLAUDE, "x", listOf(script)).last())
+        assertEquals("codex resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", listOf(script)).last())
     }
 
     @Test
@@ -395,7 +605,7 @@ class AgentCommandTest {
                 "Bypass",
                 "-Command",
                 "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
-                    "claude --resume 'abc-123' 'say hi'",
+                    "claude --resume 'abc-123' -- 'say hi'",
             ),
             launchCommand(
                 "pwsh.exe",
@@ -414,6 +624,16 @@ class AgentCommandTest {
 
         assertEquals("http://127.0.0.1:63342/imux/pi-session", env["IMUX_REPORT_URL"])
         assertEquals("tok-1", env["IMUX_TOKEN"])
+    }
+
+    @Test
+    fun `只有 pi 拿到 IDEA MCP 桥接环境`() {
+        val endpoint = IdeaMcpEndpoint(64342, "/workspace")
+
+        assertEquals("http://127.0.0.1:64342/stream", launchEnvironment(AgentType.PI, "tab-1", ideaMcp = endpoint)["IMUX_IDEA_MCP_URL"])
+        assertEquals("/workspace", launchEnvironment(AgentType.PI, "tab-1", ideaMcp = endpoint)["IMUX_IDEA_MCP_PROJECT"])
+        assertNull(launchEnvironment(AgentType.CLAUDE, "tab-1", ideaMcp = endpoint)["IMUX_IDEA_MCP_URL"])
+        assertNull(launchEnvironment(AgentType.CODEX, "tab-1", ideaMcp = endpoint)["IMUX_IDEA_MCP_URL"])
     }
 
     /** 令牌是这个接口唯一的门禁：平台在 HttpRequestHandler 这层不做任何校验。 */
@@ -481,6 +701,7 @@ class AgentCommandTest {
                 agentType: AgentType,
                 tabId: String,
                 piReport: PiReportEndpoint? = null,
+                ideaMcp: IdeaMcpEndpoint? = null,
             )
             """,
             source.bodyAfter("internal fun launchEnvironment", '('),
@@ -499,7 +720,7 @@ class AgentCommandTest {
     fun `codex 的 pid 自报与初始 prompt 共存`() {
         assertEquals(
             "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
-                "codex resume 'abc-123' 'say hi'",
+                "codex resume 'abc-123' -- 'say hi'",
             launchCommand(
                 "pwsh.exe",
                 AgentType.CODEX,

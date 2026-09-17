@@ -145,6 +145,36 @@ internal fun quote(
     }
 
 /**
+ * 同 [quote]，但**内部含双引号时也保证原样抵达 CLI**。
+ *
+ * 为什么不能直接用 [quote]：PowerShell 的单引号确实让 `"` 成为字面量，但这条命令还要
+ * 先过一层 Windows 的命令行拼接——整条脚本是 `powershell.exe … -Command <script>` 的
+ * 最后一个参数，含空格时会被整体裹上双引号，内层双引号是否被转义取决于 JDK 走的是
+ * `VERIFICATION_LEGACY` 还是 `VERIFICATION_WIN32_SAFE`。走前者时 `CommandLineToArgvW`
+ * 把内层引号吃掉，CLI 收到的是 `{mcpServers:{idea:…}}`（非法 JSON）和
+ * `mcp_servers.idea.url=http://…`（非法 TOML），两者都会让 CLI 拒绝参数直接退出——
+ * 而 IDEA MCP 注入默认开启，症状是 **Windows 上每个 Claude/Codex 标签一片空白**。
+ *
+ * 这与 [probeScript] 用 `[char]9` 而不是插值拼制表符是同一个坑，解法也一样：让脚本
+ * 文本里**一个双引号都不出现**。把值按 `"` 切开，用 `[char]34` 串回来，外面包一层
+ * 括号——PowerShell 会先求值再把结果当作一个参数交给原生命令。
+ *
+ * POSIX 没有这个问题（单引号内一切都是字面量，且不存在二次拼接），原样走 [quote]。
+ */
+internal fun quoteEmbeddingDoubleQuotes(
+    dialect: ShellDialect,
+    value: String,
+): String =
+    when (dialect) {
+        ShellDialect.POSIX -> quote(dialect, value)
+        ShellDialect.POWERSHELL ->
+            value
+                .split('"')
+                .joinToString(" + [char]34 + ") { quote(dialect, it) }
+                .let { "($it)" }
+    }
+
+/**
  * 一次问完一批二进制在不在 PATH 里的脚本。
  *
  * 两种方言的**输出格式必须一致**（`名称<TAB>路径`，查不到时制表符后为空），

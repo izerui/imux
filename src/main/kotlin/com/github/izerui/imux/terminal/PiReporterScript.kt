@@ -6,6 +6,7 @@ import java.nio.file.Path
 
 /** 打包时放进插件目录的上报脚本，见 build.gradle.kts 的 prepareSandbox 配置。 */
 private const val SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reporter.js"
+private const val IDEA_MCP_SCRIPT_RELATIVE_PATH = "scripts/pi-imux-idea-mcp.js"
 internal const val PLUGIN_DIRECTORY_NAME = "imux"
 
 private object PiReporterScriptLocation
@@ -46,10 +47,19 @@ internal fun piReporterScriptIn(pluginPath: Path?): Path? = pluginScriptIn(plugi
 /** 从插件 classpath 项（通常是 `<plugin>/lib/imux-*.jar`）向上定位脚本。 */
 internal fun piReporterScriptNear(classPathEntry: Path?): Path? = pluginScriptNear(classPathEntry, SCRIPT_RELATIVE_PATH)
 
+internal fun piIdeaMcpScriptIn(pluginPath: Path?): Path? = pluginScriptIn(pluginPath, IDEA_MCP_SCRIPT_RELATIVE_PATH)
+
+internal fun piIdeaMcpScriptNear(classPathEntry: Path?): Path? = pluginScriptNear(classPathEntry, IDEA_MCP_SCRIPT_RELATIVE_PATH)
+
 internal fun locatePiReporterScript(
     pluginPath: Path?,
     classPathEntry: Path?,
 ): Path? = piReporterScriptIn(pluginPath) ?: piReporterScriptNear(classPathEntry)
+
+internal fun locatePiIdeaMcpScript(
+    pluginPath: Path?,
+    classPathEntry: Path?,
+): Path? = piIdeaMcpScriptIn(pluginPath) ?: piIdeaMcpScriptNear(classPathEntry)
 
 /**
  * 生产入口：优先使用平台公开的插件目录；code source 仅作为非 IDE 环境的降级路径。
@@ -59,6 +69,16 @@ internal fun locatePiReporterScript(
  * 名固定为项目名 `imux`，正式安装与 runIde 沙箱均为 `<plugins>/imux`。
  */
 internal fun piReporterScript(): Path? {
+    val (pluginPath, classPathEntry) = pluginScriptRoots()
+    return locatePiReporterScript(pluginPath, classPathEntry)
+}
+
+internal fun piIdeaMcpScript(): Path? {
+    val (pluginPath, classPathEntry) = pluginScriptRoots()
+    return locatePiIdeaMcpScript(pluginPath, classPathEntry)
+}
+
+private fun pluginScriptRoots(): Pair<Path?, Path?> {
     val pluginPath =
         runCatching {
             PathManager.getPluginsDir().resolve(PLUGIN_DIRECTORY_NAME)
@@ -71,5 +91,5 @@ internal fun piReporterScript(): Path? {
                     ?.location
             location?.toURI()?.let(Path::of)
         }.getOrNull()
-    return locatePiReporterScript(pluginPath, classPathEntry)
+    return pluginPath to classPathEntry
 }

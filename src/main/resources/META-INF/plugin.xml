@@ -98,6 +98,7 @@
 
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
+        <notificationGroup id="imux.ideaMcp" displayType="BALLOON"/>
 
         <!--
           必须注册：工具窗口的内容是懒加载的，监听逻辑若只在 createToolWindowContent

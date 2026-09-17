@@ -12,16 +12,15 @@ class TerminalIntegrationSourceTest {
      *
      * 那条 `from(...)` 收的是字符串路径，Gradle 对**不存在**的源路径不报错——
      * 打错一个字母、或者把脚本挪了个目录，构建照样成功，只是 zip 里少一个文件。
-     * 失败症状是「功能没做」：`pi-imux-reporter.js` 缺失 → `piReporterScript()`
-     * 返回 null → 命令行**不加** `-e` → pi 的标签不跟随（这条取舍是刻意的，
-     * 正因为如此它不会报错）。
+     * 失败症状是「功能没做」：上报脚本缺失时 pi 的标签不跟随，IDEA MCP 脚本
+     * 缺失时 pi 没有 IDEA 工具。两者都刻意退回少一项能力而不是让会话起不来。
      *
      * 目标目录也一起钉：`piReporterScriptIn` 找的是插件目录下的 `scripts/`，
      * 打到别处等于没打。
      *
      * codex 曾经也有一个随包分发的 `.ps1`（Windows 上的 SessionStart hook 上报），
      * 已随整套 hook 机制删除——它改读 codex 自己写的运行态 sqlite，不需要任何
-     * 随包脚本。这里因此只剩 pi 一个。
+     * 随包脚本。这里因此只剩 pi 的两个扩展。
      */
     @Test
     fun `随插件安装的脚本在仓库里且打包路径对得上`() {
@@ -29,6 +28,7 @@ class TerminalIntegrationSourceTest {
 
         listOf(
             "src/main/js/pi-imux-reporter.js",
+            "src/main/js/pi-imux-idea-mcp.js",
         ).forEach { path ->
             assertTrue("仓库里缺少待打包的脚本：$path", File(path).exists())
             assertTrue(

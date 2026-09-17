@@ -3,6 +3,7 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.IMUX_TAB_ENV
 import com.github.izerui.imux.session.PiReportEndpoint
+import com.google.gson.JsonObject
 
 /**
  * 启动 CLI 的命令行。
@@ -31,16 +32,43 @@ internal fun launchCommand(
     shell: String,
     agentType: AgentType,
     resumeId: String?,
-    piExtension: java.nio.file.Path? = null,
+    piExtensions: List<java.nio.file.Path> = emptyList(),
+    ideaMcp: IdeaMcpEndpoint? = null,
     initialPrompt: String? = null,
     pidFile: String? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = agentType.cli
+    // 这些参数内部都带双引号（JSON / TOML 的值），因此必须走
+    // quoteEmbeddingDoubleQuotes 而不是 quote——理由见它的 KDoc，
+    // 用 quote 会让 Windows 上每个 Claude/Codex 标签静默起不来。
+    //
+    // 两种 agent 都要带 IDEA_MCP_PROJECT_HEADER：不带它，多项目窗口下任何没写
+    // projectPath 实参的工具调用都会被服务端拒绝，模型只能反过来问用户选哪个项目。
+    val ideaMcpArgument =
+        ideaMcp?.let { endpoint ->
+            when (agentType) {
+                AgentType.CLAUDE -> {
+                    val config = claudeIdeaMcpConfig(endpoint)
+                    "--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}"
+                }
+
+                AgentType.CODEX -> {
+                    val url = "mcp_servers.idea.url=${tomlBasicString(endpoint.url)}"
+                    val header =
+                        "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=" +
+                            tomlBasicString(endpoint.projectPath)
+                    "-c ${quoteEmbeddingDoubleQuotes(dialect, url)} " +
+                        "-c ${quoteEmbeddingDoubleQuotes(dialect, header)}"
+                }
+
+                AgentType.PI -> null
+            }
+        }
     val script =
         when {
             resumeId == null -> {
-                cli
+                listOfNotNull(cli, ideaMcpArgument).joinToString(" ")
             }
 
             // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
@@ -48,24 +76,34 @@ internal fun launchCommand(
             agentType == AgentType.PI -> {
                 buildString {
                     append("$cli --session-id ${quote(dialect, resumeId)}")
-                    // 脚本缺失时**不加** -e：拼出一个加载不了的扩展会让 pi 启动失败，
-                    // 那是整个会话起不来；而少了上报只是标签页不自动跟随。
-                    piExtension?.let { append(" -e ${quote(dialect, it.toString())}") }
+                    // 脚本缺失时调用方不把它放进列表：拼出一个加载不了的扩展会让 pi
+                    // 启动失败，而少一个集成扩展只会让对应能力降级。
+                    piExtensions.forEach { append(" -e ${quote(dialect, it.toString())}") }
                 }
             }
 
             agentType == AgentType.CODEX -> {
-                "$cli resume ${quote(dialect, resumeId)}"
+                listOfNotNull(cli, ideaMcpArgument, "resume", quote(dialect, resumeId)).joinToString(" ")
             }
 
             else -> {
-                "$cli --resume ${quote(dialect, resumeId)}"
+                listOfNotNull(cli, ideaMcpArgument, "--resume", quote(dialect, resumeId)).joinToString(" ")
             }
         }
+    // 初始 prompt 是**位置参数**，前面必须有 `--` 把选项解析截断。
+    //
+    // 不加就踩 claude 的 `--mcp-config`：它是 variadic（可接多个配置），会把紧随其后的
+    // prompt 当成第二个配置**文件路径**吞掉，启动直接失败：
+    //   Error: Invalid MCP configuration: MCP config file not found: /path/说 hi
+    // 而 MCP 注入默认开启、新建时 claude 又没有别的 flag 垫在中间，于是「交接到…」
+    // 开出来的每个 Claude 标签都起不来。实测复现并确认 `--` 修好了它。
+    //
+    // 三种 CLI 统一加：claude 与 codex 都实测接受 `--`，而「位置参数前截断选项解析」
+    // 本来就是对的写法——只给 claude 加，等于赌另外两个永远不引入 variadic 选项。
     val command =
         initialPrompt
             ?.takeIf { it.isNotBlank() }
-            ?.let { "$script ${quote(dialect, it)}" }
+            ?.let { "$script -- ${quote(dialect, it)}" }
             ?: script
     // pid 自报只在 Windows 分支生成：POSIX 方言下 pidFileRecordCommand 恒为 null，
     // macOS 与 Linux 的启动命令因此一个字都不加。
@@ -80,6 +118,55 @@ internal fun launchCommand(
             ?: command
     return listOf(shell) + shellArgs(dialect) + prefixed
 }
+
+/** 用 Gson 生成配置，避免 Windows 反斜杠、引号和控制字符破坏 JSON。 */
+internal fun claudeIdeaMcpConfig(endpoint: IdeaMcpEndpoint): String {
+    val server =
+        JsonObject().apply {
+            addProperty("type", "http")
+            addProperty("url", endpoint.url)
+            add(
+                "headers",
+                JsonObject().apply {
+                    addProperty(IDEA_MCP_PROJECT_HEADER, endpoint.projectPath)
+                },
+            )
+        }
+    return JsonObject()
+        .apply {
+            add(
+                "mcpServers",
+                JsonObject().apply {
+                    add("idea", server)
+                },
+            )
+        }.toString()
+}
+
+/** TOML basic string；Codex 的 `-c key=value` 会按 TOML 解析 value。 */
+internal fun tomlBasicString(value: String): String =
+    buildString(value.length + 2) {
+        append('"')
+        value.forEach { char ->
+            when (char) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\b' -> append("\\b")
+                '\t' -> append("\\t")
+                '\n' -> append("\\n")
+                '\u000C' -> append("\\f")
+                '\r' -> append("\\r")
+                else ->
+                    if (char.code < 0x20 || char.code == 0x7F) {
+                        append("\\u")
+                        append(char.code.toString(16).padStart(4, '0'))
+                    } else {
+                        append(char)
+                    }
+            }
+        }
+        append('"')
+    }
 
 /**
  * 传给 CLI 进程的终端环境。
@@ -105,6 +192,7 @@ internal fun launchEnvironment(
     agentType: AgentType,
     tabId: String,
     piReport: PiReportEndpoint? = null,
+    ideaMcp: IdeaMcpEndpoint? = null,
 ): Map<String, String> =
     buildMap {
         put(IMUX_TAB_ENV, tabId)
@@ -119,6 +207,10 @@ internal fun launchEnvironment(
                 piReport?.let {
                     put("IMUX_REPORT_URL", it.url)
                     put("IMUX_TOKEN", it.token)
+                }
+                ideaMcp?.let {
+                    put("IMUX_IDEA_MCP_URL", it.url)
+                    put("IMUX_IDEA_MCP_PROJECT", it.projectPath)
                 }
             }
 

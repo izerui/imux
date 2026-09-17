@@ -90,7 +90,38 @@ javap -classpath \
 2. 再通过本机 IDEA 2026.2 的 jar、`javap`、`jar tf` 或 SDK 源码确认实际类、字段和方法。
 3. 查找平台内相同语义的现有实现，优先沿用其图标、Action、组件和事件模式。
 4. 只有官方能力确实不足时才自定义，并在代码注释中记录原因、替代方案及生命周期风险。
-5. 不为绕过 Kotlin `internal`、私有 API 或旧版本兼容而使用反射；本项目直接面向 262 的公开 API 实现。
+5. 尽量不用反射，但它不是被禁的：本项目直接面向 262 的公开 API 实现，公开 API 够用时**一律**直接调用。
+
+### 什么时候可以反射
+
+两种情形，都是**直接调用反而更糟**，不是图省事：
+
+1. **目标是 Internal / 实验性 API，而功能又必须做。**
+   JetBrains 的 plugin verifier 会把对这类 API 的直接引用报成问题，插件传不上 Marketplace；
+   反射不产生字节码级引用，验证器看不到。
+   现例：`SessionMessageNavigator.highlightingRangesViaReflection` 读 Terminal 高亮模型
+   （`getHighlightingAt` / `HighlightingInfo` / `TextAttributesProvider` 都是 Internal，
+   见 commit `99bfca7`，动机就是「避免 API 校验失败」）。
+
+2. **公开 API 在同一平台版本内发生了二进制不兼容变更。**
+   JVM 方法描述符包含返回类型，正常调用生成的字节码不可能同时匹配两组 build；而 Java 反射查找
+   不看返回类型，两边都能正确执行。
+   现例：`TerminalHost.createView` 调 `TerminalToolWindowTabsManager.detachTab`——262.8665 / 262.9437
+   返回 `TerminalView`，262.10315+ 返回 `Unit`，而用户明确要求同一个插件包覆盖整个 262。
+
+反射不是「绕过约定」的后门，而是这两种情形下唯一能同时满足功能与校验的做法。公开 API 够用时，
+反射一律是错的选择。
+
+用了就必须一并满足：
+
+- **在注释里写清楚**为什么公开 API 不够用、反射的是哪个类型的哪个成员、平台改了之后会怎样。
+- **失败要降级，不能抛**。反射的目标随时可能消失，代价只能是少一项能力，不能是整个功能崩掉
+  （`SessionMessageNavigator` 的做法：调用异常时返回空列表）。
+- **把反射关在一个函数里**，不外溢到调用方；对外只暴露稳定类型。
+- **补一条测试钉住它**，否则平台换签名之后是静默失效。
+
+仍然不做的：为**旧版** IntelliJ Platform 做反射回退或多版本适配（见上面「IntelliJ Platform 版本」一节）——
+那与「公开 API 缺位」是两回事，本项目只支持 262。
 
 ## JetBrains 官方参考资料
 

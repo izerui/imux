@@ -15,6 +15,8 @@ import com.intellij.util.EventDispatcher
 import java.util.EventListener
 import java.util.Locale
 
+internal const val DEFAULT_IDEA_MCP_PORT = 64342
+
 /**
  * 插件的全局偏好。
  *
@@ -29,6 +31,7 @@ import java.util.Locale
 class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State()) {
     private val languageListeners = EventDispatcher.create(LanguageListener::class.java)
     private val enabledAgentsListeners = EventDispatcher.create(EnabledAgentsListener::class.java)
+    private var ideaMcpPortDefaultInitialized = false
 
     class State : BaseState() {
         /** 单击即打开会话；false 表示需要双击。 */
@@ -46,6 +49,15 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
 
         /** 在 Project 工具窗口的“新建”菜单中显示 AI 智能体入口。 */
         var showProjectNewAgentMenu: Boolean by property(true)
+
+        /** 只给 imux 启动的会话临时注入 IDEA MCP，不修改各 CLI 的全局配置。 */
+        var injectIdeaMcp: Boolean by property(true)
+
+        /** JetBrains MCP Server 的 HTTP Stream 端口。 */
+        var ideaMcpPort: Int by property(DEFAULT_IDEA_MCP_PORT)
+
+        /** 用户是否明确修改过端口；明确值不得再被自动检测覆盖。 */
+        var ideaMcpPortCustomized: Boolean by property(false)
 
         /** Agent 开关使用显式字段持久化；枚举名不是配置文件契约。 */
         var claudeEnabled: Boolean by property(true)
@@ -93,6 +105,18 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         enabledAgentsListeners.multicaster.enabledAgentsChanged()
     }
 
+    fun initializeIdeaMcpPortDefault(detectedPort: Int?) {
+        if (state.ideaMcpPortCustomized || ideaMcpPortDefaultInitialized) return
+        val validPort = detectedPort?.takeIf { it in 1..65535 } ?: return
+        state.ideaMcpPort = validPort
+        ideaMcpPortDefaultInitialized = true
+    }
+
+    fun setIdeaMcpPort(port: Int) {
+        state.ideaMcpPort = port
+        state.ideaMcpPortCustomized = true
+    }
+
     fun addLanguageListener(
         parentDisposable: Disposable,
         listener: () -> Unit,
@@ -116,7 +140,10 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
     }
 
     companion object {
-        fun getInstance(): ImuxSettings = service()
+        fun getInstance(): ImuxSettings =
+            service<ImuxSettings>().also {
+                it.initializeIdeaMcpPortDefault(readIdeaMcpPlatformPort())
+            }
 
         fun getInstanceOrNull(): ImuxSettings? {
             val application = ApplicationManager.getApplication() ?: return null

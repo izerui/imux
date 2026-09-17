@@ -124,9 +124,34 @@ macOS 上把多个项目窗口合成标签栏后，这些状态就出现在标�
 | **会话打开方式** | 单击或双击打开会话（默认双击） |
 | **关闭运行中的会话前确认** | 关掉还在跑的会话标签页时是否弹确认框（默认开启） |
 | **Agent 开关** | 分别启用或禁用 Claude Code / Codex / Pi 的显示 |
+| **IDEA MCP 会话注入** | 只给 imux 启动的 Agent 临时添加 IDEA 代码分析、导航和重构工具（默认开启） |
+| **MCP Server 端口** | 首次自动读取 IDEA 的 MCP Server 端口；之后 Agent 始终使用这里显示的值 |
 | **在"新建"菜单中显示 AI 智能体** | 控制 Project 工具窗口的"新建"菜单里是否出现 Agent 入口 |
 
 设置全局生效（不跨机器同步）。
+
+## IDEA MCP 集成
+
+imux 会把 IDEA MCP 作为**会话级配置**注入它启动的 Claude Code、Codex 和 pi：
+
+- Claude Code 使用本次进程的 `--mcp-config`
+- Codex 使用本次进程的 `-c mcp_servers.idea.url=...`
+- pi 加载 imux 自带的 `pi-imux-idea-mcp.js`，通过一个按需路由工具调用 IDEA MCP
+
+imux 不会修改 `~/.claude.json`、`~/.codex/config.toml` 或 pi 的全局设置。你从系统终端
+直接启动这些 CLI 时，不会因此多出 IDEA MCP，也不会在 IDEA 没启动时等待它。
+
+三条通道都会带上项目定向请求头 `IJ_MCP_SERVER_PROJECT_PATH`，值是该标签所属的项目路径。
+同一个 IDEA 开着多个项目时，这个头决定工具调用落到哪个项目；没有它，IDEA 无法判断目标项目，
+会要求智能体反过来问你选一个。
+
+首次使用时，imux 会从 **Settings → Tools → MCP Server** 读取端口并填入自己的设置。
+之后连接始终以 **Settings → Tools → Imux** 里显示的端口为准；你手动改过后，自动检测
+不会再覆盖它。若两个设置不一致，Imux 设置页会明确提示。
+
+JetBrains MCP Server 涉及读取打开的项目、触发 IDE 操作和执行命令，因此第一次仍需在
+**Settings → Tools → MCP Server** 完成平台原生授权。服务未运行时 Agent 仍按 Imux 端口
+加载这项可选 MCP，同时弹一次带设置入口的提示；服务启动后 CLI 会连接或重连。
 
 ## LSP 语言服务器体检
 
@@ -140,7 +165,7 @@ macOS 上把多个项目窗口合成标签栏后，这些状态就出现在标�
 
 一般在几秒内完成（跟着下一轮扫描走）。
 
-三个 CLI 都支持，但 pi 的做法不同：Claude 与 Codex 是 imux 去翻进程信息认出来的，而 pi 把这些信息全藏住了（没有运行态文件、不持有会话文件句柄、`ps` 读不到它的环境变量），只能由它自己上报——imux 启动 pi 时会加载一个自带的扩展 `pi-imux-reporter.js`，它在会话切换时把「哪个标签页换到了哪个会话」发回 IDE。
+三个 CLI 都支持，但 pi 的做法不同：Claude 与 Codex 是 imux 去翻进程信息认出来的，而 pi 把这些信息全藏住了（没有运行态文件、不持有会话文件句柄、`ps` 读不到它的环境变量），只能由它自己上报——imux 启动 pi 时会加载自带的 `pi-imux-reporter.js`，它在会话切换时把「哪个标签页换到了哪个会话」发回 IDE。启用 IDEA MCP 注入时还会加载独立的 `pi-imux-idea-mcp.js`；两项能力彼此独立，缺一个不会拖垮另一个。
 
 这个扩展只做这一件事：启动时读取 `IMUX_REPORT_URL`、`IMUX_TOKEN`、`IMUX_TAB` 三个环境变量，随即从 pi 进程环境中删除，避免 pi 的 bash 子进程继承上报凭据；之后在会话切换和最终失败时把 `tabId`、`sessionId`、`cwd` 与必要的结束原因 POST 给 IDE 的本机 HTTP 接口。不读你的对话、不碰会话文件、不联网。你在 pi 里按 `Ctrl+O` 能在 `[Extensions]` 一栏看到它。你自己在终端里跑 pi 时它不会被加载。
 
@@ -170,12 +195,12 @@ macOS 上把多个项目窗口合成标签栏后，这些状态就出现在标�
 
 pi 不走这两条——它把这些信息全藏住了，`ps` 读不到它的环境变量，也不长期持有会话文件句柄，反推不出来。改由它自己上报，见上面一段。
 
-启动 pi 时还多做三件事，都是为了让它能上报会话切换：
+启动 pi 时还会加载会话上报与 IDEA MCP 桥接：
 
 | 做什么 | 具体内容 |
 | --- | --- |
-| 注入环境变量 | `IMUX_TAB`（标签页标识，三种 CLI 都注入）、`PI_HARDWARE_CURSOR=1`（供 IDEA 定位输入法候选窗）、`IMUX_REPORT_URL`、`IMUX_TOKEN` |
-| 加载一个扩展 | imux 自带的 `pi-imux-reporter.js`，上报会话切换，并在 IDEA 中保留硬件光标定位、去掉 pi 重叠的反色假光标 |
+| 注入环境变量 | `IMUX_TAB`（标签页标识，三种 CLI 都注入）、`PI_HARDWARE_CURSOR=1`、上报凭据，以及启用时的 IDEA MCP 地址和项目路径 |
+| 加载扩展 | `pi-imux-reporter.js` 负责会话切换与光标适配；`pi-imux-idea-mcp.js` 负责按需转发 IDEA MCP 工具调用 |
 | 开一个本机路由 | 在 IDE 内置 HTTP 服务上注册 `/imux/pi-session`，只收 POST，校验 `x-imux-token` 请求头 |
 
 会话切换上报包含 `tabId`、pi 官方返回的 `sessionId` 和当前 `cwd`；最终的 `error` / `length` 还会在 `agent_settled` 后补报结束原因，避免自动重试期间提前提醒。`IMUX_REPORT_URL` 形如 `http://127.0.0.1:<IDE 内置服务端口>/imux/pi-session`。

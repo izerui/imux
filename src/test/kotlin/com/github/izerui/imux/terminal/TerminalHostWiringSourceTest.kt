@@ -39,7 +39,8 @@ class TerminalHostWiringSourceTest {
      *   它在 Windows 上同样靠 pid 文件认「属于哪个标签」
      * - `configuredShell` 换掉或传 null → Windows 上永远退回 `powershell.exe`，
      *   用户在 Terminal 设置里配的 Git Bash 被无声忽略
-     * - `piExtension` 传 null → pi 的标签不跟随
+     * - `piExtensions` 传空 → pi 的标签不跟随，也拿不到 IDEA MCP
+     * - `ideaMcp` 传 null → Claude 与 Codex 不会获得 IDEA 能力，也拿不到项目定向请求头
      *
      * 整段比对而不是逐条 `contains`：这些实参都是具名的，逐条 `contains("pidFile")`
      * 在改成 `pidFile = null` 之后照样命中。
@@ -50,8 +51,9 @@ class TerminalHostWiringSourceTest {
             "这几个实参各自守着一条 Windows 上的通道，改成 null 的后果全是静默失效——" +
                 "功能看起来「没做」而不是「坏了」。若你只是动了排版，照下面的「期望」抄回去即可。",
             """
-            =
-                launchCommand(
+            {
+                val ideaMcp = ideaMcpEndpoint()
+                return launchCommand(
                     resolveShell(
                         System.getenv("SHELL"),
                         isWindows = SystemInfo.isWindows,
@@ -59,15 +61,17 @@ class TerminalHostWiringSourceTest {
                     ),
                     agentType,
                     resumeId = sessionId,
-                    piExtension = piExtensionFor(agentType),
+                    piExtensions = piExtensionsFor(agentType, ideaMcp),
+                    ideaMcp = ideaMcp,
                     initialPrompt = initialPrompt,
                     pidFile = tabPidFileFor(tabId),
                 )
+            }
             """,
             host.bodyAfter(
                 "private fun newCommand(agentType: AgentType, sessionId: String?, " +
                     "initialPrompt: String?, tabId: String): List<String>",
-                '(',
+                '{',
             ),
         )
     }
@@ -87,8 +91,9 @@ class TerminalHostWiringSourceTest {
             "续聊与新建必须一样齐全。恢复标签走的正是这一条，Windows 上重启 IDE 之后" +
                 "恢复出来的每个标签都会落在这里。",
             """
-            =
-                launchCommand(
+            {
+                val ideaMcp = ideaMcpEndpoint()
+                return launchCommand(
                     resolveShell(
                         System.getenv("SHELL"),
                         isWindows = SystemInfo.isWindows,
@@ -96,13 +101,15 @@ class TerminalHostWiringSourceTest {
                     ),
                     agentType,
                     resumeId = sessionId,
-                    piExtension = piExtensionFor(agentType),
+                    piExtensions = piExtensionsFor(agentType, ideaMcp),
+                    ideaMcp = ideaMcp,
                     pidFile = tabPidFileFor(tabId),
                 )
+            }
             """,
             host.bodyAfter(
                 "private fun resumeCommand(agentType: AgentType, sessionId: String, tabId: String): List<String>",
-                '(',
+                '{',
             ),
         )
     }

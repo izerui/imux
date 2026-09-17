@@ -18,6 +18,55 @@ class ImuxSettingsTest {
     }
 
     @Test
+    fun `IDEA MCP session injection uses the platform default port`() {
+        val state = ImuxSettings().state
+
+        assertTrue(state.injectIdeaMcp)
+        assertEquals(64342, state.ideaMcpPort)
+    }
+
+    @Test
+    fun `未自定义端口时采用自动检测值`() {
+        val settings = ImuxSettings()
+
+        settings.initializeIdeaMcpPortDefault(64355)
+
+        assertEquals(64355, settings.state.ideaMcpPort)
+        assertEquals(false, settings.state.ideaMcpPortCustomized)
+    }
+
+    @Test
+    fun `自动端口成功初始化后不再变化`() {
+        val settings = ImuxSettings()
+
+        settings.initializeIdeaMcpPortDefault(64355)
+        settings.initializeIdeaMcpPortDefault(64356)
+
+        assertEquals(64355, settings.state.ideaMcpPort)
+    }
+
+    @Test
+    fun `自动端口首次读取失败后允许重试`() {
+        val settings = ImuxSettings()
+
+        settings.initializeIdeaMcpPortDefault(null)
+        settings.initializeIdeaMcpPortDefault(64355)
+
+        assertEquals(64355, settings.state.ideaMcpPort)
+    }
+
+    @Test
+    fun `用户修改端口后不再被自动检测覆盖`() {
+        val settings = ImuxSettings()
+        settings.setIdeaMcpPort(64360)
+
+        settings.initializeIdeaMcpPortDefault(64355)
+
+        assertEquals(64360, settings.state.ideaMcpPort)
+        assertTrue(settings.state.ideaMcpPortCustomized)
+    }
+
+    @Test
     fun `all agents are enabled by default`() {
         assertEquals(AgentType.entries, ImuxSettings().enabledAgentTypes)
     }
