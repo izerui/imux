@@ -71,11 +71,11 @@ class ImuxSettingsTest {
         val settings = ImuxSettings()
 
         assertEquals(false, settings.state.ideaMcpGuidanceEnabled)
-        assertTrue(settings.ideaMcpGuidance.contains("Finding definitions"))
-        assertTrue(settings.ideaMcpGuidance.contains("call hierarchy"))
-        assertTrue(settings.ideaMcpGuidance.contains("Renaming a symbol"))
+        assertTrue(settings.ideaMcpGuidance.contains("Always use IDEA MCP"))
+        assertTrue(settings.ideaMcpGuidance.contains("Renaming symbols"))
         assertTrue(settings.ideaMcpGuidance.contains("Debugging"))
-        assertTrue(settings.ideaMcpGuidance.contains("rg/grep"))
+        assertTrue(settings.ideaMcpGuidance.contains("Prefer IDEA MCP"))
+        assertTrue(settings.ideaMcpGuidance.contains("Keep using your own tools"))
         assertTrue(settings.ideaMcpGuidance.contains("Do not repeat a state-changing"))
     }
 
