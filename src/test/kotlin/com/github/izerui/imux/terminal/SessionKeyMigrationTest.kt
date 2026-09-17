@@ -148,31 +148,31 @@ class SessionKeyMigrationTest {
 
     @Test
     fun `探测失败时保留重试次数`() {
-        val monitor =
+        val coordinator =
             File(
-                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+                "src/main/kotlin/com/github/izerui/imux/monitor/DriftCoordinator.kt",
             ).readText()
 
         assertTrue(
             "/clear 只产生一次无主会话，触发器被一次性消费掉就再没有下一次了，" +
                 "终端会永久停在旧 id 上而且失败是静默的",
-            monitor.contains("if (migrated) driftProbeAttempts.set(0) else driftProbeAttempts.decrementAndGet()"),
+            coordinator.contains("if (migrated) driftProbeAttempts.set(0) else driftProbeAttempts.decrementAndGet()"),
         )
         assertTrue(
             "正在探测时必须原样保留重试次数，不能先 drain 再发现走不下去",
-            monitor.contains("if (!probing.compareAndSet(false, true)) return"),
+            coordinator.contains("if (!probing.compareAndSet(false, true)) return"),
         )
         assertTrue(
             "探测期间若又出现新会话，旧探测完成时不能把新触发器的重试次数清零",
-            monitor.contains("if (driftProbeGeneration.get() == generation)"),
+            coordinator.contains("if (driftProbeGeneration.get() == generation)"),
         )
     }
 
     @Test
     fun `探测允许 daemon 接管并在应用前复核`() {
-        val monitor =
+        val coordinator =
             File(
-                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+                "src/main/kotlin/com/github/izerui/imux/monitor/DriftCoordinator.kt",
             ).readText()
         val applier =
             File(
@@ -181,7 +181,7 @@ class SessionKeyMigrationTest {
 
         assertTrue(
             "daemon 接管后的用户会话也标成 bg，必须进入探测并由歧义闸门决定是否迁移",
-            monitor.contains("claudeDriftPids(runtimeSessions)"),
+            coordinator.contains("claudeDriftPids(runtimeSessions)"),
         )
         assertTrue(
             "探测是异步的，结果落地前标签页可能已经关掉或被重新打开成另一个终端",

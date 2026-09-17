@@ -91,17 +91,17 @@ class PlatformApiAlignmentSourceTest {
      */
     @Test
     fun `绑定迁移由 monitor 消费而不是界面`() {
-        val monitor =
+        val coordinator =
             source(
-                "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
+                "src/main/kotlin/com/github/izerui/imux/monitor/DriftCoordinator.kt",
             )
         val tree =
             source(
                 "src/main/kotlin/com/github/izerui/imux/toolwindow/AgentSessionTree.kt",
             )
 
-        assertTrue(monitor.contains("drainNewBindings()"))
-        assertTrue(monitor.contains("rebindKey("))
+        assertTrue(coordinator.contains("drainNewBindings()"))
+        assertTrue(coordinator.contains("rebindKey("))
         assertFalse("界面不该消费绑定", tree.contains("drainNewBindings"))
         assertFalse("界面不该负责换 key", tree.contains("rebindKey"))
     }
@@ -134,9 +134,14 @@ class PlatformApiAlignmentSourceTest {
                 .containsMatchIn(monitor),
         )
         assertTrue(monitor.contains("updateFilePresentation(file)"))
+        val unreadTracker =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/monitor/UnreadTracker.kt",
+            )
         assertTrue(
+            "未读状态变化时必须刷新标签图标",
             Regex("""updateOpenTabIcons\(setOf\(sessionId\)\)""")
-                .findAll(monitor)
+                .findAll(unreadTracker)
                 .count() >= 2,
         )
     }

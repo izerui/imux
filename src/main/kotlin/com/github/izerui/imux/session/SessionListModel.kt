@@ -2,6 +2,7 @@ package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.intellij.openapi.application.ApplicationManager
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
@@ -73,6 +74,7 @@ class SessionListModel(
         agentType: AgentType,
         sessionId: String? = null,
     ): PendingSession {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         val pending =
             PendingSession(
                 key = "pending-${pendingSeq++}",
@@ -95,6 +97,7 @@ class SessionListModel(
      * 只有 session header 的空会话会一直显示到 30 分钟超时。
      */
     fun cancelPending(key: String): Boolean {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         val pending = pendings.firstOrNull { it.key == key || it.sessionId == key } ?: return false
         if (pending.key in bindings) return false
         val removed = pendings.remove(pending)
@@ -130,6 +133,7 @@ class SessionListModel(
         scanned: List<AgentSession>,
         detectUnclaimedSessions: Boolean = true,
     ) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         val pendingsBefore = visiblePendingKeys()
 
         bindNewSessions(scanned, detectUnclaimedSessions)

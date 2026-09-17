@@ -190,6 +190,11 @@ class SessionDriftApplierWiringTest {
             .File(
                 "src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt",
             ).readText()
+    private val coordinator =
+        java.io
+            .File(
+                "src/main/kotlin/com/github/izerui/imux/monitor/DriftCoordinator.kt",
+            ).readText()
 
     @Test
     fun `落地器必须长期持有而不是每次现造`() {
@@ -197,11 +202,11 @@ class SessionDriftApplierWiringTest {
         // pi 的会话会因此永远进不了轮次监控——而界面上完全看不出来
         assertTrue(
             "落地器要作为字段活着",
-            Regex("""private val driftApplier\s*=\s*SessionDriftApplier\(""").containsMatchIn(monitor),
+            Regex("""private val driftApplier\s*=\s*SessionDriftApplier\(""").containsMatchIn(coordinator),
         )
         assertFalse(
             "不能在 applyDrifts 里现造",
-            Regex("""fun applyDrifts[\s\S]{0,300}?SessionDriftApplier\(""").containsMatchIn(monitor),
+            Regex("""fun applyDrifts[\s\S]{0,300}?SessionDriftApplier\(""").containsMatchIn(coordinator),
         )
     }
 
@@ -209,7 +214,7 @@ class SessionDriftApplierWiringTest {
     fun `每轮扫描之后必须补挂等着的监控`() {
         assertTrue(
             "pi 的上报早于扫描，补挂这一步没接上的话它永远不会被纳入轮次监控",
-            Regex("""applyNewBindings\(\)\s*(//[^\n]*\n\s*)*driftApplier\.retryPendingWatches\(\)""")
+            Regex("""driftCoordinator\.applyNewBindings\(\)\s*(//[^\n]*\n\s*)*driftCoordinator\.retryPendingWatches\(\)""")
                 .containsMatchIn(monitor),
         )
     }
@@ -221,7 +226,7 @@ class SessionDriftApplierWiringTest {
         // 队列会因此停摆。轮询无条件按拍走，是重试的兜底节奏。
         assertTrue(
             "checkCompletedTurns 里必须也续一拍重试",
-            Regex("""fun checkCompletedTurns[\s\S]{0,900}?driftApplier\.retryPendingWatches\(\)""")
+            Regex("""fun checkCompletedTurns[\s\S]{0,900}?driftCoordinator\.retryPendingWatches\(\)""")
                 .containsMatchIn(monitor),
         )
     }
@@ -232,11 +237,19 @@ class SessionDriftApplierWiringTest {
         // 刷一条误报 WARN，并把紧随其后的挂监控一并跳过
         assertTrue(
             "绑定必须转成 KeyDrift 交给 applyDrifts",
-            Regex("""fun applyNewBindings[\s\S]{0,600}?applyDrifts\(""").containsMatchIn(monitor),
+            Regex("""fun applyNewBindings[\s\S]{0,600}?applyDrifts\(""").containsMatchIn(coordinator),
         )
         assertFalse(
             "不能再走各自的 rebindKey",
-            monitor.contains("host.rebindKey(pendingKey"),
+            coordinator.contains("host.rebindKey(pendingKey"),
+        )
+    }
+
+    @Test
+    fun `DriftCoordinator 必须作为字段长期持有`() {
+        assertTrue(
+            "SessionMonitor 必须长期持有 DriftCoordinator",
+            Regex("""private val driftCoordinator\s*=\s*DriftCoordinator\(""").containsMatchIn(monitor),
         )
     }
 }

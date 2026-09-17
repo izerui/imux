@@ -590,9 +590,16 @@ class TerminalHost(
         manager: TerminalToolWindowTabsManager,
         tab: TerminalToolWindowTab,
     ) {
-        TerminalToolWindowTabsManager::class.java
-            .getMethod("detachTab", TerminalToolWindowTab::class.java)
-            .invoke(manager, tab)
+        try {
+            TerminalToolWindowTabsManager::class.java
+                .getMethod("detachTab", TerminalToolWindowTab::class.java)
+                .invoke(manager, tab)
+        } catch (e: ReflectiveOperationException) {
+            throw IllegalStateException(
+                "TerminalToolWindowTabsManager.detachTab 签名不兼容，请升级 imux 或报告此问题",
+                e,
+            )
+        }
     }
 
     private fun projectPath(): String = project.basePath ?: System.getProperty("user.home")

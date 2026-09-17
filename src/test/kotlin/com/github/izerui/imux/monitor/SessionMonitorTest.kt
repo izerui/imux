@@ -83,7 +83,7 @@ class SessionMonitorTest {
                     """
                     PiReportType.SESSION_START -> {
                         val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
-                        if (drifts.isNotEmpty()) applyDrifts(drifts)
+                        if (drifts.isNotEmpty()) driftCoordinator.applyDrifts(drifts)
                         refresh()
                     }
                     """.trimIndent(),
