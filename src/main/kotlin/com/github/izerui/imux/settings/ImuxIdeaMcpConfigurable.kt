@@ -17,9 +17,12 @@ import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.selected
+import java.awt.Point
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JButton
 import javax.swing.JCheckBox
+import javax.swing.JViewport
+import javax.swing.SwingUtilities
 
 /** IDEA MCP connection and agent-guidance settings. */
 class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
@@ -95,8 +98,12 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                 row {
                     button(ImuxBundle.message("settings.idea.mcp.guidance.restore")) {
                         guidanceArea?.text = DEFAULT_IDEA_MCP_GUIDANCE
+                        resetGuidanceView(guidanceArea)
                     }
                 }.enabledIf(guidanceToggle.selected)
+            }
+            onReset {
+                resetGuidanceView(guidanceArea)
             }
         }
     }
@@ -137,4 +144,11 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
             )
         }
     }
+}
+
+private fun resetGuidanceView(area: JBTextArea?) {
+    if (area == null) return
+    area.caretPosition = 0
+    (SwingUtilities.getAncestorOfClass(JViewport::class.java, area) as? JViewport)
+        ?.viewPosition = Point(0, 0)
 }

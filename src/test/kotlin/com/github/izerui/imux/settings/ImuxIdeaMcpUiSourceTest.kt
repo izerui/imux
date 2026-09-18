@@ -30,6 +30,35 @@ class ImuxIdeaMcpUiSourceTest {
         assertTrue(text.contains("settings::setIdeaMcpGuidance"))
         assertTrue(text.contains("""button(ImuxBundle.message("settings.idea.mcp.guidance.restore"))"""))
         assertTrue(text.contains("guidanceArea?.text = DEFAULT_IDEA_MCP_GUIDANCE"))
+        assertTrue(
+            source.compact(text).contains(
+                source.compact(
+                    """
+                    guidanceArea?.text = DEFAULT_IDEA_MCP_GUIDANCE
+                    resetGuidanceView(guidanceArea)
+                    """.trimIndent(),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `打开 IDEA MCP 页面时引导区定位到左上角`() {
+        val text = source.normalized
+
+        assertTrue(
+            source.compact(text).contains(
+                source.compact(
+                    """
+                    onReset {
+                        resetGuidanceView(guidanceArea)
+                    }
+                    """.trimIndent(),
+                ),
+            ),
+        )
+        assertTrue(text.contains("area.caretPosition = 0"))
+        assertTrue(text.contains("?.viewPosition = Point(0, 0)"))
     }
 
     @Test
