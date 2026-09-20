@@ -17,29 +17,30 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.view.TerminalView
 
+/**
+ * 结对编程的子菜单 actions。sessionId 可以是 pending key 或真实 id，
+ * 不要求会话已落盘。
+ */
 internal fun peerProgrammingActions(
     project: Project,
-    session: AgentSession,
+    sessionId: String,
     targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
 ): Array<AnAction> {
-    val monitor = SessionMonitor.getInstance(project)
-    val coordinator = monitor.peerCoordinator
-    val boundTarget = coordinator.boundTarget(session.id)
+    val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+    val boundTarget = coordinator.boundTarget(sessionId)
 
     val actions = mutableListOf<AnAction>()
-
     targetTypes.forEach { target ->
-        actions += PeerBindAction(project, session, target, isBound = target == boundTarget)
+        actions += PeerBindAction(project, sessionId, target, isBound = target == boundTarget)
     }
-
     if (boundTarget != null) {
         actions += Separator.getInstance()
-        actions += PeerUnbindAction(project, session)
+        actions += PeerUnbindAction(project, sessionId)
     }
-
     return actions.toTypedArray()
 }
 
+/** 供树形列表右键菜单使用。 */
 internal fun peerProgrammingActionGroup(
     project: Project,
     session: AgentSession,
@@ -50,14 +51,14 @@ internal fun peerProgrammingActionGroup(
             templatePresentation.icon = AllIcons.Actions.ProfileCPU
         }
 
-        private val children = peerProgrammingActions(project, session, targetTypes)
+        private val children = peerProgrammingActions(project, session.id, targetTypes)
 
         override fun getChildren(event: AnActionEvent?): Array<AnAction> = children
     }
 
 private class PeerBindAction(
     private val project: Project,
-    private val session: AgentSession,
+    private val sessionId: String,
     private val target: AgentType,
     private val isBound: Boolean,
 ) : DumbAwareAction(
@@ -70,16 +71,16 @@ private class PeerBindAction(
     override fun actionPerformed(event: AnActionEvent) {
         val coordinator = SessionMonitor.getInstance(project).peerCoordinator
         if (isBound) {
-            coordinator.unbind(session.id)
+            coordinator.unbind(sessionId)
         } else {
-            coordinator.bind(session.id, target)
+            coordinator.bind(sessionId, target)
         }
     }
 }
 
 private class PeerUnbindAction(
     private val project: Project,
-    private val session: AgentSession,
+    private val sessionId: String,
 ) : DumbAwareAction(
     ImuxBundle.message("action.peer.disable.text"),
     ImuxBundle.message("action.peer.disable.text"),
@@ -88,11 +89,16 @@ private class PeerUnbindAction(
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun actionPerformed(event: AnActionEvent) {
-        SessionMonitor.getInstance(project).peerCoordinator.unbind(session.id)
+        SessionMonitor.getInstance(project).peerCoordinator.unbind(sessionId)
     }
 }
 
-/** Terminal context menu group — registered in plugin.xml. */
+/**
+ * Terminal context menu group — registered in plugin.xml.
+ *
+ * 只需要 sessionIdentity（agentType + sessionId），不要求会话已落盘。
+ * 新建会话在 CLI 还没写下第一条记录时就能开启结对编程。
+ */
 class PeerProgrammingActionGroup :
     ActionGroup(ImuxBundle.message("action.peer.group.text"), true),
     DumbAware {
@@ -105,19 +111,18 @@ class PeerProgrammingActionGroup :
     override fun update(event: AnActionEvent) {
         event.presentation.text = ImuxBundle.message("action.peer.group.text")
         event.presentation.icon = AllIcons.Actions.ProfileCPU
-        event.presentation.isEnabledAndVisible = sourceSession(event) != null
+        event.presentation.isEnabledAndVisible = sessionIdentity(event) != null
     }
 
     override fun getChildren(event: AnActionEvent?): Array<AnAction> {
-        val source = event?.let(::sourceSession) ?: return emptyArray()
+        val (_, sessionId) = event?.let(::sessionIdentity) ?: return emptyArray()
         val project = event.project ?: return emptyArray()
-        return peerProgrammingActions(project, source)
+        return peerProgrammingActions(project, sessionId)
     }
 
-    private fun sourceSession(event: AnActionEvent): AgentSession? {
+    private fun sessionIdentity(event: AnActionEvent): Pair<AgentType, String>? {
         val project = event.project ?: return null
         val terminalView = event.getData(TerminalView.DATA_KEY) ?: return null
-        val (_, sessionId) = TerminalHost.getInstance(project).sessionIdentityFor(terminalView) ?: return null
-        return SessionMonitor.getInstance(project).model.sessionOf(sessionId)
+        return TerminalHost.getInstance(project).sessionIdentityFor(terminalView)
     }
 }

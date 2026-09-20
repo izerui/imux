@@ -105,35 +105,10 @@ class PeerCoordinator(
             return
         }
 
-        LOG.info("结对编程：第 $round 轮，采集上下文...")
+        LOG.info("结对编程：第 $round 轮，采集对话历史...")
 
         val conversation = collectLatestConversation(mainSessionId)
-        val diff = collectGitDiff()
-
-        if (conversation.isBlank() && diff.isBlank()) {
-            LOG.info("结对编程：无对话变化也无代码变更，跳过")
-            roundCounts[mainSessionId]?.set(0)
-            return
-        }
-
-        val context = buildString {
-            if (binding.task.isNotBlank()) {
-                append("## Task\n\n")
-                append(binding.task)
-                append("\n\n")
-            }
-            if (conversation.isNotBlank()) {
-                append("## Latest conversation\n\n")
-                append(conversation.take(MAX_CONVERSATION_LENGTH))
-                append("\n\n")
-            }
-            if (diff.isNotBlank()) {
-                append("## Code changes (git diff)\n\n")
-                append(diff.take(MAX_DIFF_LENGTH))
-            }
-        }
-
-        val reviewPrompt = buildReviewPrompt(context)
+        val reviewPrompt = buildReviewPrompt(binding.task, conversation)
         LOG.info("结对编程：调用 ${binding.targetAgentType.cli}...")
 
         val rawOutput = callCliOnce(binding.targetAgentType, reviewPrompt)
@@ -143,12 +118,6 @@ class PeerCoordinator(
         }
 
         val feedback = rawOutput.trim()
-        if (feedback.equals(PASS_SIGNAL, ignoreCase = true) || feedback.startsWith("$PASS_SIGNAL\n")) {
-            LOG.info("结对编程：副驾驶返回 PASS，本轮结束")
-            roundCounts[mainSessionId]?.set(0)
-            return
-        }
-
         val injectPrompt = feedback.take(MAX_FEEDBACK_LENGTH)
         LOG.info("结对编程：收到反馈（${injectPrompt.length} 字符），注入主会话")
 
@@ -162,24 +131,24 @@ class PeerCoordinator(
         }
     }
 
-    private fun buildReviewPrompt(context: String): String {
+    private fun buildReviewPrompt(task: String, conversation: String): String {
         val lang = ImuxBundle.currentLanguage()
         val isChinese = lang.id == "zh_CN" || lang.id == "zh_TW"
+        val taskSection = if (task.isNotBlank()) "任务：$task\n\n" else ""
+        val taskSectionEn = if (task.isNotBlank()) "Task: $task\n\n" else ""
+        val convSection = if (conversation.isNotBlank()) "对话记录：\n$conversation\n\n" else ""
+        val convSectionEn = if (conversation.isNotBlank()) "Conversation:\n$conversation\n\n" else ""
         return if (isChinese) """
-你的搭档刚做了这些：
+你现在扮演这个 AI 编程会话的用户。你的搭档（另一个 AI 助手）刚完成了一轮工作。
 
-$context
-
-你就坐在他旁边。随口说一两句——一个问题、一个顾虑、一个建议。像同事聊天，别像写报告。最多三句话。
-如果确实没什么要说的，只回复一个词：PASS
+${taskSection}${convSection}请自己查看项目文件和 git 变更记录来了解代码的当前状态，然后作为用户，你接下来会说什么？可以是追问、纠正、推进下一步、换个方向，或者任何你觉得该说的话。像正常使用 AI 助手一样说话。简短自然。
+注意：始终围绕用户的原始任务目标推进，不要跑偏到无关的事情上。绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作。
 """.trimIndent()
         else """
-Your partner just did this:
+You are the user of this AI coding session. Your partner (another AI assistant) just completed a round of work.
 
-$context
-
-You're sitting next to them. Give a quick reaction — 1 to 3 sentences max. A question, a concern, a suggestion. Talk like a colleague, not a reviewer.
-If you genuinely have nothing to add, respond with just: PASS
+${taskSectionEn}${convSectionEn}Check the project files and git history yourself to understand the current code state, then as the user, what would you type next? It could be a follow-up question, a correction, pushing to the next step, changing direction, or anything you'd naturally say. Talk like a normal user, not a reviewer. Keep it brief and natural.
+IMPORTANT: Always stay focused on the user's original task goal. Do not drift to unrelated topics. Never suggest destructive operations like deleting files, resetting the repo, or force-pushing.
 """.trimIndent()
     }
 
@@ -207,7 +176,7 @@ If you genuinely have nothing to add, respond with just: PASS
 
             val cliCommand = when (agentType) {
                 AgentType.CLAUDE -> "claude -p < '$promptPath'"
-                AgentType.CODEX -> "codex exec < '$promptPath'"
+                AgentType.CODEX -> "codex exec --ephemeral --sandbox read-only < '$promptPath'"
                 AgentType.PI -> "pi -p < '$promptPath'"
             }
             val shell = System.getenv("SHELL")?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
@@ -284,50 +253,36 @@ If you genuinely have nothing to add, respond with just: PASS
             val file = session.filePath
             if (!java.nio.file.Files.isRegularFile(file)) return@runCatching ""
             val lines = java.nio.file.Files.readAllLines(file)
-            val tail = lines.asReversed().take(CONVERSATION_TAIL_LINES)
 
             val parts = mutableListOf<String>()
-            for (line in tail) {
+            var totalLength = 0
+            for (line in lines) {
                 val role = JsonLineScanner.topLevelStringValue(line, "role")
                     ?: JsonLineScanner.objectStringValue(line, "message", "role")
                     ?: continue
                 val text = JsonLineScanner.stringValue(line, "text") ?: continue
-                val preview = text.take(500)
-                when (role) {
-                    "user" -> parts += "User: $preview"
-                    "assistant" -> parts += "Assistant: $preview"
+                val entry = when (role) {
+                    "user" -> "User: $text"
+                    "assistant" -> "Assistant: $text"
+                    else -> continue
                 }
+                parts += entry
+                totalLength += entry.length
+                if (totalLength > MAX_CONVERSATION_LENGTH) break
             }
-            parts.asReversed().joinToString("\n\n")
+            parts.joinToString("\n\n")
         }.getOrElse {
             LOG.warn("结对编程：读取主会话对话失败", it)
             ""
         }
     }
 
-    private fun collectGitDiff(): String =
-        runCatching {
-            val process = ProcessBuilder("git", "diff", "HEAD")
-                .directory(java.io.File(projectPath))
-                .redirectErrorStream(true)
-                .start()
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor()
-            output
-        }.getOrElse {
-            LOG.warn("结对编程：git diff 失败", it)
-            ""
-        }
-
     companion object {
         private val LOG = logger<PeerCoordinator>()
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"
-        private const val MAX_CONVERSATION_LENGTH = 4000
-        private const val MAX_DIFF_LENGTH = 8000
-        private const val CONVERSATION_TAIL_LINES = 30
+        private const val MAX_CONVERSATION_LENGTH = 100000
         private const val MAX_FEEDBACK_LENGTH = 4000
         private const val MAX_ROUNDS = 5
-        private const val PASS_SIGNAL = "PASS"
         private const val CLI_TIMEOUT_SECONDS = 300L
     }
 }
