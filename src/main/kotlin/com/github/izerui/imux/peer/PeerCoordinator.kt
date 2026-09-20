@@ -37,15 +37,15 @@ class PeerCoordinator(
     private val bindings = ConcurrentHashMap<String, PeerBinding>()
     private val roundCounts = ConcurrentHashMap<String, AtomicInteger>()
 
-    /** 持久横幅的状态：bannerDisposable 控制横幅生命周期，label 用于更新文字。 */
     private val bannerStates = ConcurrentHashMap<String, BannerState>()
-    /** 副驾驶执行期间的输入拦截器，执行完后释放。 */
     private val inputGuards = ConcurrentHashMap<String, Disposable>()
+    private val runningProcesses = ConcurrentHashMap<String, Process>()
 
     private data class BannerState(
         val disposable: Disposable,
         val label: JLabel,
         val spinnerLabel: JLabel,
+        val cancelButton: javax.swing.JButton,
     )
 
     fun bind(sessionId: String, targetAgentType: AgentType) {
@@ -73,20 +73,26 @@ class PeerCoordinator(
         LOG.info("结对编程：主会话轮次完成 sessionId=$sessionId")
 
         updateBannerToWaiting(sessionId, binding.targetAgentType)
-        lockInput(sessionId)
 
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 runReviewAndInject(sessionId)
             } finally {
                 withContext(Dispatchers.EDT) {
-                    removeInputGuard(sessionId)
                     if (bindings.containsKey(sessionId)) {
                         updateBannerToIdle(sessionId, binding.targetAgentType)
                     }
                 }
             }
         }
+    }
+
+    fun cancelCurrentRun(sessionId: String) {
+        LOG.info("结对编程：手动取消 $sessionId")
+        runningProcesses.remove(sessionId)?.destroyForcibly()
+        roundCounts[sessionId]?.set(0)
+        removeInputGuard(sessionId)
+        bindings[sessionId]?.let { updateBannerToIdle(sessionId, it.targetAgentType) }
     }
 
     private fun showBanner(sessionId: String, agentType: AgentType, waiting: Boolean) {
@@ -99,6 +105,11 @@ class PeerCoordinator(
             } else {
                 ImuxBundle.message("action.peer.enabled", agentType.displayName)
             })
+            val cancelBtn = javax.swing.JButton(ImuxBundle.message("action.peer.cancel")).apply {
+                isVisible = waiting
+                isFocusable = false
+                addActionListener { cancelCurrentRun(sessionId) }
+            }
             val banner = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.X_AXIS)
                 border = JBUI.Borders.empty(6, 12)
@@ -106,9 +117,11 @@ class PeerCoordinator(
                 background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
                 add(spinnerLabel)
                 add(textLabel)
+                add(javax.swing.Box.createHorizontalGlue())
+                add(cancelBtn)
             }
             view.setTopComponent(banner, disposable)
-            bannerStates[sessionId] = BannerState(disposable, textLabel, spinnerLabel)
+            bannerStates[sessionId] = BannerState(disposable, textLabel, spinnerLabel, cancelBtn)
         }.onFailure {
             LOG.warn("结对编程：无法显示横幅", it)
         }
@@ -119,6 +132,7 @@ class PeerCoordinator(
         if (state != null) {
             state.label.text = "  " + ImuxBundle.message("action.peer.progress.reviewing", agentType.displayName)
             state.spinnerLabel.isVisible = true
+            state.cancelButton.isVisible = true
         } else {
             showBanner(sessionId, agentType, waiting = true)
         }
@@ -128,6 +142,7 @@ class PeerCoordinator(
         val state = bannerStates[sessionId] ?: return
         state.label.text = "  " + ImuxBundle.message("action.peer.enabled", agentType.displayName)
         state.spinnerLabel.isVisible = false
+        state.cancelButton.isVisible = false
     }
 
     private fun removeBanner(sessionId: String) {
@@ -167,7 +182,7 @@ class PeerCoordinator(
         val reviewPrompt = buildReviewPrompt(binding.task, conversation)
         LOG.info("结对编程：调用 ${binding.targetAgentType.cli}...")
 
-        val rawOutput = callCliOnce(binding.targetAgentType, reviewPrompt)
+        val rawOutput = callCliOnce(mainSessionId, binding.targetAgentType, reviewPrompt)
         if (rawOutput.isNullOrBlank()) {
             LOG.warn("结对编程：副驾驶无返回")
             return
@@ -197,10 +212,10 @@ class PeerCoordinator(
 
         val lang = ImuxBundle.currentLanguage()
         val isChinese = lang.id == "zh_CN" || lang.id == "zh_TW"
-        val taskSection = if (task.isNotBlank()) "任务：$task\n\n" else ""
-        val taskSectionEn = if (task.isNotBlank()) "Task: $task\n\n" else ""
-        val convSection = if (conversation.isNotBlank()) "对话记录：\n$conversation\n\n" else ""
-        val convSectionEn = if (conversation.isNotBlank()) "Conversation:\n$conversation\n\n" else ""
+        val taskSection = if (task.isNotBlank()) "## 任务目标\n\n$task\n\n" else ""
+        val taskSectionEn = if (task.isNotBlank()) "## Task Goal\n\n$task\n\n" else ""
+        val convSection = if (conversation.isNotBlank()) "## 对话记录\n\n$conversation\n\n" else ""
+        val convSectionEn = if (conversation.isNotBlank()) "## Conversation\n\n$conversation\n\n" else ""
         return if (isChinese) DEFAULT_PROMPT_ZH
             .replace("\${task}", taskSection)
             .replace("\${conversation}", convSection)
@@ -222,7 +237,7 @@ class PeerCoordinator(
         }.getOrElse { "" }
     }
 
-    private fun callCliOnce(agentType: AgentType, prompt: String): String? {
+    private fun callCliOnce(sessionId: String, agentType: AgentType, prompt: String): String? {
         var promptFile: java.io.File? = null
         return runCatching {
             promptFile = java.io.File.createTempFile("imux-peer-prompt-", ".txt").apply {
@@ -232,7 +247,7 @@ class PeerCoordinator(
             val promptPath = promptFile!!.absolutePath
 
             val cliCommand = when (agentType) {
-                AgentType.CLAUDE -> "claude -p < '$promptPath'"
+                AgentType.CLAUDE -> "claude -p --no-session-persistence < '$promptPath'"
                 AgentType.CODEX -> "codex exec --ephemeral < '$promptPath'"
                 AgentType.PI -> "pi -p --no-session < '$promptPath'"
             }
@@ -243,6 +258,7 @@ class PeerCoordinator(
                 .directory(java.io.File(projectPath))
                 .redirectErrorStream(false)
                 .start()
+            runningProcesses[sessionId] = process
 
             // 并发消费 stderr 防止缓冲区满死锁，内容丢弃
             val stderrDrainer = Thread {
@@ -270,6 +286,7 @@ class PeerCoordinator(
             LOG.warn("结对编程：CLI 调用失败", it)
             null
         }.also {
+            runningProcesses.remove(sessionId)
             promptFile?.delete()
         }
     }
