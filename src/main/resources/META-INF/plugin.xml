@@ -163,5 +163,11 @@
                 popup="true">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
+        <group
+                id="imux.PeerProgramming"
+                class="com.github.izerui.imux.terminal.PeerProgrammingActionGroup"
+                popup="true">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </group>
     </actions>
 </idea-plugin>

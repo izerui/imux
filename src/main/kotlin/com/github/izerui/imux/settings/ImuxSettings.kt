@@ -112,6 +112,9 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         var claudeEnabled: Boolean by property(true)
         var codexEnabled: Boolean by property(true)
         var piEnabled: Boolean by property(true)
+
+        /** 结对编程：副驾驶反馈是否自动注入主会话（false 时弹通知确认）。 */
+        var peerAutoInject: Boolean by property(true)
     }
 
     /**

@@ -3,6 +3,7 @@ package com.github.izerui.imux.monitor
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.peer.PeerCoordinator
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.ClaudeSessionReader
@@ -195,6 +196,15 @@ class SessionMonitor(
                 ),
         )
     }
+
+    val peerCoordinator =
+        PeerCoordinator(
+            project = project,
+            projectPath = projectPath,
+            model = model,
+            viewOf = { key -> TerminalHost.getInstance(project).terminalViewOf(key) },
+            coroutineScope = coroutineScope,
+        )
 
     private val driftCoordinator =
         DriftCoordinator(
@@ -531,9 +541,8 @@ class SessionMonitor(
                     notifyListeners()
 
                     completed.forEach { sessionId ->
-                        // 正被查看的会话同样要标记与提醒：tab 选中不等于人在屏幕前，
-                        // 一声不吭的话，离开一会儿回来就不知道这轮早已跑完。
-                        // 标记由终端官方输入事件在用户真正交互时消除。
+                        peerCoordinator.onTurnCompleted(sessionId)
+
                         val session = model.sessionOf(sessionId)
                         val title =
                             session?.title ?: ImuxBundle.message("session.default", sessionId.take(8))

@@ -10,6 +10,7 @@ import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.handoffActionGroup
+import com.github.izerui.imux.terminal.peerProgrammingActionGroup
 import com.github.izerui.imux.terminal.regenerateSessionTitleAction
 import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.terminal.sessionClipboardText
@@ -367,6 +368,7 @@ class AgentSessionTree(
                         actions.add(regenerateSessionTitleAction(project, source))
                         actions.addSeparator()
                         actions.add(handoffActionGroup(project, source))
+                        actions.add(peerProgrammingActionGroup(project, source))
                     }
                     ActionManager
                         .getInstance()

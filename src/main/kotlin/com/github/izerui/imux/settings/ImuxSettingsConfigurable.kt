@@ -63,6 +63,13 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     comment(ImuxBundle.message("settings.available.agents.comment"))
                 }
             }
+            group(ImuxBundle.message("settings.group.peer.programming")) {
+                row {
+                    checkBox(ImuxBundle.message("settings.peer.auto.inject"))
+                        .bindSelected(settings.state::peerAutoInject)
+                        .comment(ImuxBundle.message("settings.peer.auto.inject.comment"))
+                }
+            }
             group(ImuxBundle.message("settings.group.project.window")) {
                 row {
                     checkBox(ImuxBundle.message("settings.project.new.agent.menu"))

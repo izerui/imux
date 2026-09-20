@@ -432,6 +432,9 @@ class TerminalHost(
      */
     fun openTabAgentTypes(): Set<AgentType> = files.values.mapTo(mutableSetOf()) { it.agentType }
 
+    /** 按 sessionKey 查找终端 view，供结对编程协调器注入文本。 */
+    fun terminalViewOf(sessionKey: String): TerminalView? = files[sessionKey]?.terminalView
+
     internal fun sessionIdentityFor(view: TerminalView): Pair<AgentType, String>? =
         files.values
             .firstOrNull { it.terminalView === view }
