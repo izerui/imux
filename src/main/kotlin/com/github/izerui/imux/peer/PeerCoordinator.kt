@@ -37,16 +37,30 @@ class PeerCoordinator(
     private val bindings = ConcurrentHashMap<String, PeerBinding>()
     private val roundCounts = ConcurrentHashMap<String, AtomicInteger>()
 
+    /** 持久横幅的状态：bannerDisposable 控制横幅生命周期，label 用于更新文字。 */
+    private val bannerStates = ConcurrentHashMap<String, BannerState>()
+    /** 副驾驶执行期间的输入拦截器，执行完后释放。 */
+    private val inputGuards = ConcurrentHashMap<String, Disposable>()
+
+    private data class BannerState(
+        val disposable: Disposable,
+        val label: JLabel,
+        val spinnerLabel: JLabel,
+    )
+
     fun bind(sessionId: String, targetAgentType: AgentType) {
         unbind(sessionId)
         val task = extractTask(sessionId)
         bindings[sessionId] = PeerBinding(targetAgentType, task)
         LOG.info("结对编程：绑定 $sessionId -> ${targetAgentType.displayName}")
+        showBanner(sessionId, targetAgentType, waiting = false)
     }
 
     fun unbind(sessionId: String) {
         bindings.remove(sessionId)
         roundCounts.remove(sessionId)
+        removeBanner(sessionId)
+        removeInputGuard(sessionId)
         LOG.info("结对编程：解绑 $sessionId")
     }
 
@@ -58,38 +72,79 @@ class PeerCoordinator(
         val binding = bindings[sessionId] ?: return
         LOG.info("结对编程：主会话轮次完成 sessionId=$sessionId")
 
-        val view = viewOf(sessionId) ?: return
-        val guard = lockTerminal(view, binding.targetAgentType)
+        updateBannerToWaiting(sessionId, binding.targetAgentType)
+        lockInput(sessionId)
 
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 runReviewAndInject(sessionId)
             } finally {
                 withContext(Dispatchers.EDT) {
-                    guard?.let { Disposer.dispose(it) }
+                    removeInputGuard(sessionId)
+                    if (bindings.containsKey(sessionId)) {
+                        updateBannerToIdle(sessionId, binding.targetAgentType)
+                    }
                 }
             }
         }
     }
 
-    private fun lockTerminal(view: TerminalView, agentType: AgentType): Disposable? {
-        return runCatching {
-            val guard = Disposer.newDisposable("peerGuard")
-            view.addInputInterceptor(guard) { true }
+    private fun showBanner(sessionId: String, agentType: AgentType, waiting: Boolean) {
+        val view = viewOf(sessionId) ?: return
+        runCatching {
+            val disposable = Disposer.newDisposable("peerBanner-$sessionId")
+            val spinnerLabel = JLabel(AnimatedIcon.Default()).apply { isVisible = waiting }
+            val textLabel = JLabel("  " + if (waiting) {
+                ImuxBundle.message("action.peer.progress.reviewing", agentType.displayName)
+            } else {
+                ImuxBundle.message("action.peer.enabled", agentType.displayName)
+            })
             val banner = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.X_AXIS)
                 border = JBUI.Borders.empty(6, 12)
                 isOpaque = true
                 background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
-                add(JLabel(AnimatedIcon.Default()))
-                add(JLabel("  " + ImuxBundle.message("action.peer.progress.reviewing", agentType.displayName)))
+                add(spinnerLabel)
+                add(textLabel)
             }
-            view.setTopComponent(banner, guard)
-            guard
-        }.getOrElse {
-            LOG.warn("结对编程：无法锁定终端", it)
-            null
+            view.setTopComponent(banner, disposable)
+            bannerStates[sessionId] = BannerState(disposable, textLabel, spinnerLabel)
+        }.onFailure {
+            LOG.warn("结对编程：无法显示横幅", it)
         }
+    }
+
+    private fun updateBannerToWaiting(sessionId: String, agentType: AgentType) {
+        val state = bannerStates[sessionId]
+        if (state != null) {
+            state.label.text = "  " + ImuxBundle.message("action.peer.progress.reviewing", agentType.displayName)
+            state.spinnerLabel.isVisible = true
+        } else {
+            showBanner(sessionId, agentType, waiting = true)
+        }
+    }
+
+    private fun updateBannerToIdle(sessionId: String, agentType: AgentType) {
+        val state = bannerStates[sessionId] ?: return
+        state.label.text = "  " + ImuxBundle.message("action.peer.enabled", agentType.displayName)
+        state.spinnerLabel.isVisible = false
+    }
+
+    private fun removeBanner(sessionId: String) {
+        bannerStates.remove(sessionId)?.let { Disposer.dispose(it.disposable) }
+    }
+
+    private fun lockInput(sessionId: String) {
+        val view = viewOf(sessionId) ?: return
+        runCatching {
+            val guard = Disposer.newDisposable("peerInputGuard-$sessionId")
+            view.addInputInterceptor(guard) { true }
+            inputGuards[sessionId] = guard
+        }
+    }
+
+    private fun removeInputGuard(sessionId: String) {
+        inputGuards.remove(sessionId)?.let { Disposer.dispose(it) }
     }
 
     private fun runReviewAndInject(mainSessionId: String) {
