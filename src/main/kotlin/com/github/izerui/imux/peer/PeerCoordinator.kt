@@ -38,7 +38,6 @@ class PeerCoordinator(
     private val roundCounts = ConcurrentHashMap<String, AtomicInteger>()
 
     private val bannerStates = ConcurrentHashMap<String, BannerState>()
-    private val inputGuards = ConcurrentHashMap<String, Disposable>()
     private val runningProcesses = ConcurrentHashMap<String, Process>()
 
     private data class BannerState(
@@ -60,7 +59,6 @@ class PeerCoordinator(
         bindings.remove(sessionId)
         roundCounts.remove(sessionId)
         removeBanner(sessionId)
-        removeInputGuard(sessionId)
         LOG.info("结对编程：解绑 $sessionId")
     }
 
@@ -91,7 +89,6 @@ class PeerCoordinator(
         LOG.info("结对编程：手动取消 $sessionId")
         runningProcesses.remove(sessionId)?.destroyForcibly()
         roundCounts[sessionId]?.set(0)
-        removeInputGuard(sessionId)
         bindings[sessionId]?.let { updateBannerToIdle(sessionId, it.targetAgentType) }
     }
 
@@ -147,19 +144,6 @@ class PeerCoordinator(
 
     private fun removeBanner(sessionId: String) {
         bannerStates.remove(sessionId)?.let { Disposer.dispose(it.disposable) }
-    }
-
-    private fun lockInput(sessionId: String) {
-        val view = viewOf(sessionId) ?: return
-        runCatching {
-            val guard = Disposer.newDisposable("peerInputGuard-$sessionId")
-            view.addInputInterceptor(guard) { true }
-            inputGuards[sessionId] = guard
-        }
-    }
-
-    private fun removeInputGuard(sessionId: String) {
-        inputGuards.remove(sessionId)?.let { Disposer.dispose(it) }
     }
 
     private fun runReviewAndInject(mainSessionId: String) {
