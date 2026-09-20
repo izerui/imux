@@ -178,8 +178,8 @@ class PeerCoordinator(
 
             val cliCommand = when (agentType) {
                 AgentType.CLAUDE -> "claude -p < '$promptPath'"
-                AgentType.CODEX -> "codex exec --ephemeral --sandbox read-only < '$promptPath'"
-                AgentType.PI -> "pi -p < '$promptPath'"
+                AgentType.CODEX -> "codex exec --ephemeral < '$promptPath'"
+                AgentType.PI -> "pi -p --no-session < '$promptPath'"
             }
             val shell = System.getenv("SHELL")?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
             LOG.info("结对编程：通过 $shell 执行 $cliCommand")
@@ -287,17 +287,55 @@ class PeerCoordinator(
         private const val CLI_TIMEOUT_SECONDS = 300L
 
         val DEFAULT_PROMPT_ZH = """
-你现在扮演这个 AI 编程会话的用户。你的搭档（另一个 AI 助手）刚完成了一轮工作。
+# 角色
 
-${'$'}{task}${'$'}{conversation}请自己查看项目文件和 git 变更记录来了解代码的当前状态，然后作为用户，你接下来会说什么？可以是追问、纠正、推进下一步、换个方向，或者任何你觉得该说的话。像正常使用 AI 助手一样说话。简短自然。
-注意：始终围绕用户的原始任务目标推进，不要跑偏到无关的事情上。绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作。
+你现在扮演这个 AI 编程会话的用户。
+你的搭档（另一个 AI 助手）刚完成了一轮工作。
+
+# 上下文
+
+${'$'}{task}
+${'$'}{conversation}
+
+# 你要做什么
+
+请自己查看项目文件和 git 变更记录来了解代码的当前状态。
+然后作为用户，你接下来会说什么？
+
+可以是：追问、纠正、推进下一步、换个方向，或者任何你觉得该说的话。
+像正常使用 AI 助手一样说话。简短自然。
+
+# 约束
+
+- 始终围绕用户的原始任务目标推进，不要跑偏到无关的事情上
+- 绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作
+- 不要修改任何文件，你是只读的观察者
 """.trimIndent()
 
         val DEFAULT_PROMPT_EN = """
-You are the user of this AI coding session. Your partner (another AI assistant) just completed a round of work.
+# Role
 
-${'$'}{task}${'$'}{conversation}Check the project files and git history yourself to understand the current code state, then as the user, what would you type next? It could be a follow-up question, a correction, pushing to the next step, changing direction, or anything you'd naturally say. Talk like a normal user, not a reviewer. Keep it brief and natural.
-IMPORTANT: Always stay focused on the user's original task goal. Do not drift to unrelated topics. Never suggest destructive operations like deleting files, resetting the repo, or force-pushing.
+You are the user of this AI coding session.
+Your partner (another AI assistant) just completed a round of work.
+
+# Context
+
+${'$'}{task}
+${'$'}{conversation}
+
+# What to do
+
+Check the project files and git history yourself to understand the current code state.
+Then as the user, what would you type next?
+
+It could be: a follow-up question, a correction, pushing to the next step, changing direction, or anything you'd naturally say.
+Talk like a normal user, not a reviewer. Keep it brief and natural.
+
+# Constraints
+
+- Always stay focused on the user's original task goal. Do not drift to unrelated topics.
+- Never suggest destructive operations like deleting files, resetting the repo, or force-pushing.
+- Do not modify any files. You are a read-only observer.
 """.trimIndent()
     }
 }
