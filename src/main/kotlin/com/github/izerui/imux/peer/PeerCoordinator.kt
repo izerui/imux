@@ -363,6 +363,7 @@ ${'$'}{conversation}
 
 # 约束
 
+- 直接输出你要说的话，不要输出思考过程、分析过程、"作为用户我会说"之类的前缀
 - 始终围绕用户的原始任务目标推进，不要跑偏到无关的事情上
 - 绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作
 - 不要修改任何文件，你是只读的观察者
@@ -389,6 +390,7 @@ Talk like a normal user, not a reviewer. Keep it brief and natural.
 
 # Constraints
 
+- Output ONLY what you would type. No thinking process, no analysis, no "As the user I would say:" prefix.
 - Always stay focused on the user's original task goal. Do not drift to unrelated topics.
 - Never suggest destructive operations like deleting files, resetting the repo, or force-pushing.
 - Do not modify any files. You are a read-only observer.
