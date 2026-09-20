@@ -5,9 +5,14 @@ import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBCheckBox
+import com.github.izerui.imux.peer.PeerCoordinator
+import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.MutableProperty
+import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
+import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 
 /** Application-level imux preferences. */
@@ -68,6 +73,28 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     checkBox(ImuxBundle.message("settings.peer.auto.inject"))
                         .bindSelected(settings.state::peerAutoInject)
                         .comment(ImuxBundle.message("settings.peer.auto.inject.comment"))
+                }
+                row(ImuxBundle.message("settings.peer.max.rounds")) {
+                    intTextField(1..50)
+                        .bindIntText(settings.state::peerMaxRounds)
+                        .comment(ImuxBundle.message("settings.peer.max.rounds.comment"))
+                }
+                row(ImuxBundle.message("settings.peer.prompt")) {
+                    var promptArea: JBTextArea? = null
+                    promptArea = textArea()
+                        .applyToComponent { rows = 8 }
+                        .align(AlignX.FILL)
+                        .bindText(
+                            MutableProperty(
+                                { settings.state.peerPromptOverride ?: PeerCoordinator.DEFAULT_PROMPT_ZH },
+                                { settings.state.peerPromptOverride = it.takeUnless { v -> v == PeerCoordinator.DEFAULT_PROMPT_ZH } },
+                            ),
+                        ).component
+                }.resizableRow()
+                row {
+                    button(ImuxBundle.message("settings.peer.prompt.restore")) {
+                        settings.state.peerPromptOverride = null
+                    }
                 }
             }
             group(ImuxBundle.message("settings.group.project.window")) {

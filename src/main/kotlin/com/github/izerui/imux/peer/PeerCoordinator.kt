@@ -99,8 +99,9 @@ class PeerCoordinator(
             .computeIfAbsent(mainSessionId) { AtomicInteger(0) }
             .incrementAndGet()
 
-        if (round > MAX_ROUNDS) {
-            LOG.info("结对编程：已达安全上限 $MAX_ROUNDS 轮，停止")
+        val maxRounds = ImuxSettings.getInstance().state.peerMaxRounds
+        if (round > maxRounds) {
+            LOG.info("结对编程：已达安全上限 $maxRounds 轮，停止")
             roundCounts[mainSessionId]?.set(0)
             return
         }
@@ -132,24 +133,25 @@ class PeerCoordinator(
     }
 
     private fun buildReviewPrompt(task: String, conversation: String): String {
+        val customPrompt = ImuxSettings.getInstance().state.peerPromptOverride
+        if (customPrompt != null) {
+            return customPrompt
+                .replace("\${task}", task)
+                .replace("\${conversation}", conversation)
+        }
+
         val lang = ImuxBundle.currentLanguage()
         val isChinese = lang.id == "zh_CN" || lang.id == "zh_TW"
         val taskSection = if (task.isNotBlank()) "任务：$task\n\n" else ""
         val taskSectionEn = if (task.isNotBlank()) "Task: $task\n\n" else ""
         val convSection = if (conversation.isNotBlank()) "对话记录：\n$conversation\n\n" else ""
         val convSectionEn = if (conversation.isNotBlank()) "Conversation:\n$conversation\n\n" else ""
-        return if (isChinese) """
-你现在扮演这个 AI 编程会话的用户。你的搭档（另一个 AI 助手）刚完成了一轮工作。
-
-${taskSection}${convSection}请自己查看项目文件和 git 变更记录来了解代码的当前状态，然后作为用户，你接下来会说什么？可以是追问、纠正、推进下一步、换个方向，或者任何你觉得该说的话。像正常使用 AI 助手一样说话。简短自然。
-注意：始终围绕用户的原始任务目标推进，不要跑偏到无关的事情上。绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作。
-""".trimIndent()
-        else """
-You are the user of this AI coding session. Your partner (another AI assistant) just completed a round of work.
-
-${taskSectionEn}${convSectionEn}Check the project files and git history yourself to understand the current code state, then as the user, what would you type next? It could be a follow-up question, a correction, pushing to the next step, changing direction, or anything you'd naturally say. Talk like a normal user, not a reviewer. Keep it brief and natural.
-IMPORTANT: Always stay focused on the user's original task goal. Do not drift to unrelated topics. Never suggest destructive operations like deleting files, resetting the repo, or force-pushing.
-""".trimIndent()
+        return if (isChinese) DEFAULT_PROMPT_ZH
+            .replace("\${task}", taskSection)
+            .replace("\${conversation}", convSection)
+        else DEFAULT_PROMPT_EN
+            .replace("\${task}", taskSectionEn)
+            .replace("\${conversation}", convSectionEn)
     }
 
     private fun extractTask(sessionId: String): String {
@@ -282,7 +284,20 @@ IMPORTANT: Always stay focused on the user's original task goal. Do not drift to
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"
         private const val MAX_CONVERSATION_LENGTH = 100000
         private const val MAX_FEEDBACK_LENGTH = 4000
-        private const val MAX_ROUNDS = 5
         private const val CLI_TIMEOUT_SECONDS = 300L
+
+        val DEFAULT_PROMPT_ZH = """
+你现在扮演这个 AI 编程会话的用户。你的搭档（另一个 AI 助手）刚完成了一轮工作。
+
+${'$'}{task}${'$'}{conversation}请自己查看项目文件和 git 变更记录来了解代码的当前状态，然后作为用户，你接下来会说什么？可以是追问、纠正、推进下一步、换个方向，或者任何你觉得该说的话。像正常使用 AI 助手一样说话。简短自然。
+注意：始终围绕用户的原始任务目标推进，不要跑偏到无关的事情上。绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作。
+""".trimIndent()
+
+        val DEFAULT_PROMPT_EN = """
+You are the user of this AI coding session. Your partner (another AI assistant) just completed a round of work.
+
+${'$'}{task}${'$'}{conversation}Check the project files and git history yourself to understand the current code state, then as the user, what would you type next? It could be a follow-up question, a correction, pushing to the next step, changing direction, or anything you'd naturally say. Talk like a normal user, not a reviewer. Keep it brief and natural.
+IMPORTANT: Always stay focused on the user's original task goal. Do not drift to unrelated topics. Never suggest destructive operations like deleting files, resetting the repo, or force-pushing.
+""".trimIndent()
     }
 }
