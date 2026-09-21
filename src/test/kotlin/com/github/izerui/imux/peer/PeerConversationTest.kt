@@ -59,6 +59,11 @@ class PeerConversationTest {
     @Test
     fun `PASS 不会形成主会话输入`() {
         assertNull(actionablePeerFeedback(" PASS \n"))
+        assertNull(actionablePeerFeedback("PASS."))
+        assertNull(actionablePeerFeedback("PASS。"))
+        assertNull(actionablePeerFeedback("pass!"))
+        assertNull(actionablePeerFeedback("PASS！"))
+        assertNull(actionablePeerFeedback("  pass  "))
     }
 
     @Test

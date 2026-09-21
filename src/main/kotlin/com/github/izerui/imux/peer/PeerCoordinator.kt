@@ -469,7 +469,7 @@ ${'$'}{conversation}
 
 像平时结对时那样说话就好——"这里空列表会不会出问题？""并发场景下是不是得加锁？""这块跟上面的逻辑好像矛盾了"。挑重点说，别一股脑全倒出来。围绕用户的任务目标，跑题的事提一嘴就够了，别反复念叨。少贴代码，点到为止，让搭档自己决定怎么改。你说的是反馈和观察，不是替用户下指令。
 
-没发现问题就说 PASS。
+没发现问题就只输出 PASS 这一个词，不要加任何解释。
 """.trimIndent()
 
         val DEFAULT_PROMPT_EN = """
@@ -488,7 +488,7 @@ In the conversation log, tool calls and their results are more reliable than you
 
 Talk like you would in a real pair session — "Would this break on an empty list?" "Might need a lock for concurrency here." "This seems to contradict the logic above." Focus on what matters most, don't dump everything at once. Stay on the user's task goal; off-topic stuff gets one mention, then move on. Keep code snippets minimal — point things out and let your partner decide how to fix them. You're sharing observations, not issuing commands on behalf of the user.
 
-Nothing to flag? Just say PASS.
+Nothing to flag? Output the single word PASS and nothing else.
 """.trimIndent()
     }
 }
@@ -514,9 +514,11 @@ internal fun latestConversation(
 }
 
 
+private val PASS_PATTERN = Regex("""^\s*pass\s*[.。!！]?\s*$""", RegexOption.IGNORE_CASE)
+
 internal fun actionablePeerFeedback(output: String?): String? {
     val feedback = output?.trim().orEmpty()
-    if (feedback.isEmpty() || feedback.equals("PASS", ignoreCase = true)) return null
+    if (feedback.isEmpty() || PASS_PATTERN.matches(feedback)) return null
     return feedback.take(4_000)
 }
 
