@@ -2,7 +2,9 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.monitor.SessionMonitor
-import com.github.izerui.imux.peer.PeerStateListener
+import com.github.izerui.imux.peer.PeerProgressEvent
+import com.github.izerui.imux.peer.PeerProgressKind
+import com.github.izerui.imux.peer.PeerProgressSnapshot
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
 import com.intellij.ide.actions.CloseAction
@@ -34,6 +36,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.IdeFrame
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.Dispatchers
@@ -46,12 +49,12 @@ import java.awt.event.FocusEvent
 import java.awt.BorderLayout
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.JButton
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JLayeredPane
 import javax.swing.JPanel
+import javax.swing.Timer
 
 /**
  * 把终端 view 的组件挂到 editor tab 上，并在标签页关闭时结束会话。
@@ -111,23 +114,33 @@ class AgentTerminalFileEditor(
     private val peerSpinner = JLabel(AnimatedIcon.Default())
     private val peerLabel = JLabel()
     private val peerCancelButton =
-        JButton(ImuxBundle.message("action.peer.cancel")).apply {
+        ActionLink(ImuxBundle.message("action.peer.cancel")) {
+            SessionMonitor.getInstance(project).peerCoordinator.cancelCurrentRun(virtualFile.sessionKey)
+        }.apply {
             isFocusable = false
-            addActionListener {
-                SessionMonitor.getInstance(project).peerCoordinator.cancelCurrentRun(virtualFile.sessionKey)
-            }
+        }
+    private val peerCloseButton =
+        ActionLink(ImuxBundle.message("action.peer.close")) {
+            SessionMonitor.getInstance(project).peerCoordinator.unbind(virtualFile.sessionKey)
+        }.apply {
+            isFocusable = false
         }
     private val peerBanner =
         JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
-            border = JBUI.Borders.empty(6, 12)
+            border = JBUI.Borders.empty(3, 12, 3, 24)
             isOpaque = true
             background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
             add(peerSpinner)
             add(peerLabel)
             add(Box.createHorizontalGlue())
             add(peerCancelButton)
+            add(peerCloseButton)
             isVisible = false
+        }
+    private val peerElapsedTimer =
+        Timer(1_000) {
+            if (peerBanner.isVisible) refreshPeerBanner()
         }
 
     /**
@@ -171,6 +184,7 @@ class AgentTerminalFileEditor(
                 ImuxBundle.message("action.scroll.bottom.description")
             scrollButton?.update()
             peerCancelButton.text = ImuxBundle.message("action.peer.cancel")
+            peerCloseButton.text = ImuxBundle.message("action.peer.close")
             refreshPeerBanner()
         }
         SessionMonitor.getInstance(project).peerCoordinator.addStateListener(
@@ -286,20 +300,73 @@ class AgentTerminalFileEditor(
         val status = SessionMonitor.getInstance(project).peerCoordinator.status(virtualFile.sessionKey)
         peerBanner.isVisible = status != null
         if (status == null) {
+            peerElapsedTimer.stop()
             peerSpinner.isVisible = false
             peerCancelButton.isVisible = false
+            peerCloseButton.isVisible = false
         } else {
             peerSpinner.isVisible = status.running
             peerCancelButton.isVisible = status.running
+            peerCloseButton.isVisible = !status.running
             peerLabel.text =
                 "  " +
-                        ImuxBundle.message(
-                            if (status.running) "action.peer.progress.reviewing" else "action.peer.enabled",
-                            status.targetAgentType.displayName,
-                        )
+                        if (status.running && status.progress != null) {
+                            progressSummary(
+                                status.targetAgentType.displayName,
+                                status.progress,
+                                status.pending,
+                            )
+                        } else {
+                            ImuxBundle.message("action.peer.enabled", status.targetAgentType.displayName)
+                        }
+            if (status.running) peerElapsedTimer.start() else peerElapsedTimer.stop()
         }
         peerBanner.revalidate()
         peerBanner.repaint()
+    }
+
+    private fun progressSummary(
+        agentName: String,
+        progress: PeerProgressSnapshot,
+        pending: Boolean,
+    ): String {
+        val elapsedSeconds = ((System.currentTimeMillis() - progress.startedAtMillis) / 1_000).coerceAtLeast(0)
+        val pendingText = if (pending) ImuxBundle.message("action.peer.progress.pending") else ""
+        return ImuxBundle.message(
+            "action.peer.progress.summary",
+            agentName,
+            progress.round,
+            progress.completedActions,
+            progressText(progress.current, MAX_BANNER_SUBJECT_CHARS),
+            elapsedSeconds,
+            pendingText,
+        )
+    }
+
+    private fun progressText(
+        event: PeerProgressEvent,
+        subjectLimit: Int = Int.MAX_VALUE,
+    ): String {
+        val subject =
+            event.subject.let {
+                if (it.length <= subjectLimit) it else it.take(subjectLimit - 1) + "…"
+            }
+        return when (event.kind) {
+            PeerProgressKind.STARTING -> ImuxBundle.message("action.peer.progress.starting")
+            PeerProgressKind.THINKING -> ImuxBundle.message("action.peer.progress.thinking")
+            PeerProgressKind.TOOL_STARTED ->
+                ImuxBundle.message("action.peer.progress.tool.running", subject.ifBlank { "tool" })
+
+            PeerProgressKind.TOOL_FINISHED ->
+                ImuxBundle.message("action.peer.progress.tool.finished", subject.ifBlank { "tool" })
+
+            PeerProgressKind.RETRYING ->
+                ImuxBundle.message("action.peer.progress.retrying", subject)
+
+            PeerProgressKind.RESPONDING -> ImuxBundle.message("action.peer.progress.responding")
+            PeerProgressKind.COMPLETED -> ImuxBundle.message("action.peer.progress.completed")
+            PeerProgressKind.FAILED -> ImuxBundle.message("action.peer.progress.failed", subject)
+        }
     }
 
     private fun startScrollTracking() {
@@ -397,6 +464,7 @@ class AgentTerminalFileEditor(
 
     override fun dispose() {
         disposed = true
+        peerElapsedTimer.stop()
         activeModelJob?.cancel()
         activeModelJob = null
         keyEventsJob?.cancel()
@@ -428,6 +496,7 @@ class AgentTerminalFileEditor(
     }
 
     private companion object {
+        const val MAX_BANNER_SUBJECT_CHARS = 48
         const val NAVIGATOR_RIGHT_INSET = 14
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30

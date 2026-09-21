@@ -30,6 +30,8 @@ import java.util.concurrent.atomic.AtomicInteger
 data class PeerStatus(
     val targetAgentType: AgentType,
     val running: Boolean,
+    val pending: Boolean,
+    val progress: PeerProgressSnapshot?,
 )
 
 fun interface PeerStateListener : EventListener {
@@ -44,11 +46,13 @@ class PeerCoordinator(
     private val coroutineScope: CoroutineScope,
     private val shell: String,
     private val runCli: (
+        agentType: AgentType,
         command: List<String>,
         cwd: Path,
         prompt: String,
         timeoutSeconds: Long,
         onProcess: (Process?) -> Unit,
+        onProgress: (PeerProgressEvent) -> Unit,
     ) -> String? = ::runPeerCli,
 ) : Disposable {
     private val bindings = ConcurrentHashMap<String, PeerBinding>()
@@ -66,7 +70,13 @@ class PeerCoordinator(
 
     fun status(sessionKey: String): PeerStatus? =
         bindings[sessionKey]?.let {
-            PeerStatus(it.targetAgentType, guards[sessionKey]?.isReviewing == true)
+            val guard = guards[sessionKey]
+            PeerStatus(
+                targetAgentType = it.targetAgentType,
+                running = guard?.isReviewing == true,
+                pending = guard?.hasPending == true,
+                progress = guard?.progressSnapshot(),
+            )
         }
 
     fun bind(
@@ -182,12 +192,9 @@ class PeerCoordinator(
 
         if (!runIsCurrent(mainSessionKey, initialBinding, run, guard)) return
 
-        val round =
-            roundCounts
-                .computeIfAbsent(mainSessionKey) { AtomicInteger(0) }
-                .incrementAndGet()
+        val injectedRounds = roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.get()
         val maxRounds = ImuxSettings.getInstance().state.peerMaxRounds
-        if (round > maxRounds) {
+        if (injectedRounds >= maxRounds) {
             LOG.info("结对编程：已达安全上限 $maxRounds 轮，停止")
             return
         }
@@ -203,13 +210,28 @@ class PeerCoordinator(
         val conversation = collectLatestConversation(mainSessionKey)
         val prompt = buildReviewPrompt(binding.task, conversation)
         val command = peerCliCommand(shell, binding.targetAgentType, projectPath)
-        LOG.info("结对编程：第 $round 轮，调用 ${binding.targetAgentType.cli}")
+        run.startProgress(injectedRounds + 1)
+        LOG.info("结对编程：已注入 $injectedRounds 轮，调用 ${binding.targetAgentType.cli}")
 
         if (!runIsCurrent(mainSessionKey, binding, run, guard)) return
 
         val result =
             runCatching {
-                runCli(command, Path.of(projectPath), prompt, CLI_TIMEOUT_SECONDS, run::attach)
+                runCli(
+                    binding.targetAgentType,
+                    command,
+                    Path.of(projectPath),
+                    prompt,
+                    CLI_TIMEOUT_SECONDS,
+                    run::attach,
+                ) { event ->
+                    run.recordProgress(event)
+                    coroutineScope.launch(Dispatchers.EDT) {
+                        if (runIsCurrent(mainSessionKey, binding, run, guard)) {
+                            notifyStateChanged(mainSessionKey)
+                        }
+                    }
+                }
             }
 
         if (!runIsCurrent(mainSessionKey, binding, run, guard)) return
@@ -318,6 +340,7 @@ class PeerCoordinator(
             LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
             return
         }
+        roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
         peerInjectedSessions.add(mainSessionKey)
         view.createSendTextBuilder()
@@ -371,9 +394,9 @@ class PeerCoordinator(
         val DEFAULT_PROMPT_ZH = """
 # 角色
 
-你是这个 AI 编程会话的结对编程伙伴，扮演引导者的角色。
+你是这个 AI 编程会话的结对编程伙伴。
 你和主会话中的 AI 助手组成搭档，共同协作完成用户交给你们的任务。
-你站在独立第三方的视角审视主会话的工作，通过提问和引导帮助主会话把事情做得更好。
+你站在独立第三方的视角审视主会话的工作，通过提问、补充视角和指出遗漏帮助主会话把事情做得更好。
 
 # 上下文
 
@@ -382,15 +405,19 @@ ${'$'}{conversation}
 
 # 你要做什么
 
-请以只读方式查看项目文件和 git 变更，结合主会话刚完成的工作，看看有什么想说的。
-你的输出会被直接发送给主会话，作为它下一步工作的参考。
-通过提问和启发来引导主会话思考，而不是直接下达指令让它执行。
-如果你觉得当前工作已经没什么好说的了，只输出 PASS。
+请以只读方式查看项目文件和 git 变更，结合主会话刚完成的工作，检查是否存在风险、矛盾或遗漏。
+你可以：
+- 提出诊断性问题，例如"这个函数在空列表时会返回什么？"
+- 补充主会话可能忽略的考量维度，例如"高并发场景下是不是还需要考虑限流？"
+- 指出方案中的矛盾或遗漏
+但不要给出具体的实现方案，让主会话自己决定怎么做。
+如果没有发现任何问题，只输出 PASS。
 
 # 约束
 
 - 直接输出要发送的内容或 PASS，不要输出思考过程、分析过程或前缀
 - 始终围绕用户的原始任务目标
+- 可以提问、补充视角、指出遗漏的维度，但不要给出具体实现方案或代码
 - 绝对不要建议删除文件、重置代码仓库、强制推送等破坏性操作
 - 不要修改任何文件，你是只读的观察者
 """.trimIndent()
@@ -398,9 +425,9 @@ ${'$'}{conversation}
         val DEFAULT_PROMPT_EN = """
 # Role
 
-You are a pair-programming partner for this AI coding session, acting as a guide.
+You are a pair-programming partner for this AI coding session.
 You and the AI assistant in the main session form a team, collaborating to complete the task assigned by the user.
-You observe from an independent third-party perspective, helping the main session do better work through questions and guidance.
+You observe from an independent third-party perspective, helping the main session do better work by asking questions, offering additional perspectives, and pointing out gaps.
 
 # Context
 
@@ -409,15 +436,19 @@ ${'$'}{conversation}
 
 # What to do
 
-Inspect the project files and git changes in read-only mode. Based on the main session's latest work, share whatever comes to mind.
-Your output will be sent directly to the main session as input for its next step.
-Guide the main session to think by asking questions and offering insights, rather than issuing direct commands.
-If you feel there is nothing worth saying about the current work, output only PASS.
+Inspect the project files and git changes in read-only mode. Based on the main session's latest work, check for risks, contradictions, or gaps.
+You may:
+- Ask diagnostic questions, e.g. "What does this function return when the list is empty?"
+- Raise considerations the main session may have overlooked, e.g. "Does the design need to account for rate limiting under high concurrency?"
+- Point out contradictions or gaps in the current approach.
+But do not provide concrete implementation plans — let the main session decide how to proceed.
+If you find no issues, output only PASS.
 
 # Constraints
 
 - Output only the message to send or PASS. Do not include thinking, analysis, or a prefix.
 - Stay focused on the user's original task goal.
+- You may ask questions, offer perspectives, and point out overlooked dimensions, but never provide concrete implementation plans or code.
 - Never suggest destructive operations such as deleting files, resetting the repository, or force-pushing.
 - Do not modify any files. You are a read-only observer.
 """.trimIndent()

@@ -47,6 +47,13 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
+    fun `横幅使用紧凑操作和较小纵向内边距`() {
+        assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.cancel"))"""))
+        assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.close"))"""))
+        assertTrue(editor.contains("border = JBUI.Borders.empty(3, 12, 3, 24)"))
+    }
+
+    @Test
     fun `协调器绑定到项目生命周期`() {
         assertTrue(monitor.contains("Disposer.register(this, peerCoordinator)"))
         assertTrue(coordinator.contains("override fun dispose()"))
@@ -62,5 +69,15 @@ class PeerCoordinatorSourceTest {
     fun `只有用户主动消息重置轮次计数`() {
         assertTrue(coordinator.contains("peerInjectedSessions.remove(sessionKey)"))
         assertTrue(coordinator.contains("peerInjectedSessions.add(mainSessionKey)"))
+    }
+
+    @Test
+    fun `轮次计数只在反馈实际注入时递增`() {
+        val injectFun = coordinator.substringAfter("private fun injectFeedback(").substringBefore("private fun ")
+        assertTrue("injectFeedback 应递增计数", injectFun.contains("incrementAndGet()"))
+        val reviewFun =
+            coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
+        assertFalse("runReviewAndInject 不应递增计数", reviewFun.contains("incrementAndGet()"))
+        assertTrue("审阅前只检查已注入轮数", reviewFun.contains(".get()"))
     }
 }

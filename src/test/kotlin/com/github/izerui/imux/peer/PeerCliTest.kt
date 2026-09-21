@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
 import kotlin.system.exitProcess
 import kotlin.time.measureTime
 
@@ -17,6 +18,8 @@ class PeerCliTest {
         assertTrue(script.contains("--permission-mode plan"))
         assertTrue(script.contains("--tools default"))
         assertTrue(script.contains("--no-session-persistence"))
+        assertTrue(script.contains("--output-format stream-json"))
+        assertTrue(script.contains("--verbose"))
     }
 
     @Test
@@ -25,6 +28,7 @@ class PeerCliTest {
 
         assertTrue(script.contains("--sandbox read-only"))
         assertTrue(script.contains("--ephemeral"))
+        assertTrue(script.contains("--json"))
         assertTrue(script.contains("-C '/tmp/project'"))
     }
 
@@ -35,6 +39,7 @@ class PeerCliTest {
         assertTrue(script.contains("--tools read,grep,find,ls"))
         assertTrue(!script.contains("--no-tools"))
         assertTrue(script.contains("--no-session"))
+        assertTrue(script.contains("--mode json"))
     }
 
     @Test
@@ -58,9 +63,45 @@ class PeerCliTest {
                 "output",
             )
 
-        val output = runPeerCli(command, Path.of("."), "prompt", 5) {}
+        val output = runPeerCli(AgentType.CODEX, command, Path.of("."), "prompt", 5, {}, {})
 
         assertEquals("真正的副驾驶反馈", output)
+    }
+
+    @Test
+    fun `结构化输出同时产生进度事件与最终反馈`() {
+        val java = Path.of(System.getProperty("java.home"), "bin", "java").toString()
+        val command =
+            listOf(
+                java,
+                "-cp",
+                System.getProperty("java.class.path"),
+                PeerCliTest::class.java.name,
+                "json-output",
+            )
+        val events = mutableListOf<PeerProgressEvent>()
+
+        val output = runPeerCli(AgentType.CODEX, command, Path.of("."), "prompt", 5, {}, events::add)
+
+        assertEquals("最终反馈", output)
+        assertEquals(PeerProgressKind.TOOL_STARTED, events[0].kind)
+        assertTrue(events[0].subject.contains("rg TODO"))
+        assertEquals(PeerProgressKind.TOOL_FINISHED, events[1].kind)
+        assertEquals(PeerProgressKind.RESPONDING, events[2].kind)
+    }
+
+    @Test
+    fun `输出流耗尽超时会抛出异常`() {
+        var thrown: PeerCliException? = null
+
+        try {
+            awaitPeerCliDrain(CountDownLatch(1), "output", 0)
+        } catch (e: PeerCliException) {
+            thrown = e
+        }
+
+        assertTrue("超时应抛出 PeerCliException", thrown != null)
+        assertTrue("异常消息应说明输出流未耗尽", thrown!!.message!!.contains("output did not finish draining"))
     }
 
     @Test
@@ -79,7 +120,7 @@ class PeerCliTest {
         val elapsed =
             measureTime {
                 try {
-                    runPeerCli(command, Path.of("."), "x".repeat(1_000_000), 1) {}
+                    runPeerCli(AgentType.CODEX, command, Path.of("."), "x".repeat(1_000_000), 1, {}, {})
                 } catch (e: PeerCliException) {
                     thrown = e
                 }
@@ -104,7 +145,7 @@ class PeerCliTest {
 
         var thrown: PeerCliException? = null
         try {
-            runPeerCli(command, Path.of("."), "prompt", 5) {}
+            runPeerCli(AgentType.CODEX, command, Path.of("."), "prompt", 5, {}, {})
         } catch (e: PeerCliException) {
             thrown = e
         }
@@ -125,6 +166,13 @@ class PeerCliTest {
                     println("[proxy] enabled via 127.0.0.1:7890")
                     println(PEER_OUTPUT_MARKER)
                     println("真正的副驾驶反馈")
+                }
+
+                "json-output" -> {
+                    println(PEER_OUTPUT_MARKER)
+                    println("""{"type":"item.started","item":{"type":"command_execution","command":"rg TODO"}}""")
+                    println("""{"type":"item.completed","item":{"type":"command_execution","command":"rg TODO"}}""")
+                    println("""{"type":"item.completed","item":{"type":"agent_message","text":"最终反馈"}}""")
                 }
 
                 "fail" -> {

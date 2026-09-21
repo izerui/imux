@@ -7,6 +7,32 @@ internal class PeerRun {
     val cancelled = AtomicBoolean(false)
     val reviewing = AtomicBoolean(false)
     val process = AtomicReference<Process?>()
+    private val progressLock = Any()
+    private var round = 0
+    private var startedAtMillis = System.currentTimeMillis()
+    private var completedActions = 0
+    private var current = PeerProgressEvent(PeerProgressKind.STARTING)
+
+    fun startProgress(round: Int) = synchronized(progressLock) {
+        this.round = round
+        startedAtMillis = System.currentTimeMillis()
+        completedActions = 0
+        current = PeerProgressEvent(PeerProgressKind.STARTING)
+    }
+
+    fun recordProgress(event: PeerProgressEvent) = synchronized(progressLock) {
+        current = event
+        if (event.kind == PeerProgressKind.TOOL_FINISHED) completedActions++
+    }
+
+    fun progressSnapshot(): PeerProgressSnapshot = synchronized(progressLock) {
+        PeerProgressSnapshot(
+            round = round,
+            startedAtMillis = startedAtMillis,
+            completedActions = completedActions,
+            current = current,
+        )
+    }
 
     fun attach(started: Process?) {
         process.set(started)
@@ -26,6 +52,13 @@ internal class PeerSessionGuard {
 
     val isReviewing: Boolean
         get() = synchronized(lock) { activeRun?.reviewing?.get() == true }
+
+    val hasPending: Boolean
+        get() = synchronized(lock) { pending }
+
+    fun progressSnapshot(): PeerProgressSnapshot? = synchronized(lock) {
+        activeRun?.takeIf { it.reviewing.get() }?.progressSnapshot()
+    }
 
     fun tryStart(): PeerRun? = synchronized(lock) {
         if (activeRun != null) {

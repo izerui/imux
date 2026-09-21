@@ -17,14 +17,15 @@ internal fun peerCliCommand(
     val cli =
         when (agentType) {
             AgentType.CLAUDE ->
-                "claude -p --safe-mode --permission-mode plan --tools default --no-session-persistence"
+                "claude -p --safe-mode --permission-mode plan --tools default --no-session-persistence " +
+                        "--output-format stream-json --verbose"
 
             AgentType.CODEX ->
                 "codex exec --ephemeral --skip-git-repo-check --sandbox read-only --color never " +
-                        "-C ${quote(dialect, projectPath)}"
+                        "--json -C ${quote(dialect, projectPath)}"
 
             AgentType.PI ->
-                "pi -p --no-session --tools read,grep,find,ls"
+                "pi -p --no-session --tools read,grep,find,ls --mode json"
         }
     val marker =
         when (dialect) {
@@ -39,11 +40,13 @@ internal fun peerCliCommand(
 }
 
 internal fun runPeerCli(
+    agentType: AgentType,
     command: List<String>,
     cwd: Path,
     prompt: String,
     timeoutSeconds: Long,
     onProcess: (Process?) -> Unit,
+    onProgress: (PeerProgressEvent) -> Unit,
 ): String? {
     var process: Process? = null
     return try {
@@ -54,8 +57,9 @@ internal fun runPeerCli(
         process = started
         onProcess(started)
 
-        val output = StringBuffer()
+        val fallbackOutput = StringBuffer()
         val stderr = StringBuffer()
+        val parser = PeerJsonEventParser(agentType, onProgress)
         val finishedWriting = CountDownLatch(1)
         val finishedReading = CountDownLatch(1)
         val finishedStderr = CountDownLatch(1)
@@ -71,27 +75,14 @@ internal fun runPeerCli(
         Thread {
             runCatching {
                 started.inputStream.bufferedReader().use { reader ->
-                    val buffer = CharArray(2_048)
                     var markerFound = false
-                    val markerBuf = StringBuilder()
                     while (true) {
-                        val count = reader.read(buffer)
-                        if (count < 0) break
-                        if (markerFound) {
-                            val room = MAX_PEER_OUTPUT_CHARS - output.length
-                            if (room > 0) output.append(buffer, 0, minOf(room, count))
-                        } else if (markerBuf.length < MAX_MARKER_SEARCH_CHARS) {
-                            markerBuf.append(buffer, 0, count)
-                            val idx = markerBuf.indexOf(PEER_OUTPUT_MARKER)
-                            if (idx >= 0) {
-                                markerFound = true
-                                val afterMarker = markerBuf.substring(idx + PEER_OUTPUT_MARKER.length)
-                                if (afterMarker.isNotEmpty()) {
-                                    val room = MAX_PEER_OUTPUT_CHARS - output.length
-                                    if (room > 0) output.append(afterMarker, 0, minOf(room, afterMarker.length))
-                                }
-                            }
+                        val line = reader.readLine() ?: break
+                        if (!markerFound) {
+                            markerFound = line.contains(PEER_OUTPUT_MARKER)
+                            continue
                         }
+                        if (!parser.accept(line)) appendCappedLine(fallbackOutput, line)
                     }
                 }
             }
@@ -122,20 +113,35 @@ internal fun runPeerCli(
             throw PeerCliException("CLI timed out after ${timeoutSeconds}s")
         }
         finishedWriting.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        finishedReading.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        awaitPeerCliDrain(finishedReading, "output", READ_DRAIN_TIMEOUT_SECONDS)
         finishedStderr.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         if (started.exitValue() != 0) {
             val detail = stderr.toString().trim().ifEmpty { "exit code ${started.exitValue()}" }
             throw PeerCliException(detail)
         }
-        output
-            .toString()
-            .trim()
-            .takeIf(String::isNotEmpty)
+        parser.finalText()
+            ?: fallbackOutput.toString().trim().takeIf(String::isNotEmpty)
     } finally {
         onProcess(null)
         process?.let(::destroyProcessTree)
     }
+}
+
+internal fun awaitPeerCliDrain(
+    finished: CountDownLatch,
+    streamName: String,
+    timeoutSeconds: Long,
+) {
+    if (!finished.await(timeoutSeconds, TimeUnit.SECONDS)) {
+        throw PeerCliException("CLI $streamName did not finish draining after ${timeoutSeconds}s")
+    }
+}
+
+private fun appendCappedLine(output: StringBuffer, line: String) {
+    val room = MAX_PEER_OUTPUT_CHARS - output.length
+    if (room <= 0) return
+    if (output.isNotEmpty()) output.append('\n')
+    output.append(line, 0, minOf(line.length, MAX_PEER_OUTPUT_CHARS - output.length))
 }
 
 internal class PeerCliException(message: String) : RuntimeException(message)
@@ -145,8 +151,7 @@ internal fun destroyProcessTree(process: Process) {
     process.destroyForcibly()
 }
 
-private const val MAX_PEER_OUTPUT_CHARS = 16_000
-private const val MAX_MARKER_SEARCH_CHARS = 64_000
+internal const val MAX_PEER_OUTPUT_CHARS = 16_000
 private const val MAX_STDERR_CHARS = 4_000
 private const val READ_DRAIN_TIMEOUT_SECONDS = 2L
 internal const val PEER_OUTPUT_MARKER = "__IMUX_PEER_OUTPUT_BEGIN__"

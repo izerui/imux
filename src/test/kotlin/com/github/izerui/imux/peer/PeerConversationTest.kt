@@ -96,4 +96,23 @@ class PeerConversationTest {
         val migrated = original.copy(task = "")
         assertEquals(original.generation, migrated.generation)
     }
+
+    @Test
+    fun `中文提示词允许提问和补充视角但禁止具体方案`() {
+        val prompt = PeerCoordinator.DEFAULT_PROMPT_ZH
+        assertTrue("应包含诊断性问题", prompt.contains("诊断性问题"))
+        assertTrue("应允许补充视角", prompt.contains("补充视角"))
+        assertTrue("应禁止具体实现方案", prompt.contains("不要给出具体实现方案"))
+        assertFalse("不应包含'有什么想说的'", prompt.contains("有什么想说的"))
+        assertFalse("不应包含'提问和启发'", prompt.contains("提问和启发"))
+    }
+
+    @Test
+    fun `英文提示词允许提问和补充视角但禁止具体方案`() {
+        val prompt = PeerCoordinator.DEFAULT_PROMPT_EN
+        assertTrue("应包含 diagnostic questions", prompt.contains("diagnostic questions"))
+        assertTrue("应允许 perspectives", prompt.contains("perspectives"))
+        assertTrue("应禁止 concrete implementation", prompt.contains("never provide concrete implementation"))
+        assertFalse("不应包含 'share whatever comes to mind'", prompt.contains("share whatever comes to mind"))
+    }
 }
