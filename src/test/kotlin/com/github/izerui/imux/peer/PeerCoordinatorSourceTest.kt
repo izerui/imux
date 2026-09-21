@@ -114,7 +114,7 @@ class PeerCoordinatorSourceTest {
     @Test
     fun `injectFeedback 中 send 在 incrementAndGet 和 peerInjectedSessions-add 之前`() {
         val injectFun = coordinator.substringAfter("private fun injectFeedback(").substringBefore("private fun ")
-        val sendPos = injectFun.indexOf(".send(prompt)")
+        val sendPos = injectFun.indexOf(".send(prefixed)")
         val incrementPos = injectFun.indexOf("incrementAndGet()")
         val addPos = injectFun.indexOf("peerInjectedSessions.add(")
         assertTrue("send 应出现", sendPos >= 0)
@@ -125,6 +125,14 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
+    fun `injectFeedback 和 stageFeedback 均添加来源前缀`() {
+        val injectFun = coordinator.substringAfter("private fun injectFeedback(").substringBefore("private fun ")
+        val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
+        assertTrue("injectFeedback 应添加前缀", injectFun.contains("feedbackPrefix()"))
+        assertTrue("stageFeedback 应添加前缀", stageFun.contains("feedbackPrefix()"))
+    }
+
+    @Test
     fun `关闭自动发送只把反馈填入输入框`() {
         val reviewFun =
             coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
@@ -132,7 +140,7 @@ class PeerCoordinatorSourceTest {
 
         assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, feedback)"))
         assertTrue("暂存反馈应使用括号粘贴模式", stageFun.contains(".useBracketedPasteMode()"))
-        assertTrue("暂存反馈应写入终端输入区", stageFun.contains(".send(prompt)"))
+        assertTrue("暂存反馈应写入终端输入区", stageFun.contains(".send(prefixed)"))
         assertFalse("暂存反馈不应执行发送", stageFun.contains(".shouldExecute()"))
     }
 }

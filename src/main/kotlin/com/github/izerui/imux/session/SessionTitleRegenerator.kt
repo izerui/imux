@@ -280,6 +280,7 @@ internal fun transcriptMessage(
     agentType: AgentType,
     maxMessageChars: Int,
     navigatorVisibleTextOnly: Boolean = false,
+    includeToolContent: Boolean = false,
 ): SessionTranscriptMessage? {
     if (line.length > MAX_JSON_LINE_CHARS) return null
     val root = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() ?: return null
@@ -300,6 +301,8 @@ internal fun transcriptMessage(
         (
             if (navigatorVisibleTextOnly) {
                 navigatorContentText(message.get("content"))
+            } else if (includeToolContent) {
+                contentTextWithTools(message.get("content"))
             } else {
                 contentText(message.get("content"))
             }
@@ -320,6 +323,47 @@ internal fun transcriptMessage(
 }
 
 private fun contentText(element: JsonElement?): String? = contentText(element) { true }
+
+private fun contentTextWithTools(element: JsonElement?): String? =
+    contentTextWithTools(element) { true }
+
+private fun contentTextWithTools(
+    element: JsonElement?,
+    includeText: (String) -> Boolean,
+): String? =
+    when {
+        element == null || element.isJsonNull -> null
+        element.isJsonPrimitive && element.asJsonPrimitive.isString ->
+            element.asString.takeIf(includeText)
+        element.isJsonArray ->
+            element.asJsonArray
+                .mapNotNull { contentTextWithTools(it, includeText) }
+                .joinToString("\n")
+                .takeIf(String::isNotBlank)
+        element.isJsonObject -> {
+            val obj = element.asJsonObject
+            val type = obj.string("type")
+            when (type) {
+                "tool_use" -> {
+                    val name = obj.string("name") ?: "unknown_tool"
+                    val input = obj.get("input")?.toString()?.take(MAX_TOOL_CONTENT_CHARS) ?: ""
+                    "[tool_use: $name] $input"
+                }
+                "tool_result", "function_call_output" -> {
+                    val toolContent = contentTextWithTools(obj.get("content"), includeText)
+                        ?: contentTextWithTools(obj.get("output"), includeText)
+                        ?: obj.string("text")
+                    toolContent?.take(MAX_TOOL_CONTENT_CHARS)?.let { "[tool_result] $it" }
+                }
+                else ->
+                    contentTextWithTools(obj.get("text"), includeText)
+                        ?: contentTextWithTools(obj.get("content"), includeText)
+            }
+        }
+        else -> null
+    }
+
+private const val MAX_TOOL_CONTENT_CHARS = 2_000
 
 private fun navigatorContentText(element: JsonElement?): String? =
     contentText(element) { value ->
