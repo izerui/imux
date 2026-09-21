@@ -128,6 +128,21 @@ class IdeaMcpSupportTest {
     }
 
     @Test
+    fun `切换端口再切回时即使从未恢复也会重新提示`() {
+        var clock = 0L
+        val probe = IdeaMcpProbe(ttlMillis = 1L, now = { clock++ }, connect = { false })
+
+        assertFalse(probe.reachable(64342))
+        assertTrue("A 端口第一次不可达必须提示", probe.shouldNotify(64342))
+
+        assertFalse(probe.reachable(64343))
+        assertTrue("切到 B 端口不可达必须提示", probe.shouldNotify(64343))
+
+        assertFalse(probe.reachable(64342))
+        assertTrue("切回 A 端口应重新提示（即使从未恢复）", probe.shouldNotify(64342))
+    }
+
+    @Test
     fun `端口有监听时判定 IDEA MCP 可连接`() {
         ServerSocket(0).use { server ->
             assertTrue(canConnectToIdeaMcp(server.localPort))

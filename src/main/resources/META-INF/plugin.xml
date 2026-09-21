@@ -20,9 +20,9 @@
       your IDE's refactoring, debugging, inspections, or run configurations. <b>imux bridges this
       gap.</b></p>
 
-      <p><b>IDEA MCP: give AI agents full IDE capabilities</b></p>
-      <p>imux automatically injects the JetBrains MCP server into every AI session it launches.
-      This means your AI agents can:</p>
+      <p><b>IDEA MCP: give AI agents access to IDE tools</b></p>
+      <p>When enabled (on by default), imux injects the JetBrains MCP server config into AI sessions it launches.
+      With a reachable MCP server, your AI agents can (Pi also requires the bundled extension script):</p>
       <ul>
         <li><b>Safe refactoring</b> — rename symbols across the entire project by semantic identity, not risky text replace</li>
         <li><b>Interactive debugging</b> — set breakpoints, step through code, inspect variables, evaluate expressions — instead of print-debugging</li>
@@ -32,9 +32,9 @@
         <li><b>Code formatting</b> — apply your project's configured Code Style, not an external formatter</li>
         <li><b>Semantic navigation</b> — trace call hierarchies, find symbol definitions, and understand type relationships across modules</li>
       </ul>
-      <p>Works with <b>all JetBrains IDEs</b> (IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion…)
-      and <b>all languages</b> they support. The injection is session-scoped — it does not modify your
-      CLI's global config.</p>
+      <p>Works with JetBrains IDEs that support Platform build 262+ (IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion…).
+      Available tools depend on the IDE product, installed plugins, and MCP server version.
+      The injection is session-scoped — it does not modify your CLI's global config.</p>
 
       <p><b>Session management in editor tabs</b></p>
       <ul>
@@ -48,7 +48,7 @@
       <p><b>imux does not host your conversations.</b> Session history stays in each CLI's own store.
       Uninstalling the plugin leaves all session history intact.</p>
 
-      <p><b>Requirements</b>: Any JetBrains IDE 2026.2+ and at least one supported CLI:
+      <p><b>Requirements</b>: JetBrains IDE 2026.2+ (Platform build 262+) and at least one supported CLI:
       <code>claude</code>, <code>codex</code>, or <code>pi</code>.</p>
     ]]></description>
 

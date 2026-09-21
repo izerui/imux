@@ -1,6 +1,8 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.settings.DEFAULT_IDEA_MCP_PORT
+import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -35,6 +37,24 @@ internal data class IdeaMcpEndpoint(
     val projectPath: String,
 ) {
     val url: String = "http://127.0.0.1:$port/stream"
+}
+
+internal fun configuredIdeaMcpEndpoint(
+    project: Project,
+    projectPath: String,
+): IdeaMcpEndpoint? {
+    val settings = ImuxSettings.getInstance().state
+    return IdeaMcpReadiness.getInstance(project).endpointFor(
+        injectEnabled = settings.injectIdeaMcp,
+        configuredPort = settings.ideaMcpPort.takeIf { it in 1..65535 } ?: DEFAULT_IDEA_MCP_PORT,
+        projectPath = projectPath,
+    )
+}
+
+internal fun configuredIdeaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? {
+    if (endpoint == null) return null
+    val settings = ImuxSettings.getInstance()
+    return settings.ideaMcpGuidance.takeIf { settings.state.ideaMcpGuidanceEnabled }
 }
 
 internal fun canConnectToIdeaMcp(
@@ -92,9 +112,9 @@ internal fun decideIdeaMcp(
  * 回 RST（ECONNREFUSED），同样立即返回——[canConnectToIdeaMcp] 的 250ms 只在数据包被丢弃时
  * 才会走满，而这在回环上基本不存在。
  *
- * 不可达的提示按**端口 + 连续不可达**去重：同一端口连着不可达只提示一次，恢复过一次之后
- * 再次不可达会重新提示。一次性的 `AtomicBoolean` 永不复位，用户照着提示去改端口、又改错了，
- * 之后就再也收不到任何反馈。
+ * 不可达的提示通过 `notifiedPort` 去重：同一端口连着不可达只提示一次；恢复过一次之后
+ * 再次不可达会重新提示。由于只记录一个端口，切换到其他端口再切回时即使从未恢复也会
+ * 重新提示——这是有意为之，避免用户改错端口后再也收不到反馈。
  */
 internal class IdeaMcpProbe(
     private val ttlMillis: Long = 3_000L,
@@ -155,6 +175,7 @@ internal class IdeaMcpReadiness(
                 if (decision.notifyUnavailable && !project.isDisposed) notifyUnavailable()
                 decision.endpoint
             }
+
             IdeaMcpDecision.Disabled -> null
         }
     }

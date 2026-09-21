@@ -8,6 +8,10 @@ import com.github.izerui.imux.session.scanTail
 import com.github.izerui.imux.session.sessionTranscriptMessages
 import com.github.izerui.imux.session.transcriptMessage
 import com.github.izerui.imux.settings.ImuxSettings
+import com.github.izerui.imux.terminal.IdeaMcpEndpoint
+import com.github.izerui.imux.terminal.configuredIdeaMcpEndpoint
+import com.github.izerui.imux.terminal.configuredIdeaMcpGuidance
+import com.github.izerui.imux.terminal.piIdeaMcpScript
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
@@ -33,27 +37,45 @@ data class PeerStatus(
     val progress: PeerProgressSnapshot?,
 )
 
+internal data class PeerMcpConfig(
+    val endpoint: IdeaMcpEndpoint?,
+    val guidance: String?,
+    val piExtensionScript: Path?,
+)
+
 fun interface PeerStateListener : EventListener {
     fun peerStateChanged(sessionKey: String)
 }
 
-class PeerCoordinator(
+class PeerCoordinator internal constructor(
     private val project: Project,
     private val projectPath: String,
     private val model: SessionListModel,
     private val viewOf: (String) -> TerminalView?,
     private val coroutineScope: CoroutineScope,
     private val shell: String,
+    private val edtDispatcher: kotlin.coroutines.CoroutineContext? = null,
+    private val peerMaxRounds: () -> Int = { ImuxSettings.getInstance().state.peerMaxRounds },
+    private val peerAutoInject: () -> Boolean = { ImuxSettings.getInstance().state.peerAutoInject },
     private val runCli: (
         agentType: AgentType,
         command: List<String>,
         cwd: Path,
         prompt: String,
+        environment: Map<String, String>,
         timeoutSeconds: Long,
         onProcess: (Process?) -> Unit,
         onProgress: (PeerProgressEvent) -> Unit,
     ) -> String? = ::runPeerCli,
+    private val resolveMcpConfig: (AgentType) -> PeerMcpConfig = { agentType ->
+        val ep = configuredIdeaMcpEndpoint(project, projectPath)
+        val guidance = configuredIdeaMcpGuidance(ep)
+        val piScript = if (agentType == AgentType.PI && ep != null) piIdeaMcpScript() else null
+        PeerMcpConfig(ep, guidance, piScript)
+    },
+    private val buildPrompt: ((task: String, conversation: String) -> String)? = null,
 ) : Disposable {
+    private val edt: kotlin.coroutines.CoroutineContext by lazy { edtDispatcher ?: Dispatchers.EDT }
     private val bindings = ConcurrentHashMap<String, PeerBinding>()
     private val roundCounts = ConcurrentHashMap<String, AtomicInteger>()
     private val guards = ConcurrentHashMap<String, PeerSessionGuard>()
@@ -124,7 +146,7 @@ class PeerCoordinator(
                 runReviewAndInject(sessionKey, binding, run, guard)
             } finally {
                 val rerun = guard.onFinished(run)
-                withContext(Dispatchers.EDT) {
+                withContext(edt) {
                     notifyStateChanged(sessionKey)
                 }
                 if (rerun != null) {
@@ -158,10 +180,14 @@ class PeerCoordinator(
         if (from == to) return
         val binding = bindings.remove(from)
         roundCounts.remove(from)
+        peerInjectedSessions.remove(from)
         guards.remove(from)?.cancel()
+        bindings.remove(to)
+        roundCounts.remove(to)
+        peerInjectedSessions.remove(to)
+        guards.remove(to)?.cancel()
         if (binding != null) {
             bindings[to] = binding.copy(task = "")
-            roundCounts.remove(to)
             LOG.info("结对编程：迁移绑定 $from -> $to")
         }
         notifyStateChanged(from)
@@ -185,14 +211,14 @@ class PeerCoordinator(
         if (!runIsCurrent(mainSessionKey, initialBinding, run, guard)) return
 
         run.reviewing.set(true)
-        withContext(Dispatchers.EDT) {
+        withContext(edt) {
             if (runIsCurrent(mainSessionKey, initialBinding, run, guard)) notifyStateChanged(mainSessionKey)
         }
 
         if (!runIsCurrent(mainSessionKey, initialBinding, run, guard)) return
 
         val injectedRounds = roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.get()
-        val maxRounds = ImuxSettings.getInstance().state.peerMaxRounds
+        val maxRounds = peerMaxRounds()
         if (injectedRounds >= maxRounds) {
             LOG.info("结对编程：已达安全上限 $maxRounds 轮，停止")
             return
@@ -207,8 +233,11 @@ class PeerCoordinator(
                 initialBinding
             }
         val conversation = collectLatestConversation(mainSessionKey)
-        val prompt = buildReviewPrompt(binding.task, conversation)
-        val command = peerCliCommand(shell, binding.targetAgentType, projectPath)
+        val prompt = (buildPrompt ?: ::buildReviewPrompt)(binding.task, conversation)
+        val mcpConfig = resolveMcpConfig(binding.targetAgentType)
+        val invocation = buildPeerCliInvocation(shell, binding.targetAgentType, projectPath, mcpConfig)
+        val command = invocation.command
+        val environment = invocation.environment
         run.startProgress(injectedRounds + 1)
         LOG.info("结对编程：已注入 $injectedRounds 轮，调用 ${binding.targetAgentType.cli}")
 
@@ -221,11 +250,12 @@ class PeerCoordinator(
                     command,
                     Path.of(projectPath),
                     prompt,
+                    environment,
                     CLI_TIMEOUT_SECONDS,
                     run::attach,
                 ) { event ->
                     run.recordProgress(event)
-                    coroutineScope.launch(Dispatchers.EDT) {
+                    coroutineScope.launch(edt) {
                         if (runIsCurrent(mainSessionKey, binding, run, guard)) {
                             notifyStateChanged(mainSessionKey)
                         }
@@ -239,7 +269,7 @@ class PeerCoordinator(
         val error = result.exceptionOrNull()
         if (error != null) {
             LOG.warn("结对编程：CLI 调用失败", error)
-            withContext(Dispatchers.EDT) {
+            withContext(edt) {
                 if (!project.isDisposed) notifyCliError(binding, error.message ?: error.javaClass.simpleName)
             }
             return
@@ -251,9 +281,9 @@ class PeerCoordinator(
             return
         }
 
-        withContext(Dispatchers.EDT) {
+        withContext(edt) {
             if (!runIsCurrent(mainSessionKey, binding, run, guard) || project.isDisposed) return@withContext
-            if (ImuxSettings.getInstance().state.peerAutoInject) {
+            if (peerAutoInject()) {
                 injectFeedback(mainSessionKey, feedback)
             } else {
                 stageFeedback(mainSessionKey, feedback)
@@ -339,13 +369,13 @@ class PeerCoordinator(
             LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
             return
         }
-        roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
-        peerInjectedSessions.add(mainSessionKey)
         view.createSendTextBuilder()
             .useBracketedPasteMode()
             .shouldExecute()
             .send(prompt)
+        roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
+        peerInjectedSessions.add(mainSessionKey)
     }
 
     private fun stageFeedback(

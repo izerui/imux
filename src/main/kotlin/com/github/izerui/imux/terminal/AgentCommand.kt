@@ -46,39 +46,7 @@ internal fun launchCommand(
     //
     // 两种 agent 都要带 IDEA_MCP_PROJECT_HEADER：不带它，多项目窗口下任何没写
     // projectPath 实参的工具调用都会被服务端拒绝，模型只能反过来问用户选哪个项目。
-    val ideaMcpArgument =
-        ideaMcp?.let { endpoint ->
-            when (agentType) {
-                AgentType.CLAUDE -> {
-                    val config = claudeIdeaMcpConfig(endpoint)
-                    buildString {
-                        append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}")
-                        ideaMcpGuidance
-                            ?.takeIf(String::isNotBlank)
-                            ?.let { append(" --append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, it)}") }
-                    }
-                }
-
-                AgentType.CODEX -> {
-                    val url = "mcp_servers.idea.url=${tomlBasicString(endpoint.url)}"
-                    val header =
-                        "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=" +
-                            tomlBasicString(endpoint.projectPath)
-                    buildString {
-                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, url)} ")
-                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, header)}")
-                        ideaMcpGuidance
-                            ?.takeIf(String::isNotBlank)
-                            ?.let { guidance ->
-                                val instructions = "developer_instructions=${tomlBasicString(guidance)}"
-                                append(" -c ${quoteEmbeddingDoubleQuotes(dialect, instructions)}")
-                            }
-                    }
-                }
-
-                AgentType.PI -> null
-            }
-        }
+    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance)
     val script =
         when {
             resumeId == null -> {
@@ -132,6 +100,45 @@ internal fun launchCommand(
             ?: command
     return listOf(shell) + shellArgs(dialect) + prefixed
 }
+
+internal fun ideaMcpCliArgument(
+    dialect: ShellDialect,
+    agentType: AgentType,
+    ideaMcp: IdeaMcpEndpoint?,
+    ideaMcpGuidance: String?,
+): String? =
+    ideaMcp?.let { endpoint ->
+        when (agentType) {
+            AgentType.CLAUDE -> {
+                val config = claudeIdeaMcpConfig(endpoint)
+                buildString {
+                    append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}")
+                    ideaMcpGuidance
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { append(" --append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, it)}") }
+                }
+            }
+
+            AgentType.CODEX -> {
+                val url = "mcp_servers.idea.url=${tomlBasicString(endpoint.url)}"
+                val header =
+                    "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=" +
+                            tomlBasicString(endpoint.projectPath)
+                buildString {
+                    append("-c ${quoteEmbeddingDoubleQuotes(dialect, url)} ")
+                    append("-c ${quoteEmbeddingDoubleQuotes(dialect, header)}")
+                    ideaMcpGuidance
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { guidance ->
+                            val instructions = "developer_instructions=${tomlBasicString(guidance)}"
+                            append(" -c ${quoteEmbeddingDoubleQuotes(dialect, instructions)}")
+                        }
+                }
+            }
+
+            AgentType.PI -> null
+        }
+    }
 
 /** 用 Gson 生成配置，避免 Windows 反斜杠、引号和控制字符破坏 JSON。 */
 internal fun claudeIdeaMcpConfig(endpoint: IdeaMcpEndpoint): String {
@@ -223,13 +230,7 @@ internal fun launchEnvironment(
                     put("IMUX_REPORT_URL", it.url)
                     put("IMUX_TOKEN", it.token)
                 }
-                ideaMcp?.let {
-                    put("IMUX_IDEA_MCP_URL", it.url)
-                    put("IMUX_IDEA_MCP_PROJECT", it.projectPath)
-                    ideaMcpGuidance?.takeIf(String::isNotBlank)?.let { guidance ->
-                        put("IMUX_IDEA_MCP_GUIDANCE", guidance)
-                    }
-                }
+                putAll(ideaMcpEnvironment(agentType, ideaMcp, ideaMcpGuidance))
             }
 
             AgentType.CODEX -> {
@@ -240,6 +241,23 @@ internal fun launchEnvironment(
                 Unit
             }
         }
+    }
+
+internal fun ideaMcpEnvironment(
+    agentType: AgentType,
+    ideaMcp: IdeaMcpEndpoint?,
+    ideaMcpGuidance: String?,
+): Map<String, String> =
+    if (agentType == AgentType.PI && ideaMcp != null) {
+        buildMap {
+            put("IMUX_IDEA_MCP_URL", ideaMcp.url)
+            put("IMUX_IDEA_MCP_PROJECT", ideaMcp.projectPath)
+            ideaMcpGuidance?.takeIf(String::isNotBlank)?.let { guidance ->
+                put("IMUX_IDEA_MCP_GUIDANCE", guidance)
+            }
+        }
+    } else {
+        emptyMap()
     }
 
 /**

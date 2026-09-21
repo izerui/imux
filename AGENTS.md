@@ -35,7 +35,7 @@
 
 ## IntelliJ Platform 版本
 
-- 本项目只支持最新的 IntelliJ IDEA 2026.2，对应 IntelliJ Platform build `262`。
+- 本项目支持 IntelliJ Platform build `262` 及以上版本（对应 IntelliJ IDEA 2026.2+）。
 - 不为旧版 IntelliJ Platform 增加兼容分支、反射回退或旧 API 适配，除非用户明确要求。
 
 ## IntelliJ Platform 原生 UI 优先

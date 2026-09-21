@@ -8,8 +8,6 @@ import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.session.deleteTabPidFile
 import com.github.izerui.imux.session.imuxTabPidDir
 import com.github.izerui.imux.session.tabPidFilePath
-import com.github.izerui.imux.settings.DEFAULT_IDEA_MCP_PORT
-import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.ide.DataManager
@@ -694,24 +692,17 @@ class TerminalHost(
     }
 
     /**
-     * 可注入的 IDEA MCP 端点；关了开关或服务不可用都返回 null。
+     * 可注入的 IDEA MCP 端点；仅关闭注入设置时返回 null，端口不可达时仍返回 endpoint。
      *
      * Imux 设置是唯一真相。端口探测只负责提示，不决定是否注入：IDE 启动早期服务可能
      * 尚未监听，若因此删掉启动参数，恢复出来的会话会永久缺少 IDEA 工具。
      */
     private fun ideaMcpEndpoint(): IdeaMcpEndpoint? {
-        val settings = ImuxSettings.getInstance().state
-        return IdeaMcpReadiness.getInstance(project).endpointFor(
-            injectEnabled = settings.injectIdeaMcp,
-            configuredPort = settings.ideaMcpPort.takeIf { it in 1..65535 } ?: DEFAULT_IDEA_MCP_PORT,
-            projectPath = projectPath(),
-        )
+        return configuredIdeaMcpEndpoint(project, projectPath())
     }
 
     private fun ideaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? {
-        if (endpoint == null) return null
-        val settings = ImuxSettings.getInstance()
-        return settings.ideaMcpGuidance.takeIf { settings.state.ideaMcpGuidanceEnabled }
+        return configuredIdeaMcpGuidance(endpoint)
     }
 
     private fun persistRestorableTabs() {

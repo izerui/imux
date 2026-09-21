@@ -1,7 +1,10 @@
 package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.terminal.IdeaMcpEndpoint
 import com.github.izerui.imux.terminal.dialectOf
+import com.github.izerui.imux.terminal.ideaMcpCliArgument
+import com.github.izerui.imux.terminal.ideaMcpEnvironment
 import com.github.izerui.imux.terminal.quote
 import com.github.izerui.imux.terminal.shellArgs
 import java.nio.file.Path
@@ -12,20 +15,34 @@ internal fun peerCliCommand(
     shell: String,
     agentType: AgentType,
     projectPath: String,
+    ideaMcp: IdeaMcpEndpoint? = null,
+    ideaMcpGuidance: String? = null,
+    piIdeaMcpExtension: Path? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
+    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance)
     val cli =
         when (agentType) {
             AgentType.CLAUDE ->
-                "claude -p --safe-mode --permission-mode plan --tools default --no-session-persistence " +
-                        "--output-format stream-json --verbose"
+                listOfNotNull(
+                    "claude -p --permission-mode bypassPermissions --tools default --no-session-persistence",
+                    ideaMcpArgument,
+                    "--output-format stream-json --verbose",
+                ).joinToString(" ")
 
             AgentType.CODEX ->
-                "codex exec --ephemeral --skip-git-repo-check --sandbox read-only --color never " +
-                        "--json -C ${quote(dialect, projectPath)}"
+                listOfNotNull(
+                    "codex exec --ephemeral --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --color never",
+                    ideaMcpArgument,
+                    "--json -C ${quote(dialect, projectPath)}",
+                ).joinToString(" ")
 
             AgentType.PI ->
-                "pi -p --no-session --tools read,grep,find,ls --mode json"
+                buildString {
+                    append("pi -p --no-session")
+                    piIdeaMcpExtension?.let { append(" -e ${quote(dialect, it.toString())}") }
+                    append(" --mode json")
+                }
         }
     val marker =
         when (dialect) {
@@ -39,21 +56,38 @@ internal fun peerCliCommand(
     return listOf(shell) + shellArgs(dialect) + script
 }
 
+internal data class PeerCliInvocation(
+    val command: List<String>,
+    val environment: Map<String, String>,
+)
+
+internal fun buildPeerCliInvocation(
+    shell: String,
+    agentType: AgentType,
+    projectPath: String,
+    mcpConfig: PeerMcpConfig,
+): PeerCliInvocation = PeerCliInvocation(
+    command = peerCliCommand(shell, agentType, projectPath, mcpConfig.endpoint, mcpConfig.guidance, mcpConfig.piExtensionScript),
+    environment = ideaMcpEnvironment(agentType, mcpConfig.endpoint, mcpConfig.guidance),
+)
+
 internal fun runPeerCli(
     agentType: AgentType,
     command: List<String>,
     cwd: Path,
     prompt: String,
+    environment: Map<String, String>,
     timeoutSeconds: Long,
     onProcess: (Process?) -> Unit,
     onProgress: (PeerProgressEvent) -> Unit,
 ): String? {
     var process: Process? = null
     return try {
-        val started =
+        val processBuilder =
             ProcessBuilder(command)
                 .directory(cwd.toFile())
-                .start()
+        processBuilder.environment().putAll(environment)
+        val started = processBuilder.start()
         process = started
         onProcess(started)
 
