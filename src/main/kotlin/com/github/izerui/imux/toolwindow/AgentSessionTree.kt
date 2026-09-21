@@ -348,27 +348,38 @@ class AgentSessionTree(
                 ) {
                     val path = tree.pathForRowAt(y) ?: return
                     val node = path.lastPathComponent as? DefaultMutableTreeNode ?: return
-                    val session = node.userObject as? NodeData.Session ?: return
+                    val data = node.userObject
+                    if (data !is NodeData.Session && data !is NodeData.PendingSession) return
                     tree.selectionPath = path
 
-                    val copyAction =
-                        object : DumbAwareAction(
-                            ImuxBundle.message("action.copy.identity.text"),
-                            ImuxBundle.message("action.copy.identity.description"),
-                            AllIcons.Actions.Copy,
-                        ) {
-                            override fun actionPerformed(event: AnActionEvent) {
-                                CopyPasteManager.copyTextToClipboard(
-                                    sessionClipboardText(session.agentType, session.id),
-                                )
+                    val actions = DefaultActionGroup()
+                    when (data) {
+                        is NodeData.Session -> {
+                            actions.add(
+                                object : DumbAwareAction(
+                                    ImuxBundle.message("action.copy.identity.text"),
+                                    ImuxBundle.message("action.copy.identity.description"),
+                                    AllIcons.Actions.Copy,
+                                ) {
+                                    override fun actionPerformed(event: AnActionEvent) {
+                                        CopyPasteManager.copyTextToClipboard(
+                                            sessionClipboardText(data.agentType, data.id),
+                                        )
+                                    }
+                                },
+                            )
+                            model.sessionOf(data.id)?.let { source ->
+                                actions.add(regenerateSessionTitleAction(project, source))
+                                actions.addSeparator()
+                                actions.add(handoffActionGroup(project, source))
+                                actions.add(peerProgrammingActionGroup(project, source))
                             }
                         }
-                    val actions = DefaultActionGroup(copyAction)
-                    model.sessionOf(session.id)?.let { source ->
-                        actions.add(regenerateSessionTitleAction(project, source))
-                        actions.addSeparator()
-                        actions.add(handoffActionGroup(project, source))
-                        actions.add(peerProgrammingActionGroup(project, source))
+
+                        is NodeData.PendingSession -> {
+                            actions.add(peerProgrammingActionGroup(project, data.key))
+                        }
+
                     }
                     ActionManager
                         .getInstance()

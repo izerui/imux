@@ -45,13 +45,20 @@ internal fun peerProgrammingActionGroup(
     project: Project,
     session: AgentSession,
     targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
+): ActionGroup = peerProgrammingActionGroup(project, session.id, targetTypes)
+
+/** 供尚未落盘的 pending 会话使用。 */
+internal fun peerProgrammingActionGroup(
+    project: Project,
+    sessionKey: String,
+    targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
 ): ActionGroup =
     object : ActionGroup(ImuxBundle.message("action.peer.group.text"), true), DumbAware {
         init {
             templatePresentation.icon = AllIcons.Actions.ProfileCPU
         }
 
-        private val children = peerProgrammingActions(project, session.id, targetTypes)
+        private val children = peerProgrammingActions(project, sessionKey, targetTypes)
 
         override fun getChildren(event: AnActionEvent?): Array<AnAction> = children
     }
@@ -111,18 +118,18 @@ class PeerProgrammingActionGroup :
     override fun update(event: AnActionEvent) {
         event.presentation.text = ImuxBundle.message("action.peer.group.text")
         event.presentation.icon = AllIcons.Actions.ProfileCPU
-        event.presentation.isEnabledAndVisible = sessionIdentity(event) != null
+        event.presentation.isEnabledAndVisible = sessionKey(event) != null
     }
 
     override fun getChildren(event: AnActionEvent?): Array<AnAction> {
-        val (_, sessionId) = event?.let(::sessionIdentity) ?: return emptyArray()
+        val sessionKey = event?.let(::sessionKey) ?: return emptyArray()
         val project = event.project ?: return emptyArray()
-        return peerProgrammingActions(project, sessionId)
+        return peerProgrammingActions(project, sessionKey)
     }
 
-    private fun sessionIdentity(event: AnActionEvent): Pair<AgentType, String>? {
+    private fun sessionKey(event: AnActionEvent): String? {
         val project = event.project ?: return null
         val terminalView = event.getData(TerminalView.DATA_KEY) ?: return null
-        return TerminalHost.getInstance(project).sessionIdentityFor(terminalView)
+        return TerminalHost.getInstance(project).sessionKeyFor(terminalView)
     }
 }

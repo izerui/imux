@@ -41,7 +41,7 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(
             "必须监听官方 TerminalOutputModel，而不是重新监听 Editor Document",
             navigator.normalized.contains("TerminalOutputModelListener") &&
-                navigator.normalized.contains("outputModels.active.value.addListener"),
+                    navigator.normalized.contains("outputModels.active.value.addListener"),
         )
         assertFalse(navigator.normalized.contains("DocumentListener"))
     }
@@ -298,7 +298,11 @@ class SessionMessageNavigatorSourceTest {
         val body = navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{')
 
         assertTrue("圆点应按 offset 映射到可视行", body.contains("offsetToVisualPosition(offset).line"))
-        assertTrue("总高度应按文档末尾的可视行数计算", body.contains("offsetToVisualPosition(document.textLength).line"))
+        assertTrue(
+            "总高度仍应按文档末尾映射到可视行",
+            body.contains("offsetToVisualPosition(textLength).line"),
+        )
+        assertTrue("视觉行缓存短暂不同步时应跳过本帧", body.contains("catch (_: IndexOutOfBoundsException)"))
         assertFalse("不能再用逻辑行号决定圆点位置", body.contains("document.getLineNumber(offset)"))
     }
 

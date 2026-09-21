@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.peer.PeerStateListener
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
 import com.intellij.ide.actions.CloseAction
@@ -32,20 +33,25 @@ import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.IdeFrame
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
+import java.awt.BorderLayout
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.JButton
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
+import javax.swing.JLabel
 import javax.swing.JLayeredPane
+import javax.swing.JPanel
 
 /**
  * 把终端 view 的组件挂到 editor tab 上，并在标签页关闭时结束会话。
@@ -102,6 +108,27 @@ class AgentTerminalFileEditor(
     private var keyEventsJob: Job? = null
     private var followBottomOnActivation = false
     private var disposed = false
+    private val peerSpinner = JLabel(AnimatedIcon.Default())
+    private val peerLabel = JLabel()
+    private val peerCancelButton =
+        JButton(ImuxBundle.message("action.peer.cancel")).apply {
+            isFocusable = false
+            addActionListener {
+                SessionMonitor.getInstance(project).peerCoordinator.cancelCurrentRun(virtualFile.sessionKey)
+            }
+        }
+    private val peerBanner =
+        JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            border = JBUI.Borders.empty(6, 12)
+            isOpaque = true
+            background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
+            add(peerSpinner)
+            add(peerLabel)
+            add(Box.createHorizontalGlue())
+            add(peerCancelButton)
+            isVisible = false
+        }
 
     /**
      * macOS 的 CloseContent（Command+W）从组件 DataContext 取 CloseTarget，平台默认目标
@@ -143,7 +170,15 @@ class AgentTerminalFileEditor(
             scrollToBottomAction.templatePresentation.description =
                 ImuxBundle.message("action.scroll.bottom.description")
             scrollButton?.update()
+            peerCancelButton.text = ImuxBundle.message("action.peer.cancel")
+            refreshPeerBanner()
         }
+        SessionMonitor.getInstance(project).peerCoordinator.addStateListener(
+            this,
+        ) { sessionKey ->
+            if (sessionKey == virtualFile.sessionKey) refreshPeerBanner()
+        }
+        refreshPeerBanner()
 
         // 终端输出在应用后台仍会为每次光标变化排 EDT 滚动任务。激活时先同步到
         // 最新位置，随后积压任务因不能向上回滚而全部成为 no-op，避免逐次追到底部。
@@ -200,45 +235,71 @@ class AgentTerminalFileEditor(
         startScrollTracking()
         startInputTracking()
 
-        return object : JBLayeredPane(), UiDataProvider {
-            init {
-                isOpaque = false
-                add(terminal)
-                setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
-                add(scrollButton)
-                setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
-                add(navigatorComponent)
-                setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
+        val terminalLayer =
+            object : JBLayeredPane(), UiDataProvider {
+                init {
+                    isOpaque = false
+                    add(terminal)
+                    setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
+                    add(scrollButton)
+                    setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
+                    add(navigatorComponent)
+                    setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
+                }
+
+                override fun uiDataSnapshot(sink: DataSink) {
+                    sink[CloseAction.CloseTarget.KEY] = closeTarget
+                }
+
+                override fun addNotify() {
+                    super.addNotify()
+                    scheduleScrollButtonRefresh()
+                }
+
+                override fun doLayout() {
+                    terminal.setBounds(0, 0, width, height)
+
+                    val horizontalInset = JBUI.scale(SCROLL_ROW_HORIZONTAL_INSET)
+                    val minimumButtonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE
+                    val toolbarWidth =
+                        maxOf(width - horizontalInset * 2, minimumButtonSize.width)
+                            .coerceAtMost(width.coerceAtLeast(0))
+                    val toolbarHeight = minimumButtonSize.height
+                    val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)
+                    val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
+                    scrollButton.setBounds(x, y, toolbarWidth, toolbarHeight)
+
+                    val navigatorWidth = messageNavigator.preferredWidth
+                    val navigatorX =
+                        (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
+                    navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
+                }
             }
-
-            override fun uiDataSnapshot(sink: DataSink) {
-                sink[CloseAction.CloseTarget.KEY] = closeTarget
-            }
-
-            override fun addNotify() {
-                super.addNotify()
-                scheduleScrollButtonRefresh()
-            }
-
-            override fun doLayout() {
-                terminal.setBounds(0, 0, width, height)
-
-                val horizontalInset = JBUI.scale(SCROLL_ROW_HORIZONTAL_INSET)
-                val minimumButtonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE
-                val toolbarWidth =
-                    maxOf(width - horizontalInset * 2, minimumButtonSize.width)
-                        .coerceAtMost(width.coerceAtLeast(0))
-                val toolbarHeight = minimumButtonSize.height
-                val x = ((width - toolbarWidth) / 2).coerceAtLeast(0)
-                val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
-                scrollButton.setBounds(x, y, toolbarWidth, toolbarHeight)
-
-                val navigatorWidth = messageNavigator.preferredWidth
-                val navigatorX =
-                    (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
-                navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
-            }
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(peerBanner, BorderLayout.NORTH)
+            add(terminalLayer, BorderLayout.CENTER)
         }
+    }
+
+    private fun refreshPeerBanner() {
+        val status = SessionMonitor.getInstance(project).peerCoordinator.status(virtualFile.sessionKey)
+        peerBanner.isVisible = status != null
+        if (status == null) {
+            peerSpinner.isVisible = false
+            peerCancelButton.isVisible = false
+        } else {
+            peerSpinner.isVisible = status.running
+            peerCancelButton.isVisible = status.running
+            peerLabel.text =
+                "  " +
+                        ImuxBundle.message(
+                            if (status.running) "action.peer.progress.reviewing" else "action.peer.enabled",
+                            status.targetAgentType.displayName,
+                        )
+        }
+        peerBanner.revalidate()
+        peerBanner.repaint()
     }
 
     private fun startScrollTracking() {

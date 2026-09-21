@@ -235,7 +235,7 @@ private fun lastIndexOfPreferredOccurrence(
         if (
             preferredRanges.any { range ->
                 absoluteOffset >= range.startAbsoluteOffset &&
-                    absoluteOffset + needle.length <= range.endAbsoluteOffset
+                        absoluteOffset + needle.length <= range.endAbsoluteOffset
             }
         ) {
             return found
@@ -612,8 +612,8 @@ internal class SessionMessageNavigator(
     /** 定宽 HTML 让 JBLabel 自己折行；转义是因为终端里的提问常带 `<` `>` 和 `&`。 */
     private fun wrappedHtml(text: String): String =
         "<html><body style='width:${JBUI.scale(PREVIEW_WIDTH)}px'>" +
-            StringUtil.escapeXmlEntities(text) +
-            "</body></html>"
+                StringUtil.escapeXmlEntities(text) +
+                "</body></html>"
 
     override fun dispose() {
         disposed = true
@@ -783,7 +783,8 @@ internal class SessionMessageNavigator(
         }
 
         /** 到最近那颗点的纵向距离，供 [contains] 判命中；一颗有效的点都没有时返回 null。 */
-        private fun nearestAnchorDistance(mouseY: Int): Int? = anchorPoints().minOfOrNull { kotlin.math.abs(it.y - mouseY) }
+        private fun nearestAnchorDistance(mouseY: Int): Int? =
+            anchorPoints().minOfOrNull { kotlin.math.abs(it.y - mouseY) }
 
         /**
          * 当前文档里仍然有效的锚点，连同它的行号和纵坐标。
@@ -795,15 +796,22 @@ internal class SessionMessageNavigator(
             val currentEditor = editor?.takeIf { !it.isDisposed } ?: return emptyList()
             val padding = JBUI.scale(RAIL_PADDING)
             val document = currentEditor.document
-            val outputStart =
-                virtualFile.terminalView.outputModels.active.value.startOffset
-                    .toAbsolute()
-            val visualLineCount =
-                currentEditor.offsetToVisualPosition(document.textLength).line + 1
-            return anchors.mapNotNull { anchor ->
-                val offset = relativeOffset(anchor, outputStart, document.textLength) ?: return@mapNotNull null
-                val line = currentEditor.offsetToVisualPosition(offset).line
-                AnchorPoint(anchor, line, markerY(line, visualLineCount, height, padding))
+            return try {
+                val textLength = document.textLength
+                val outputStart =
+                    virtualFile.terminalView.outputModels.active.value.startOffset
+                        .toAbsolute()
+                val visualLineCount =
+                    currentEditor.offsetToVisualPosition(textLength).line + 1
+                anchors.mapNotNull { anchor ->
+                    val offset = relativeOffset(anchor, outputStart, textLength) ?: return@mapNotNull null
+                    val line = currentEditor.offsetToVisualPosition(offset).line
+                    AnchorPoint(anchor, line, markerY(line, visualLineCount, height, padding))
+                }
+            } catch (_: IndexOutOfBoundsException) {
+                // Terminal 正在替换 output 文档时，Document 长度与 Editor 视觉行缓存会短暂错位。
+                // 绘制路径只能跳过这一帧，不能把异常抛回 EDT；后续内容事件会再次 repaint。
+                emptyList()
             }
         }
     }
@@ -948,8 +956,10 @@ private fun highlightingRangesViaReflection(
     val terminalLineIndexClass = Class.forName("org.jetbrains.plugins.terminal.view.TerminalLineIndex")
     val ofMethod = terminalOffsetClass.getMethod("of", Long::class.javaPrimitiveType).apply { isAccessible = true }
     val outputModelClass = TerminalOutputModel::class.java
-    val getHighlightingAt = outputModelClass.getMethod("getHighlightingAt", terminalOffsetClass).apply { isAccessible = true }
-    val getLineByOffset = outputModelClass.getMethod("getLineByOffset", terminalOffsetClass).apply { isAccessible = true }
+    val getHighlightingAt =
+        outputModelClass.getMethod("getHighlightingAt", terminalOffsetClass).apply { isAccessible = true }
+    val getLineByOffset =
+        outputModelClass.getMethod("getLineByOffset", terminalOffsetClass).apply { isAccessible = true }
     val getEndOfLine = outputModelClass.getMethod(
         "getEndOfLine", terminalLineIndexClass, Boolean::class.javaPrimitiveType,
     ).apply { isAccessible = true }

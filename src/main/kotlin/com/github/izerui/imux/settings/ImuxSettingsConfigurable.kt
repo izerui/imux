@@ -20,6 +20,13 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
     override fun createPanel(): DialogPanel {
         val settings = ImuxSettings.getInstance()
         val agentCheckBoxes = mutableMapOf<AgentType, JBCheckBox>()
+        val defaultPeerPrompt =
+            if (ImuxBundle.currentLanguage().id in setOf("zh_CN", "zh_TW")) {
+                PeerCoordinator.DEFAULT_PROMPT_ZH
+            } else {
+                PeerCoordinator.DEFAULT_PROMPT_EN
+            }
+        lateinit var promptArea: JBTextArea
 
         return panel {
             row(ImuxBundle.message("settings.interface.language")) {
@@ -80,20 +87,19 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                         .comment(ImuxBundle.message("settings.peer.max.rounds.comment"))
                 }
                 row(ImuxBundle.message("settings.peer.prompt")) {
-                    var promptArea: JBTextArea? = null
                     promptArea = textArea()
                         .applyToComponent { rows = 8 }
                         .align(AlignX.FILL)
                         .bindText(
                             MutableProperty(
-                                { settings.state.peerPromptOverride ?: PeerCoordinator.DEFAULT_PROMPT_ZH },
-                                { settings.state.peerPromptOverride = it.takeUnless { v -> v == PeerCoordinator.DEFAULT_PROMPT_ZH } },
+                                { settings.state.peerPromptOverride ?: defaultPeerPrompt },
+                                { settings.state.peerPromptOverride = it.takeUnless { v -> v == defaultPeerPrompt } },
                             ),
                         ).component
                 }.resizableRow()
                 row {
                     button(ImuxBundle.message("settings.peer.prompt.restore")) {
-                        settings.state.peerPromptOverride = null
+                        promptArea.text = defaultPeerPrompt
                     }
                 }
             }

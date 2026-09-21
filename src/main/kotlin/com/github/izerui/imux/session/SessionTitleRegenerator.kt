@@ -190,7 +190,7 @@ internal fun sessionTranscriptMessages(
     val messages = mutableListOf<SessionTranscriptMessage>()
     Files.newBufferedReader(session.filePath).useLines { lines ->
         for (line in lines.take(maxLines)) {
-            parseTranscriptMessage(line, session.agentType, maxMessageChars)?.let(messages::add)
+            transcriptMessage(line, session.agentType, maxMessageChars)?.let(messages::add)
             if (messages.size >= maxMessages) break
         }
     }
@@ -267,7 +267,7 @@ internal fun parseNavigatorTranscriptMessage(
         } else {
             redactNavigatorImagePayloads(line).takeIf { it.length <= MAX_JSON_LINE_CHARS } ?: return null
         }
-    return parseTranscriptMessage(
+    return transcriptMessage(
         parseableLine,
         agentType,
         maxMessageChars,
@@ -275,7 +275,7 @@ internal fun parseNavigatorTranscriptMessage(
     )
 }
 
-private fun parseTranscriptMessage(
+internal fun transcriptMessage(
     line: String,
     agentType: AgentType,
     maxMessageChars: Int,

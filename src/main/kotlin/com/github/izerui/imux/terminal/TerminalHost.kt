@@ -322,7 +322,7 @@ class TerminalHost(
             // 与仍在运行的原终端抢同一个会话。曾因两边 key 不一致而静默失败过。
             LOG.warn(
                 "换 key 失败：找不到 key=$oldKey 的完整终端，目标 $newKey。" +
-                    "view keys=${views.keys}, file keys=${files.keys}",
+                        "view keys=${views.keys}, file keys=${files.keys}",
             )
             return false
         }
@@ -364,7 +364,7 @@ class TerminalHost(
         val fileEditorManager = FileEditorManager.getInstance(project)
         val wasSelected =
             duplicateFile != null &&
-                fileEditorManager.selectedFiles.any { it === duplicateFile }
+                    fileEditorManager.selectedFiles.any { it === duplicateFile }
         turnWatcher.unwatch(key)
         if (duplicateFile != null && duplicateFile !== sourceFile) {
             fileEditorManager.closeFile(duplicateFile)
@@ -439,6 +439,12 @@ class TerminalHost(
         files.values
             .firstOrNull { it.terminalView === view }
             ?.let { file -> file.sessionId?.let { file.agentType to it } }
+
+    /** 结对编程可在会话落盘前使用内部记账 key；不得用于复制、恢复或交接。 */
+    internal fun sessionKeyFor(view: TerminalView): String? =
+        files.values
+            .firstOrNull { it.terminalView === view }
+            ?.sessionKey
 
     /**
      * [command] 收的是 tabId 而不是拼好的命令行：Windows 上启动命令里要嵌入

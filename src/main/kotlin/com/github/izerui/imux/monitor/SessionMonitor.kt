@@ -28,6 +28,7 @@ import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.serviceOrNull
@@ -192,7 +193,10 @@ class SessionMonitor(
                 resolveShell(
                     System.getenv("SHELL"),
                     isWindows = SystemInfo.isWindows,
-                    configuredShell = TerminalLocalOptions.getInstance().shellPath,
+                    configuredShell =
+                        ApplicationManager.getApplication()?.let {
+                            TerminalLocalOptions.getInstance().shellPath
+                        },
                 ),
         )
     }
@@ -204,6 +208,15 @@ class SessionMonitor(
             model = model,
             viewOf = { key -> TerminalHost.getInstance(project).terminalViewOf(key) },
             coroutineScope = coroutineScope,
+            shell =
+                resolveShell(
+                    System.getenv("SHELL"),
+                    isWindows = SystemInfo.isWindows,
+                    configuredShell =
+                        ApplicationManager.getApplication()?.let {
+                            TerminalLocalOptions.getInstance().shellPath
+                        },
+                ),
         )
 
     private val driftCoordinator =
@@ -219,6 +232,7 @@ class SessionMonitor(
         )
 
     init {
+        Disposer.register(this, peerCoordinator)
         // 扫描结果、新建 pending、pending 绑定真实 id 都由 model 产出。
         // monitor 必须透传这些变化，否则界面只能等下一次运行态轮询才刷新。
         model.addListener(::notifyListeners)
@@ -359,6 +373,7 @@ class SessionMonitor(
 
     /** 标签关闭后立即撤销运行态，不能让窗口标题再等下一轮文件轮询。 */
     fun sessionClosed(key: String) {
+        peerCoordinator.unbind(key)
         model.cancelPending(key)
         transcriptGenerations.remove(key)
         if (key !in runningIds) return
@@ -386,6 +401,9 @@ class SessionMonitor(
     fun start() {
         if (!started.runOnceResetOnFailure(::startWatching)) return
         clearUnreadOnTabSwitch()
+        TerminalHost.getInstance(project).addSessionKeyMigratedListener(this) { from, to ->
+            peerCoordinator.migrateSessionKey(from, to)
+        }
         // 接在 start 而非构造函数里：这两件都是运行时行为，需要 TerminalHost 服务已经可用。
         // 顺序有意义：先把 key 迁到真实 id，标题同步才查得到对应的会话。
         model.addListener {
