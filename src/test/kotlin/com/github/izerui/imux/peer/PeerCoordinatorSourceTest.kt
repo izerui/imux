@@ -80,4 +80,16 @@ class PeerCoordinatorSourceTest {
         assertFalse("runReviewAndInject 不应递增计数", reviewFun.contains("incrementAndGet()"))
         assertTrue("审阅前只检查已注入轮数", reviewFun.contains(".get()"))
     }
+
+    @Test
+    fun `关闭自动发送只把反馈填入输入框`() {
+        val reviewFun =
+            coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
+        val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
+
+        assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, feedback)"))
+        assertTrue("暂存反馈应使用括号粘贴模式", stageFun.contains(".useBracketedPasteMode()"))
+        assertTrue("暂存反馈应写入终端输入区", stageFun.contains(".send(prompt)"))
+        assertFalse("暂存反馈不应执行发送", stageFun.contains(".shouldExecute()"))
+    }
 }

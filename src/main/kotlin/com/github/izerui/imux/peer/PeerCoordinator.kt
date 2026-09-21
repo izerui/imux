@@ -8,7 +8,6 @@ import com.github.izerui.imux.session.scanTail
 import com.github.izerui.imux.session.sessionTranscriptMessages
 import com.github.izerui.imux.session.transcriptMessage
 import com.github.izerui.imux.settings.ImuxSettings
-import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
@@ -257,7 +256,7 @@ class PeerCoordinator(
             if (ImuxSettings.getInstance().state.peerAutoInject) {
                 injectFeedback(mainSessionKey, feedback)
             } else {
-                notifyForConfirmation(mainSessionKey, binding, feedback)
+                stageFeedback(mainSessionKey, feedback)
             }
         }
     }
@@ -349,26 +348,19 @@ class PeerCoordinator(
             .send(prompt)
     }
 
-    private fun notifyForConfirmation(
+    private fun stageFeedback(
         mainSessionKey: String,
-        binding: PeerBinding,
         prompt: String,
     ) {
-        val notification =
-            NotificationGroupManager
-                .getInstance()
-                .getNotificationGroup(NOTIFICATION_GROUP)
-                .createNotification(
-                    ImuxBundle.message("action.peer.notification.title"),
-                    ImuxBundle.message("action.peer.notification.content", binding.targetAgentType.displayName),
-                    NotificationType.INFORMATION,
-                )
-        notification.addAction(
-            NotificationAction.createSimpleExpiring(ImuxBundle.message("action.peer.notification.inject")) {
-                if (bindings[mainSessionKey] == binding) injectFeedback(mainSessionKey, prompt)
-            },
-        )
-        notification.notify(project)
+        val view = viewOf(mainSessionKey)
+        if (view == null) {
+            LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
+            return
+        }
+        LOG.info("结对编程：暂存反馈到主会话输入框 $mainSessionKey（${prompt.length} 字符）")
+        view.createSendTextBuilder()
+            .useBracketedPasteMode()
+            .send(prompt)
     }
 
     private fun notifyCliError(binding: PeerBinding, detail: String) {
