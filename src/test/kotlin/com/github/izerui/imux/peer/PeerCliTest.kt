@@ -2,7 +2,6 @@ package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Path
@@ -76,14 +75,45 @@ class PeerCliTest {
                 "sleep",
             )
 
-        var output: String?
+        var thrown: PeerCliException? = null
         val elapsed =
             measureTime {
-                output = runPeerCli(command, Path.of("."), "x".repeat(1_000_000), 1) {}
+                try {
+                    runPeerCli(command, Path.of("."), "x".repeat(1_000_000), 1) {}
+                } catch (e: PeerCliException) {
+                    thrown = e
+                }
             }
 
-        assertNull(output)
+        assertTrue("超时应抛出 PeerCliException", thrown != null)
+        assertTrue("异常消息应包含超时信息", thrown!!.message!!.contains("timed out"))
         assertTrue("超时应在数秒内生效，实际 $elapsed", elapsed.inWholeSeconds < 5)
+    }
+
+    @Test
+    fun `非零退出码携带 stderr 内容进入异常消息`() {
+        val java = Path.of(System.getProperty("java.home"), "bin", "java").toString()
+        val command =
+            listOf(
+                java,
+                "-cp",
+                System.getProperty("java.class.path"),
+                PeerCliTest::class.java.name,
+                "fail",
+            )
+
+        var thrown: PeerCliException? = null
+        try {
+            runPeerCli(command, Path.of("."), "prompt", 5) {}
+        } catch (e: PeerCliException) {
+            thrown = e
+        }
+
+        assertTrue("非零退出应抛出 PeerCliException", thrown != null)
+        assertTrue(
+            "异常消息应包含 stderr 内容，实际: ${thrown!!.message}",
+            thrown.message!!.contains("authentication failed"),
+        )
     }
 
     companion object {
@@ -98,7 +128,7 @@ class PeerCliTest {
                 }
 
                 "fail" -> {
-                    print("partial")
+                    System.err.print("authentication failed: invalid token")
                     exitProcess(3)
                 }
             }

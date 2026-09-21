@@ -50,14 +50,15 @@ internal fun runPeerCli(
         val started =
             ProcessBuilder(command)
                 .directory(cwd.toFile())
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start()
         process = started
         onProcess(started)
 
-        val output = StringBuilder()
+        val output = StringBuffer()
+        val stderr = StringBuffer()
         val finishedWriting = CountDownLatch(1)
         val finishedReading = CountDownLatch(1)
+        val finishedStderr = CountDownLatch(1)
         Thread {
             runCatching {
                 started.outputStream.bufferedWriter().use { it.write(prompt) }
@@ -71,11 +72,26 @@ internal fun runPeerCli(
             runCatching {
                 started.inputStream.bufferedReader().use { reader ->
                     val buffer = CharArray(2_048)
+                    var markerFound = false
+                    val markerBuf = StringBuilder()
                     while (true) {
                         val count = reader.read(buffer)
                         if (count < 0) break
-                        val room = MAX_PEER_OUTPUT_CHARS - output.length
-                        if (room > 0) output.appendRange(buffer, 0, minOf(room, count))
+                        if (markerFound) {
+                            val room = MAX_PEER_OUTPUT_CHARS - output.length
+                            if (room > 0) output.append(buffer, 0, minOf(room, count))
+                        } else if (markerBuf.length < MAX_MARKER_SEARCH_CHARS) {
+                            markerBuf.append(buffer, 0, count)
+                            val idx = markerBuf.indexOf(PEER_OUTPUT_MARKER)
+                            if (idx >= 0) {
+                                markerFound = true
+                                val afterMarker = markerBuf.substring(idx + PEER_OUTPUT_MARKER.length)
+                                if (afterMarker.isNotEmpty()) {
+                                    val room = MAX_PEER_OUTPUT_CHARS - output.length
+                                    if (room > 0) output.append(afterMarker, 0, minOf(room, afterMarker.length))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -84,14 +100,36 @@ internal fun runPeerCli(
             isDaemon = true
             name = "imux-peer-cli-reader"
         }.start()
+        Thread {
+            runCatching {
+                started.errorStream.bufferedReader().use { reader ->
+                    val buffer = CharArray(2_048)
+                    while (true) {
+                        val count = reader.read(buffer)
+                        if (count < 0) break
+                        val room = MAX_STDERR_CHARS - stderr.length
+                        if (room > 0) stderr.append(buffer, 0, minOf(room, count))
+                    }
+                }
+            }
+            finishedStderr.countDown()
+        }.apply {
+            isDaemon = true
+            name = "imux-peer-cli-stderr"
+        }.start()
 
-        if (!started.waitFor(timeoutSeconds, TimeUnit.SECONDS)) return null
+        if (!started.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            throw PeerCliException("CLI timed out after ${timeoutSeconds}s")
+        }
         finishedWriting.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         finishedReading.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        if (started.exitValue() != 0) return null
+        finishedStderr.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (started.exitValue() != 0) {
+            val detail = stderr.toString().trim().ifEmpty { "exit code ${started.exitValue()}" }
+            throw PeerCliException(detail)
+        }
         output
             .toString()
-            .substringAfter(PEER_OUTPUT_MARKER, missingDelimiterValue = "")
             .trim()
             .takeIf(String::isNotEmpty)
     } finally {
@@ -100,11 +138,15 @@ internal fun runPeerCli(
     }
 }
 
+internal class PeerCliException(message: String) : RuntimeException(message)
+
 internal fun destroyProcessTree(process: Process) {
     process.descendants().forEach(ProcessHandle::destroyForcibly)
     process.destroyForcibly()
 }
 
 private const val MAX_PEER_OUTPUT_CHARS = 16_000
+private const val MAX_MARKER_SEARCH_CHARS = 64_000
+private const val MAX_STDERR_CHARS = 4_000
 private const val READ_DRAIN_TIMEOUT_SECONDS = 2L
 internal const val PEER_OUTPUT_MARKER = "__IMUX_PEER_OUTPUT_BEGIN__"

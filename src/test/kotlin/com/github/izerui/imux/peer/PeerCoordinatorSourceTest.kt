@@ -16,9 +16,10 @@ class PeerCoordinatorSourceTest {
         SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt").normalized
 
     @Test
-    fun `同一会话用运行门避免副驾驶重入`() {
-        assertTrue(coordinator.contains("activeRuns.putIfAbsent(sessionKey, run)"))
-        assertTrue(coordinator.contains("activeRuns[sessionKey] === run"))
+    fun `并发调度由 PeerSessionGuard 保护`() {
+        assertTrue(coordinator.contains("guard.tryStart()"))
+        assertTrue(coordinator.contains("guard.onFinished(run)"))
+        assertTrue(coordinator.contains("guard.isActive(run)"))
     }
 
     @Test
@@ -49,5 +50,17 @@ class PeerCoordinatorSourceTest {
     fun `协调器绑定到项目生命周期`() {
         assertTrue(monitor.contains("Disposer.register(this, peerCoordinator)"))
         assertTrue(coordinator.contains("override fun dispose()"))
+    }
+
+    @Test
+    fun `取消和解绑通过 guard 清除状态`() {
+        assertTrue(coordinator.contains("guards[sessionKey]?.cancel()"))
+        assertTrue(coordinator.contains("guards.remove(sessionKey)?.cancel()"))
+    }
+
+    @Test
+    fun `只有用户主动消息重置轮次计数`() {
+        assertTrue(coordinator.contains("peerInjectedSessions.remove(sessionKey)"))
+        assertTrue(coordinator.contains("peerInjectedSessions.add(mainSessionKey)"))
     }
 }

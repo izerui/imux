@@ -82,4 +82,18 @@ class PeerConversationTest {
 
         assertEquals("", peerTask(session))
     }
+
+    @Test
+    fun `相同 AgentType 的绑定有不同 generation`() {
+        val b1 = PeerBinding(AgentType.CLAUDE)
+        val b2 = PeerBinding(AgentType.CLAUDE)
+        assertFalse("解绑后重新绑定不应与旧绑定相等", b1 == b2)
+    }
+
+    @Test
+    fun `迁移保留原 generation`() {
+        val original = PeerBinding(AgentType.CLAUDE, task = "修复 bug")
+        val migrated = original.copy(task = "")
+        assertEquals(original.generation, migrated.generation)
+    }
 }
