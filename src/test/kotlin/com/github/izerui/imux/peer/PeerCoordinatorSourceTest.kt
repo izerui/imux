@@ -22,19 +22,6 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `项目变更检查发生在副驾驶类型分派之前`() {
-        val reviewBody =
-            SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
-                .bodyAfter("private suspend fun runReviewAndInject(", '{')
-        val changeCheck = reviewBody.indexOf("projectHasChanges(projectPath)")
-        val agentDispatch = reviewBody.indexOf("peerCliCommand(shell, binding.targetAgentType, projectPath)")
-
-        assertTrue("结对编程必须先检查项目变更", changeCheck >= 0)
-        assertTrue("副驾驶命令必须按用户选择的智能体生成", agentDispatch >= 0)
-        assertTrue("项目无修改时不应进入任何副驾驶命令分派", changeCheck < agentDispatch)
-    }
-
-    @Test
     fun `会话迁移同步结对状态`() {
         assertTrue(monitor.contains("peerCoordinator.migrateSessionKey(from, to)"))
         assertTrue(coordinator.contains("fun migrateSessionKey("))

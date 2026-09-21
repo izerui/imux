@@ -167,11 +167,6 @@ class PeerCoordinator(
         initialBinding: PeerBinding,
         run: PeerRun,
     ) {
-        if (projectHasChanges(projectPath) == false) {
-            roundCounts[mainSessionKey]?.set(0)
-            LOG.info("结对编程：项目没有 Git 变更，跳过副驾驶")
-            return
-        }
         run.reviewing.set(true)
         withContext(Dispatchers.EDT) {
             if (runIsCurrent(mainSessionKey, initialBinding, run)) notifyStateChanged(mainSessionKey)
