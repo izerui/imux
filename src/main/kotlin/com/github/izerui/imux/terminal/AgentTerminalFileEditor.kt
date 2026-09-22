@@ -52,7 +52,6 @@ import java.awt.BorderLayout
 import javax.swing.Box
 import javax.swing.BoxLayout
 import java.beans.PropertyChangeListener
-import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JLayeredPane
@@ -115,18 +114,21 @@ class AgentTerminalFileEditor(
     private var followBottomOnActivation = false
     private var disposed = false
     private val peerIcon = JLabel()
+    private val peerBusyIcon = AnimatedIcon.Default()
     private val peerLabel = JLabel()
     private val peerCancelButton =
         ActionLink(ImuxBundle.message("action.peer.cancel")) {
             SessionMonitor.getInstance(project).peerCoordinator.cancelCurrentRun(virtualFile.sessionKey)
         }.apply {
             isFocusable = false
+            border = JBUI.Borders.emptyLeft(8)
         }
     private val peerCloseButton =
         ActionLink(ImuxBundle.message("action.peer.close")) {
             SessionMonitor.getInstance(project).peerCoordinator.unbind(virtualFile.sessionKey)
         }.apply {
             isFocusable = false
+            border = JBUI.Borders.emptyLeft(8)
         }
     private val peerEnableLink: ActionLink =
         ActionLink(ImuxBundle.message("action.peer.enable.hint")) { event ->
@@ -156,6 +158,7 @@ class AgentTerminalFileEditor(
             refreshPeerBanner()
         }.apply {
             isFocusable = false
+            border = JBUI.Borders.emptyLeft(12)
         }
     private val peerBanner =
         JPanel().apply {
@@ -167,11 +170,8 @@ class AgentTerminalFileEditor(
             add(Box.createHorizontalStrut(JBUI.scale(6)))
             add(peerLabel)
             add(peerEnableLink)
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
             add(peerDismissLink)
-            add(Box.createHorizontalStrut(JBUI.scale(8)))
             add(peerCancelButton)
-            add(Box.createHorizontalStrut(JBUI.scale(8)))
             add(peerCloseButton)
             isVisible = true
         }
@@ -355,11 +355,8 @@ class AgentTerminalFileEditor(
             peerCancelButton.isVisible = status.running
             peerCloseButton.isVisible = !status.running
             peerIcon.icon =
-                if (status.running && status.progress != null) {
-                    progressIcon(status.progress.current.kind)
-                } else {
-                    AllIcons.General.InspectionsOK
-                }
+                if (status.running) peerBusyIcon
+                else AllIcons.CodeWithMe.CwmVerified
             peerLabel.text =
                 "  " +
                         if (status.running && status.progress != null) {
@@ -375,18 +372,6 @@ class AgentTerminalFileEditor(
         peerBanner.revalidate()
         peerBanner.repaint()
     }
-
-    private fun progressIcon(kind: PeerProgressKind): Icon =
-        when (kind) {
-            PeerProgressKind.STARTING -> AnimatedIcon.Default()
-            PeerProgressKind.THINKING -> AllIcons.Actions.Lightning
-            PeerProgressKind.TOOL_STARTED -> AnimatedIcon.Default()
-            PeerProgressKind.TOOL_FINISHED -> AllIcons.Actions.Checked
-            PeerProgressKind.RETRYING -> AllIcons.General.Warning
-            PeerProgressKind.RESPONDING -> AllIcons.Actions.Edit
-            PeerProgressKind.COMPLETED -> AllIcons.General.InspectionsOK
-            PeerProgressKind.FAILED -> AllIcons.General.Error
-        }
 
     private fun progressSummary(
         agentName: String,

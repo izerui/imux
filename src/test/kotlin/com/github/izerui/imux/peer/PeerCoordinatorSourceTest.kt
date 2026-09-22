@@ -54,6 +54,22 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
+    fun `横幅三种状态使用正确的图标`() {
+        val refreshFun = editor.substringAfter("fun refreshPeerBanner()").substringBefore("private fun progressSummary")
+        val nullBranch = refreshFun.substringAfter("if (status == null)").substringBefore("} else {")
+        val boundBranch = refreshFun.substringAfter("} else {").substringBefore("peerBanner.revalidate()")
+
+        assertTrue("未绑定时应显示 ProfileCPU 图标", nullBranch.contains("peerIcon.icon = AllIcons.Actions.ProfileCPU"))
+        assertFalse("未绑定分支不应出现旋转图标", nullBranch.contains("peerBusyIcon"))
+
+        assertTrue("运行中应复用缓存的旋转图标", boundBranch.contains("if (status.running) peerBusyIcon"))
+        assertTrue("就绪时应显示结对验证图标", boundBranch.contains("AllIcons.CodeWithMe.CwmVerified"))
+
+        assertTrue("旋转图标应缓存为字段", editor.contains("private val peerBusyIcon = AnimatedIcon.Default()"))
+        assertFalse("refreshPeerBanner 不应新建 AnimatedIcon", refreshFun.contains("AnimatedIcon.Default()"))
+    }
+
+    @Test
     fun `协调器绑定到项目生命周期`() {
         assertTrue(monitor.contains("Disposer.register(this, peerCoordinator)"))
         assertTrue(coordinator.contains("override fun dispose()"))
