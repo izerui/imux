@@ -147,6 +147,16 @@ enum class DeleteResult {
     CLOSE_REJECTED,
 }
 
+internal fun executeDelete(
+    isRunningWithoutTab: Boolean,
+    closeTab: () -> Boolean,
+    onAccepted: () -> Unit,
+): DeleteResult = when {
+    isRunningWithoutTab -> DeleteResult.RUNNING_WITHOUT_TAB
+    !closeTab() -> DeleteResult.CLOSE_REJECTED
+    else -> { onAccepted(); DeleteResult.ACCEPTED }
+}
+
 internal fun dispatchCompletedPeerReview(
     sessionId: String,
     running: Set<String>,
@@ -446,16 +456,22 @@ class SessionMonitor(
      */
     fun deleteSession(session: AgentSession): DeleteResult {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        if (isRunningWithoutTab(session.id)) return DeleteResult.RUNNING_WITHOUT_TAB
         val host = TerminalHost.getInstance(project)
-        if (!host.closeTabBySessionKey(session.id)) return DeleteResult.CLOSE_REJECTED
-        sessionClosed(session.id)
+        val result = executeDelete(
+            isRunningWithoutTab = isRunningWithoutTab(session.id),
+            closeTab = { host.closeTabBySessionKey(session.id) },
+            onAccepted = {
+                sessionClosed(session.id)
+                unreadTracker.clearUnread(session.id)
+            },
+        )
+        if (result != DeleteResult.ACCEPTED) return result
 
         coroutineScope.launch(NonCancellable + Dispatchers.IO) {
-            val result = runCatching { java.nio.file.Files.deleteIfExists(session.filePath) }
+            val ioResult = runCatching { java.nio.file.Files.deleteIfExists(session.filePath) }
             withContext(Dispatchers.EDT) {
                 if (project.isDisposed) return@withContext
-                result.onFailure { error ->
+                ioResult.onFailure { error ->
                     LOG.warn("删除会话文件失败: ${session.filePath}", error)
                     NotificationGroupManager
                         .getInstance()
@@ -473,7 +489,7 @@ class SessionMonitor(
                 refresh()
             }
         }
-        return DeleteResult.ACCEPTED
+        return result
     }
 
     /**
