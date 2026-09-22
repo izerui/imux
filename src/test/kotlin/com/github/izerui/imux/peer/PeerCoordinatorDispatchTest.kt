@@ -71,7 +71,7 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
-    fun `括号粘贴模式拒绝时不发送原始文本`() {
+    fun `自动反馈使用括号粘贴并始终提交`() {
         val calls = mutableListOf<String>()
         val builder = Proxy.newProxyInstance(
             TerminalSendTextBuilder::class.java.classLoader,
@@ -79,18 +79,18 @@ class PeerCoordinatorDispatchTest {
         ) { proxy, method, args ->
             calls += method.name
             when (method.name) {
-                "requireBracketedPasteMode", "shouldExecute" -> proxy
-                "trySend" -> {
+                "useBracketedPasteMode", "shouldExecute" -> proxy
+                "send" -> {
                     assertEquals("first line\nsecond line", args?.single())
-                    false
+                    null
                 }
                 else -> error("不应调用 ${method.name}")
             }
         } as TerminalSendTextBuilder
 
-        assertFalse(trySendPeerFeedback(builder, "first line\nsecond line"))
+        assertTrue(trySendPeerFeedback(builder, "first line\nsecond line"))
         assertEquals(
-            listOf("requireBracketedPasteMode", "shouldExecute", "trySend"),
+            listOf("useBracketedPasteMode", "shouldExecute", "send"),
             calls,
         )
     }

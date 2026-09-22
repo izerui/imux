@@ -155,20 +155,18 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `自动反馈只在安全粘贴受理后登记轮次`() {
+    fun `自动反馈使用括号粘贴但不以能力探测阻断发送`() {
         val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
         val sendPos = injectFun.indexOf("trySendPeerFeedback(view.createSendTextBuilder(), prompt)")
-        val successPos = injectFun.indexOf("if (sent) break")
-        val failurePos = injectFun.indexOf("if (!sent) {")
         val countPos = injectFun.indexOf("incrementAndGet()")
         assertTrue("应尝试强制括号粘贴发送", sendPos >= 0)
-        assertTrue("成功后应停止重试", successPos > sendPos)
-        assertTrue("未受理时应在更新计数前返回", failurePos > successPos && failurePos < countPos)
+        assertTrue("发送结果应在更新计数前确认", countPos > sendPos)
+        assertFalse("不应用能力探测阻断终端发送", coordinator.contains("requireBracketedPasteMode"))
         assertTrue(
-            "发送函数应要求括号粘贴并执行",
+            "发送函数应使用括号粘贴并执行",
             SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
                 .compact(coordinator)
-                .contains("builder.requireBracketedPasteMode().shouldExecute().trySend(prompt)"),
+                .contains("builder.useBracketedPasteMode().shouldExecute().send(prompt)"),
         )
     }
 

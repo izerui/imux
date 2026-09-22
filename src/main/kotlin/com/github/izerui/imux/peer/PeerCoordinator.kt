@@ -445,28 +445,33 @@ class PeerCoordinator internal constructor(
         run: PeerRun,
         guard: PeerSessionGuard,
     ) {
+        if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
         var hint: PeerFeedbackHint? = null
         var sent = false
-        for (attempt in 0 until SEND_READY_ATTEMPTS) {
-            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
-            if (sendAutoFeedback != null) {
+        if (sendAutoFeedback != null) {
+            for (attempt in 0 until SEND_READY_ATTEMPTS) {
+                if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
                 sent = sendAutoFeedback.invoke(mainSessionKey, prompt)
-            } else {
-                val view = viewOf(mainSessionKey)
-                if (view == null) {
-                    LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
-                    return
-                }
-                val outputModel = view.outputModels.active.value
-                val sendOffset = outputModel.endOffset.toAbsolute()
-                sent = trySendPeerFeedback(view.createSendTextBuilder(), prompt)
-                if (sent) hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
+                if (sent) break
+                if (attempt < SEND_READY_ATTEMPTS - 1) delay(SEND_READY_RETRY_MILLIS)
             }
-            if (sent) break
-            if (attempt < SEND_READY_ATTEMPTS - 1) delay(SEND_READY_RETRY_MILLIS)
+        } else {
+            sent =
+                run {
+                    val view = viewOf(mainSessionKey)
+                    if (view == null) {
+                        LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
+                        return
+                    }
+                    val outputModel = view.outputModels.active.value
+                    val sendOffset = outputModel.endOffset.toAbsolute()
+                    sent = trySendPeerFeedback(view.createSendTextBuilder(), prompt)
+                    if (sent) hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
+                    sent
+                }
         }
         if (!sent) {
-            LOG.warn("结对编程：主会话终端未进入括号粘贴模式，反馈未发送 $mainSessionKey")
+            LOG.warn("结对编程：主会话终端未受理反馈 $mainSessionKey")
             return
         }
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
@@ -576,9 +581,10 @@ Nothing new to add this round — no observation, question, idea, or suggestion?
 }
 
 internal fun trySendPeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
-    builder.requireBracketedPasteMode()
+    builder.useBracketedPasteMode()
         .shouldExecute()
-        .trySend(prompt)
+        .send(prompt)
+        .let { true }
 
 internal fun latestConversation(
     messages: List<SessionTranscriptMessage>,
