@@ -68,29 +68,54 @@ class ClaudeSessionReaderTest {
         assertEquals("模型重新生成标题", reader().read("/Users/demo/proj").single().title)
     }
 
-    /**
-     * 实测并非每个会话都有 ai-title（同项目 6 个会话有 3 个没有，且与轮数无关），
-     * 退到 id 短码毫无信息量，因此改为退到首条用户消息——与 codex 侧一致。
-     */
     @Test
-    fun `没有 ai-title 时回退为首条用户消息`() {
-        File(projectDir(), "bbbb-2222.jsonl")
-            .writeText("""{"type":"user","message":{"content":"帮我看下这个报错"}}""")
+    fun `没有 ai-title 时回退为最后一条用户消息`() {
+        File(projectDir(), "bbbb-2222.jsonl").writeText(
+            """
+            {"type":"user","message":{"content":"第一句话"}}
+            {"type":"user","message":{"content":"最后一句话"}}
+            """.trimIndent(),
+        )
 
-        assertEquals("帮我看下这个报错", reader().read("/Users/demo/proj")[0].title)
+        assertEquals("最后一句话", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test
-    fun `回退时跳过工具结果与系统注入内容`() {
+    fun `回退时跳过工具结果、系统注入内容和中断标记`() {
         File(projectDir(), "bbbb-3333.jsonl").writeText(
             """
             {"type":"user","message":{"content":"<ide_opened_file>打开了某文件</ide_opened_file>"}}
             {"type":"user","message":{"content":[{"type":"tool_result","content":"工具输出"}]}}
             {"type":"user","message":{"content":"这才是我说的话"}}
+            {"type":"user","message":{"content":"[Request interrupted by user]"}}
             """.trimIndent(),
         )
 
         assertEquals("这才是我说的话", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `方括号开头的正常用户消息不被跳过`() {
+        File(projectDir(), "bbbb-5555.jsonl").writeText(
+            """
+            {"type":"user","message":{"content":"第一句话"}}
+            {"type":"user","message":{"content":"[proxy] enabled via 127.0.0.1:7890"}}
+            """.trimIndent(),
+        )
+
+        assertEquals("[proxy] enabled via 127.0.0.1:7890", reader().read("/Users/demo/proj")[0].title)
+    }
+
+    @Test
+    fun `content 为数组时从 text 块中提取标题`() {
+        File(projectDir(), "bbbb-6666.jsonl").writeText(
+            """
+            {"type":"user","message":{"content":"第一句话"}}
+            {"type":"user","message":{"content":[{"type":"text","text":"最后一句多模态消息"}]}}
+            """.trimIndent(),
+        )
+
+        assertEquals("最后一句多模态消息", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test

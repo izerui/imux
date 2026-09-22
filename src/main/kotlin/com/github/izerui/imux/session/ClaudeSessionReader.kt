@@ -52,12 +52,12 @@ class ClaudeSessionReader(
 
             AgentSession(
                 id = id,
-                // 回退链：CLI 生成的标题 -> history.jsonl 里的首条 prompt
-                //         -> 文件里的首条用户消息 -> id 短码
+                // 回退链：CLI 生成的标题 -> 文件里的最后一条用户消息
+                //         -> history.jsonl 里的首条 prompt -> id 短码
                 title =
                     extractTitle(file)
+                        ?: lastUserMessage(file)
                         ?: historyEntry?.display?.let(::truncate)
-                        ?: firstUserMessage(file)
                         ?: fallbackTitle(id),
                 agentType = AgentType.CLAUDE,
                 // 优先用会话文件里最后一条记录自带的时刻——它才是真正的「最后一次说话」。
@@ -100,23 +100,28 @@ class ClaudeSessionReader(
     private fun fallbackTitle(id: String) = ImuxBundle.message("session.default", id.take(8))
 
     /**
-     * 没有 ai-title 时的回退：取首条真实用户消息。
-     *
-     * 实测并非每个会话都有 ai-title（同一项目下 6 个会话有 3 个没有，且与轮数无关），
-     * 退到 id 短码毫无信息量。codex 侧本就是这么回退的，两边保持一致。
+     * 没有 ai-title 时的回退：取最后一条真实用户消息，与 `claude -r` 保持一致。
      *
      * 跳过工具结果回填，以及 <ide_opened_file> 之类的尖括号包裹的系统注入内容。
      */
-    private fun firstUserMessage(file: Path): String? =
-        file
-            .useLines { lines ->
-                lines
-                    .take(MAX_SCAN_LINES)
-                    .filter { it.contains(USER_RECORD) && !it.contains(TOOL_RESULT) }
-                    .mapNotNull { JsonLineScanner.stringValue(it, "content") }
-                    .map { it.replace('\n', ' ').trim() }
-                    .firstOrNull { it.isNotEmpty() && !it.startsWith("<") }
-            }?.let(::truncate)
+    private fun lastUserMessage(file: Path): String? =
+        scanTail(file) { lines ->
+            lines.asReversed()
+                .filter { it.contains(USER_RECORD) && !it.contains(TOOL_RESULT) }
+                .mapNotNull { userText(it) }
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("<") && it != INTERRUPTED }
+        }?.let(::truncate)
+
+    /**
+     * 从一行用户记录中提取文本。
+     *
+     * content 有两种形态：纯字符串 `"content":"你好"` 和内容块数组
+     * `"content":[{"type":"text","text":"你好"}]`。后者在多模态消息中很常见，
+     * 只取第一个 text 块足够做标题。
+     */
+    private fun userText(line: String): String? =
+        (JsonLineScanner.stringValue(line, "content") ?: JsonLineScanner.stringValue(line, "text"))
+            ?.replace('\n', ' ')?.trim()
 
     private fun truncate(text: String): String = if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
 
@@ -126,7 +131,7 @@ class ClaudeSessionReader(
         const val CUSTOM_TITLE_MARKER = "\"custom-title\""
         const val USER_RECORD = "\"type\":\"user\""
         const val TOOL_RESULT = "tool_result"
-        const val MAX_SCAN_LINES = 50
+        const val INTERRUPTED = "[Request interrupted by user]"
         const val TITLE_MAX = 60
     }
 }
