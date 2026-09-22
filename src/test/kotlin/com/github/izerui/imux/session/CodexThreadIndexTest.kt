@@ -137,22 +137,38 @@ class CodexThreadIndexTest {
         assertEquals("旧版标题", index().load()!!["old-1"])
     }
 
-    /** codex 换版本时表结构可能变，不能因此让整个会话列表崩掉。 */
+    /** codex 换版本时表结构可能变；不可读时由 Reader 回退到 rollout。 */
     @Test
-    fun `旧库表结构不符时返回空 map 而不抛异常`() {
+    fun `唯一的旧库表结构不符时返回 null 以保留 rollout`() {
         val file = File(tmp.root, "state_5.sqlite")
         DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
             conn.createStatement().use { it.executeUpdate("CREATE TABLE other (x TEXT)") }
         }
 
-        assertTrue(index().load()!!.isEmpty())
+        assertNull(index().load())
     }
 
     @Test
-    fun `旧库文件损坏时返回空 map`() {
+    fun `唯一的旧库文件损坏时返回 null 以保留 rollout`() {
         File(tmp.root, "state_5.sqlite").writeText("这不是 sqlite 文件")
 
-        assertTrue(index().load()!!.isEmpty())
+        assertNull(index().load())
+    }
+
+    @Test
+    fun `dev 和 state 都不可读时返回 null`() {
+        val state = File(tmp.root, "state_5.sqlite")
+        state.writeText("损坏的 state")
+        assertNull("仅 state 损坏且无 dev 时应降级", index().load())
+
+        File(tmp.root, "sqlite").mkdirs()
+        val dev = File(tmp.root, "sqlite/codex-dev.db")
+        dev.writeText("损坏的 dev")
+        assertTrue(state.delete())
+        assertNull("仅 dev 损坏且无 state 时应降级", index().load())
+
+        state.writeText("损坏的 state")
+        assertNull("dev 和 state 均损坏时应降级", index().load())
     }
 
     // ---- codex-dev.db 优先级 ----
@@ -173,6 +189,49 @@ class CodexThreadIndexTest {
         createDevDb()
 
         assertTrue(index().load()!!.isEmpty())
+    }
+
+    @Test
+    fun `残留空 dev 库不遮蔽后来活跃的 state 库`() {
+        createDevDb()
+        val dev = File(tmp.root, "sqlite/codex-dev.db")
+        assertTrue(dev.setLastModified(1_000_000L))
+        createDb(Triple("state-active", "当前标题", 2_000L))
+
+        assertEquals("当前标题", index().load()!!["state-active"])
+    }
+
+    @Test
+    fun `恢复旧会话的最新活动时间决定当前来源`() {
+        createDevDb(Triple("dev-idle", "残留标题", 2_000L))
+        createDb(Triple("state-resumed", "继续任务", 1_000L))
+        DriverManager.getConnection("jdbc:sqlite:${File(tmp.root, "state_5.sqlite").absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate("UPDATE threads SET updated_at_ms = 3000000 WHERE id = 'state-resumed'")
+            }
+        }
+
+        val loaded = index().load()!!
+        assertEquals("继续任务", loaded["state-resumed"])
+        assertNull(loaded["dev-idle"])
+    }
+
+    @Test
+    fun `dev 会话更新后仍优先于后来创建但不活跃的 state 会话`() {
+        createDevDb(Triple("dev-resumed", "继续任务", 1_000L))
+        val dev = File(tmp.root, "sqlite/codex-dev.db")
+        DriverManager.getConnection("jdbc:sqlite:${dev.absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate(
+                    "UPDATE local_thread_catalog SET source_updated_at = 3000 WHERE thread_id = 'dev-resumed'",
+                )
+            }
+        }
+        createDb(Triple("state-idle", "残留标题", 2_000L))
+
+        val loaded = index().load()!!
+        assertEquals("继续任务", loaded["dev-resumed"])
+        assertNull(loaded["state-idle"])
     }
 
     @Test

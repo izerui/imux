@@ -136,7 +136,8 @@ internal fun writeGeneratedTitle(
                         ).use { statement ->
                             statement.setString(1, title)
                             statement.setString(2, session.id)
-                            check(statement.executeUpdate() == 1) { "Codex 会话不存在" }
+                            // 同一 thread_id 可属于多个 host；标题应同步写入这些记录。
+                            check(statement.executeUpdate() > 0) { "Codex 会话不存在" }
                         }
                     }
             } else {

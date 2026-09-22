@@ -5,6 +5,7 @@ import org.sqlite.SQLiteConfig
 import org.sqlite.SQLiteDataSource
 import java.nio.file.Files
 import java.nio.file.Path
+import java.sql.Connection
 
 /**
  * 读取 Codex 当前使用的会话数据库，取会话标题。
@@ -13,8 +14,8 @@ import java.nio.file.Path
  * 而那常常是注入的系统内容（例如 `# AGENTS.md instructions for ...`），毫无意义。
  * 同一个会话在 sqlite 里的标题是「分析工程结构」——差距很大。
  *
- * 这是 Codex 的私有实现细节，表结构变更会导致标题失效。因此任何异常都降级为
- * 空表，让上层回退到首条用户消息，绝不影响会话列表本身。
+ * 这是 Codex 的私有实现细节，表结构变更会导致标题失效。所有数据库均不可读时
+ * 不按目录过滤 rollout，让上层回退到用户消息；成功读取的空表仍表示没有会话。
  *
  * **不要改回 [java.sql.DriverManager]**：插件的 jar 不在系统 classpath 上，而
  * DriverManager 靠 ServiceLoader 发现驱动时用的是系统类加载器，于是 sqlite-jdbc
@@ -35,28 +36,20 @@ class CodexThreadIndex(private val codexHome: Path) {
         val source: Source,
         val titles: Map<String, String>,
         val newestCreatedAt: Double,
+        val newestActivityAt: Double,
     )
 
     /**
-     * 返回会话索引：sessionId -> 标题。返回 null 表示没有任何 DB 可用。
+     * 返回会话索引：sessionId -> 标题。返回 null 表示没有可读取的 DB。
      *
      * null 与空 map 的区别至关重要：
-     * - **null**：没有 DB 文件，调用方不做过滤（显示所有 rollout）
-     * - **空 map**：DB 存在（成功读取或读取失败），调用方按需过滤
+     * - **null**：没有 DB，或所有 DB 均读取失败；调用方不过滤 rollout
+     * - **空 map**：成功读取了空库；调用方过滤 rollout
      *
-     * 两种库可能同时留在磁盘上，文件 mtime 也可能落后于 WAL。按库内最新创建的
-     * 会话选择当前来源；空 dev 库和相同时间仍优先 dev，避免旧会话重新出现。
+     * 两种库可能同时留在磁盘上。优先比较库内最新活动时间，避免恢复旧会话时
+     * 误选残留库；空 dev 库没有行可比较，才参考其文件或 WAL 的修改时间。
      */
-    fun load(): Map<String, String>? {
-        currentCatalog()?.let { return it.titles }
-        val dir = codexSqliteDir(codexHome)
-        val hasDatabase = sequenceOf(
-            dir.resolve("sqlite/codex-dev.db"),
-            dir.resolve("codex-dev.db"),
-            latestVersionedDbIn(dir, "state"),
-        ).filterNotNull().any { Files.isRegularFile(it) }
-        return if (hasDatabase) emptyMap() else null
-    }
+    fun load(): Map<String, String>? = currentCatalog()?.titles
 
     internal fun currentCatalog(): Catalog? {
         val dir = codexSqliteDir(codexHome)
@@ -69,8 +62,10 @@ class CodexThreadIndex(private val codexHome: Path) {
         return when {
             dev == null -> state
             state == null -> dev
+            dev.titles.isEmpty() && state.newestActivityAt > databaseModifiedAt(dev.file) -> state
             dev.titles.isEmpty() -> dev
-            state.newestCreatedAt > dev.newestCreatedAt -> state
+            state.newestActivityAt > dev.newestActivityAt -> state
+            state.newestActivityAt == dev.newestActivityAt && state.newestCreatedAt > dev.newestCreatedAt -> state
             else -> dev
         }
     }
@@ -82,20 +77,30 @@ class CodexThreadIndex(private val codexHome: Path) {
         runCatching {
             val titles = HashMap<String, String>()
             var newest = 0.0
+            var newestActivity = 0.0
             readOnlyDataSource(file).connection.use { conn ->
+                val columns = columnsOf(conn, "local_thread_catalog")
+                val activityColumns = listOf("source_updated_at", "source_recency_at").filter { it in columns }
                 conn.createStatement().use { statement ->
                     statement.executeQuery(
-                        "SELECT thread_id, display_title, source_created_at FROM local_thread_catalog",
+                        "SELECT thread_id, display_title, source_created_at" +
+                            activityColumns.joinToString("") { ", $it" } + " FROM local_thread_catalog",
                     ).use { rows ->
                         while (rows.next()) {
                             val id = rows.getString("thread_id") ?: continue
                             titles[id] = rows.getString("display_title")?.trim().orEmpty()
-                            newest = maxOf(newest, rows.getDouble("source_created_at"))
+                            val created = rows.getDouble("source_created_at")
+                            newest = maxOf(newest, created)
+                            newestActivity = maxOf(
+                                newestActivity,
+                                created,
+                                *activityColumns.map { rows.getDouble(it) }.toDoubleArray(),
+                            )
                         }
                     }
                 }
             }
-            Catalog(file, Source.DEV, titles, newest)
+            Catalog(file, Source.DEV, titles, newest, newestActivity)
         }.getOrElse {
             LOG.warn("读取 Codex codex-dev.db 失败", it)
             null
@@ -109,24 +114,18 @@ class CodexThreadIndex(private val codexHome: Path) {
         runCatching {
             val titles = HashMap<String, String>()
             var newest = 0.0
+            var newestActivity = 0.0
             readOnlyDataSource(file).connection.use { conn ->
-                val hasName =
-                    conn.createStatement().use { statement ->
-                        statement.executeQuery("PRAGMA table_info(threads)").use { rows ->
-                            generateSequence { if (rows.next()) rows.getString("name") else null }
-                                .any { it == "name" }
-                        }
-                    }
-                val hasCreatedAt =
-                    conn.createStatement().use { statement ->
-                        statement.executeQuery("PRAGMA table_info(threads)").use { rows ->
-                            generateSequence { if (rows.next()) rows.getString("name") else null }
-                                .any { it == "created_at" }
-                        }
-                    }
+                val columns = columnsOf(conn, "threads")
+                val hasName = "name" in columns
+                val hasCreatedAt = "created_at" in columns
+                val activityColumns =
+                    listOf("updated_at_ms", "recency_at_ms", "updated_at", "recency_at")
+                        .filter { it in columns }
                 val query = "SELECT id, title" +
                     (if (hasName) ", name" else "") +
-                    (if (hasCreatedAt) ", created_at" else "") + " FROM threads"
+                    (if (hasCreatedAt) ", created_at" else "") +
+                    activityColumns.joinToString("") { ", $it" } + " FROM threads"
                 conn.createStatement().use { statement ->
                     statement.executeQuery(query).use { rows ->
                         while (rows.next()) {
@@ -135,12 +134,21 @@ class CodexThreadIndex(private val codexHome: Path) {
                                 rows.takeIf { hasName }?.getString("name")?.trim()?.takeIf(String::isNotEmpty)
                                     ?: rows.getString("title")?.trim()
                             titles[id] = title.orEmpty()
-                            if (hasCreatedAt) newest = maxOf(newest, rows.getDouble("created_at"))
+                            val created = if (hasCreatedAt) rows.getDouble("created_at") else 0.0
+                            newest = maxOf(newest, created)
+                            newestActivity = maxOf(
+                                newestActivity,
+                                created,
+                                *activityColumns.map {
+                                    val value = rows.getDouble(it)
+                                    if (it.endsWith("_ms")) value / 1000.0 else value
+                                }.toDoubleArray(),
+                            )
                         }
                     }
                 }
             }
-            Catalog(file, Source.STATE, titles, newest)
+            Catalog(file, Source.STATE, titles, newest, newestActivity)
         }.getOrElse {
             LOG.warn("读取 Codex ${file.fileName} 失败", it)
             null
@@ -149,6 +157,20 @@ class CodexThreadIndex(private val codexHome: Path) {
     private fun readOnlyDataSource(file: Path): SQLiteDataSource =
         SQLiteDataSource(SQLiteConfig().apply { setReadOnly(true) })
             .apply { url = "jdbc:sqlite:${file.toAbsolutePath()}" }
+
+    private fun columnsOf(connection: Connection, table: String): Set<String> =
+        connection.createStatement().use { statement ->
+            statement.executeQuery("PRAGMA table_info($table)").use { rows ->
+                buildSet {
+                    while (rows.next()) add(rows.getString("name"))
+                }
+            }
+        }
+
+    private fun databaseModifiedAt(file: Path): Double =
+        sequenceOf(file, file.resolveSibling("${file.fileName}-wal"))
+            .mapNotNull { runCatching { Files.getLastModifiedTime(it).toMillis() / 1000.0 }.getOrNull() }
+            .maxOrNull() ?: 0.0
 
     private companion object {
         val LOG = logger<CodexThreadIndex>()

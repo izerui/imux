@@ -352,7 +352,8 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(body.contains("outputModels.active.value !== snapshot.outputModel"))
         assertTrue(navigator.normalized.contains("NAVIGATION_SCAN_MAX_CHARS = 256_000"))
         assertTrue(body.contains("outputGeneration.get() != snapshot.outputGeneration"))
-        assertTrue(body.contains("awaitingTerminalContent.set(!outputChangedDuringLocate"))
+        assertTrue(body.contains("awaitingTerminalContent.set("))
+        assertTrue(body.contains("waitForTerminalContent(transcript.exchanges, transcript.changed, latestResolved, outputChangedDuringLocate)"))
         assertTrue(body.contains("stableAnchorsForNavigation"))
         assertTrue(body.contains("if (outputChangedDuringLocate) scheduleRefresh()"))
     }

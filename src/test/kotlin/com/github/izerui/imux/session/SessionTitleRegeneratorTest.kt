@@ -416,6 +416,40 @@ class SessionTitleRegeneratorTest {
     }
 
     @Test
+    fun `Codex 同一线程跨 host 写回标题不误报失败`() {
+        val home = temp.newFolder("codex-multi-host-home").toPath()
+        val codexHome = home.resolve(".codex")
+        val devDir = Files.createDirectories(codexHome.resolve("sqlite"))
+        val devDb = devDir.resolve("codex-dev.db")
+        DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
+            connection.createStatement().use {
+                it.executeUpdate(
+                    "CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, " +
+                        "display_title TEXT, source_created_at REAL, PRIMARY KEY (host_id, thread_id))",
+                )
+                it.executeUpdate("INSERT INTO local_thread_catalog VALUES ('host-a', 'codex-1', '旧标题', 1000)")
+                it.executeUpdate("INSERT INTO local_thread_catalog VALUES ('host-b', 'codex-1', '旧标题', 1000)")
+            }
+        }
+
+        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("multi-host-rollout.jsonl").toPath(), "codex-1"), "新标题", home)
+
+        DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT host_id, display_title FROM local_thread_catalog ORDER BY host_id").use { rows ->
+                    assertTrue(rows.next())
+                    assertEquals("host-a", rows.getString("host_id"))
+                    assertEquals("新标题", rows.getString("display_title"))
+                    assertTrue(rows.next())
+                    assertEquals("host-b", rows.getString("host_id"))
+                    assertEquals("新标题", rows.getString("display_title"))
+                    assertFalse(rows.next())
+                }
+            }
+        }
+    }
+
+    @Test
     fun `Pi 标题追加 session_info 并被 Reader 读取`() {
         val home = temp.newFolder("pi-home").toPath()
         val reader = PiSessionReader(home)

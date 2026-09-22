@@ -267,6 +267,15 @@ internal fun latestExchangeResolved(
     return lastIndexed.anchor.userPreview == expectedPreview
 }
 
+internal fun waitForTerminalContent(
+    exchanges: List<SessionExchange>,
+    transcriptChanged: Boolean,
+    latestResolved: Boolean,
+    outputChangedDuringLocate: Boolean,
+): Boolean =
+    !outputChangedDuringLocate &&
+        (transcriptChanged || (exchanges.lastOrNull()?.assistantReply?.isNotEmpty() == true && !latestResolved))
+
 /**
  * 没有助手回复文本的轮次不展示可点击圆点。
  *
@@ -482,9 +491,10 @@ internal class SessionMessageNavigator(
             }
             val outputChangedDuringLocate = outputGeneration.get() != snapshot.outputGeneration
             locateRequested.set(outputChangedDuringLocate || feedbackGeneration.get() != snapshot.feedbackGeneration)
-            // message_end 可能早于 Terminal 把用户消息画出来。只在这种待补齐状态下
-            // 等下一次 output model 内容事件；普通持续输出不会触发导航扫描。
-            awaitingTerminalContent.set(!outputChangedDuringLocate && (transcript.changed || !latestResolved))
+            // 无回复的轮次只等一次落屏；后续工具输出无需重复扫描，回复落盘会另行触发刷新。
+            awaitingTerminalContent.set(
+                waitForTerminalContent(transcript.exchanges, transcript.changed, latestResolved, outputChangedDuringLocate),
+            )
             applyAnchors(snapshot.editor, snapshot.outputModel, allAnchors)
             if (outputChangedDuringLocate) scheduleRefresh()
         }

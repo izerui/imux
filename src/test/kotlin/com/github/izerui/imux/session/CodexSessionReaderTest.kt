@@ -193,6 +193,61 @@ class CodexSessionReaderTest {
     }
 
     @Test
+    fun `数据库全部不可读时仍显示正常 rollout 并回退用户消息`() {
+        writeRollout("uuid-readable", "/Users/demo/proj", userMessage("继续修复"))
+        val state = File(tmp.root, "state_5.sqlite")
+        state.writeText("损坏的 state")
+        val singleFailure = reader().read("/Users/demo/proj")
+        assertEquals("仅 state 损坏时仍显示 rollout", listOf("uuid-readable"), singleFailure.map { it.id })
+        assertEquals("仅 state 损坏时使用用户消息", "继续修复", singleFailure.single().title)
+
+        File(tmp.root, "sqlite").mkdirs()
+        val dev = File(tmp.root, "sqlite/codex-dev.db")
+        dev.writeText("损坏的 dev")
+        assertTrue(state.delete())
+        val devFailure = reader().read("/Users/demo/proj")
+        assertEquals("仅 dev 损坏时仍显示 rollout", listOf("uuid-readable"), devFailure.map { it.id })
+        assertEquals("仅 dev 损坏时使用用户消息", "继续修复", devFailure.single().title)
+
+        state.writeText("损坏的 state")
+        val sessions = reader().read("/Users/demo/proj")
+
+        assertEquals("双库损坏时仍显示 rollout", listOf("uuid-readable"), sessions.map { it.id })
+        assertEquals("双库损坏时使用用户消息", "继续修复", sessions.single().title)
+    }
+
+    @Test
+    fun `dev 损坏而 state 可读时仍按 state 过滤`() {
+        writeRollout("uuid-in-state", "/Users/demo/proj", userMessage("当前任务"))
+        writeRollout("uuid-orphan", "/Users/demo/proj", userMessage("旧任务"))
+        createLegacyDb("uuid-in-state" to "数据库标题")
+        File(tmp.root, "sqlite").mkdirs()
+        File(tmp.root, "sqlite/codex-dev.db").writeText("损坏的 dev")
+
+        val sessions = reader().read("/Users/demo/proj")
+        assertEquals(listOf("uuid-in-state"), sessions.map { it.id })
+        assertEquals("数据库标题", sessions.single().title)
+    }
+
+    @Test
+    fun `state 损坏而 dev 可读时仍按 dev 过滤`() {
+        writeRollout("uuid-in-dev", "/Users/demo/proj", userMessage("当前任务"))
+        writeRollout("uuid-orphan", "/Users/demo/proj", userMessage("旧任务"))
+        createDevDb("uuid-in-dev")
+        File(tmp.root, "state_5.sqlite").writeText("损坏的 state")
+
+        assertEquals(listOf("uuid-in-dev"), reader().read("/Users/demo/proj").map { it.id })
+    }
+
+    @Test
+    fun `成功读取的空 dev 库仍过滤孤立 rollout`() {
+        writeRollout("uuid-orphan", "/Users/demo/proj", userMessage("旧内容"))
+        createDevDb()
+
+        assertTrue(reader().read("/Users/demo/proj").isEmpty())
+    }
+
+    @Test
     fun `残留 dev 库不遮蔽 state 中的新会话`() {
         writeRollout("uuid-new", "/Users/demo/proj", userMessage("新任务"))
         createDevDb("uuid-old")

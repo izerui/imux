@@ -399,6 +399,33 @@ class SessionMessageNavigatorTest {
     }
 
     @Test
+    fun `无回复轮次只等待首次终端内容而不随工具输出持续重扫`() {
+        val exchanges = listOf(SessionExchange("新的提问", ""))
+
+        assertTrue(waitForTerminalContent(exchanges, transcriptChanged = true, latestResolved = false, outputChangedDuringLocate = false))
+        assertFalse(waitForTerminalContent(exchanges, transcriptChanged = false, latestResolved = false, outputChangedDuringLocate = false))
+    }
+
+    @Test
+    fun `空会话只在 transcript 变化后等待一次内容事件`() {
+        val exchanges = emptyList<SessionExchange>()
+
+        assertFalse(waitForTerminalContent(exchanges, transcriptChanged = false, latestResolved = true, outputChangedDuringLocate = false))
+        assertTrue(waitForTerminalContent(exchanges, transcriptChanged = true, latestResolved = true, outputChangedDuringLocate = false))
+        assertFalse(waitForTerminalContent(exchanges, transcriptChanged = false, latestResolved = true, outputChangedDuringLocate = false))
+        assertFalse(waitForTerminalContent(exchanges, transcriptChanged = true, latestResolved = true, outputChangedDuringLocate = true))
+    }
+
+    @Test
+    fun `已有回复但消息尚未落屏时继续等待且定位期间变化不重复等待`() {
+        val exchanges = listOf(SessionExchange("新的提问", "回复"))
+
+        assertTrue(waitForTerminalContent(exchanges, transcriptChanged = false, latestResolved = false, outputChangedDuringLocate = false))
+        assertFalse(waitForTerminalContent(exchanges, transcriptChanged = false, latestResolved = true, outputChangedDuringLocate = false))
+        assertFalse(waitForTerminalContent(exchanges, transcriptChanged = true, latestResolved = false, outputChangedDuringLocate = true))
+    }
+
+    @Test
     fun `重复提问只定位上一轮时不误判为末轮已解析`() {
         val exchanges =
             listOf(
