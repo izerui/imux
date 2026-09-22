@@ -64,10 +64,14 @@ class CodexSessionReaderTest {
     }
 
     @Test
-    fun `标题回退为首条用户消息`() {
-        writeRollout("uuid-msg", "/Users/demo/proj", userMessage("帮我重构这个函数"))
+    fun `标题回退为最后一条用户消息`() {
+        writeRollout(
+            "uuid-msg",
+            "/Users/demo/proj",
+            userMessage("第一句话") + "\n" + userMessage("最后一句话"),
+        )
 
-        assertEquals("帮我重构这个函数", reader().read("/Users/demo/proj")[0].title)
+        assertEquals("最后一句话", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test

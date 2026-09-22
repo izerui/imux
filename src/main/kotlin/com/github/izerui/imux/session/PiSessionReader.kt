@@ -59,13 +59,14 @@ class PiSessionReader(private val piHome: Path) {
         if (cwd != projectPath) return null
 
         val id = JsonLineScanner.stringValue(head, "id") ?: return null
-        val firstUserMessage = firstUserMessage(file) ?: return null
+        if (!hasUserMessage(file)) return null
 
         AgentSession(
             id = id,
-            // 标题优先取会话显示名，否则取已经确认存在的首条用户消息
+            // 标题优先取会话显示名，否则取最后一条用户消息
             title = sessionName(file)?.let(::truncate)
-                ?: firstUserMessage,
+                ?: lastUserMessage(file)
+                ?: truncate(id),
             agentType = AgentType.PI,
             // 与另外两个 reader 同一口径：优先用记录自带的时刻而非 mtime，
             // 理由见 lastTimestampOf 的注释。
@@ -104,20 +105,23 @@ class PiSessionReader(private val piHome: Path) {
     }
 
     /**
-     * 取首条用户消息，同时作为「这个会话已经真正开始」的判据。
+     * 会话是否有过用户消息。
      *
      * pi 启动后会立刻写 session header；若用户没发过消息就关闭，这个文件无法由 CLI
-     * 恢复成有意义的对话。Codex 在同一阶段还不会出现在历史列表，因此这里也排除这种
-     * 只有头部和启动元数据的空会话。打开期间仍由 SessionListModel 的 pending 条目显示。
-     *
-     * pi 不会自动给会话起名——只有手动 `--name` / `/name` 过的才有 session_info，
-     * 所以没有显示名时用这条消息作为标题。
+     * 恢复成有意义的对话，因此排除这种只有头部的空会话。
      */
-    private fun firstUserMessage(file: Path): String? = file.useLines { lines ->
-        lines.mapNotNull(::userMessageText)
-            .map { it.replace('\n', ' ').replace('\t', ' ').trim() }
-            .firstOrNull { it.isNotEmpty() }
-    }?.let(::truncate)
+    private fun hasUserMessage(file: Path): Boolean = file.useLines { lines ->
+        lines.any { userMessageText(it) != null }
+    }
+
+    /** 从文件尾部取最后一条用户消息，与 CLI 的 resume 列表对齐。 */
+    private fun lastUserMessage(file: Path): String? =
+        scanTail(file) { lines ->
+            lines.asReversed()
+                .mapNotNull(::userMessageText)
+                .map { it.replace('\n', ' ').replace('\t', ' ').trim() }
+                .firstOrNull { it.isNotEmpty() }
+        }?.let(::truncate)
 
     private fun userMessageText(line: String): String? {
         if (!line.contains(USER_ROLE_MARKER)) return null

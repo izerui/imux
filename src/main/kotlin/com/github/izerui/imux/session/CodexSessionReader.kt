@@ -70,7 +70,9 @@ class CodexSessionReader(
         val root = codexHome.resolve("sessions")
         if (!Files.isDirectory(root)) return emptyList()
 
-        // rollout 文件里没有标题字段，权威标题在 codex 自己的 sqlite 里
+        // rollout 文件里没有标题字段，权威标题在 codex 自己的 sqlite 里。
+        // 同时 DB 就是「活跃会话集」——不在里面的是已归档或内部会话，
+        // CLI 不显示，imux 也不该显示。
         val titles = threadIndex.load()
 
         return Files.walk(root).use { stream ->
@@ -107,12 +109,16 @@ class CodexSessionReader(
 
             val id = JsonLineScanner.stringValue(meta, "id") ?: return null
 
+            // DB 加载成功时，不在里面的会话是已归档/内部会话，CLI 不显示，imux 也不该显示。
+            // DB 为空（加载失败或根本没有 DB）时不过滤，否则全空。
+            if (titles.isNotEmpty() && id !in titles) return null
+
             AgentSession(
                 id = id,
-                // 回退链：sqlite 里的标题 -> 首条用户消息 -> id 短码
+                // 回退链：sqlite 里的标题 -> 最后一条用户消息 -> id 短码
                 title =
-                    titles[id]?.let(::truncate)
-                        ?: firstUserMessage(file)?.let(::truncate)
+                    titles[id]?.takeIf { it.isNotEmpty() }?.let(::truncate)
+                        ?: lastUserMessage(file)?.let(::truncate)
                         ?: ImuxBundle.message("session.default", id.take(8)),
                 agentType = AgentType.CODEX,
                 // 优先用记录自带的时刻，与 claude 侧同一口径。mtime 反映的是「文件何时被写」，
@@ -127,24 +133,21 @@ class CodexSessionReader(
 
     private fun firstLine(file: Path): String? = file.useLines { it.firstOrNull() }
 
-    /** 只扫前若干行找首条用户消息，避免为一个标题读完整个大文件。 */
-    private fun firstUserMessage(file: Path): String? =
-        file
-            .useLines { lines ->
-                lines
-                    .take(MAX_SCAN_LINES)
-                    .filter { it.contains(USER_ROLE_MARKER) }
-                    .mapNotNull { JsonLineScanner.stringValue(it, "text") }
-                    .firstOrNull()
-            }?.replace('\n', ' ')
-            ?.replace('\t', ' ')
+    /** 从文件尾部取最后一条用户消息，与 CLI 的 resume 列表对齐。 */
+    private fun lastUserMessage(file: Path): String? =
+        scanTail(file) { lines ->
+            lines.asReversed()
+                .filter { it.contains(USER_ROLE_MARKER) }
+                .mapNotNull { JsonLineScanner.stringValue(it, "text") }
+                .map { it.replace('\n', ' ').replace('\t', ' ').trim() }
+                .firstOrNull { it.isNotEmpty() }
+        }
 
     private fun truncate(text: String): String = if (text.length <= TITLE_MAX) text else text.take(TITLE_MAX) + "…"
 
     private companion object {
         val LOG = logger<CodexSessionReader>()
 
-        const val MAX_SCAN_LINES = 50
         const val TITLE_MAX = 60
 
         const val META_MARKER = "\"session_meta\""

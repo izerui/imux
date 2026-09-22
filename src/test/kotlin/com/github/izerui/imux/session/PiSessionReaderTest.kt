@@ -115,10 +115,14 @@ class PiSessionReaderTest {
     }
 
     @Test
-    fun `没有显示名时回退为首条用户消息`() {
-        writeSession("uuid-msg", "/Users/demo/proj", userMessage("帮我重构这个函数"))
+    fun `没有显示名时回退为最后一条用户消息`() {
+        writeSession(
+            "uuid-msg",
+            "/Users/demo/proj",
+            userMessage("第一句话") + "\n" + userMessage("最后一句话"),
+        )
 
-        assertEquals("帮我重构这个函数", reader().read("/Users/demo/proj")[0].title)
+        assertEquals("最后一句话", reader().read("/Users/demo/proj")[0].title)
     }
 
     @Test

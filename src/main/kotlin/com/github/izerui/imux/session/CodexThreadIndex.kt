@@ -31,12 +31,50 @@ class CodexThreadIndex(private val codexHome: Path) {
 
     /** 返回 sessionId -> 标题。 */
     fun load(): Map<String, String> {
-        val file = latestVersionedDbIn(codexSqliteDir(codexHome), "state") ?: return emptyMap()
+        val dir = codexSqliteDir(codexHome)
+        return loadFromDevDb(dir).ifEmpty { loadFromLegacyDb(dir) }
+    }
+
+    /**
+     * 新版 Codex 把标题放在 `codex-dev.db` 的 `local_thread_catalog` 表里。
+     *
+     * 所有记录都放入 map——即使 display_title 为空也用空字符串占位，
+     * 因为 map 的 key 集就是「活跃会话集」，不在里面的会话不该显示。
+     */
+    private fun loadFromDevDb(dir: Path): Map<String, String> {
+        val file = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
+            .firstOrNull { Files.isRegularFile(it) } ?: return emptyMap()
+
+        return runCatching {
+            val titles = HashMap<String, String>()
+            readOnlyDataSource(file).connection.use { conn ->
+                conn.createStatement().use { statement ->
+                    statement.executeQuery(
+                        "SELECT thread_id, display_title FROM local_thread_catalog",
+                    ).use { rows ->
+                        while (rows.next()) {
+                            val id = rows.getString("thread_id") ?: continue
+                            titles[id] = rows.getString("display_title")?.trim().orEmpty()
+                        }
+                    }
+                }
+            }
+            titles as Map<String, String>
+        }.getOrElse {
+            LOG.warn("读取 Codex codex-dev.db 失败，尝试旧版数据库", it)
+            emptyMap()
+        }
+    }
+
+    /**
+     * 旧版 Codex 的标题在 `state_<n>.sqlite` 的 `threads` 表里。
+     */
+    private fun loadFromLegacyDb(dir: Path): Map<String, String> {
+        val file = latestVersionedDbIn(dir, "state") ?: return emptyMap()
         if (!Files.isRegularFile(file)) return emptyMap()
 
         return runCatching {
             val titles = HashMap<String, String>()
-            // 只读打开：codex 可能正在写这个库，我们绝不能干扰它
             readOnlyDataSource(file).connection.use { conn ->
                 val hasName =
                     conn.createStatement().use { statement ->
@@ -60,7 +98,7 @@ class CodexThreadIndex(private val codexHome: Path) {
             }
             titles as Map<String, String>
         }.getOrElse {
-            LOG.warn("读取 Codex ${file.fileName} 失败，标题回退到首条用户消息", it)
+            LOG.warn("读取 Codex ${file.fileName} 失败，标题回退到用户消息", it)
             emptyMap()
         }
     }
