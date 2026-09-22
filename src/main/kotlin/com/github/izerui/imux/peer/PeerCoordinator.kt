@@ -23,6 +23,7 @@ import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
@@ -31,6 +32,7 @@ import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
+import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
 
 data class PeerStatus(
     val targetAgentType: AgentType,
@@ -326,7 +328,7 @@ class PeerCoordinator internal constructor(
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
             if (peerAutoInject()) {
-                injectFeedback(mainSessionKey, feedback)
+                injectFeedback(mainSessionKey, feedback, run, guard)
             } else {
                 stageFeedback(mainSessionKey, feedback)
             }
@@ -437,28 +439,37 @@ class PeerCoordinator internal constructor(
         }.orEmpty()
     }
 
-    private fun injectFeedback(
+    private suspend fun injectFeedback(
         mainSessionKey: String,
         prompt: String,
+        run: PeerRun,
+        guard: PeerSessionGuard,
     ) {
         var hint: PeerFeedbackHint? = null
-        if (sendAutoFeedback != null) {
-            if (!sendAutoFeedback.invoke(mainSessionKey, prompt)) return
-        } else {
-            val view = viewOf(mainSessionKey)
-            if (view == null) {
-                LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
-                return
+        var sent = false
+        for (attempt in 0 until SEND_READY_ATTEMPTS) {
+            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
+            if (sendAutoFeedback != null) {
+                sent = sendAutoFeedback.invoke(mainSessionKey, prompt)
+            } else {
+                val view = viewOf(mainSessionKey)
+                if (view == null) {
+                    LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
+                    return
+                }
+                val outputModel = view.outputModels.active.value
+                val sendOffset = outputModel.endOffset.toAbsolute()
+                sent = trySendPeerFeedback(view.createSendTextBuilder(), prompt)
+                if (sent) hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
             }
-            LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
-            val outputModel = view.outputModels.active.value
-            val sendOffset = outputModel.endOffset.toAbsolute()
-            view.createSendTextBuilder()
-                .useBracketedPasteMode()
-                .shouldExecute()
-                .send(prompt)
-            hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
+            if (sent) break
+            if (attempt < SEND_READY_ATTEMPTS - 1) delay(SEND_READY_RETRY_MILLIS)
         }
+        if (!sent) {
+            LOG.warn("结对编程：主会话终端未进入括号粘贴模式，反馈未发送 $mainSessionKey")
+            return
+        }
+        LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
         hint?.let {
@@ -504,6 +515,8 @@ class PeerCoordinator internal constructor(
         private const val CONVERSATION_TAIL_BYTES = 32L * 1024 * 1024
         private const val CLI_TIMEOUT_SECONDS = 300L
         private const val MAX_FEEDBACK_HINTS = 200
+        private const val SEND_READY_ATTEMPTS = 100
+        private const val SEND_READY_RETRY_MILLIS = 100L
 
         private const val MODE_AUTO_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
         private const val MODE_STAGE_ZH = "你说的话会先放到输入框里，用户看过之后决定要不要发。"
@@ -561,6 +574,11 @@ Nothing new to add this round — no observation, question, idea, or suggestion?
 """.trimIndent()
     }
 }
+
+internal fun trySendPeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
+    builder.requireBracketedPasteMode()
+        .shouldExecute()
+        .trySend(prompt)
 
 internal fun latestConversation(
     messages: List<SessionTranscriptMessage>,

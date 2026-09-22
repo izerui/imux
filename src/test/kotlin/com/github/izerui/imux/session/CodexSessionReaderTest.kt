@@ -192,6 +192,31 @@ class CodexSessionReaderTest {
         assertTrue(reader().read("/Users/demo/proj").isEmpty())
     }
 
+    @Test
+    fun `残留 dev 库不遮蔽 state 中的新会话`() {
+        writeRollout("uuid-new", "/Users/demo/proj", userMessage("新任务"))
+        createDevDb("uuid-old")
+        val state = File(tmp.root, "state_5.sqlite")
+        java.sql.DriverManager.getConnection("jdbc:sqlite:${state.absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, created_at INTEGER)")
+                it.executeUpdate("INSERT INTO threads VALUES ('uuid-new', '', 2000)")
+            }
+        }
+
+        val model = SessionListModel(
+            scan = { reader().read("/Users/demo/proj") },
+            clock = { java.time.Instant.parse("2026-08-03T11:00:00Z") },
+        )
+        val pending = model.registerPending(AgentType.CODEX)
+        model.refresh()
+
+        val sessions = reader().read("/Users/demo/proj")
+        assertEquals(listOf("uuid-new"), sessions.map { it.id })
+        assertEquals("新任务", sessions.single().title)
+        assertEquals("uuid-new", model.boundIdFor(pending.key))
+    }
+
     // ---- 最后活动时刻 ----
     //
     // 与 claude 侧对齐：优先用记录自带的时刻，而不是文件 mtime。

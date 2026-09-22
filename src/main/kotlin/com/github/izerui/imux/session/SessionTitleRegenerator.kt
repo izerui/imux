@@ -122,13 +122,13 @@ internal fun writeGeneratedTitle(
 
         AgentType.CODEX -> {
             val codexHome = userHome.resolve(".codex")
-            val dir = codexSqliteDir(codexHome)
-            val devDb = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
-                .firstOrNull { Files.isRegularFile(it) }
+            val catalog = CodexThreadIndex(codexHome).currentCatalog()
+                ?: error("Codex 会话数据库不存在")
+            check(session.id in catalog.titles) { "Codex 会话不存在" }
             val config = SQLiteConfig().apply { setBusyTimeout(SQLITE_BUSY_TIMEOUT_MS) }
-            if (devDb != null) {
+            if (catalog.source == CodexThreadIndex.Source.DEV) {
                 SQLiteDataSource(config)
-                    .apply { url = "jdbc:sqlite:${devDb.toAbsolutePath()}" }
+                    .apply { url = "jdbc:sqlite:${catalog.file.toAbsolutePath()}" }
                     .connection
                     .use { connection ->
                         connection.prepareStatement(
@@ -140,11 +140,8 @@ internal fun writeGeneratedTitle(
                         }
                     }
             } else {
-                val db = latestVersionedDbIn(dir, "state")
-                    ?: error("Codex 会话数据库不存在")
-                check(Files.isRegularFile(db)) { "Codex 会话数据库不存在" }
                 SQLiteDataSource(config)
-                    .apply { url = "jdbc:sqlite:${db.toAbsolutePath()}" }
+                    .apply { url = "jdbc:sqlite:${catalog.file.toAbsolutePath()}" }
                     .connection
                     .use { connection ->
                         connection.prepareStatement("UPDATE threads SET name = ? WHERE id = ?").use { statement ->

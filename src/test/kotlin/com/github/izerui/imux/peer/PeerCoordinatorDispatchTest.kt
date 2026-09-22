@@ -12,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -21,10 +22,167 @@ import java.lang.reflect.Proxy
 import java.nio.file.Path
 import java.time.Instant
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 
 class PeerCoordinatorDispatchTest {
+
+    @Test
+    fun `Claude Codex Pi 的反馈分别经过自动注入`() {
+        val accepted = ConcurrentLinkedQueue<String>()
+        val latch = CountDownLatch(3)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "feedback" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { sessionKey, feedback ->
+                accepted.add("$sessionKey: $feedback")
+                latch.countDown()
+                true
+            },
+        )
+        try {
+            coordinator.bind("s-claude", AgentType.CLAUDE)
+            coordinator.bind("s-codex", AgentType.CODEX)
+            coordinator.bind("s-pi", AgentType.PI)
+            coordinator.onTurnCompleted("s-claude")
+            coordinator.onTurnCompleted("s-codex")
+            coordinator.onTurnCompleted("s-pi")
+            assertTrue("三种反馈应完成分派", latch.await(5, TimeUnit.SECONDS))
+            assertTrue("Claude 反馈应被受理", "s-claude: feedback" in accepted)
+            assertTrue("Codex 反馈应被受理", "s-codex: feedback" in accepted)
+            assertTrue("Pi 反馈应被受理", "s-pi: feedback" in accepted)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `括号粘贴模式拒绝时不发送原始文本`() {
+        val calls = mutableListOf<String>()
+        val builder = Proxy.newProxyInstance(
+            TerminalSendTextBuilder::class.java.classLoader,
+            arrayOf(TerminalSendTextBuilder::class.java),
+        ) { proxy, method, args ->
+            calls += method.name
+            when (method.name) {
+                "requireBracketedPasteMode", "shouldExecute" -> proxy
+                "trySend" -> {
+                    assertEquals("first line\nsecond line", args?.single())
+                    false
+                }
+                else -> error("不应调用 ${method.name}")
+            }
+        } as TerminalSendTextBuilder
+
+        assertFalse(trySendPeerFeedback(builder, "first line\nsecond line"))
+        assertEquals(
+            listOf("requireBracketedPasteMode", "shouldExecute", "trySend"),
+            calls,
+        )
+    }
+
+    @Test
+    fun `终端稍后就绪时只发送一次反馈并登记轮次`() {
+        val attempts = AtomicInteger()
+        val firstAttempt = CountDownLatch(1)
+        val accepted = CountDownLatch(1)
+        val cliCalls = AtomicInteger()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 1 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliCalls.incrementAndGet()
+                "feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                assertEquals("feedback", feedback)
+                if (attempts.incrementAndGet() == 1) {
+                    firstAttempt.countDown()
+                    false
+                } else {
+                    accepted.countDown()
+                    true
+                }
+            },
+        )
+        try {
+            coordinator.bind("s-retry", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-retry")
+            assertTrue("应看到第一次未就绪", firstAttempt.await(5, TimeUnit.SECONDS))
+            assertTrue("等待就绪期间应保持审查状态", coordinator.status("s-retry")!!.running)
+            val review = scope.coroutineContext[Job]!!.children.single()
+            assertTrue("稍后应受理反馈", accepted.await(5, TimeUnit.SECONDS))
+            runBlocking { withTimeout(5_000) { review.join() } }
+            assertEquals("仅重试一次", 2, attempts.get())
+            coordinator.onTurnCompleted("s-retry")
+            assertEquals("受理后应计入轮次上限", 1, cliCalls.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `新用户轮次取消等待时不再重试反馈`() {
+        val attempts = AtomicInteger()
+        val firstAttempt = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "feedback" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ ->
+                attempts.incrementAndGet()
+                firstAttempt.countDown()
+                false
+            },
+        )
+        try {
+            coordinator.bind("s-cancel", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-cancel")
+            assertTrue("应开始等待终端就绪", firstAttempt.await(5, TimeUnit.SECONDS))
+            val review = scope.coroutineContext[Job]!!.children.single()
+            coordinator.onTurnStarted("s-cancel")
+            runBlocking { withTimeout(5_000) { review.join() } }
+            assertEquals("取消后不得再次发送旧反馈", 1, attempts.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
 
     private data class CapturedCliCall(
         val agentType: AgentType,
@@ -166,9 +324,10 @@ class PeerCoordinatorDispatchTest {
             coordinator.bind("s-limit", AgentType.CLAUDE)
             coordinator.onTurnCompleted("s-limit")
             assertTrue("第一轮反馈应自动发送", feedbackSent.await(5, TimeUnit.SECONDS))
+            val firstReview = scope.coroutineContext[Job]!!.children.single()
+            runBlocking { withTimeout(5_000) { firstReview.join() } }
 
             coordinator.onTurnCompleted("s-limit")
-            Thread.sleep(300)
 
             assertEquals("达到上限后不应再次启动副驾驶", 1, callCount.get())
         } finally {

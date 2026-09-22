@@ -7,7 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * 读取 Codex 最新 `state_<n>.sqlite` 的 `threads` 表，取会话标题。
+ * 读取 Codex 当前使用的会话数据库，取会话标题。
  *
  * 为什么必须读它：rollout 文件里**没有**标题字段，只能退而取首条用户消息，
  * 而那常常是注入的系统内容（例如 `# AGENTS.md instructions for ...`），毫无意义。
@@ -28,6 +28,14 @@ import java.nio.file.Path
  * 这个差异单测复现不了：Gradle 的测试 JVM 里 DriverManager 一切正常。
  */
 class CodexThreadIndex(private val codexHome: Path) {
+    internal enum class Source { DEV, STATE }
+
+    internal data class Catalog(
+        val file: Path,
+        val source: Source,
+        val titles: Map<String, String>,
+        val newestCreatedAt: Double,
+    )
 
     /**
      * 返回会话索引：sessionId -> 标题。返回 null 表示没有任何 DB 可用。
@@ -36,57 +44,71 @@ class CodexThreadIndex(private val codexHome: Path) {
      * - **null**：没有 DB 文件，调用方不做过滤（显示所有 rollout）
      * - **空 map**：DB 存在（成功读取或读取失败），调用方按需过滤
      *
-     * `codex-dev.db` 文件存在即不回退旧库——即使读取失败（损坏、表结构变化），
-     * 也不能让旧库的会话重新出现。
+     * 两种库可能同时留在磁盘上，文件 mtime 也可能落后于 WAL。按库内最新创建的
+     * 会话选择当前来源；空 dev 库和相同时间仍优先 dev，避免旧会话重新出现。
      */
     fun load(): Map<String, String>? {
+        currentCatalog()?.let { return it.titles }
+        val dir = codexSqliteDir(codexHome)
+        val hasDatabase = sequenceOf(
+            dir.resolve("sqlite/codex-dev.db"),
+            dir.resolve("codex-dev.db"),
+            latestVersionedDbIn(dir, "state"),
+        ).filterNotNull().any { Files.isRegularFile(it) }
+        return if (hasDatabase) emptyMap() else null
+    }
+
+    internal fun currentCatalog(): Catalog? {
         val dir = codexSqliteDir(codexHome)
         val devDbFile = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
             .firstOrNull { Files.isRegularFile(it) }
-        if (devDbFile != null) return readDevDb(devDbFile)
-        return readLegacyDb(dir)
+        val dev = devDbFile?.let(::readDevDb)
+        val state = latestVersionedDbIn(dir, "state")
+            ?.takeIf { Files.isRegularFile(it) }
+            ?.let(::readLegacyDb)
+        return when {
+            dev == null -> state
+            state == null -> dev
+            dev.titles.isEmpty() -> dev
+            state.newestCreatedAt > dev.newestCreatedAt -> state
+            else -> dev
+        }
     }
 
     /**
-     * 新版 Codex 把标题放在 `codex-dev.db` 的 `local_thread_catalog` 表里。
-     *
-     * 读取失败与成功读取空表都返回空 map（不是 null）。这是有意的降级策略：
-     * 文件存在即代表用户在用新版 Codex，不能因为读取异常就回退旧库让旧会话冒出来。
-     * 代价是 DB 损坏时 Reader 会隐藏该项目的全部 Codex 会话——宁可列表为空，
-     * 也不让旧库的会话冒出来造成混乱。
+     * dev 库损坏时不据此猜测来源；若另一套库可读，仍可正常显示其中的会话。
      */
-    private fun readDevDb(file: Path): Map<String, String> =
+    private fun readDevDb(file: Path): Catalog? =
         runCatching {
             val titles = HashMap<String, String>()
+            var newest = 0.0
             readOnlyDataSource(file).connection.use { conn ->
                 conn.createStatement().use { statement ->
                     statement.executeQuery(
-                        "SELECT thread_id, display_title FROM local_thread_catalog",
+                        "SELECT thread_id, display_title, source_created_at FROM local_thread_catalog",
                     ).use { rows ->
                         while (rows.next()) {
                             val id = rows.getString("thread_id") ?: continue
                             titles[id] = rows.getString("display_title")?.trim().orEmpty()
+                            newest = maxOf(newest, rows.getDouble("source_created_at"))
                         }
                     }
                 }
             }
-            titles as Map<String, String>
+            Catalog(file, Source.DEV, titles, newest)
         }.getOrElse {
-            LOG.warn("读取 Codex codex-dev.db 失败，标题回退到用户消息", it)
-            emptyMap()
+            LOG.warn("读取 Codex codex-dev.db 失败", it)
+            null
         }
 
     /**
-     * 旧版 Codex 的标题在 `state_<n>.sqlite` 的 `threads` 表里。
-     *
-     * 返回 null 表示 DB 文件不存在；空 map 表示文件存在但读取失败。
+     * state 库里的空标题也必须保留 id，否则有 rollout 的新会话在自动标题生成前
+     * 无法绑定 pending；展示时由 Reader 回退到用户消息。
      */
-    private fun readLegacyDb(dir: Path): Map<String, String>? {
-        val file = latestVersionedDbIn(dir, "state") ?: return null
-        if (!Files.isRegularFile(file)) return null
-
-        return runCatching {
+    private fun readLegacyDb(file: Path): Catalog? =
+        runCatching {
             val titles = HashMap<String, String>()
+            var newest = 0.0
             readOnlyDataSource(file).connection.use { conn ->
                 val hasName =
                     conn.createStatement().use { statement ->
@@ -95,7 +117,16 @@ class CodexThreadIndex(private val codexHome: Path) {
                                 .any { it == "name" }
                         }
                     }
-                val query = if (hasName) "SELECT id, name, title FROM threads" else "SELECT id, title FROM threads"
+                val hasCreatedAt =
+                    conn.createStatement().use { statement ->
+                        statement.executeQuery("PRAGMA table_info(threads)").use { rows ->
+                            generateSequence { if (rows.next()) rows.getString("name") else null }
+                                .any { it == "created_at" }
+                        }
+                    }
+                val query = "SELECT id, title" +
+                    (if (hasName) ", name" else "") +
+                    (if (hasCreatedAt) ", created_at" else "") + " FROM threads"
                 conn.createStatement().use { statement ->
                     statement.executeQuery(query).use { rows ->
                         while (rows.next()) {
@@ -103,17 +134,17 @@ class CodexThreadIndex(private val codexHome: Path) {
                             val title =
                                 rows.takeIf { hasName }?.getString("name")?.trim()?.takeIf(String::isNotEmpty)
                                     ?: rows.getString("title")?.trim()
-                            if (!title.isNullOrEmpty()) titles[id] = title
+                            titles[id] = title.orEmpty()
+                            if (hasCreatedAt) newest = maxOf(newest, rows.getDouble("created_at"))
                         }
                     }
                 }
             }
-            titles as Map<String, String>
+            Catalog(file, Source.STATE, titles, newest)
         }.getOrElse {
-            LOG.warn("读取 Codex ${file.fileName} 失败，标题回退到用户消息", it)
-            emptyMap()
+            LOG.warn("读取 Codex ${file.fileName} 失败", it)
+            null
         }
-    }
 
     private fun readOnlyDataSource(file: Path): SQLiteDataSource =
         SQLiteDataSource(SQLiteConfig().apply { setReadOnly(true) })

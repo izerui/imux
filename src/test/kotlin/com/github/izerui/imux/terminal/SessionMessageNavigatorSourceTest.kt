@@ -13,11 +13,13 @@ class SessionMessageNavigatorSourceTest {
 
     @Test
     fun `副驾驶发送后登记位置并通知导航器刷新`() {
-        val send = peer.bodyAfter("private fun injectFeedback(", '{')
+        val send = peer.bodyAfter("private suspend fun injectFeedback(", '{')
         val listener = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
 
         assertTrue("副驾驶应从终端模型取得当前位置", send.contains("outputModel.endOffset.toAbsolute()"))
-        assertTrue("只有执行发送后才登记定位信息", send.indexOf(".send(prompt)") < send.indexOf("hint = PeerFeedbackHint("))
+        val accepted = send.indexOf("sent = trySendPeerFeedback(view.createSendTextBuilder(), prompt)")
+        val hint = send.indexOf("if (sent) hint = PeerFeedbackHint(")
+        assertTrue("只有终端受理后才登记定位信息", accepted >= 0 && hint > accepted)
         assertTrue("登记后应通知气泡刷新", send.contains("notifyStateChanged(mainSessionKey)"))
         assertTrue("导航器应复用项目副驾驶状态订阅", navigator.normalized.contains("peerCoordinator.addStateListener(this)"))
         assertTrue("只有新增定位信息才触发重扫", navigator.normalized.contains("latest === observedFeedbackHint"))

@@ -346,6 +346,76 @@ class SessionTitleRegeneratorTest {
     }
 
     @Test
+    fun `残留 dev 库存在时标题写回当前 state 库`() {
+        val home = temp.newFolder("codex-mixed-home").toPath()
+        val codexHome = home.resolve(".codex")
+        val devDir = Files.createDirectories(codexHome.resolve("sqlite"))
+        val devDb = devDir.resolve("codex-dev.db")
+        DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
+            connection.createStatement().use {
+                it.executeUpdate(
+                    "CREATE TABLE local_thread_catalog (thread_id TEXT PRIMARY KEY, display_title TEXT, source_created_at REAL)",
+                )
+                it.executeUpdate("INSERT INTO local_thread_catalog VALUES ('dev-old', '旧标题', 1000)")
+            }
+        }
+        val stateDb = codexHome.resolve("state_5.sqlite")
+        DriverManager.getConnection("jdbc:sqlite:$stateDb").use { connection ->
+            connection.createStatement().use {
+                it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, created_at INTEGER)")
+                it.executeUpdate("INSERT INTO threads VALUES ('state-new', NULL, '原标题', 2000)")
+            }
+        }
+
+        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("mixed-rollout.jsonl").toPath(), "state-new"), "新标题", home)
+
+        assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["state-new"])
+        DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT display_title FROM local_thread_catalog WHERE thread_id = 'dev-old'").use { rows ->
+                    assertTrue(rows.next())
+                    assertEquals("旧标题", rows.getString(1))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `dev 库较新时标题写回 dev 库`() {
+        val home = temp.newFolder("codex-dev-home").toPath()
+        val codexHome = home.resolve(".codex")
+        val devDir = Files.createDirectories(codexHome.resolve("sqlite"))
+        val devDb = devDir.resolve("codex-dev.db")
+        DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
+            connection.createStatement().use {
+                it.executeUpdate(
+                    "CREATE TABLE local_thread_catalog (thread_id TEXT PRIMARY KEY, display_title TEXT, source_created_at REAL)",
+                )
+                it.executeUpdate("INSERT INTO local_thread_catalog VALUES ('dev-new', '原标题', 2000)")
+            }
+        }
+        val stateDb = codexHome.resolve("state_5.sqlite")
+        DriverManager.getConnection("jdbc:sqlite:$stateDb").use { connection ->
+            connection.createStatement().use {
+                it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, created_at INTEGER)")
+                it.executeUpdate("INSERT INTO threads VALUES ('state-old', NULL, '旧标题', 1000)")
+            }
+        }
+
+        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("dev-rollout.jsonl").toPath(), "dev-new"), "新标题", home)
+
+        assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["dev-new"])
+        DriverManager.getConnection("jdbc:sqlite:$stateDb").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT name FROM threads WHERE id = 'state-old'").use { rows ->
+                    assertTrue(rows.next())
+                    assertNull(rows.getString(1))
+                }
+            }
+        }
+    }
+
+    @Test
     fun `Pi 标题追加 session_info 并被 Reader 读取`() {
         val home = temp.newFolder("pi-home").toPath()
         val reader = PiSessionReader(home)

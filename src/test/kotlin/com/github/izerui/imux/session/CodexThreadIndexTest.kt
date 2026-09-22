@@ -19,7 +19,7 @@ class CodexThreadIndexTest {
     private fun createDb(vararg rows: Triple<String, String?, Long>) =
         createDb("state_5.sqlite", *rows)
 
-    private fun createDevDb(vararg rows: Pair<String, String>) {
+    private fun createDevDb(vararg rows: Triple<String, String, Long>) {
         val dir = File(tmp.root, "sqlite").apply { mkdirs() }
         val file = File(dir, "codex-dev.db")
         DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
@@ -36,11 +36,12 @@ class CodexThreadIndexTest {
                 conn.prepareStatement(
                     "INSERT INTO local_thread_catalog (host_id, thread_id, display_title, " +
                         "source_created_at, source_updated_at, source_kind, observation_sequence) " +
-                        "VALUES ('host', ?, ?, 0, 0, 'cli', 0)",
+                        "VALUES ('host', ?, ?, ?, 0, 'cli', 0)",
                 ).use { stmt ->
-                    rows.forEach { pair ->
-                        stmt.setString(1, pair.first)
-                        stmt.setString(2, pair.second)
+                    rows.forEach { (id, title, created) ->
+                        stmt.setString(1, id)
+                        stmt.setString(2, title)
+                        stmt.setLong(3, created)
                         stmt.executeUpdate()
                     }
                 }
@@ -57,15 +58,16 @@ class CodexThreadIndexTest {
         DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
             conn.createStatement().use {
                 it.executeUpdate(
-                    "CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, updated_at_ms INTEGER)",
+                    "CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT, created_at INTEGER, updated_at_ms INTEGER)",
                 )
             }
-            conn.prepareStatement("INSERT INTO threads (id, name, title, updated_at_ms) VALUES (?, NULL, ?, ?)")
+            conn.prepareStatement("INSERT INTO threads (id, name, title, created_at, updated_at_ms) VALUES (?, NULL, ?, ?, ?)")
                 .use { stmt ->
                     rows.forEach { (id, title, updated) ->
                         stmt.setString(1, id)
                         stmt.setString(2, title)
                         stmt.setLong(3, updated)
+                        stmt.setLong(4, updated)
                         stmt.executeUpdate()
                     }
                 }
@@ -106,15 +108,15 @@ class CodexThreadIndexTest {
     }
 
     @Test
-    fun `标题为空的记录不参与`() {
+    fun `标题为空的记录仍保留会话 id`() {
         createDb(
             Triple("a", null, 1_000L),
             Triple("b", "   ", 2_000L),
         )
 
         val loaded = index().load()!!
-        assertNull(loaded["a"])
-        assertNull(loaded["b"])
+        assertEquals("", loaded["a"])
+        assertEquals("", loaded["b"])
     }
 
     @Test
@@ -158,7 +160,7 @@ class CodexThreadIndexTest {
     @Test
     fun `codex-dev db 存在时优先读取`() {
         createDb(Triple("legacy-1", "旧库标题", 1_000L))
-        createDevDb("dev-1" to "新库标题")
+        createDevDb(Triple("dev-1", "新库标题", 2_000L))
 
         val loaded = index().load()!!
         assertEquals("新库标题", loaded["dev-1"])
@@ -166,23 +168,32 @@ class CodexThreadIndexTest {
     }
 
     @Test
-    fun `codex-dev db 成功读取为空时不回退旧库`() {
+    fun `空 dev 库不回退到有旧会话的 state 库`() {
         createDb(Triple("legacy-1", "旧库标题", 1_000L))
-        createDevDb() // 空表
+        createDevDb()
 
-        val loaded = index().load()!!
-        assertTrue(loaded.isEmpty())
+        assertTrue(index().load()!!.isEmpty())
     }
 
     @Test
-    fun `codex-dev db 读取失败时不回退旧库`() {
+    fun `state 有更新的会话时不被残留的 dev 库遮蔽`() {
+        createDb(Triple("state-1", "state 标题", 2_000L))
+        createDevDb(Triple("dev-1", "dev 旧标题", 1_000L))
+
+        val loaded = index().load()!!
+        assertEquals("state 标题", loaded["state-1"])
+        assertNull(loaded["dev-1"])
+    }
+
+    @Test
+    fun `dev 库损坏时读取可用的 state 库`() {
         createDb(Triple("legacy-1", "旧库标题", 1_000L))
         // 写一个损坏的 codex-dev.db
         File(tmp.root, "sqlite").mkdirs()
         File(tmp.root, "sqlite/codex-dev.db").writeText("损坏的数据库")
 
         val loaded = index().load()!!
-        assertTrue(loaded.isEmpty())
+        assertEquals("旧库标题", loaded["legacy-1"])
     }
 
     @Test

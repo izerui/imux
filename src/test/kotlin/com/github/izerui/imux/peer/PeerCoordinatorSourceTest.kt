@@ -126,7 +126,7 @@ class PeerCoordinatorSourceTest {
 
     @Test
     fun `injectFeedback 含 incrementAndGet 而 runReviewAndInject 不含`() {
-        val injectFun = coordinator.substringAfter("private fun injectFeedback(").substringBefore("private fun ")
+        val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
         assertTrue("injectFeedback 应含 incrementAndGet", injectFun.contains("incrementAndGet()"))
         val reviewFun = coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
         assertFalse("runReviewAndInject 不应含 incrementAndGet", reviewFun.contains("incrementAndGet()"))
@@ -134,8 +134,8 @@ class PeerCoordinatorSourceTest {
 
     @Test
     fun `injectFeedback 中 send 在 incrementAndGet 和 peerInjectedSessions-add 之前`() {
-        val injectFun = coordinator.substringAfter("private fun injectFeedback(").substringBefore("private fun ")
-        val sendPos = injectFun.indexOf(".send(prompt)")
+        val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
+        val sendPos = injectFun.indexOf("trySendPeerFeedback(view.createSendTextBuilder(), prompt)")
         val incrementPos = injectFun.indexOf("incrementAndGet()")
         val addPos = injectFun.indexOf("peerInjectedSessions.add(")
         assertTrue("send 应出现", sendPos >= 0)
@@ -146,8 +146,26 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
+    fun `自动反馈只在安全粘贴受理后登记轮次`() {
+        val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
+        val sendPos = injectFun.indexOf("trySendPeerFeedback(view.createSendTextBuilder(), prompt)")
+        val successPos = injectFun.indexOf("if (sent) break")
+        val failurePos = injectFun.indexOf("if (!sent) {")
+        val countPos = injectFun.indexOf("incrementAndGet()")
+        assertTrue("应尝试强制括号粘贴发送", sendPos >= 0)
+        assertTrue("成功后应停止重试", successPos > sendPos)
+        assertTrue("未受理时应在更新计数前返回", failurePos > successPos && failurePos < countPos)
+        assertTrue(
+            "发送函数应要求括号粘贴并执行",
+            SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
+                .compact(coordinator)
+                .contains("builder.requireBracketedPasteMode().shouldExecute().trySend(prompt)"),
+        )
+    }
+
+    @Test
     fun `injectFeedback 和 stageFeedback 直接发送反馈无前缀`() {
-        val injectFun = coordinator.substringAfter("private fun injectFeedback(").substringBefore("private fun ")
+        val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
         val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
         assertFalse("injectFeedback 不应添加前缀", injectFun.contains("feedbackPrefix"))
         assertFalse("stageFeedback 不应添加前缀", stageFun.contains("feedbackPrefix"))
