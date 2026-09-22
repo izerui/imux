@@ -280,7 +280,7 @@ class SessionMonitor(
                 PiReportType.USER_MESSAGE -> {
                     if (host.openTabsByTabId()[report.tabId] != report.sessionId) return@launch
                     // 用户已经开始新一轮，立即终止上一轮副驾驶；不能等下一次运行态轮询。
-                    peerCoordinator.cancelCurrentRun(report.sessionId)
+                    peerCoordinator.onTurnStarted(report.sessionId)
                     transcriptGenerations
                         .computeIfAbsent(report.sessionId) { AtomicLong() }
                         .incrementAndGet()
@@ -567,7 +567,7 @@ class SessionMonitor(
                         updateOpenTabIcons()
                         updateFrameTitle()
                         (running - previousRunning).forEach { sessionId ->
-                            peerCoordinator.cancelCurrentRun(sessionId)
+                            peerCoordinator.onTurnStarted(sessionId)
                         }
                     }
                     notifyListeners()

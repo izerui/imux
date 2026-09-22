@@ -136,12 +136,6 @@ class PeerCoordinator internal constructor(
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val generation = bindings[sessionKey]?.generation ?: return
-        val injectedRounds = roundCounts[sessionKey]?.get() ?: 0
-        val maxRounds = peerMaxRounds()
-        if (injectedRounds >= maxRounds) {
-            LOG.info("结对编程：已达安全上限 $maxRounds 轮，不再启动副驾驶 sessionKey=$sessionKey")
-            return
-        }
         val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
         if (!bindings.containsKey(sessionKey)) {
             guards.remove(sessionKey, guard)
@@ -153,6 +147,14 @@ class PeerCoordinator internal constructor(
             }
         } ?: return
         result.cancelled?.killProcess()
+        val injectedRounds = roundCounts[sessionKey]?.get() ?: 0
+        val maxRounds = peerMaxRounds()
+        if (injectedRounds >= maxRounds) {
+            guard.cancelAndDetach()?.killProcess()
+            LOG.info("结对编程：已达安全上限 $maxRounds 轮，不再启动副驾驶 sessionKey=$sessionKey")
+            notifyStateChanged(sessionKey)
+            return
+        }
         LOG.info("结对编程：主会话轮次完成 sessionKey=$sessionKey")
         launchReview(sessionKey, result.run, guard)
     }
@@ -179,6 +181,16 @@ class PeerCoordinator internal constructor(
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()
         LOG.info("结对编程：手动取消 $sessionKey")
+        notifyStateChanged(sessionKey)
+    }
+
+    fun onTurnStarted(sessionKey: String) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        if (disposed || !bindings.containsKey(sessionKey)) return
+        // 自动注入也会使主会话进入运行态，只有非注入轮次才开启新的计数周期。
+        if (sessionKey !in peerInjectedSessions) roundCounts[sessionKey]?.set(0)
+        val cancelledRun = guards[sessionKey]?.cancelAndDetach()
+        cancelledRun?.killProcess()
         notifyStateChanged(sessionKey)
     }
 

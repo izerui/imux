@@ -178,6 +178,66 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
+    fun `达到上限的自动反馈轮次停止而下一次用户轮次恢复副驾驶`() {
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val firstCliStarted = CountDownLatch(1)
+        val releaseFirstCli = CountDownLatch(1)
+        val firstFeedback = CountDownLatch(1)
+        val resumedReview = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 1 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                if (calls.incrementAndGet() == 1) {
+                    firstCliStarted.countDown()
+                    releaseFirstCli.await(5, TimeUnit.SECONDS)
+                } else {
+                    resumedReview.countDown()
+                }
+                "feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ ->
+                firstFeedback.countDown()
+                true
+            },
+        )
+
+        try {
+            coordinator.bind("s-limit-reset", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-limit-reset")
+            assertTrue("首轮 CLI 应启动", firstCliStarted.await(5, TimeUnit.SECONDS))
+            val firstReview = scope.coroutineContext[Job]!!.children.single()
+            releaseFirstCli.countDown()
+            assertTrue("首轮反馈应发送", firstFeedback.await(5, TimeUnit.SECONDS))
+            runBlocking { withTimeout(5_000) { firstReview.join() } }
+
+            coordinator.onTurnStarted("s-limit-reset")
+            coordinator.onTurnCompleted("s-limit-reset")
+            assertEquals("上限轮次不得启动副驾驶 CLI", 1, calls.get())
+            assertFalse("上限轮次不得保留运行状态", coordinator.status("s-limit-reset")!!.running)
+
+            coordinator.onTurnStarted("s-limit-reset")
+            coordinator.onTurnCompleted("s-limit-reset")
+            assertTrue("后续用户轮次应重新启动副驾驶", resumedReview.await(5, TimeUnit.SECONDS))
+            assertEquals("只在用户新轮次增加一次调用", 2, calls.get())
+        } finally {
+            releaseFirstCli.countDown()
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `第二个 onTurnCompleted 取消旧副驾驶并触发新一轮`() {
         val mcpConfig = PeerMcpConfig(null, null, null)
         val callCount = java.util.concurrent.atomic.AtomicInteger(0)

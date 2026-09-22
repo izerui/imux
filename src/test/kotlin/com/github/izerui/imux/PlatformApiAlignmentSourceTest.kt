@@ -136,7 +136,7 @@ class PlatformApiAlignmentSourceTest {
         // 新进入运行态的会话应取消副驾驶
         assertTrue(
             "新进入运行态时应取消副驾驶",
-            monitor.contains("peerCoordinator.cancelCurrentRun(sessionId)"),
+            monitor.contains("peerCoordinator.onTurnStarted(sessionId)"),
         )
         assertTrue(
             "取消范围应为新进入运行态的会话",
