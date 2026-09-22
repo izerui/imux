@@ -40,11 +40,21 @@ internal class PeerRun {
         if (started != null && cancelled.get()) destroyProcessTree(started)
     }
 
-    fun cancel() {
+    fun markCancelled() {
         cancelled.set(true)
+    }
+
+    fun killProcess() {
         process.getAndSet(null)?.let(::destroyProcessTree)
     }
+
+    fun cancel() {
+        markCancelled()
+        killProcess()
+    }
 }
+
+internal data class StartResult(val run: PeerRun, val cancelled: PeerRun?)
 
 internal class PeerSessionGuard {
     private val lock = Any()
@@ -61,22 +71,34 @@ internal class PeerSessionGuard {
         bindingGeneration: Long,
         currentGeneration: () -> Long?,
         onStart: () -> Unit = {},
-    ): PeerRun? = synchronized(lock) {
+    ): StartResult? = synchronized(lock) {
         if (currentGeneration() != bindingGeneration) return@synchronized null
-        activeRun?.cancel()
-        PeerRun().also {
+        val old = activeRun
+        old?.markCancelled()
+        val newRun = PeerRun().also {
             it.bindingGeneration = bindingGeneration
             activeRun = it
             onStart()
         }
+        StartResult(newRun, old)
     }
 
     fun isActive(run: PeerRun): Boolean = synchronized(lock) { activeRun === run }
 
-    fun onFinished(run: PeerRun) = synchronized(lock) {
+    fun cancelAndDetach(): PeerRun? = synchronized(lock) {
+        val run = activeRun
+        run?.markCancelled()
+        activeRun = null
+        run
+    }
+
+    fun onFinished(run: PeerRun): PeerRun? = synchronized(lock) {
         if (activeRun === run) {
-            run.cancel()
+            run.markCancelled()
             activeRun = null
+            run
+        } else {
+            null
         }
     }
 

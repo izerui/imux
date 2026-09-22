@@ -2,7 +2,6 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.icons.AgentIcons
-import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.settings.ImuxSettings
@@ -39,29 +38,6 @@ internal fun peerProgrammingActions(
     }
     return actions.toTypedArray()
 }
-
-/** 供树形列表右键菜单使用。 */
-internal fun peerProgrammingActionGroup(
-    project: Project,
-    session: AgentSession,
-    targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
-): ActionGroup = peerProgrammingActionGroup(project, session.id, targetTypes)
-
-/** 供尚未落盘的 pending 会话使用。 */
-internal fun peerProgrammingActionGroup(
-    project: Project,
-    sessionKey: String,
-    targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
-): ActionGroup =
-    object : ActionGroup(ImuxBundle.message("action.peer.group.text"), true), DumbAware {
-        init {
-            templatePresentation.icon = AllIcons.Actions.ProfileCPU
-        }
-
-        private val children = peerProgrammingActions(project, sessionKey, targetTypes)
-
-        override fun getChildren(event: AnActionEvent?): Array<AnAction> = children
-    }
 
 private class PeerBindAction(
     private val project: Project,
@@ -103,8 +79,7 @@ private class PeerUnbindAction(
 /**
  * Terminal context menu group — registered in plugin.xml.
  *
- * 只需要 sessionIdentity（agentType + sessionId），不要求会话已落盘。
- * 新建会话在 CLI 还没写下第一条记录时就能开启结对编程。
+ * 只在当前会话终端正文的右键菜单中出现。
  */
 class PeerProgrammingActionGroup :
     ActionGroup(ImuxBundle.message("action.peer.group.text"), true),

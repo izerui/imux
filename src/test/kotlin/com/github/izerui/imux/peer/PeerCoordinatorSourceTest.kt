@@ -81,8 +81,8 @@ class PeerCoordinatorSourceTest {
 
     @Test
     fun `取消和解绑通过 guard 清除状态`() {
-        assertTrue(coordinator.contains("guards[sessionKey]?.cancel()"))
-        assertTrue(coordinator.contains("guards.remove(sessionKey)?.cancel()"))
+        assertTrue(coordinator.contains("cancelledRun?.killProcess()"))
+        assertTrue(coordinator.contains("cancelAndDetach()"))
     }
 
     @Test
@@ -93,7 +93,7 @@ class PeerCoordinatorSourceTest {
         assertTrue("迁移应无条件清理目标 key 的 bindings", bindingBlock.contains("bindings.remove(to)"))
         assertTrue("迁移应无条件清理目标 key 的 peerInjectedSessions", bindingBlock.contains("peerInjectedSessions.remove(to)"))
         assertTrue("迁移应无条件清理目标 key 的 roundCounts", bindingBlock.contains("roundCounts.remove(to)"))
-        assertTrue("迁移应无条件取消目标 key 的 guard", bindingBlock.contains("guards.remove(to)?.cancel()"))
+        assertTrue("迁移应无条件移除目标 key 的 guard", bindingBlock.contains("guards.remove(to)"))
     }
 
     @Test

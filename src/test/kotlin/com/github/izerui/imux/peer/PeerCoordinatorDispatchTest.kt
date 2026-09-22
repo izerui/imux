@@ -134,6 +134,50 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
+    fun `达到自动注入上限后不再启动副驾驶`() {
+        val mcpConfig = PeerMcpConfig(null, null, null)
+        val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val feedbackSent = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 1 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                callCount.incrementAndGet()
+                "feedback"
+            },
+            resolveMcpConfig = { mcpConfig },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ ->
+                feedbackSent.countDown()
+                true
+            },
+        )
+
+        try {
+            coordinator.bind("s-limit", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-limit")
+            assertTrue("第一轮反馈应自动发送", feedbackSent.await(5, TimeUnit.SECONDS))
+
+            coordinator.onTurnCompleted("s-limit")
+            Thread.sleep(300)
+
+            assertEquals("达到上限后不应再次启动副驾驶", 1, callCount.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `第二个 onTurnCompleted 取消旧副驾驶并触发新一轮`() {
         val mcpConfig = PeerMcpConfig(null, null, null)
         val callCount = java.util.concurrent.atomic.AtomicInteger(0)
@@ -601,6 +645,172 @@ class PeerCoordinatorDispatchTest {
             assertFalse("取消后不应 running", statusAfterCancel!!.running)
             assertEquals("runCli 只应调用一次", 1, callCount.get())
         } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `旧 run 在 runCli 内被取消后其反馈不被注入`() {
+        val mcpConfig = PeerMcpConfig(null, null, null)
+        val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val oldRunInCli = CountDownLatch(1)
+        val oldRunGate = CountDownLatch(1)
+        val newRunDone = CountDownLatch(1)
+        val injectedFeedback = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                val n = callCount.incrementAndGet()
+                if (n == 1) {
+                    oldRunInCli.countDown()
+                    oldRunGate.await(5, TimeUnit.SECONDS)
+                    "stale feedback"
+                } else {
+                    newRunDone.countDown()
+                    "fresh feedback"
+                }
+            },
+            resolveMcpConfig = { mcpConfig },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                injectedFeedback.add(feedback)
+                true
+            },
+        )
+
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s1")
+            assertTrue("旧 run 应进入 runCli", oldRunInCli.await(5, TimeUnit.SECONDS))
+
+            coordinator.onTurnCompleted("s1")
+            oldRunGate.countDown()
+
+            assertTrue("新 run 应完成 runCli", newRunDone.await(5, TimeUnit.SECONDS))
+            Thread.sleep(300)
+
+            assertFalse(
+                "旧 run 的 stale feedback 不应被注入",
+                injectedFeedback.contains("stale feedback"),
+            )
+            assertTrue(
+                "新 run 的 fresh feedback 应被注入",
+                injectedFeedback.contains("fresh feedback"),
+            )
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `cancelCurrentRun 的 killProcess 期间新 onTurnCompleted 启动的 run 不受影响`() {
+        val mcpConfig = PeerMcpConfig(null, null, null)
+        val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val firstCliStarted = CountDownLatch(1)
+        val firstCliBlocked = CountDownLatch(1)
+        val destroyStarted = CountDownLatch(1)
+        val destroyGate = CountDownLatch(1)
+        val secondCliStarted = CountDownLatch(1)
+        val secondCliFinished = CountDownLatch(1)
+        val injectedFeedback = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val oldProcessDestroyed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, onProcess, _ ->
+                val n = callCount.incrementAndGet()
+                if (n == 1) {
+                    onProcess(object : Process() {
+                        override fun getOutputStream() = java.io.OutputStream.nullOutputStream()
+                        override fun getInputStream() = java.io.InputStream.nullInputStream()
+                        override fun getErrorStream() = java.io.InputStream.nullInputStream()
+                        override fun waitFor() = 0
+                        override fun exitValue() = 0
+                        override fun destroy() { oldProcessDestroyed.set(true) }
+                        override fun destroyForcibly(): Process {
+                            destroyStarted.countDown()
+                            destroyGate.await(5, TimeUnit.SECONDS)
+                            oldProcessDestroyed.set(true)
+                            return this
+                        }
+                        override fun descendants(): java.util.stream.Stream<ProcessHandle> =
+                            java.util.stream.Stream.empty()
+                    })
+                    firstCliStarted.countDown()
+                    firstCliBlocked.await(5, TimeUnit.SECONDS)
+                    null
+                } else {
+                    secondCliStarted.countDown()
+                    secondCliFinished.countDown()
+                    "new-run-feedback"
+                }
+            },
+            resolveMcpConfig = { mcpConfig },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                injectedFeedback.add(feedback)
+                true
+            },
+        )
+
+        var cancelThread: Thread? = null
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s1")
+            assertTrue("旧 run 应进入 runCli", firstCliStarted.await(5, TimeUnit.SECONDS))
+
+            cancelThread = Thread { coordinator.cancelCurrentRun("s1") }
+            cancelThread.start()
+            assertTrue("旧进程 destroyForcibly 应开始", destroyStarted.await(5, TimeUnit.SECONDS))
+
+            coordinator.onTurnCompleted("s1")
+
+            assertTrue(
+                "新 run 应在旧进程销毁完成前进入 runCli",
+                secondCliStarted.await(5, TimeUnit.SECONDS),
+            )
+
+            destroyGate.countDown()
+            firstCliBlocked.countDown()
+            cancelThread.join(5000)
+            cancelThread = null
+
+            assertTrue("新 run 应完成 runCli", secondCliFinished.await(5, TimeUnit.SECONDS))
+            Thread.sleep(300)
+
+            assertTrue("旧进程应被终止", oldProcessDestroyed.get())
+            assertTrue(
+                "新 run 的反馈应被注入",
+                injectedFeedback.contains("new-run-feedback"),
+            )
+            val status = coordinator.status("s1")
+            assertNotNull("绑定应仍存在", status)
+            assertFalse("新 run 完成后不应 running", status!!.running)
+        } finally {
+            destroyGate.countDown()
+            firstCliBlocked.countDown()
+            cancelThread?.join(5000)
             coordinator.dispose()
             scope.cancel()
         }
