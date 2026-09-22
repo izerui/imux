@@ -11,6 +11,7 @@ import com.github.izerui.imux.session.tabPidFilePath
 import com.github.izerui.imux.turn.TurnNotifier
 import com.github.izerui.imux.turn.TurnWatcher
 import com.intellij.ide.DataManager
+import com.intellij.ide.ui.UISettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
@@ -150,13 +151,21 @@ class TerminalHost(
         runtime: Map<String, ClaudeRuntimeSession>,
     ) {
         ApplicationManager.getApplication().assertIsDispatchThread()
-        saved.forEach { tab ->
-            val agentType = AgentType.entries.firstOrNull { it.cli == tab.agentId } ?: return@forEach
-            val session = sessions[tab.sessionId]?.takeIf { it.agentType == agentType } ?: return@forEach
+        val resumable = saved.mapNotNull { tab ->
+            val agentType = AgentType.entries.firstOrNull { it.cli == tab.agentId } ?: return@mapNotNull null
+            val session = sessions[tab.sessionId]?.takeIf { it.agentType == agentType } ?: return@mapNotNull null
             if (runtime[tab.sessionId].blocksResume()) {
                 TurnNotifier.notifyBusy(project, session.title)
-                return@forEach
+                return@mapNotNull null
             }
+            Triple(tab, agentType, session)
+        }
+        val editorManager = FileEditorManagerEx.getInstanceEx(project)
+        restorationOpenOrder(
+            resumable,
+            openTabsAtEnd = UISettings.getInstance().openTabsAtTheEnd,
+            hasSelectedTab = editorManager.currentWindow?.selectedFile != null,
+        ).forEach { (tab, agentType, session) ->
             open(
                 key = tab.sessionId,
                 agentType = agentType,
@@ -709,15 +718,21 @@ class TerminalHost(
         if (!restorationState.canPersist(projectClosing, project.isDisposed)) return
         ApplicationManager.getApplication().assertIsDispatchThread()
 
+        // ConcurrentHashMap.values 没有视觉顺序；EditorWindow.fileList 按标签从左到右排列。
         val tabs =
-            files.values.mapNotNull { file ->
-                val sessionId = file.sessionId ?: return@mapNotNull null
-                RestorableSessionTabs.Tab(
-                    agentId = file.agentType.cli,
-                    sessionId = sessionId,
-                    title = file.tabTitle,
-                )
-            }
+            FileEditorManagerEx.getInstanceEx(project).windows
+                .asSequence()
+                .flatMap { it.fileList.asSequence() }
+                .mapNotNull { it as? AgentTerminalVirtualFile }
+                .filter { files[it.sessionKey] === it }
+                .mapNotNull { file ->
+                    val sessionId = file.sessionId ?: return@mapNotNull null
+                    RestorableSessionTabs.Tab(
+                        agentId = file.agentType.cli,
+                        sessionId = sessionId,
+                        title = file.tabTitle,
+                    )
+                }.toList()
         RestorableSessionTabs.getInstance(project).replace(tabs)
     }
 

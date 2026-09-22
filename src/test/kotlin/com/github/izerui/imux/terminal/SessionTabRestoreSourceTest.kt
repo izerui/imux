@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.SourceCode
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -35,9 +36,21 @@ class SessionTabRestoreSourceTest {
 
     @Test
     fun `only resumable sessions are persisted`() {
-        assertTrue(hostSource.contains("files.values.mapNotNull"))
+        val persist = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt")
+            .bodyAfter("private fun persistRestorableTabs()", '{')
+        assertTrue("快照应按窗口标签的视觉顺序读取", persist.contains("it.fileList.asSequence()"))
+        assertTrue("只保存当前终端实例", persist.contains("files[it.sessionKey] === it"))
         assertTrue(hostSource.contains("val sessionId = file.sessionId ?: return@mapNotNull null"))
         assertTrue(hostSource.contains("agentId = file.agentType.cli"))
+    }
+
+    @Test
+    fun `恢复标签按平台插入规则调整打开顺序`() {
+        val restore = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt")
+            .bodyAfter("fun restoreTabs(", '{')
+        assertTrue("应先筛选可恢复标签，再计算打开顺序", restore.indexOf("val resumable =") < restore.indexOf("restorationOpenOrder("))
+        assertTrue("应使用平台的新标签位置设置", restore.contains("UISettings.getInstance().openTabsAtTheEnd"))
+        assertTrue("应以当前窗口是否已有选中标签选择恢复次序", restore.contains("editorManager.currentWindow?.selectedFile != null"))
     }
 
     @Test

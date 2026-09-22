@@ -40,6 +40,21 @@ class RestorableSessionTabs : SerializablePersistentStateComponent<RestorableSes
     }
 }
 
+/**
+ * 262 默认把不选中的新标签插在当前选中标签之后；连续恢复时要逆序打开。
+ * 空窗口第一次打开的标签会成为选中标签，因此先打开最左侧，再逆序打开剩余标签。
+ */
+internal fun <T> restorationOpenOrder(
+    tabs: List<T>,
+    openTabsAtEnd: Boolean,
+    hasSelectedTab: Boolean,
+): List<T> =
+    when {
+        openTabsAtEnd || tabs.size < 2 -> tabs
+        hasSelectedTab -> tabs.asReversed()
+        else -> tabs.take(1) + tabs.drop(1).asReversed()
+    }
+
 internal class SessionTabRestorationState {
     /**
      * 仅在启动恢复正在逐个打开快照标签时为 true。

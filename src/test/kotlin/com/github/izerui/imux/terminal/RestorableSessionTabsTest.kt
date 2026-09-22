@@ -8,6 +8,24 @@ import org.junit.Test
 
 class RestorableSessionTabsTest {
     @Test
+    fun `末尾打开标签时恢复顺序保持原样`() {
+        assertEquals(listOf("a", "b", "c"), restorationOpenOrder(listOf("a", "b", "c"), true, true))
+        assertEquals(listOf("a", "b", "c"), restorationOpenOrder(listOf("a", "b", "c"), true, false))
+    }
+
+    @Test
+    fun `选中标签后插入时逆序恢复`() {
+        assertEquals(listOf("c", "b", "a"), restorationOpenOrder(listOf("a", "b", "c"), false, true))
+    }
+
+    @Test
+    fun `空窗口先打开最左侧标签再逆序恢复剩余标签`() {
+        assertEquals(listOf("a", "c", "b"), restorationOpenOrder(listOf("a", "b", "c"), false, false))
+        assertEquals(listOf("a"), restorationOpenOrder(listOf("a"), false, false))
+        assertEquals(emptyList<String>(), restorationOpenOrder(emptyList<String>(), false, false))
+    }
+
+    @Test
     fun `workspace state survives platform xml serialization`() {
         val expected =
             RestorableSessionTabs.State(
