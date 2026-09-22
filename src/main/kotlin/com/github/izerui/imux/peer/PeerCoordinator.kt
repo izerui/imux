@@ -15,6 +15,7 @@ import com.github.izerui.imux.terminal.piIdeaMcpScript
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
@@ -104,6 +105,7 @@ class PeerCoordinator internal constructor(
         sessionKey: String,
         targetAgentType: AgentType,
     ) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val cancelledRun = unbindInner(sessionKey)
         bindings[sessionKey] = PeerBinding(targetAgentType)
@@ -113,6 +115,7 @@ class PeerCoordinator internal constructor(
     }
 
     fun unbind(sessionKey: String) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val cancelledRun = unbindInner(sessionKey)
         cancelledRun?.killProcess()
@@ -130,6 +133,7 @@ class PeerCoordinator internal constructor(
     fun boundTarget(sessionKey: String): AgentType? = bindings[sessionKey]?.targetAgentType
 
     fun onTurnCompleted(sessionKey: String) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val generation = bindings[sessionKey]?.generation ?: return
         val injectedRounds = roundCounts[sessionKey]?.get() ?: 0
@@ -169,6 +173,7 @@ class PeerCoordinator internal constructor(
     }
 
     fun cancelCurrentRun(sessionKey: String) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         roundCounts[sessionKey]?.set(0)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
@@ -186,6 +191,7 @@ class PeerCoordinator internal constructor(
         to: String,
     ) {
         if (from == to) return
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val binding = bindings.remove(from)
         roundCounts.remove(from)
@@ -205,6 +211,7 @@ class PeerCoordinator internal constructor(
     }
 
     override fun dispose() {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
         disposed = true
         val guardsToCancel = guards.values.toList()
         guards.clear()

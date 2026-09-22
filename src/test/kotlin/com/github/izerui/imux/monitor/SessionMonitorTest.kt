@@ -119,6 +119,7 @@ class SessionMonitorTest {
         val userMessageBranch = source.bodyAfter("PiReportType.USER_MESSAGE ->", '{')
 
         assertTrue(reportBody.contains("PiReportType.USER_MESSAGE"))
+        assertTrue("用户消息必须立即取消上一轮副驾驶", userMessageBranch.contains("peerCoordinator.cancelCurrentRun(report.sessionId)"))
         assertTrue(userMessageBranch.contains("transcriptGenerations"))
         assertTrue(userMessageBranch.contains("incrementAndGet()"))
         assertTrue(userMessageBranch.contains("notifyListeners()"))
