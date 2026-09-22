@@ -2,17 +2,98 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.peer.PeerFeedbackHint
 import com.github.izerui.imux.session.SessionExchange
+import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.awt.Point
+import java.lang.reflect.Proxy
 import java.nio.file.Path
 import java.time.Instant
 
 class SessionMessageNavigatorTest {
     private fun asked(vararg texts: String) = texts.map { SessionExchange(it, "") }
+
+    private val outputModel = Proxy.newProxyInstance(
+        TerminalOutputModel::class.java.classLoader,
+        arrayOf(TerminalOutputModel::class.java),
+    ) { _, _, _ -> null } as TerminalOutputModel
+
+    @Test
+    fun `副驾驶反馈发送后无需等待主会话回复就能显示锚点`() {
+        val hint = PeerFeedbackHint("检查并发边界", 1_020L, outputModel)
+
+        val anchors = peerFeedbackAnchors(emptyList(), listOf(hint), 1_000L, 1_030L)
+
+        assertEquals(1, anchors.size)
+        assertEquals(1_020L, anchors.single().absoluteOffset)
+        assertEquals("检查并发边界", anchors.single().userPreview)
+        assertEquals("", anchors.single().replyPreview)
+    }
+
+    @Test
+    fun `副驾驶反馈原文已有锚点时优先保留准确位置`() {
+        val native = UserMessageAnchor(30, "检查并发边界", "处理完成", 1_030L)
+        val hint = PeerFeedbackHint("检查并发边界", 1_020L, outputModel)
+
+        val anchors = peerFeedbackAnchors(listOf(native), listOf(hint), 1_000L, 1_050L)
+
+        assertEquals(listOf(native), anchors)
+    }
+
+    @Test
+    fun `相同反馈只有新一轮出现原生锚点时保留旧轮气泡`() {
+        val first = PeerFeedbackHint("检查并发边界", 1_010L, outputModel)
+        val second = PeerFeedbackHint("检查并发边界", 1_030L, outputModel)
+        val latestNative = UserMessageAnchor(40, "检查并发边界", "处理完成", 1_040L)
+
+        val anchors = peerFeedbackAnchors(listOf(latestNative), listOf(first, second), 1_000L, 1_050L)
+
+        assertEquals("旧轮应保留合成锚点", listOf(1_010L, 1_040L), anchors.map(UserMessageAnchor::absoluteOffset))
+        assertEquals("新轮应保留原生回复预览", "处理完成", anchors.last().replyPreview)
+    }
+
+    @Test
+    fun `相同反馈两轮均有原生锚点时分别替代且不重复`() {
+        val first = PeerFeedbackHint("检查并发边界", 1_010L, outputModel)
+        val second = PeerFeedbackHint("检查并发边界", 1_030L, outputModel)
+        val firstNative = UserMessageAnchor(20, "检查并发边界", "第一轮回复", 1_020L)
+        val secondNative = UserMessageAnchor(40, "检查并发边界", "第二轮回复", 1_040L)
+
+        val anchors = peerFeedbackAnchors(
+            listOf(firstNative, secondNative),
+            listOf(first, second),
+            1_000L,
+            1_050L,
+        )
+
+        assertEquals(listOf(firstNative, secondNative), anchors)
+    }
+
+    @Test
+    fun `旧轮原生锚点不替代后来尚未落屏的相同反馈`() {
+        val first = PeerFeedbackHint("检查并发边界", 1_010L, outputModel)
+        val second = PeerFeedbackHint("检查并发边界", 1_030L, outputModel)
+        val firstNative = UserMessageAnchor(20, "检查并发边界", "第一轮回复", 1_020L)
+
+        val anchors = peerFeedbackAnchors(listOf(firstNative), listOf(first, second), 1_000L, 1_050L)
+
+        assertEquals(listOf(1_020L, 1_030L), anchors.map(UserMessageAnchor::absoluteOffset))
+        assertEquals("旧轮保留原生回复预览", "第一轮回复", anchors.first().replyPreview)
+        assertEquals("新轮保留独立合成锚点", "", anchors.last().replyPreview)
+    }
+
+    @Test
+    fun `副驾驶旧锚点被终端裁剪后不再显示`() {
+        val hint = PeerFeedbackHint("旧反馈", 900L, outputModel)
+
+        val anchors = peerFeedbackAnchors(emptyList(), listOf(hint), 1_000L, 1_050L)
+
+        assertTrue(anchors.isEmpty())
+    }
 
     @Test
     fun `软换行与连续空白不影响用户消息定位`() {

@@ -30,6 +30,7 @@ import java.nio.file.Path
 import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 
 data class PeerStatus(
     val targetAgentType: AgentType,
@@ -46,6 +47,12 @@ internal data class PeerMcpConfig(
 fun interface PeerStateListener : EventListener {
     fun peerStateChanged(sessionKey: String)
 }
+
+internal data class PeerFeedbackHint(
+    val text: String,
+    val absoluteOffset: Long,
+    val outputModel: TerminalOutputModel,
+)
 
 class PeerCoordinator internal constructor(
     private val project: Project,
@@ -82,6 +89,7 @@ class PeerCoordinator internal constructor(
     private val roundCounts = ConcurrentHashMap<String, AtomicInteger>()
     private val guards = ConcurrentHashMap<String, PeerSessionGuard>()
     private val peerInjectedSessions = ConcurrentHashMap.newKeySet<String>()
+    private val feedbackHints = mutableMapOf<String, ArrayDeque<PeerFeedbackHint>>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
 
     fun addStateListener(
@@ -100,6 +108,11 @@ class PeerCoordinator internal constructor(
                 progress = guard?.progressSnapshot(),
             )
         }
+
+    internal fun feedbackHints(sessionKey: String, outputModel: TerminalOutputModel): List<PeerFeedbackHint> {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        return feedbackHints[sessionKey]?.filter { it.outputModel === outputModel }.orEmpty()
+    }
 
     fun bind(
         sessionKey: String,
@@ -128,6 +141,11 @@ class PeerCoordinator internal constructor(
         roundCounts.remove(sessionKey)
         peerInjectedSessions.remove(sessionKey)
         return guards.remove(sessionKey)?.cancelAndDetach()
+    }
+
+    fun forgetFeedbackHints(sessionKey: String) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        feedbackHints.remove(sessionKey)
     }
 
     fun boundTarget(sessionKey: String): AgentType? = bindings[sessionKey]?.targetAgentType
@@ -208,10 +226,12 @@ class PeerCoordinator internal constructor(
         val binding = bindings.remove(from)
         roundCounts.remove(from)
         peerInjectedSessions.remove(from)
+        feedbackHints.remove(from)
         val r1 = guards.remove(from)?.cancelAndDetach()
         bindings.remove(to)
         roundCounts.remove(to)
         peerInjectedSessions.remove(to)
+        feedbackHints.remove(to)
         val r2 = guards.remove(to)?.cancelAndDetach()
         if (binding != null) {
             bindings[to] = binding.copy(task = "")
@@ -230,6 +250,7 @@ class PeerCoordinator internal constructor(
         bindings.clear()
         roundCounts.clear()
         peerInjectedSessions.clear()
+        feedbackHints.clear()
         guardsToCancel.forEach { it.cancel() }
     }
 
@@ -420,6 +441,7 @@ class PeerCoordinator internal constructor(
         mainSessionKey: String,
         prompt: String,
     ) {
+        var hint: PeerFeedbackHint? = null
         if (sendAutoFeedback != null) {
             if (!sendAutoFeedback.invoke(mainSessionKey, prompt)) return
         } else {
@@ -429,13 +451,22 @@ class PeerCoordinator internal constructor(
                 return
             }
             LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
+            val outputModel = view.outputModels.active.value
+            val sendOffset = outputModel.endOffset.toAbsolute()
             view.createSendTextBuilder()
                 .useBracketedPasteMode()
                 .shouldExecute()
                 .send(prompt)
+            hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
         }
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
+        hint?.let {
+            val history = feedbackHints.getOrPut(mainSessionKey) { ArrayDeque() }
+            history.addLast(it)
+            while (history.size > MAX_FEEDBACK_HINTS) history.removeFirst()
+            notifyStateChanged(mainSessionKey)
+        }
     }
 
     private fun stageFeedback(
@@ -472,6 +503,7 @@ class PeerCoordinator internal constructor(
         private const val MAX_MESSAGE_LENGTH = 100_000
         private const val CONVERSATION_TAIL_BYTES = 32L * 1024 * 1024
         private const val CLI_TIMEOUT_SECONDS = 300L
+        private const val MAX_FEEDBACK_HINTS = 200
 
         private const val MODE_AUTO_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
         private const val MODE_STAGE_ZH = "你说的话会先放到输入框里，用户看过之后决定要不要发。"

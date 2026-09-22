@@ -3,6 +3,7 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.peer.PeerFeedbackHint
 import com.github.izerui.imux.session.NavigationTranscriptIndex
 import com.github.izerui.imux.session.SessionExchange
 import com.intellij.openapi.Disposable
@@ -277,6 +278,33 @@ internal fun stableAnchorsForNavigation(
         anchors
     }
 
+internal fun peerFeedbackAnchors(
+    native: List<UserMessageAnchor>,
+    hints: List<PeerFeedbackHint>,
+    scanStart: Long,
+    scanEnd: Long,
+): List<UserMessageAnchor> {
+    val availableNative = native.toMutableList()
+    val added = hints.asReversed().mapNotNull { hint ->
+        if (hint.absoluteOffset !in scanStart..scanEnd) return@mapNotNull null
+        val preview = truncated(normalizeWhitespace(hint.text), USER_PREVIEW_CHARS)
+        val match = availableNative.indexOfLast {
+            it.userPreview == preview && it.absoluteOffset >= hint.absoluteOffset
+        }
+        if (match >= 0) {
+            availableNative.removeAt(match)
+            return@mapNotNull null
+        }
+        UserMessageAnchor(
+            offset = (hint.absoluteOffset - scanStart).toInt(),
+            userPreview = preview,
+            replyPreview = "",
+            absoluteOffset = hint.absoluteOffset,
+        )
+    }
+    return (native + added).sortedBy(UserMessageAnchor::absoluteOffset)
+}
+
 private fun truncated(
     value: String,
     limit: Int,
@@ -294,7 +322,9 @@ internal class SessionMessageNavigator(
     private val locateRequested = AtomicBoolean(true)
     private val awaitingTerminalContent = AtomicBoolean()
     private val outputGeneration = AtomicLong()
+    private val feedbackGeneration = AtomicLong()
     private val transcriptIndex = NavigationTranscriptIndex()
+    private var observedFeedbackHint: PeerFeedbackHint? = null
 
     @Volatile
     private var disposed = false
@@ -322,6 +352,19 @@ internal class SessionMessageNavigator(
 
     init {
         SessionMonitor.getInstance(project).addListener(this, ::sessionStateChanged)
+        SessionMonitor.getInstance(project).peerCoordinator.addStateListener(this) { sessionKey ->
+            if (sessionKey == virtualFile.sessionKey) {
+                val latest = SessionMonitor.getInstance(project).peerCoordinator
+                    .feedbackHints(sessionKey, virtualFile.terminalView.outputModels.active.value)
+                    .lastOrNull()
+                if (latest === observedFeedbackHint) return@addStateListener
+                observedFeedbackHint = latest
+                feedbackGeneration.incrementAndGet()
+                awaitingTerminalContent.set(true)
+                locateRequested.set(true)
+                scheduleRefresh()
+            }
+        }
         project.messageBus.connect(this).subscribe(
             FileEditorManagerListener.FILE_EDITOR_MANAGER,
             object : FileEditorManagerListener {
@@ -421,6 +464,12 @@ internal class SessionMessageNavigator(
             )
         val stableAnchors = stableAnchorsForNavigation(transcript.exchanges, locatedAnchors)
         val latestResolved = latestExchangeResolved(transcript.exchanges, locatedAnchors)
+        val allAnchors = peerFeedbackAnchors(
+            stableAnchors,
+            snapshot.feedbackHints,
+            scanStart.toAbsolute(),
+            outputSnapshot.endOffset.toAbsolute(),
+        )
         withContext(Dispatchers.EDT) {
             if (editor !== snapshot.editor || snapshot.editor.isDisposed) return@withContext
             if (virtualFile.terminalView.outputModels.active.value !== snapshot.outputModel) {
@@ -428,11 +477,11 @@ internal class SessionMessageNavigator(
                 return@withContext
             }
             val outputChangedDuringLocate = outputGeneration.get() != snapshot.outputGeneration
-            locateRequested.set(outputChangedDuringLocate)
+            locateRequested.set(outputChangedDuringLocate || feedbackGeneration.get() != snapshot.feedbackGeneration)
             // message_end 可能早于 Terminal 把用户消息画出来。只在这种待补齐状态下
             // 等下一次 output model 内容事件；普通持续输出不会触发导航扫描。
             awaitingTerminalContent.set(!outputChangedDuringLocate && (transcript.changed || !latestResolved))
-            applyAnchors(snapshot.editor, snapshot.outputModel, stableAnchors)
+            applyAnchors(snapshot.editor, snapshot.outputModel, allAnchors)
             if (outputChangedDuringLocate) scheduleRefresh()
         }
     }
@@ -467,6 +516,8 @@ internal class SessionMessageNavigator(
             session,
             outputModel,
             outputGeneration.get(),
+            feedbackGeneration.get(),
+            SessionMonitor.getInstance(project).peerCoordinator.feedbackHints(session.id, outputModel),
         )
     }
 
@@ -630,6 +681,8 @@ internal class SessionMessageNavigator(
         val session: AgentSession,
         val outputModel: TerminalOutputModel,
         val outputGeneration: Long,
+        val feedbackGeneration: Long,
+        val feedbackHints: List<PeerFeedbackHint>,
     )
 
     private data class AnchorPoint(

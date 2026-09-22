@@ -8,6 +8,35 @@ import org.junit.Test
 class SessionMessageNavigatorSourceTest {
     private val editor = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt")
     private val navigator = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/SessionMessageNavigator.kt")
+    private val peer = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
+    private val monitor = SourceCode("src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt")
+
+    @Test
+    fun `副驾驶发送后登记位置并通知导航器刷新`() {
+        val send = peer.bodyAfter("private fun injectFeedback(", '{')
+        val listener = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
+
+        assertTrue("副驾驶应从终端模型取得当前位置", send.contains("outputModel.endOffset.toAbsolute()"))
+        assertTrue("只有执行发送后才登记定位信息", send.indexOf(".send(prompt)") < send.indexOf("hint = PeerFeedbackHint("))
+        assertTrue("登记后应通知气泡刷新", send.contains("notifyStateChanged(mainSessionKey)"))
+        assertTrue("导航器应复用项目副驾驶状态订阅", navigator.normalized.contains("peerCoordinator.addStateListener(this)"))
+        assertTrue("只有新增定位信息才触发重扫", navigator.normalized.contains("latest === observedFeedbackHint"))
+        assertTrue("等待终端正文异步到达后再补一次定位", navigator.normalized.contains("awaitingTerminalContent.set(true)"))
+        assertTrue("普通消息和副驾驶锚点应合并", listener.contains("peerFeedbackAnchors("))
+        assertTrue("定位过程中到来的新反馈不能被清掉", listener.contains("feedbackGeneration.get() != snapshot.feedbackGeneration"))
+        assertTrue("最终应用合并后的锚点", listener.contains("applyAnchors(snapshot.editor, snapshot.outputModel, allAnchors)"))
+    }
+
+    @Test
+    fun `副驾驶历史锚点在解绑后保留并随终端关闭清理`() {
+        val unbind = peer.bodyAfter("private fun unbindInner(sessionKey: String)", '{')
+        val closed = monitor.bodyAfter("fun sessionClosed(key: String)", '{')
+
+        assertFalse("解绑不应删除历史气泡", unbind.contains("feedbackHints.remove(sessionKey)"))
+        assertTrue("关终端必须清理定位信息", closed.contains("peerCoordinator.forgetFeedbackHints(key)"))
+        assertTrue("会话身份切换必须清理旧定位信息", peer.normalized.contains("feedbackHints.remove(from)"))
+        assertTrue("会话身份切换必须清理目标残留定位信息", peer.normalized.contains("feedbackHints.remove(to)"))
+    }
 
     @Test
     fun `终端 Editor 切换时重新绑定消息导航并在释放时清理`() {
@@ -85,11 +114,14 @@ class SessionMessageNavigatorSourceTest {
     @Test
     fun `定位期间持续输出时先应用锚点并安排纠正`() {
         val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
-        val apply = body.indexOf("applyAnchors(snapshot.editor, snapshot.outputModel, stableAnchors)")
+        val native = body.indexOf("stableAnchorsForNavigation(")
+        val merge = body.indexOf("peerFeedbackAnchors(")
+        val apply = body.indexOf("applyAnchors(snapshot.editor, snapshot.outputModel, allAnchors)")
         val retry = body.indexOf("if (changedDuringLocate) scheduleRefresh()")
 
         assertFalse("不能再因持续变化丢弃整轮结果", body.contains("modificationStamp"))
         assertTrue("必须先应用可用的绝对锚点", apply >= 0)
+        assertTrue("应先计算原生锚点再合并副驾驶锚点", native >= 0 && native < merge && merge < apply)
         assertTrue("不再依赖终端文档变化监听触发纠正", retry < 0)
         assertFalse(body.contains("contentGeneration"))
     }
