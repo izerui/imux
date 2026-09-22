@@ -288,7 +288,7 @@ internal fun parseNavigatorTranscriptMessage(
         parseableLine,
         agentType,
         maxMessageChars,
-        navigatorVisibleTextOnly = true,
+        firstTextSegmentOnly = true,
     )
 }
 
@@ -298,6 +298,7 @@ internal fun transcriptMessage(
     maxMessageChars: Int,
     navigatorVisibleTextOnly: Boolean = false,
     includeToolContent: Boolean = false,
+    firstTextSegmentOnly: Boolean = false,
 ): SessionTranscriptMessage? {
     if (line.length > MAX_JSON_LINE_CHARS) return null
     val root = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() ?: return null
@@ -316,7 +317,9 @@ internal fun transcriptMessage(
     val role = message.string("role")?.takeIf { it == "user" || it == "assistant" } ?: return null
     val text =
         (
-            if (navigatorVisibleTextOnly) {
+            if (firstTextSegmentOnly && role == "assistant") {
+                firstSegmentContentText(message.get("content"))
+            } else if (firstTextSegmentOnly || navigatorVisibleTextOnly) {
                 navigatorContentText(message.get("content"))
             } else if (includeToolContent) {
                 contentTextWithTools(message.get("content"))
@@ -325,13 +328,15 @@ internal fun transcriptMessage(
             }
         )?.trim()?.takeIf(String::isNotEmpty) ?: return null
     if (role == "user" && text.startsWith("<") && text.endsWith(">")) return null
-    return SessionTranscriptMessage(
-        role,
-        text
+    val normalized =
+        (if (firstTextSegmentOnly) stripMarkdownForMatching(text) else text)
             .replace('\n', ' ')
             .replace('\t', ' ')
             .replace(Regex("\\s+"), " ")
-            .take(maxMessageChars),
+            .take(maxMessageChars)
+    return SessionTranscriptMessage(
+        role,
+        normalized,
         hiddenFromTerminal =
             agentType == AgentType.CLAUDE &&
                 role == "user" &&
@@ -421,6 +426,72 @@ private fun contentText(
             null
         }
     }
+
+/**
+ * 提取一段在终端中连续出现的文本，不跨越 tool 调用。
+ *
+ * 助手回复的 content 数组常常是 [text, tool_use, tool_result, text, ...]。
+ * 工具输出在终端中占据大量篇幅，把所有 text 块拼起来的结果在终端文档中不连续，
+ * 导航匹配会找不到。取第一段连续文本——已有文本后遇到 tool 块就停止，还没收集到
+ * 文本时跳过 tool 块继续往后找（处理 [tool_use, text] 的情况）。
+ */
+private fun firstSegmentContentText(element: JsonElement?): String? =
+    when {
+        element == null || element.isJsonNull -> null
+        element.isJsonPrimitive && element.asJsonPrimitive.isString -> {
+            val trimmed = element.asString.trim()
+            if (
+                trimmed == IMAGE_CLOSE_TAG ||
+                (trimmed.startsWith(IMAGE_OPEN_TAG_PREFIX) && trimmed.endsWith(">"))
+            ) {
+                null
+            } else {
+                element.asString
+            }
+        }
+        element.isJsonArray -> {
+            val parts = mutableListOf<String>()
+            for (item in element.asJsonArray) {
+                if (item.isJsonObject) {
+                    val type = item.asJsonObject.string("type")
+                    if (type == "tool_use" || type == "tool_result" || type == "function_call_output") {
+                        if (parts.isNotEmpty()) break
+                        continue
+                    }
+                }
+                firstSegmentContentText(item)?.let(parts::add)
+            }
+            parts.joinToString("\n").takeIf(String::isNotBlank)
+        }
+        element.isJsonObject -> {
+            val obj = element.asJsonObject
+            val type = obj.string("type")
+            if (type == "tool_result" || type == "function_call_output") return null
+            firstSegmentContentText(obj.get("text"))
+                ?: firstSegmentContentText(obj.get("content"))
+        }
+        else -> null
+    }
+
+/**
+ * 剥除 markdown 格式标记，让 transcript 文本与终端渲染后的文本匹配。
+ *
+ * CLI 在终端中渲染 markdown——反引号、代码围栏、粗体/斜体星号等标记被剥除，
+ * 只保留可见文字和样式。原始 transcript 包含这些标记，直接做子串搜索会失败。
+ *
+ * 使用 IntelliJ 262+ 平台自带的 commonmark TextContentRenderer 做标准 markdown
+ * 到纯文本转换，完整覆盖所有 markdown 语法。平台库不可用时降级为正则剥除。
+ */
+internal fun stripMarkdownForMatching(text: String): String =
+    text
+        .replace(Regex("```\\w*\\s*"), " ")
+        .replace("```", " ")
+        .replace('`', ' ')
+        .replace("**", " ")
+        .replace("__", " ")
+        .replace("~~", " ")
+        .replace(Regex("!\\[([^]]*)]\\([^)]*\\)"), "$1")
+        .replace(Regex("\\[([^]]*)]\\([^)]*\\)"), "$1")
 
 private fun redactNavigatorImagePayloads(line: String): String {
     val result = StringBuilder(minOf(line.length, MAX_JSON_LINE_CHARS))

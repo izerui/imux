@@ -3,6 +3,7 @@ package com.github.izerui.imux.session
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -365,5 +366,50 @@ class SessionTitleRegeneratorTest {
 
         assertEquals("新标题", renamed.title)
         assertEquals(before, renamed.lastActiveAt)
+    }
+
+    @Test
+    fun `导航器助手回复只提取第一段连续文本不跨越 tool_use`() {
+        val line = """{"message":{"role":"assistant","content":[{"type":"text","text":"Sure."},{"type":"tool_use","id":"t1","name":"bash","input":{}},{"type":"text","text":"Done."}]}}"""
+
+        val full = transcriptMessage(line, AgentType.CLAUDE, 1_000)
+        val navigator = parseNavigatorTranscriptMessage(line, AgentType.CLAUDE, 1_000)
+
+        assertEquals("Sure. Done.", full!!.text)
+        assertEquals("Sure.", navigator!!.text)
+    }
+
+    @Test
+    fun `导航器用户消息不受第一段截断影响`() {
+        val line = """{"message":{"role":"user","content":[{"type":"text","text":"检查这个文件"},{"type":"tool_result","tool_use_id":"t1","content":"file content"},{"type":"text","text":"然后修复 bug"}]}}"""
+
+        val navigator = parseNavigatorTranscriptMessage(line, AgentType.CLAUDE, 1_000)
+
+        assertEquals("检查这个文件 然后修复 bug", navigator!!.text)
+    }
+
+    @Test
+    fun `导航器助手回复剥除 markdown 标记后与终端渲染一致`() {
+        val line = """{"message":{"role":"assistant","content":[{"type":"text","text":"在 `cordis.yml` 的 `plugins` 下加：\n\n```yaml\nplugins:\n  foo: {}\n```\n\n然后启动。"}]}}"""
+
+        val navigator = parseNavigatorTranscriptMessage(line, AgentType.CLAUDE, 1_000)
+
+        assertFalse("反引号应被剥除", navigator!!.text.contains('`'))
+        assertFalse("代码围栏应被剥除", navigator.text.contains("```"))
+        assertTrue("正文内容应保留", navigator.text.contains("在"))
+        assertTrue("代码块内容应保留", navigator.text.contains("plugins:"))
+    }
+
+    @Test
+    fun `导航器剥除粗体星号和链接括号`() {
+        val line = """{"message":{"role":"assistant","content":[{"type":"text","text":"修改 **关键** 文件，参考 [文档](https://example.com)。"}]}}"""
+
+        val navigator = parseNavigatorTranscriptMessage(line, AgentType.CLAUDE, 1_000)
+
+        assertFalse("粗体星号应被剥除", navigator!!.text.contains("**"))
+        assertTrue("粗体内容应保留", navigator.text.contains("关键"))
+        assertFalse("链接括号应被剥除", navigator.text.contains("["))
+        assertTrue("链接文本应保留", navigator.text.contains("文档"))
+        assertFalse("链接 URL 应被剥除", navigator.text.contains("https://"))
     }
 }

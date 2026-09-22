@@ -12,6 +12,7 @@ import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataSink
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.UiDataProvider
 import com.intellij.openapi.actionSystem.ex.ActionButtonLook
 import com.intellij.openapi.actionSystem.impl.ActionButton
@@ -30,6 +31,7 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
@@ -50,6 +52,7 @@ import java.awt.BorderLayout
 import javax.swing.Box
 import javax.swing.BoxLayout
 import java.beans.PropertyChangeListener
+import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JLayeredPane
@@ -111,7 +114,7 @@ class AgentTerminalFileEditor(
     private var keyEventsJob: Job? = null
     private var followBottomOnActivation = false
     private var disposed = false
-    private val peerSpinner = JLabel(AnimatedIcon.Default())
+    private val peerIcon = JLabel()
     private val peerLabel = JLabel()
     private val peerCancelButton =
         ActionLink(ImuxBundle.message("action.peer.cancel")) {
@@ -125,18 +128,52 @@ class AgentTerminalFileEditor(
         }.apply {
             isFocusable = false
         }
+    private val peerEnableLink: ActionLink =
+        ActionLink(ImuxBundle.message("action.peer.enable.hint")) { event ->
+            val targets = ImuxSettings.getInstance().enabledAgentTypes
+            if (targets.isEmpty()) return@ActionLink
+            if (targets.size == 1) {
+                SessionMonitor.getInstance(project).peerCoordinator.bind(virtualFile.sessionKey, targets.first())
+            } else {
+                val source = event.source as JComponent
+                val group = DefaultActionGroup(*peerProgrammingActions(project, virtualFile.sessionKey, targets))
+                JBPopupFactory.getInstance()
+                    .createActionGroupPopup(
+                        ImuxBundle.message("action.peer.group.text"),
+                        group,
+                        com.intellij.openapi.actionSystem.impl.SimpleDataContext.getProjectContext(project),
+                        JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
+                        false,
+                    )
+                    .showUnderneathOf(source)
+            }
+        }.apply {
+            isFocusable = false
+        }
+    private val peerDismissLink =
+        ActionLink(ImuxBundle.message("action.peer.enable.dismiss")) {
+            virtualFile.peerBannerDismissed = true
+            refreshPeerBanner()
+        }.apply {
+            isFocusable = false
+        }
     private val peerBanner =
         JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             border = JBUI.Borders.empty(3, 12, 3, 24)
             isOpaque = true
             background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
-            add(peerSpinner)
+            add(peerIcon)
+            add(Box.createHorizontalStrut(JBUI.scale(6)))
             add(peerLabel)
-            add(Box.createHorizontalGlue())
+            add(peerEnableLink)
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(peerDismissLink)
+            add(Box.createHorizontalStrut(JBUI.scale(8)))
             add(peerCancelButton)
+            add(Box.createHorizontalStrut(JBUI.scale(8)))
             add(peerCloseButton)
-            isVisible = false
+            isVisible = true
         }
     private val peerElapsedTimer =
         Timer(1_000) {
@@ -185,6 +222,8 @@ class AgentTerminalFileEditor(
             scrollButton?.update()
             peerCancelButton.text = ImuxBundle.message("action.peer.cancel")
             peerCloseButton.text = ImuxBundle.message("action.peer.close")
+            peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
+            peerDismissLink.text = ImuxBundle.message("action.peer.enable.dismiss")
             refreshPeerBanner()
         }
         SessionMonitor.getInstance(project).peerCoordinator.addStateListener(
@@ -298,16 +337,29 @@ class AgentTerminalFileEditor(
 
     private fun refreshPeerBanner() {
         val status = SessionMonitor.getInstance(project).peerCoordinator.status(virtualFile.sessionKey)
-        peerBanner.isVisible = status != null
         if (status == null) {
             peerElapsedTimer.stop()
-            peerSpinner.isVisible = false
+            peerIcon.icon = AllIcons.Actions.ProfileCPU
+            peerLabel.isVisible = false
             peerCancelButton.isVisible = false
             peerCloseButton.isVisible = false
+            peerBanner.isVisible = !virtualFile.peerBannerDismissed
+            peerEnableLink.isVisible = true
+            peerDismissLink.isVisible = true
+            peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
         } else {
-            peerSpinner.isVisible = status.running
+            peerBanner.isVisible = true
+            peerEnableLink.isVisible = false
+            peerDismissLink.isVisible = false
+            peerLabel.isVisible = true
             peerCancelButton.isVisible = status.running
             peerCloseButton.isVisible = !status.running
+            peerIcon.icon =
+                if (status.running && status.progress != null) {
+                    progressIcon(status.progress.current.kind)
+                } else {
+                    AllIcons.General.InspectionsOK
+                }
             peerLabel.text =
                 "  " +
                         if (status.running && status.progress != null) {
@@ -323,6 +375,18 @@ class AgentTerminalFileEditor(
         peerBanner.revalidate()
         peerBanner.repaint()
     }
+
+    private fun progressIcon(kind: PeerProgressKind): Icon =
+        when (kind) {
+            PeerProgressKind.STARTING -> AnimatedIcon.Default()
+            PeerProgressKind.THINKING -> AllIcons.Actions.Lightning
+            PeerProgressKind.TOOL_STARTED -> AnimatedIcon.Default()
+            PeerProgressKind.TOOL_FINISHED -> AllIcons.Actions.Checked
+            PeerProgressKind.RETRYING -> AllIcons.General.Warning
+            PeerProgressKind.RESPONDING -> AllIcons.Actions.Edit
+            PeerProgressKind.COMPLETED -> AllIcons.General.InspectionsOK
+            PeerProgressKind.FAILED -> AllIcons.General.Error
+        }
 
     private fun progressSummary(
         agentName: String,

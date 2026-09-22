@@ -60,7 +60,7 @@ internal data class UserMessageAnchor(
     val absoluteOffset: Long = offset.toLong(),
 )
 
-private data class IndexedUserMessageAnchor(
+internal data class IndexedUserMessageAnchor(
     val exchangeIndex: Int,
     val anchor: UserMessageAnchor,
 )
@@ -167,18 +167,22 @@ internal fun locateUserMessageAnchors(
     locateUserMessageAnchorsIndexed(documentText, exchanges, documentStartOffset, preferredRanges)
         .map(IndexedUserMessageAnchor::anchor)
 
-private fun locateUserMessageAnchorsIndexed(
+internal fun locateUserMessageAnchorsIndexed(
     documentText: String,
     exchanges: List<SessionExchange>,
-    documentStartOffset: Long,
-    preferredRanges: List<PreferredTextRange>,
+    documentStartOffset: Long = 0L,
+    preferredRanges: List<PreferredTextRange> = emptyList(),
 ): List<IndexedUserMessageAnchor> {
     val document = normalizedWithOffsets(documentText)
     if (document.text.isEmpty()) return emptyList()
 
+    // 尾部连续无回复的轮次不参与匹配：没有右边界的用户文本会从文档尾部反向抢走
+    // 上一轮的匹配位置。一旦回复文本落盘，下一次 transcript 刷新会重新加入。
+    val matchable = exchanges.dropLastWhile { it.assistantReply.isEmpty() }
+
     // 提问、回复、提问、回复……展平成一条与渲染顺序一致的链，回复只推游标不产出锚点
     val chain =
-        exchanges.flatMapIndexed { index, exchange ->
+        matchable.flatMapIndexed { index, exchange ->
             listOf(
                 Triple(exchange.userText, index, exchange),
                 Triple(exchange.assistantReply, null, null),
@@ -254,29 +258,29 @@ internal fun changeCanMoveAnchors(
 
 internal fun latestExchangeResolved(
     exchanges: List<SessionExchange>,
-    anchors: List<UserMessageAnchor>,
+    indexedAnchors: List<IndexedUserMessageAnchor>,
 ): Boolean {
     val latest = exchanges.lastOrNull() ?: return true
+    val lastIndexed = indexedAnchors.lastOrNull() ?: return false
+    if (lastIndexed.exchangeIndex != exchanges.lastIndex) return false
     val expectedPreview = truncated(normalizeWhitespace(latest.userText), USER_PREVIEW_CHARS)
-    return anchors.lastOrNull()?.userPreview == expectedPreview
+    return lastIndexed.anchor.userPreview == expectedPreview
 }
 
 /**
- * 末轮没有 assistant 记录时，不能把它当成可点击锚点。
+ * 没有助手回复文本的轮次不展示可点击圆点。
  *
- * 这时定位器没有「用户输入之后、下一轮之前」的右边界；如果用户文本又出现在后续
- * 工具输出里，反向匹配会把点绑定到文档尾部，点击后看起来像是“跳到底部”。等末轮
- * assistant 落盘后，下一次 transcript generation 刷新会重新加入这颗点。
+ * 回复文本是定位器给用户输入建立右边界的唯一可靠依据。缺少它时，反向匹配可能把
+ * 工具输出中的复述或其他相同文本标为用户输入——点击后跳到错误位置。等回复文本
+ * 落盘后，下一次 transcript generation 刷新会重新加入这颗点。
  */
 internal fun stableAnchorsForNavigation(
     exchanges: List<SessionExchange>,
-    anchors: List<UserMessageAnchor>,
+    indexedAnchors: List<IndexedUserMessageAnchor>,
 ): List<UserMessageAnchor> =
-    if (exchanges.lastOrNull()?.assistantReply?.isEmpty() == true) {
-        anchors.dropLast(1)
-    } else {
-        anchors
-    }
+    indexedAnchors
+        .filter { exchanges.getOrNull(it.exchangeIndex)?.assistantReply?.isNotEmpty() == true }
+        .map(IndexedUserMessageAnchor::anchor)
 
 internal fun peerFeedbackAnchors(
     native: List<UserMessageAnchor>,
@@ -455,15 +459,15 @@ internal class SessionMessageNavigator(
                     outputSnapshot.endOffset.toAbsolute(),
                 )
             }
-        val locatedAnchors =
-            locateUserMessageAnchors(
+        val indexedAnchors =
+            locateUserMessageAnchorsIndexed(
                 documentText,
                 transcript.exchanges,
                 documentStartOffset = scanStart.toAbsolute(),
                 preferredRanges = preferredRanges,
             )
-        val stableAnchors = stableAnchorsForNavigation(transcript.exchanges, locatedAnchors)
-        val latestResolved = latestExchangeResolved(transcript.exchanges, locatedAnchors)
+        val stableAnchors = stableAnchorsForNavigation(transcript.exchanges, indexedAnchors)
+        val latestResolved = latestExchangeResolved(transcript.exchanges, indexedAnchors)
         val allAnchors = peerFeedbackAnchors(
             stableAnchors,
             snapshot.feedbackHints,

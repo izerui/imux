@@ -3,19 +3,26 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.peer.PeerFeedbackHint
+import com.github.izerui.imux.session.NavigationTranscriptIndex
 import com.github.izerui.imux.session.SessionExchange
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.awt.Point
 import java.lang.reflect.Proxy
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 
 class SessionMessageNavigatorTest {
-    private fun asked(vararg texts: String) = texts.map { SessionExchange(it, "") }
+    @get:Rule
+    val temp = TemporaryFolder()
+
+    private fun asked(vararg texts: String) = texts.map { SessionExchange(it, "reply") }
 
     private val outputModel = Proxy.newProxyInstance(
         TerminalOutputModel::class.java.classLoader,
@@ -189,21 +196,15 @@ class SessionMessageNavigatorTest {
     }
 
     /**
-     * 已知局限，写在这里是为了它别被当成 bug 重新发现一遍。
-     *
-     * 末轮的助手回复还没写进 transcript 时，这一轮没有右边界可用，游标只能停在文档末尾；
-     * 若终端此刻已经渲染出含相同文本的输出，锚点会落在后面那处。这个窗口只有 transcript
-     * 写入滞后于终端渲染的一瞬，回复一旦落盘，下一次刷新就把它纠正回用户输入处。
-     *
-     * 用它换掉了「靠白名单认 CLI 提示符」那套：后者在换一版渲染字符时会让整轮消息
-     * 从轨道上消失，且不会自愈。
+     * 末轮回复还没写进 transcript 时，该轮不参与匹配——没有右边界的用户文本会抢走
+     * 上一轮的匹配位置。回复落盘后下一次 transcript 刷新会重新加入。
      */
     @Test
-    fun `末轮回复尚未写入时锚点可能落在后续输出上`() {
+    fun `末轮回复尚未写入时该轮不参与匹配`() {
         val document = "> 继续\n工具输出\n继续"
 
         val pending = locateUserMessageAnchors(document, listOf(SessionExchange("继续", "")))
-        assertEquals(document.lastIndexOf("继续"), pending.single().offset)
+        assertTrue("末轮回复为空时不应产出锚点", pending.isEmpty())
 
         val settled = locateUserMessageAnchors(document, listOf(SessionExchange("继续", "工具输出")))
         assertEquals(document.indexOf("继续"), settled.single().offset)
@@ -390,11 +391,26 @@ class SessionMessageNavigatorTest {
     @Test
     fun `最新用户轮次出现后停止待定位重试`() {
         val exchanges = asked("较早问题", "最新问题")
-        val earlierOnly = listOf(UserMessageAnchor(10, "较早问题", ""))
-        val includingLatest = earlierOnly + UserMessageAnchor(20, "最新问题", "")
+        val earlierOnly = listOf(IndexedUserMessageAnchor(0, UserMessageAnchor(10, "较早问题", "")))
+        val includingLatest = earlierOnly + IndexedUserMessageAnchor(1, UserMessageAnchor(20, "最新问题", ""))
 
         assertFalse(latestExchangeResolved(exchanges, earlierOnly))
         assertTrue(latestExchangeResolved(exchanges, includingLatest))
+    }
+
+    @Test
+    fun `重复提问只定位上一轮时不误判为末轮已解析`() {
+        val exchanges =
+            listOf(
+                SessionExchange("继续", "已处理"),
+                SessionExchange("继续", "已处理"),
+            )
+        val firstOnly = listOf(IndexedUserMessageAnchor(0, UserMessageAnchor(10, "继续", "")))
+
+        assertFalse(
+            "上一轮 preview 相同但 exchangeIndex 不是末轮，不应认为已解析",
+            latestExchangeResolved(exchanges, firstOnly),
+        )
     }
 
     @Test
@@ -404,16 +420,78 @@ class SessionMessageNavigatorTest {
                 SessionExchange("较早问题", "较早回复"),
                 SessionExchange("最新问题", ""),
             )
-        val anchors =
+        val indexed =
             listOf(
-                UserMessageAnchor(10, "较早问题", "较早回复"),
-                UserMessageAnchor(20, "最新问题", ""),
+                IndexedUserMessageAnchor(0, UserMessageAnchor(10, "较早问题", "较早回复")),
+                IndexedUserMessageAnchor(1, UserMessageAnchor(20, "最新问题", "")),
             )
 
         assertEquals(
             listOf("较早问题"),
-            stableAnchorsForNavigation(exchanges, anchors).map(UserMessageAnchor::userPreview),
+            stableAnchorsForNavigation(exchanges, indexed).map(UserMessageAnchor::userPreview),
         )
+    }
+
+    @Test
+    fun `末轮未定位时上一轮已定位的圆点不被误删`() {
+        val exchanges =
+            listOf(
+                SessionExchange("较早问题", "较早回复"),
+                SessionExchange("最新问题", ""),
+            )
+        val indexed =
+            listOf(IndexedUserMessageAnchor(0, UserMessageAnchor(10, "较早问题", "较早回复")))
+
+        assertEquals(
+            listOf("较早问题"),
+            stableAnchorsForNavigation(exchanges, indexed).map(UserMessageAnchor::userPreview),
+        )
+    }
+
+    @Test
+    fun `重复提问末轮未定位时上一轮同名圆点不被误删`() {
+        val exchanges =
+            listOf(
+                SessionExchange("继续", "已处理"),
+                SessionExchange("继续", ""),
+            )
+        val document = "继续\n已处理"
+        val indexed = locateUserMessageAnchorsIndexed(document, exchanges)
+
+        assertEquals("上一轮应产出锚点", 1, indexed.size)
+        assertEquals("锚点应归属上一轮", 0, indexed.single().exchangeIndex)
+        assertEquals(
+            "上一轮的圆点不应因 preview 相同而被当成末轮删掉",
+            listOf("继续"),
+            stableAnchorsForNavigation(exchanges, indexed).map(UserMessageAnchor::userPreview),
+        )
+    }
+
+    /**
+     * 真实定位链路：重复提问 "继续" 两轮，末轮回复为空，终端只有上一轮内容。
+     *
+     * 末轮不参与匹配，上一轮的 "继续" 被正确标为 exchangeIndex=0，
+     * stableAnchorsForNavigation 保留它，latestExchangeResolved 返回 false。
+     */
+    @Test
+    fun `重复提问末轮回复未落盘时上一轮圆点保留且继续等待刷新`() {
+        val exchanges =
+            listOf(
+                SessionExchange("继续", "已处理"),
+                SessionExchange("继续", ""),
+            )
+        val document = "继续\n已处理"
+
+        val indexed = locateUserMessageAnchorsIndexed(document, exchanges)
+
+        assertEquals("上一轮应产出锚点", 1, indexed.size)
+        assertEquals("锚点应归属上一轮而非末轮", 0, indexed.single().exchangeIndex)
+        assertEquals(document.indexOf("继续"), indexed.single().anchor.offset)
+
+        val stable = stableAnchorsForNavigation(exchanges, indexed)
+        assertEquals("上一轮圆点应保留", 1, stable.size)
+
+        assertFalse("末轮未定位，应继续等待刷新", latestExchangeResolved(exchanges, indexed))
     }
 
     @Test
@@ -421,6 +499,127 @@ class SessionMessageNavigatorTest {
         assertEquals(10, markerY(line = 0, lineCount = 101, height = 220, padding = 10))
         assertEquals(110, markerY(line = 50, lineCount = 101, height = 220, padding = 10))
         assertEquals(210, markerY(line = 100, lineCount = 101, height = 220, padding = 10))
+    }
+
+    /**
+     * 端到端：从 JSONL 解析经 NavigationTranscriptIndex 到锚点定位。
+     *
+     * 助手回复的 content 数组含 [text, tool_use, text]。旧实现把两段 text 拼成
+     * "好的. All done."，终端里找不到（中间有工具输出），游标不推回，"请修复" 定到
+     * 工具输出中复述的那处。修复后导航索引只取第一段 "好的."，游标正确推回。
+     */
+    @Test
+    fun `助手回复跨 tool_use 文本经解析到锚点全链路定位正确`() {
+        val file = temp.newFile("e2e.jsonl").toPath()
+        Files.writeString(
+            file,
+            """
+            {"type":"user","message":{"role":"user","content":"请修复"}}
+            {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"好的."},{"type":"tool_use","id":"t1","name":"bash","input":{}},{"type":"text","text":"All done."}]}}
+            """.trimIndent(),
+        )
+        val now = Instant.now()
+        val session = AgentSession("s1", "标题", AgentType.CLAUDE, now, now, file)
+        val index = NavigationTranscriptIndex()
+        val exchanges = index.refresh(session).exchanges
+
+        assertEquals("导航索引应只取第一段助手文本", "好的.", exchanges.single().assistantReply)
+
+        val document = "请修复\n好的.\ntool output 请修复 somewhere\nAll done."
+        val anchors = locateUserMessageAnchors(document, exchanges)
+
+        assertEquals(
+            "锚点应落在用户输入处而非工具输出中的复述处",
+            document.indexOf("请修复"),
+            anchors.single().offset,
+        )
+    }
+
+    /**
+     * 助手先调工具再给文本时，回复不能为空——否则 [stableAnchorsForNavigation] 会
+     * 隐藏该轮圆点。[tool_use, text] 中 tool_use 前没有文本段，应跳过工具继续取后面的文本。
+     */
+    @Test
+    fun `助手先调工具再回复文本时圆点仍然可见`() {
+        val file = temp.newFile("e2e-tool-first.jsonl").toPath()
+        Files.writeString(
+            file,
+            """
+            {"type":"user","message":{"role":"user","content":"检查日志"}}
+            {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"bash","input":{}},{"type":"text","text":"日志没有异常。"}]}}
+            """.trimIndent(),
+        )
+        val now = Instant.now()
+        val session = AgentSession("s1", "标题", AgentType.CLAUDE, now, now, file)
+        val index = NavigationTranscriptIndex()
+        val exchanges = index.refresh(session).exchanges
+
+        assertEquals("tool_use 前无文本时应取后面的文本段", "日志没有异常。", exchanges.single().assistantReply)
+
+        val document = "检查日志\ntool output\n日志没有异常。"
+        val indexed = locateUserMessageAnchorsIndexed(document, exchanges)
+        val stable = stableAnchorsForNavigation(exchanges, indexed)
+
+        assertEquals("该轮圆点不应被隐藏", 1, stable.size)
+    }
+
+    /**
+     * 第一轮助手只有 tool_use（解析后回复为空），第二轮同样问"继续"且尚无回复。
+     *
+     * 两轮回复都为空时，[dropLastWhile] 把两轮全部移出匹配，不会产出锚点。
+     * 这避免了反向搜索把工具输出中的复述标为用户输入，代价是助手只有工具调用的
+     * 轮次需要等后续文本回复落盘才能定位——这与终端高亮优先匹配在真实场景下互补。
+     */
+    @Test
+    fun `两轮回复均为空的重复提问不互相抢位`() {
+        val file = temp.newFile("e2e-both-empty-reply.jsonl").toPath()
+        Files.writeString(
+            file,
+            """
+            {"type":"user","message":{"role":"user","content":"继续"}}
+            {"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"bash","input":{}}]}}
+            {"type":"user","message":{"role":"user","content":"继续"}}
+            """.trimIndent(),
+        )
+        val now = Instant.now()
+        val session = AgentSession("s1", "标题", AgentType.CLAUDE, now, now, file)
+        val index = NavigationTranscriptIndex()
+        val exchanges = index.refresh(session).exchanges
+
+        assertEquals("两轮应都被解析", 2, exchanges.size)
+        assertEquals("第一轮助手只有 tool_use，回复应为空", "", exchanges[0].assistantReply)
+        assertEquals("末轮尚无回复", "", exchanges[1].assistantReply)
+
+        val document = "继续\n工具输出复述：继续"
+        val indexed = locateUserMessageAnchorsIndexed(document, exchanges)
+
+        assertTrue(
+            "两轮回复都为空时不产出锚点，避免定位到复述处",
+            indexed.isEmpty(),
+        )
+        assertFalse("应继续等待刷新", latestExchangeResolved(exchanges, indexed))
+    }
+
+    /**
+     * 助手只有 tool_use 的轮次无法建立右边界——即使后续轮次限制了搜索范围，
+     * 工具输出中的复述仍在范围内，纯文本匹配无法区分。不展示该轮圆点。
+     */
+    @Test
+    fun `工具调用轮次无文本回复时不展示圆点即使后续轮次有回复`() {
+        val exchanges =
+            listOf(
+                SessionExchange("继续", ""),
+                SessionExchange("修复 bug", "好的"),
+            )
+        val document = "继续\n工具输出复述：继续\n修复 bug\n好的"
+        val indexed = locateUserMessageAnchorsIndexed(document, exchanges)
+        val stable = stableAnchorsForNavigation(exchanges, indexed)
+
+        assertEquals(
+            "只有有回复的轮次展示圆点",
+            listOf("修复 bug"),
+            stable.map(UserMessageAnchor::userPreview),
+        )
     }
 
 }

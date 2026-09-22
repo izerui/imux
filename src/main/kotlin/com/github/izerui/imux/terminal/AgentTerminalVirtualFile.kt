@@ -30,6 +30,7 @@ class AgentTerminalVirtualFile(
     var sessionId: String? = null,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
+    var peerBannerDismissed: Boolean = false
 
     val displayName: String
         get() = "${agentType.cli}: $tabTitle"
