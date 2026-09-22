@@ -20,7 +20,7 @@ internal fun deleteSessionAction(
     object : DumbAwareAction(
         ImuxBundle.message("action.delete.session.text"),
         ImuxBundle.message("action.delete.session.description"),
-        AllIcons.General.Remove,
+        AllIcons.General.Delete,
     ) {
         override fun actionPerformed(event: AnActionEvent) {
             if (monitor.isRunningWithoutTab(session.id)) {
