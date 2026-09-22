@@ -2,86 +2,87 @@ package com.github.izerui.imux.peer
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 class PeerSessionGuardTest {
+
+    private fun PeerSessionGuard.start(gen: Long = 1L): PeerRun =
+        tryStart(gen, currentGeneration = { gen })!!
+
     @Test
     fun `首次 tryStart 返回新运行`() {
         val guard = PeerSessionGuard()
-        val run = guard.tryStart()
+        val run = guard.start()
         assertNotNull(run)
+        assertTrue(guard.isActive(run))
     }
 
     @Test
-    fun `运行期间 tryStart 返回 null 并标记 pending`() {
+    fun `运行期间同代 tryStart 取消旧运行并返回新运行`() {
         val guard = PeerSessionGuard()
-        val run1 = guard.tryStart()
-        assertNotNull(run1)
+        val run1 = guard.start(1)
 
-        val run2 = guard.tryStart()
-        assertNull("运行中不应创建新 run", run2)
+        val run2 = guard.start(1)
+        assertNotSame("应是不同的 run", run1, run2)
+        assertTrue("旧 run 应被取消", run1.cancelled.get())
+        assertFalse("旧 run 不再 active", guard.isActive(run1))
+        assertTrue("新 run 应 active", guard.isActive(run2))
     }
 
     @Test
-    fun `运行期间多次事件只补跑一次`() {
+    fun `generation 不匹配时 tryStart 返回 null 且不取消当前 run`() {
         val guard = PeerSessionGuard()
-        val run1 = guard.tryStart()!!
+        val currentGen = AtomicLong(1)
+        val run1 = guard.tryStart(1, currentGeneration = { currentGen.get() })!!
 
-        guard.tryStart()
-        guard.tryStart()
-        guard.tryStart()
-
-        val rerun = guard.onFinished(run1)
-        assertNotNull("应有一次补跑", rerun)
-
-        val rerun2 = guard.onFinished(rerun!!)
-        assertNull("不应有第二次补跑", rerun2)
+        currentGen.set(2)
+        val run2 = guard.tryStart(1, currentGeneration = { currentGen.get() })
+        assertNull("generation 不匹配应返回 null", run2)
+        assertFalse("当前 run 不应被取消", run1.cancelled.get())
+        assertTrue("当前 run 仍应 active", guard.isActive(run1))
     }
 
     @Test
-    fun `无 pending 时 onFinished 不补跑`() {
+    fun `旧代事件不会取消新代 run`() {
         val guard = PeerSessionGuard()
-        val run = guard.tryStart()!!
-        val rerun = guard.onFinished(run)
-        assertNull(rerun)
-    }
+        val currentGen = AtomicLong(1)
 
-    @Test
-    fun `取消后不补跑`() {
-        val guard = PeerSessionGuard()
-        val run = guard.tryStart()!!
+        val run1 = guard.tryStart(1, currentGeneration = { currentGen.get() })!!
 
-        guard.tryStart()
-
+        currentGen.set(2)
         guard.cancel()
+        val run2 = guard.tryStart(2, currentGeneration = { currentGen.get() })!!
 
-        val rerun = guard.onFinished(run)
-        assertNull("取消后不应补跑", rerun)
+        // 旧事件持有 generation=1，但 currentGeneration 已变为 2
+        val staleRun = guard.tryStart(1, currentGeneration = { currentGen.get() })
+        assertNull("旧代事件不应启动", staleRun)
+        assertFalse("新代 run 不应被取消", run2.cancelled.get())
+        assertTrue("新代 run 仍应 active", guard.isActive(run2))
+    }
+
+    @Test
+    fun `onFinished 清理 activeRun`() {
+        val guard = PeerSessionGuard()
+        val run = guard.start()
+        guard.onFinished(run)
+        assertFalse(guard.isActive(run))
     }
 
     @Test
     fun `取消后可以重新启动`() {
         val guard = PeerSessionGuard()
-        val run1 = guard.tryStart()!!
+        val run1 = guard.start()
         guard.cancel()
+        assertTrue("取消应标记 cancelled", run1.cancelled.get())
 
-        val run2 = guard.tryStart()
+        val run2 = guard.start()
         assertNotNull("取消后应能重新启动", run2)
-    }
-
-    @Test
-    fun `isActive 正确反映当前运行`() {
-        val guard = PeerSessionGuard()
-        val run = guard.tryStart()!!
-        assertTrue(guard.isActive(run))
-
-        guard.onFinished(run)
-        assertFalse(guard.isActive(run))
     }
 
     @Test
@@ -89,7 +90,7 @@ class PeerSessionGuardTest {
         val guard = PeerSessionGuard()
         assertFalse(guard.isReviewing)
 
-        val run = guard.tryStart()!!
+        val run = guard.start()
         assertFalse(guard.isReviewing)
 
         run.reviewing.set(true)
@@ -100,102 +101,82 @@ class PeerSessionGuardTest {
     }
 
     @Test
-    fun `并发-运行结束与新事件交错不丢事件`() {
+    fun `连续多次同代 tryStart 只有最后一个 active`() {
         val guard = PeerSessionGuard()
-        val run1 = guard.tryStart()!!
+        val run1 = guard.start(1)
+        val run2 = guard.start(1)
+        val run3 = guard.start(1)
 
-        val beforeFinish = CountDownLatch(1)
-        val afterPending = CountDownLatch(1)
-        val rerunResult = AtomicReference<PeerRun?>()
-        val eventResult = AtomicReference<PeerRun?>()
+        assertTrue("run1 应被取消", run1.cancelled.get())
+        assertTrue("run2 应被取消", run2.cancelled.get())
+        assertFalse("run3 不应被取消", run3.cancelled.get())
+        assertTrue("只有 run3 应 active", guard.isActive(run3))
+    }
 
-        val finisher = Thread {
-            beforeFinish.await()
-            rerunResult.set(guard.onFinished(run1))
+    @Test
+    fun `并发-两个同代 tryStart 各拿到不同 run 且只有一个 active`() {
+        val guard = PeerSessionGuard()
+        val run0 = guard.start(1)
+
+        val go = CountDownLatch(1)
+        val result1 = AtomicReference<PeerRun?>()
+        val result2 = AtomicReference<PeerRun?>()
+
+        val t1 = Thread {
+            go.await()
+            result1.set(guard.tryStart(1, currentGeneration = { 1L }))
         }
-        val eventer = Thread {
-            beforeFinish.await()
-            eventResult.set(guard.tryStart())
-            afterPending.countDown()
+        val t2 = Thread {
+            go.await()
+            result2.set(guard.tryStart(1, currentGeneration = { 1L }))
         }
 
-        finisher.start()
-        eventer.start()
-        beforeFinish.countDown()
+        t1.start()
+        t2.start()
+        go.countDown()
 
-        finisher.join(5000)
-        eventer.join(5000)
+        t1.join(5000)
+        t2.join(5000)
 
-        val rerun = rerunResult.get()
-        val directStart = eventResult.get()
+        val r1 = result1.get()!!
+        val r2 = result2.get()!!
+        assertNotSame(r1, r2)
+        assertTrue("原始 run 应被取消", run0.cancelled.get())
         assertTrue(
-            "补跑或直接启动至少有一个成功",
-            rerun != null || directStart != null,
+            "最终只有一个 run active",
+            guard.isActive(r1) xor guard.isActive(r2),
         )
     }
 
     @Test
-    fun `并发-取消与补跑不冲突`() {
-        val guard = PeerSessionGuard()
-        val run1 = guard.tryStart()!!
-        guard.tryStart()
-
-        val go = CountDownLatch(1)
-        val rerunResult = AtomicReference<PeerRun?>()
-        val cancelled = AtomicBoolean(false)
-
-        val finisher = Thread {
-            go.await()
-            rerunResult.set(guard.onFinished(run1))
-        }
-        val canceller = Thread {
-            go.await()
-            guard.cancel()
-            cancelled.set(true)
-        }
-
-        finisher.start()
-        canceller.start()
-        go.countDown()
-
-        finisher.join(5000)
-        canceller.join(5000)
-
-        val rerun = rerunResult.get()
-        if (rerun != null) {
-            assertTrue("补跑的 run 应该已被 cancel 标记", rerun.cancelled.get())
-        }
-    }
-
-    @Test
-    fun `并发-解绑等效取消后不补跑`() {
+    fun `并发-取消与 tryStart 不冲突`() {
         for (i in 0 until 100) {
             val guard = PeerSessionGuard()
-            val run = guard.tryStart()!!
-            guard.tryStart()
+            val run = guard.start(1)
 
             val go = CountDownLatch(1)
-            val rerunResult = AtomicReference<PeerRun?>()
+            val newRun = AtomicReference<PeerRun?>()
 
-            val finisher = Thread {
+            val starter = Thread {
                 go.await()
-                rerunResult.set(guard.onFinished(run))
+                newRun.set(guard.tryStart(1, currentGeneration = { 1L }))
             }
-            val unbinder = Thread {
+            val canceller = Thread {
                 go.await()
                 guard.cancel()
             }
 
-            finisher.start()
-            unbinder.start()
+            starter.start()
+            canceller.start()
             go.countDown()
 
-            finisher.join(5000)
-            unbinder.join(5000)
+            starter.join(5000)
+            canceller.join(5000)
 
-            val rerun = rerunResult.get()
-            if (rerun != null) {
-                assertTrue("如果有补跑 run，它应被 cancel 清理", rerun.cancelled.get())
+            assertTrue("原始 run 应被取消", run.cancelled.get())
+            val nr = newRun.get()
+            if (nr != null && guard.isActive(nr)) {
+                assertFalse("active 的 run 不应被 cancel 标记", nr.cancelled.get())
             }
         }
     }

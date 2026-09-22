@@ -314,7 +314,6 @@ class AgentTerminalFileEditor(
                             progressSummary(
                                 status.targetAgentType.displayName,
                                 status.progress,
-                                status.pending,
                             )
                         } else {
                             ImuxBundle.message("action.peer.enabled", status.targetAgentType.displayName)
@@ -328,10 +327,8 @@ class AgentTerminalFileEditor(
     private fun progressSummary(
         agentName: String,
         progress: PeerProgressSnapshot,
-        pending: Boolean,
     ): String {
         val elapsedSeconds = ((System.currentTimeMillis() - progress.startedAtMillis) / 1_000).coerceAtLeast(0)
-        val pendingText = if (pending) ImuxBundle.message("action.peer.progress.pending") else ""
         return ImuxBundle.message(
             "action.peer.progress.summary",
             agentName,
@@ -339,7 +336,6 @@ class AgentTerminalFileEditor(
             progress.completedActions,
             progressText(progress.current, MAX_BANNER_SUBJECT_CHARS),
             elapsedSeconds,
-            pendingText,
         )
     }
 

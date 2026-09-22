@@ -20,6 +20,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class SessionMonitorTest {
     @Test
+    fun `运行态收到完成事件时跳过副驾驶分派而空闲会话照常分派`() {
+        val dispatched = mutableListOf<String>()
+        val onTurnCompleted: (String) -> Unit = { dispatched.add(it) }
+
+        dispatchCompletedPeerReview("running", setOf("running"), onTurnCompleted)
+        assertTrue("运行态的完成事件不能启动副驾驶", dispatched.isEmpty())
+
+        dispatchCompletedPeerReview("idle", setOf("running"), onTurnCompleted)
+        assertEquals("空闲会话的完成事件必须分派", listOf("idle"), dispatched)
+    }
+
+    @Test
     fun `model 变化会透传给 monitor 监听器`() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val monitor = SessionMonitor(testProject(), scope)

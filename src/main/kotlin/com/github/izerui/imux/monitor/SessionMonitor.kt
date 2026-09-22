@@ -123,6 +123,14 @@ internal inline fun AtomicBoolean.runOnceResetOnFailure(block: () -> Unit): Bool
     return true
 }
 
+internal fun dispatchCompletedPeerReview(
+    sessionId: String,
+    running: Set<String>,
+    onTurnCompleted: (String) -> Unit,
+) {
+    if (sessionId !in running) onTurnCompleted(sessionId)
+}
+
 /**
  * 会话状态的唯一持有者：扫描会话库、跟踪运行态、发完成提醒、记未读。
  *
@@ -548,18 +556,22 @@ class SessionMonitor(
                 val running = RunningSessions.of(snapshot, watcher.workingIds())
 
                 withContext(Dispatchers.EDT) {
-                    val runningChanged = runningIds != running
+                    val previousRunning = runningIds
+                    val runningChanged = previousRunning != running
                     runtime = snapshot
                     runningIds = running
                     // 标签图标与窗口标题读的是同一个信号，一并推
                     if (runningChanged) {
                         updateOpenTabIcons()
                         updateFrameTitle()
+                        (running - previousRunning).forEach { sessionId ->
+                            peerCoordinator.cancelCurrentRun(sessionId)
+                        }
                     }
                     notifyListeners()
 
                     completed.forEach { sessionId ->
-                        peerCoordinator.onTurnCompleted(sessionId)
+                        dispatchCompletedPeerReview(sessionId, running, peerCoordinator::onTurnCompleted)
 
                         val session = model.sessionOf(sessionId)
                         val title =

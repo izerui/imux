@@ -17,7 +17,7 @@ class PeerCoordinatorSourceTest {
 
     @Test
     fun `并发调度由 PeerSessionGuard 保护`() {
-        assertTrue(coordinator.contains("guard.tryStart()"))
+        assertTrue(coordinator.contains("guard.tryStart(generation,"))
         assertTrue(coordinator.contains("guard.onFinished(run)"))
         assertTrue(coordinator.contains("guard.isActive(run)"))
     }
@@ -62,12 +62,12 @@ class PeerCoordinatorSourceTest {
     @Test
     fun `runReviewAndInject 源码中 resolveMcpConfig 到 buildPeerCliInvocation 到 runCli 的调用链`() {
         val reviewFun = coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
-        assertTrue("应调用 resolveMcpConfig", reviewFun.contains("resolveMcpConfig(binding.targetAgentType)"))
-        assertTrue("应调用 buildPeerCliInvocation", reviewFun.contains("buildPeerCliInvocation(shell, binding.targetAgentType, projectPath, mcpConfig)"))
+        assertTrue("应调用 resolveMcpConfig", reviewFun.contains("resolveMcpConfig(currentBinding.targetAgentType)"))
+        assertTrue("应调用 buildPeerCliInvocation", reviewFun.contains("buildPeerCliInvocation(shell, currentBinding.targetAgentType, projectPath, mcpConfig)"))
         assertTrue("invocation.command 应赋给 command", reviewFun.contains("val command = invocation.command"))
         assertTrue("invocation.environment 应赋给 environment", reviewFun.contains("val environment = invocation.environment"))
         val runCliArgs = reviewFun.substringAfter("runCli(").substringBefore(") {")
-        assertTrue("runCli 第二参数应是 command", runCliArgs.contains("binding.targetAgentType, command,"))
+        assertTrue("runCli 第二参数应是 command", runCliArgs.contains("currentBinding.targetAgentType, command,"))
         assertTrue("runCli 第五参数应是 environment", runCliArgs.contains("prompt, environment,"))
     }
 
@@ -97,10 +97,15 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `onTurnCompleted 用 peerInjectedSessions 标记判断是否重置计数`() {
+    fun `onTurnCompleted 中轮次状态修改在 tryStart 回调内`() {
         val onTurnFun = coordinator.substringAfter("fun onTurnCompleted(").substringBefore("fun ")
         assertTrue("应检查 peerInjectedSessions.remove", onTurnFun.contains("peerInjectedSessions.remove(sessionKey)"))
         assertTrue("未标记时应重置计数", onTurnFun.contains("roundCounts[sessionKey]?.set(0)"))
+        val tryStartBlock = onTurnFun.substringAfter("guard.tryStart(generation,").substringBefore("} ?: return")
+        assertTrue(
+            "peerInjectedSessions.remove 应在 tryStart 回调内",
+            tryStartBlock.contains("peerInjectedSessions.remove(sessionKey)"),
+        )
     }
 
     @Test

@@ -33,7 +33,6 @@ import java.util.concurrent.atomic.AtomicInteger
 data class PeerStatus(
     val targetAgentType: AgentType,
     val running: Boolean,
-    val pending: Boolean,
     val progress: PeerProgressSnapshot?,
 )
 
@@ -74,6 +73,7 @@ class PeerCoordinator internal constructor(
         PeerMcpConfig(ep, guidance, piScript)
     },
     private val buildPrompt: ((task: String, conversation: String) -> String)? = null,
+    private val sendAutoFeedback: ((sessionKey: String, feedback: String) -> Boolean)? = null,
 ) : Disposable {
     private val edt: kotlin.coroutines.CoroutineContext by lazy { edtDispatcher ?: Dispatchers.EDT }
     private val bindings = ConcurrentHashMap<String, PeerBinding>()
@@ -95,7 +95,6 @@ class PeerCoordinator internal constructor(
             PeerStatus(
                 targetAgentType = it.targetAgentType,
                 running = guard?.isReviewing == true,
-                pending = guard?.hasPending == true,
                 progress = guard?.progressSnapshot(),
             )
         }
@@ -122,41 +121,29 @@ class PeerCoordinator internal constructor(
     fun boundTarget(sessionKey: String): AgentType? = bindings[sessionKey]?.targetAgentType
 
     fun onTurnCompleted(sessionKey: String) {
-        val binding = bindings[sessionKey] ?: return
-        if (!peerInjectedSessions.remove(sessionKey)) {
-            roundCounts[sessionKey]?.set(0)
-        }
+        val generation = bindings[sessionKey]?.generation ?: return
         val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
         if (!bindings.containsKey(sessionKey)) {
             guards.remove(sessionKey, guard)
             return
         }
-        val run = guard.tryStart()
-        if (run == null) {
-            LOG.info("结对编程：$sessionKey 已有副驾驶运行，标记待补跑")
-            return
-        }
+        val run = guard.tryStart(generation, { bindings[sessionKey]?.generation }) {
+            if (!peerInjectedSessions.remove(sessionKey)) {
+                roundCounts[sessionKey]?.set(0)
+            }
+        } ?: return
         LOG.info("结对编程：主会话轮次完成 sessionKey=$sessionKey")
-        launchReview(sessionKey, binding, run, guard)
+        launchReview(sessionKey, run, guard)
     }
 
-    private fun launchReview(sessionKey: String, binding: PeerBinding, run: PeerRun, guard: PeerSessionGuard) {
+    private fun launchReview(sessionKey: String, run: PeerRun, guard: PeerSessionGuard) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                runReviewAndInject(sessionKey, binding, run, guard)
+                runReviewAndInject(sessionKey, run, guard)
             } finally {
-                val rerun = guard.onFinished(run)
+                guard.onFinished(run)
                 withContext(edt) {
                     notifyStateChanged(sessionKey)
-                }
-                if (rerun != null) {
-                    val latestBinding = bindings[sessionKey]
-                    if (latestBinding != null) {
-                        LOG.info("结对编程：补跑 $sessionKey")
-                        launchReview(sessionKey, latestBinding, rerun, guard)
-                    } else {
-                        guard.cancel()
-                    }
                 }
             }
         }
@@ -204,18 +191,17 @@ class PeerCoordinator internal constructor(
 
     private suspend fun runReviewAndInject(
         mainSessionKey: String,
-        initialBinding: PeerBinding,
         run: PeerRun,
         guard: PeerSessionGuard,
     ) {
-        if (!runIsCurrent(mainSessionKey, initialBinding, run, guard)) return
+        if (!runIsCurrent(mainSessionKey, run, guard)) return
 
         run.reviewing.set(true)
         withContext(edt) {
-            if (runIsCurrent(mainSessionKey, initialBinding, run, guard)) notifyStateChanged(mainSessionKey)
+            if (runIsCurrent(mainSessionKey, run, guard)) notifyStateChanged(mainSessionKey)
         }
 
-        if (!runIsCurrent(mainSessionKey, initialBinding, run, guard)) return
+        if (!runIsCurrent(mainSessionKey, run, guard)) return
 
         val injectedRounds = roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.get()
         val maxRounds = peerMaxRounds()
@@ -224,29 +210,25 @@ class PeerCoordinator internal constructor(
             return
         }
 
-        val binding =
-            if (initialBinding.task.isBlank()) {
-                initialBinding.copy(task = extractTask(mainSessionKey)).also {
-                    bindings.replace(mainSessionKey, initialBinding, it)
-                }
-            } else {
-                initialBinding
-            }
+        val currentBinding = bindings[mainSessionKey] ?: return
+        if (currentBinding.generation != run.bindingGeneration) return
+        val freshTask = extractTask(mainSessionKey)
+        if (!runIsCurrent(mainSessionKey, run, guard)) return
         val conversation = collectLatestConversation(mainSessionKey)
-        val prompt = (buildPrompt ?: ::buildReviewPrompt)(binding.task, conversation)
-        val mcpConfig = resolveMcpConfig(binding.targetAgentType)
-        val invocation = buildPeerCliInvocation(shell, binding.targetAgentType, projectPath, mcpConfig)
+        val prompt = (buildPrompt ?: ::buildReviewPrompt)(freshTask, conversation)
+        val mcpConfig = resolveMcpConfig(currentBinding.targetAgentType)
+        val invocation = buildPeerCliInvocation(shell, currentBinding.targetAgentType, projectPath, mcpConfig)
         val command = invocation.command
         val environment = invocation.environment
         run.startProgress(injectedRounds + 1)
-        LOG.info("结对编程：已注入 $injectedRounds 轮，调用 ${binding.targetAgentType.cli}")
+        LOG.info("结对编程：已注入 $injectedRounds 轮，调用 ${currentBinding.targetAgentType.cli}")
 
-        if (!runIsCurrent(mainSessionKey, binding, run, guard)) return
+        if (!runIsCurrent(mainSessionKey, run, guard)) return
 
         val result =
             runCatching {
                 runCli(
-                    binding.targetAgentType,
+                    currentBinding.targetAgentType,
                     command,
                     Path.of(projectPath),
                     prompt,
@@ -256,21 +238,21 @@ class PeerCoordinator internal constructor(
                 ) { event ->
                     run.recordProgress(event)
                     coroutineScope.launch(edt) {
-                        if (runIsCurrent(mainSessionKey, binding, run, guard)) {
+                        if (runIsCurrent(mainSessionKey, run, guard)) {
                             notifyStateChanged(mainSessionKey)
                         }
                     }
                 }
             }
 
-        if (!runIsCurrent(mainSessionKey, binding, run, guard)) return
+        if (!runIsCurrent(mainSessionKey, run, guard)) return
 
         val rawOutput = result.getOrNull()
         val error = result.exceptionOrNull()
         if (error != null) {
             LOG.warn("结对编程：CLI 调用失败", error)
             withContext(edt) {
-                if (!project.isDisposed) notifyCliError(binding, error.message ?: error.javaClass.simpleName)
+                if (!project.isDisposed) notifyCliError(currentBinding, error.message ?: error.javaClass.simpleName)
             }
             return
         }
@@ -282,7 +264,7 @@ class PeerCoordinator internal constructor(
         }
 
         withContext(edt) {
-            if (!runIsCurrent(mainSessionKey, binding, run, guard) || project.isDisposed) return@withContext
+            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
             if (peerAutoInject()) {
                 injectFeedback(mainSessionKey, feedback)
             } else {
@@ -293,13 +275,12 @@ class PeerCoordinator internal constructor(
 
     private fun runIsCurrent(
         sessionKey: String,
-        binding: PeerBinding,
         run: PeerRun,
         guard: PeerSessionGuard,
     ): Boolean =
         !run.cancelled.get() &&
                 guard.isActive(run) &&
-                bindings[sessionKey] == binding
+                bindings[sessionKey]?.generation == run.bindingGeneration
 
     private fun notifyStateChanged(sessionKey: String) {
         stateDispatcher.multicaster.peerStateChanged(sessionKey)
@@ -399,16 +380,20 @@ class PeerCoordinator internal constructor(
         mainSessionKey: String,
         prompt: String,
     ) {
-        val view = viewOf(mainSessionKey)
-        if (view == null) {
-            LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
-            return
+        if (sendAutoFeedback != null) {
+            if (!sendAutoFeedback.invoke(mainSessionKey, prompt)) return
+        } else {
+            val view = viewOf(mainSessionKey)
+            if (view == null) {
+                LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
+                return
+            }
+            LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
+            view.createSendTextBuilder()
+                .useBracketedPasteMode()
+                .shouldExecute()
+                .send(prompt)
         }
-        LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
-        view.createSendTextBuilder()
-            .useBracketedPasteMode()
-            .shouldExecute()
-            .send(prompt)
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
     }
@@ -467,7 +452,7 @@ ${'$'}{conversation}
 
 对话记录里，工具调用和返回值比搭档的自述更靠谱。如果搭档说"测试通过了"但记录里没有对应的执行，这本身就值得问一句。你也可以自己用工具去验证。搭档可能做了还没提交的改动，别假设所有工作都体现在 git diff 里。
 
-像平时结对时那样说话就好——"这里空列表会不会出问题？""并发场景下是不是得加锁？""这块跟上面的逻辑好像矛盾了"。挑重点说，别一股脑全倒出来。围绕用户的任务目标，跑题的事提一嘴就够了，别反复念叨。少贴代码，点到为止，让搭档自己决定怎么改。你说的是反馈和观察，不是替用户下指令。
+用大白话说就行，像两个人坐一起写代码时随口聊的那种。别写成审查报告，别分条列点，别加标题分类。就正常说话——"这里空列表会不会炸？""你这个锁好像没加上啊""这块逻辑跟上面矛盾了吧"。挑重点说，别一股脑全倒出来。围绕用户的任务目标，跑题的事提一嘴就够了，别反复念叨。少贴代码，点到为止，让搭档自己决定怎么改。你说的是反馈和观察，不是替用户下指令。
 
 没发现问题就只输出 PASS 这一个词，不要加任何解释。
 """.trimIndent()
@@ -486,7 +471,7 @@ See how your partner is doing. Focus on: any logic gaps or unhandled edge cases?
 
 In the conversation log, tool calls and their results are more reliable than your partner's own narration. If they say "tests passed" but there's no matching execution in the log, that's worth asking about. You can also use your own tools to verify. Your partner may have made uncommitted changes or run commands that don't produce file diffs — don't assume everything shows up in git diff.
 
-Talk like you would in a real pair session — "Would this break on an empty list?" "Might need a lock for concurrency here." "This seems to contradict the logic above." Focus on what matters most, don't dump everything at once. Stay on the user's task goal; off-topic stuff gets one mention, then move on. Keep code snippets minimal — point things out and let your partner decide how to fix them. You're sharing observations, not issuing commands on behalf of the user.
+Just talk plainly, like two people sitting next to each other writing code. Don't write a review report, don't use headers or bullet lists, don't categorize findings. Just say it — "This'll blow up on an empty list, right?" "Did you forget the lock here?" "This contradicts what you did above." Focus on what matters most, don't dump everything at once. Stay on the user's task goal; off-topic stuff gets one mention, then move on. Keep code snippets minimal — point things out and let your partner decide how to fix them. You're sharing observations, not issuing commands on behalf of the user.
 
 Nothing to flag? Output the single word PASS and nothing else.
 """.trimIndent()

@@ -7,6 +7,7 @@ internal class PeerRun {
     val cancelled = AtomicBoolean(false)
     val reviewing = AtomicBoolean(false)
     val process = AtomicReference<Process?>()
+    @Volatile var bindingGeneration: Long = 0
     private val progressLock = Any()
     private var round = 0
     private var startedAtMillis = System.currentTimeMillis()
@@ -48,43 +49,38 @@ internal class PeerRun {
 internal class PeerSessionGuard {
     private val lock = Any()
     private var activeRun: PeerRun? = null
-    private var pending = false
 
     val isReviewing: Boolean
         get() = synchronized(lock) { activeRun?.reviewing?.get() == true }
-
-    val hasPending: Boolean
-        get() = synchronized(lock) { pending }
 
     fun progressSnapshot(): PeerProgressSnapshot? = synchronized(lock) {
         activeRun?.takeIf { it.reviewing.get() }?.progressSnapshot()
     }
 
-    fun tryStart(): PeerRun? = synchronized(lock) {
-        if (activeRun != null) {
-            pending = true
-            null
-        } else {
-            PeerRun().also { activeRun = it }
+    fun tryStart(
+        bindingGeneration: Long,
+        currentGeneration: () -> Long?,
+        onStart: () -> Unit = {},
+    ): PeerRun? = synchronized(lock) {
+        if (currentGeneration() != bindingGeneration) return@synchronized null
+        activeRun?.cancel()
+        PeerRun().also {
+            it.bindingGeneration = bindingGeneration
+            activeRun = it
+            onStart()
         }
     }
 
     fun isActive(run: PeerRun): Boolean = synchronized(lock) { activeRun === run }
 
-    fun onFinished(run: PeerRun): PeerRun? = synchronized(lock) {
-        if (activeRun !== run) return@synchronized null
-        run.cancel()
-        activeRun = null
-        if (pending) {
-            pending = false
-            PeerRun().also { activeRun = it }
-        } else {
-            null
+    fun onFinished(run: PeerRun) = synchronized(lock) {
+        if (activeRun === run) {
+            run.cancel()
+            activeRun = null
         }
     }
 
     fun cancel() = synchronized(lock) {
-        pending = false
         activeRun?.cancel()
         activeRun = null
     }

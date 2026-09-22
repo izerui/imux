@@ -126,12 +126,26 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(icons.contains("AnimatedIcon("))
         // 未读格与会话列表用同一个常量，两处样式才一致
         assertTrue(icons.contains("AllIcons.General.Modified"))
-        assertTrue(monitor.contains("val runningChanged = runningIds != running"))
+        assertTrue(monitor.contains("val runningChanged = previousRunning != running"))
         // 标签图标与窗口标题读同一个信号，漏掉任一处都会让那处停在上一次的运行态
         assertTrue(
             "运行态变化要同时刷新标签图标与窗口标题",
-            Regex("""if \(runningChanged\) \{\s*updateOpenTabIcons\(\)\s*updateFrameTitle\(\)\s*}""")
+            Regex("""if \(runningChanged\) \{\s*updateOpenTabIcons\(\)\s*updateFrameTitle\(\)""")
                 .containsMatchIn(monitor),
+        )
+        // 新进入运行态的会话应取消副驾驶
+        assertTrue(
+            "新进入运行态时应取消副驾驶",
+            monitor.contains("peerCoordinator.cancelCurrentRun(sessionId)"),
+        )
+        assertTrue(
+            "取消范围应为新进入运行态的会话",
+            monitor.contains("(running - previousRunning).forEach"),
+        )
+        // 同一轮询中完成但仍在运行的会话不应启动副驾驶
+        assertTrue(
+            "仍在运行的已完成会话不应触发 onTurnCompleted",
+            monitor.contains("dispatchCompletedPeerReview(sessionId, running, peerCoordinator::onTurnCompleted)"),
         )
         assertTrue(monitor.contains("updateFilePresentation(file)"))
         val unreadTracker =
