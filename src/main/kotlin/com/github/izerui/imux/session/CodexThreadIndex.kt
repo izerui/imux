@@ -30,27 +30,33 @@ import java.nio.file.Path
 class CodexThreadIndex(private val codexHome: Path) {
 
     /**
-     * 返回 sessionId -> 标题。
+     * 返回会话索引：sessionId -> 标题。返回 null 表示没有任何 DB 可用。
      *
-     * 优先读新版 `codex-dev.db`，只有它不存在时才回退到旧版 `state_*.sqlite`。
-     * 不合并：Codex CLI 以 `codex-dev.db` 为准，旧 DB 里的会话 CLI 也不显示。
+     * null 与空 map 的区别至关重要：
+     * - **null**：没有 DB 文件，调用方不做过滤（显示所有 rollout）
+     * - **空 map**：DB 存在（成功读取或读取失败），调用方按需过滤
+     *
+     * `codex-dev.db` 文件存在即不回退旧库——即使读取失败（损坏、表结构变化），
+     * 也不能让旧库的会话重新出现。
      */
-    fun load(): Map<String, String> {
+    fun load(): Map<String, String>? {
         val dir = codexSqliteDir(codexHome)
-        return loadFromDevDb(dir).ifEmpty { loadFromLegacyDb(dir) }
+        val devDbFile = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
+            .firstOrNull { Files.isRegularFile(it) }
+        if (devDbFile != null) return readDevDb(devDbFile)
+        return readLegacyDb(dir)
     }
 
     /**
      * 新版 Codex 把标题放在 `codex-dev.db` 的 `local_thread_catalog` 表里。
      *
-     * 所有记录都放入 map——即使 display_title 为空也用空字符串占位，
-     * 因为 map 的 key 集就是「活跃会话集」，不在里面的会话不该显示。
+     * 读取失败与成功读取空表都返回空 map（不是 null）。这是有意的降级策略：
+     * 文件存在即代表用户在用新版 Codex，不能因为读取异常就回退旧库让旧会话冒出来。
+     * 代价是 DB 损坏时 Reader 会隐藏该项目的全部 Codex 会话——宁可列表为空，
+     * 也不让旧库的会话冒出来造成混乱。
      */
-    private fun loadFromDevDb(dir: Path): Map<String, String> {
-        val file = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
-            .firstOrNull { Files.isRegularFile(it) } ?: return emptyMap()
-
-        return runCatching {
+    private fun readDevDb(file: Path): Map<String, String> =
+        runCatching {
             val titles = HashMap<String, String>()
             readOnlyDataSource(file).connection.use { conn ->
                 conn.createStatement().use { statement ->
@@ -66,17 +72,18 @@ class CodexThreadIndex(private val codexHome: Path) {
             }
             titles as Map<String, String>
         }.getOrElse {
-            LOG.warn("读取 Codex codex-dev.db 失败，尝试旧版数据库", it)
+            LOG.warn("读取 Codex codex-dev.db 失败，标题回退到用户消息", it)
             emptyMap()
         }
-    }
 
     /**
      * 旧版 Codex 的标题在 `state_<n>.sqlite` 的 `threads` 表里。
+     *
+     * 返回 null 表示 DB 文件不存在；空 map 表示文件存在但读取失败。
      */
-    private fun loadFromLegacyDb(dir: Path): Map<String, String> {
-        val file = latestVersionedDbIn(dir, "state") ?: return emptyMap()
-        if (!Files.isRegularFile(file)) return emptyMap()
+    private fun readLegacyDb(dir: Path): Map<String, String>? {
+        val file = latestVersionedDbIn(dir, "state") ?: return null
+        if (!Files.isRegularFile(file)) return null
 
         return runCatching {
             val titles = HashMap<String, String>()

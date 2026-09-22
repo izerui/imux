@@ -130,6 +130,68 @@ class CodexSessionReaderTest {
         assertEquals(2, reader().read("/Users/demo/proj").size)
     }
 
+    // ---- codex-dev.db 过滤 ----
+
+    private fun createLegacyDb(vararg rows: Pair<String, String>) {
+        val file = File(tmp.root, "state_5.sqlite")
+        java.sql.DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate("CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, name TEXT, title TEXT)")
+            }
+            conn.prepareStatement("INSERT INTO threads (id, title) VALUES (?, ?)").use { stmt ->
+                rows.forEach { (id, title) -> stmt.setString(1, id); stmt.setString(2, title); stmt.executeUpdate() }
+            }
+        }
+    }
+
+    private fun createDevDb(vararg ids: String) {
+        val dir = File(tmp.root, "sqlite").apply { mkdirs() }
+        java.sql.DriverManager.getConnection("jdbc:sqlite:${File(dir, "codex-dev.db").absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate(
+                    "CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, display_title TEXT, " +
+                        "source_created_at REAL, source_updated_at REAL, source_kind TEXT, " +
+                        "observation_sequence INTEGER, missing_candidate INTEGER DEFAULT 0, " +
+                        "source_recency_at REAL DEFAULT 0, pending_observed_title INTEGER DEFAULT 0, " +
+                        "PRIMARY KEY (host_id, thread_id))",
+                )
+            }
+            if (ids.isNotEmpty()) {
+                conn.prepareStatement(
+                    "INSERT INTO local_thread_catalog (host_id, thread_id, display_title, " +
+                        "source_created_at, source_updated_at, source_kind, observation_sequence) " +
+                        "VALUES ('host', ?, '', 0, 0, 'cli', 0)",
+                ).use { stmt ->
+                    ids.forEach { id -> stmt.setString(1, id); stmt.executeUpdate() }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `codex-dev db 存在时只显示其中的会话`() {
+        writeRollout("uuid-in-db", "/Users/demo/proj", userMessage("DB 内的会话"))
+        writeRollout("uuid-not-in-db", "/Users/demo/proj", userMessage("DB 外的会话"))
+        createDevDb("uuid-in-db")
+
+        val sessions = reader().read("/Users/demo/proj")
+        assertEquals(listOf("uuid-in-db"), sessions.map { it.id })
+    }
+
+    /**
+     * codex-dev.db 存在但表为空 → 所有 rollout 都被过滤掉，即使旧库里有该会话。
+     * 有 DB 说明用户在用新版 Codex，空表就是没有会话，不该回退显示旧数据。
+     */
+    @Test
+    fun `codex-dev db 为空时不显示任何 rollout 即使旧库有记录`() {
+        writeRollout("uuid-orphan", "/Users/demo/proj", userMessage("旧会话"))
+        createDevDb() // 空表
+        // 旧库里有这个会话的标题——不该因此让它重新出现
+        createLegacyDb("uuid-orphan" to "旧库标题")
+
+        assertTrue(reader().read("/Users/demo/proj").isEmpty())
+    }
+
     // ---- 最后活动时刻 ----
     //
     // 与 claude 侧对齐：优先用记录自带的时刻，而不是文件 mtime。

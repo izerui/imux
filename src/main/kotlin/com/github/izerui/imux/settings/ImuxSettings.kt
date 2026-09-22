@@ -117,7 +117,7 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         var peerAutoInject: Boolean by property(true)
 
         /** 结对编程：副驾驶最大交互轮次。 */
-        var peerMaxRounds: Int by property(5)
+        var peerMaxRounds: Int by property(20)
 
         /** 结对编程：用户自定义副驾驶提示词；null 表示使用默认。 */
         var peerPromptOverride: String? by string(null)

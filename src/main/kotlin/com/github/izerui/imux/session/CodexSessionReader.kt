@@ -71,15 +71,14 @@ class CodexSessionReader(
         if (!Files.isDirectory(root)) return emptyList()
 
         // rollout 文件里没有标题字段，权威标题在 codex 自己的 sqlite 里。
-        // 同时 DB 就是「活跃会话集」——不在里面的是已归档或内部会话，
-        // CLI 不显示，imux 也不该显示。
-        val titles = threadIndex.load()
+        // null = 没有 DB 文件（不过滤）；非 null = 用 DB 的 key 集过滤 rollout。
+        val catalog = threadIndex.load()
 
         return Files.walk(root).use { stream ->
             stream
                 .toList()
                 .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".jsonl") }
-                .mapNotNull { readOne(it, projectPath, titles) }
+                .mapNotNull { readOne(it, projectPath, catalog) }
         }
     }
 
@@ -93,10 +92,13 @@ class CodexSessionReader(
      * 早期实现是先把前 50 行全读出来再过滤，等于为 600 多个无关文件各白读 49 行，
      * 单次 scan 耗时 300–800ms。
      */
+    /**
+     * @param catalog 非 null 时用 key 集过滤 rollout；null 时不过滤。
+     */
     private fun readOne(
         file: Path,
         projectPath: String,
-        titles: Map<String, String>,
+        catalog: Map<String, String>?,
     ): AgentSession? =
         runCatching {
             val meta = firstLine(file) ?: return null
@@ -104,20 +106,18 @@ class CodexSessionReader(
             if (JsonLineScanner.stringValue(meta, "thread_source") == SUBAGENT_THREAD_SOURCE) return null
 
             val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
-            // 两侧都换算：codex 记原生分隔符，projectPath 是 @SystemIndependent 的正斜杠
             if (!sameCodexCwd(cwd, projectPath, isWindows)) return null
 
             val id = JsonLineScanner.stringValue(meta, "id") ?: return null
 
-            // DB 加载成功时，不在里面的会话是已归档/内部会话，CLI 不显示，imux 也不该显示。
-            // DB 为空（加载失败或根本没有 DB）时不过滤，否则全空。
-            if (titles.isNotEmpty() && id !in titles) return null
+            // catalog 非 null 说明 DB 成功加载，不在里面的会话 CLI 也不显示。
+            // catalog 为 null 说明没有可用的 DB，不过滤。
+            if (catalog != null && id !in catalog) return null
 
             AgentSession(
                 id = id,
-                // 回退链：sqlite 里的标题 -> 最后一条用户消息 -> id 短码
                 title =
-                    titles[id]?.takeIf { it.isNotEmpty() }?.let(::truncate)
+                    catalog?.get(id)?.takeIf { it.isNotEmpty() }?.let(::truncate)
                         ?: lastUserMessage(file)?.let(::truncate)
                         ?: ImuxBundle.message("session.default", id.take(8)),
                 agentType = AgentType.CODEX,

@@ -312,7 +312,7 @@ class SessionTitleRegeneratorTest {
 
         writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", home)
 
-        assertEquals("新标题", CodexThreadIndex(codexHome).load()["codex-1"])
+        assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["codex-1"])
         DriverManager.getConnection("jdbc:sqlite:$oldDb").use { connection ->
             connection.createStatement().use { statement ->
                 statement.executeQuery("SELECT name FROM threads WHERE id = 'codex-1'").use { rows ->
@@ -341,7 +341,7 @@ class SessionTitleRegeneratorTest {
 
         writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", home)
 
-        assertEquals("新标题", CodexThreadIndex(codexHome).load()["codex-1"])
+        assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["codex-1"])
     }
 
     @Test

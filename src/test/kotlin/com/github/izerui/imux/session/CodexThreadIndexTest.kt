@@ -19,6 +19,35 @@ class CodexThreadIndexTest {
     private fun createDb(vararg rows: Triple<String, String?, Long>) =
         createDb("state_5.sqlite", *rows)
 
+    private fun createDevDb(vararg rows: Pair<String, String>) {
+        val dir = File(tmp.root, "sqlite").apply { mkdirs() }
+        val file = File(dir, "codex-dev.db")
+        DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
+            conn.createStatement().use {
+                it.executeUpdate(
+                    "CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, display_title TEXT, " +
+                        "source_created_at REAL, source_updated_at REAL, source_kind TEXT, " +
+                        "observation_sequence INTEGER, missing_candidate INTEGER DEFAULT 0, " +
+                        "source_recency_at REAL DEFAULT 0, pending_observed_title INTEGER DEFAULT 0, " +
+                        "PRIMARY KEY (host_id, thread_id))",
+                )
+            }
+            if (rows.isNotEmpty()) {
+                conn.prepareStatement(
+                    "INSERT INTO local_thread_catalog (host_id, thread_id, display_title, " +
+                        "source_created_at, source_updated_at, source_kind, observation_sequence) " +
+                        "VALUES ('host', ?, ?, 0, 0, 'cli', 0)",
+                ).use { stmt ->
+                    rows.forEach { pair ->
+                        stmt.setString(1, pair.first)
+                        stmt.setString(2, pair.second)
+                        stmt.executeUpdate()
+                    }
+                }
+            }
+        }
+    }
+
     /** 用同一个驱动造一个结构一致的库，比塞二进制夹具可读得多。 */
     private fun createDb(
         name: String,
@@ -47,7 +76,7 @@ class CodexThreadIndexTest {
     fun `按会话 id 取到标题`() {
         createDb(Triple("019faba2-379e-7333-a4bd-9dc6f7ec81ed", "分析工程结构", 1_000L))
 
-        assertEquals("分析工程结构", index().load()["019faba2-379e-7333-a4bd-9dc6f7ec81ed"])
+        assertEquals("分析工程结构", index().load()!!["019faba2-379e-7333-a4bd-9dc6f7ec81ed"])
     }
 
     @Test
@@ -61,7 +90,7 @@ class CodexThreadIndexTest {
             }
         }
 
-        assertEquals("重新生成的标题", index().load()["thread-1"])
+        assertEquals("重新生成的标题", index().load()!!["thread-1"])
     }
 
     @Test
@@ -71,7 +100,7 @@ class CodexThreadIndexTest {
             Triple("b", "标题乙", 2_000L),
         )
 
-        val loaded = index().load()
+        val loaded = index().load()!!
         assertEquals("标题甲", loaded["a"])
         assertEquals("标题乙", loaded["b"])
     }
@@ -83,14 +112,14 @@ class CodexThreadIndexTest {
             Triple("b", "   ", 2_000L),
         )
 
-        val loaded = index().load()
+        val loaded = index().load()!!
         assertNull(loaded["a"])
         assertNull(loaded["b"])
     }
 
     @Test
-    fun `数据库不存在时返回空表`() {
-        assertTrue(index().load().isEmpty())
+    fun `数据库不存在时返回 null`() {
+        assertNull(index().load())
     }
 
     @Test
@@ -103,25 +132,57 @@ class CodexThreadIndexTest {
             }
         }
 
-        assertEquals("旧版标题", index().load()["old-1"])
+        assertEquals("旧版标题", index().load()!!["old-1"])
     }
 
     /** codex 换版本时表结构可能变，不能因此让整个会话列表崩掉。 */
     @Test
-    fun `表结构不符时返回空表而不抛异常`() {
+    fun `旧库表结构不符时返回空 map 而不抛异常`() {
         val file = File(tmp.root, "state_5.sqlite")
         DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { conn ->
             conn.createStatement().use { it.executeUpdate("CREATE TABLE other (x TEXT)") }
         }
 
-        assertTrue(index().load().isEmpty())
+        assertTrue(index().load()!!.isEmpty())
     }
 
     @Test
-    fun `文件不是合法数据库时返回空表`() {
+    fun `旧库文件损坏时返回空 map`() {
         File(tmp.root, "state_5.sqlite").writeText("这不是 sqlite 文件")
 
-        assertTrue(index().load().isEmpty())
+        assertTrue(index().load()!!.isEmpty())
+    }
+
+    // ---- codex-dev.db 优先级 ----
+
+    @Test
+    fun `codex-dev db 存在时优先读取`() {
+        createDb(Triple("legacy-1", "旧库标题", 1_000L))
+        createDevDb("dev-1" to "新库标题")
+
+        val loaded = index().load()!!
+        assertEquals("新库标题", loaded["dev-1"])
+        assertNull(loaded["legacy-1"])
+    }
+
+    @Test
+    fun `codex-dev db 成功读取为空时不回退旧库`() {
+        createDb(Triple("legacy-1", "旧库标题", 1_000L))
+        createDevDb() // 空表
+
+        val loaded = index().load()!!
+        assertTrue(loaded.isEmpty())
+    }
+
+    @Test
+    fun `codex-dev db 读取失败时不回退旧库`() {
+        createDb(Triple("legacy-1", "旧库标题", 1_000L))
+        // 写一个损坏的 codex-dev.db
+        File(tmp.root, "sqlite").mkdirs()
+        File(tmp.root, "sqlite/codex-dev.db").writeText("损坏的数据库")
+
+        val loaded = index().load()!!
+        assertTrue(loaded.isEmpty())
     }
 
     @Test
@@ -129,7 +190,7 @@ class CodexThreadIndexTest {
         createDb("state_5.sqlite", Triple("thread-1", "旧库标题", 1_000L))
         createDb("state_10.sqlite", Triple("thread-1", "新库标题", 2_000L))
 
-        assertEquals("新库标题", index().load()["thread-1"])
+        assertEquals("新库标题", index().load()!!["thread-1"])
     }
 
     @Test
@@ -146,6 +207,6 @@ class CodexThreadIndexTest {
         }
         File(tmp.root, "config.toml").writeText("sqlite_home = \"${sqliteDir.absolutePath}\"\n")
 
-        assertEquals("外部目录标题", index().load()["thread-1"])
+        assertEquals("外部目录标题", index().load()!!["thread-1"])
     }
 }
