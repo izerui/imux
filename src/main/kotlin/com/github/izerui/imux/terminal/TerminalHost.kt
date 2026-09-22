@@ -256,6 +256,25 @@ class TerminalHost(
      */
     fun openTabKeys(): Set<String> = files.keys.toSet()
 
+    /**
+     * 按 session key 关闭已打开的标签页。
+     *
+     * 供删除会话流程调用：先关掉标签页（触发 [closeSession] 完成进程终止与记账清理），
+     * 再由调用方删除文件。
+     *
+     * 返回值语义：
+     * - `true`：标签页已关闭，或该 key 本就没有打开的标签页
+     * - `false`：标签页仍然存在（用户在 [AgentSessionPreCloseCheck] 的确认框里点了取消）
+     *
+     * 必须在 EDT 调用。
+     */
+    fun closeTabBySessionKey(key: String): Boolean {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        val file = files[key] ?: return true
+        FileEditorManager.getInstance(project).closeFile(file)
+        return !files.containsKey(key)
+    }
+
     /** 打开一个已有会话；若其终端已在运行则切到该标签页而不重启。 */
     fun openResume(
         agentType: AgentType,

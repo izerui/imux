@@ -123,6 +123,30 @@ internal inline fun AtomicBoolean.runOnceResetOnFailure(block: () -> Unit): Bool
     return true
 }
 
+/**
+ * 判定一个会话是否正在运行但没有打开标签页。
+ *
+ * 三种信号取并集：
+ * - [inRunningIds]：TurnWatcher 从会话文件推断的执行态（覆盖 Codex、Pi）
+ * - [runtimeOccupied]：Claude 运行态文件里的进程占用（覆盖 Claude 后台 agent）
+ *
+ * 有标签页时无论是否在跑都返回 false——关标签页能终止进程，删除流程可以走下去。
+ */
+internal fun isRunningWithoutTab(
+    hasTab: Boolean,
+    inRunningIds: Boolean,
+    runtimeOccupied: Boolean,
+): Boolean = !hasTab && (inRunningIds || runtimeOccupied)
+
+enum class DeleteResult {
+    /** 删除已受理：标签页已关闭、状态已清理，文件删除在 IO 线程异步进行。 */
+    ACCEPTED,
+    /** 会话正在运行且没有可关闭的标签页，imux 无法终止进程。 */
+    RUNNING_WITHOUT_TAB,
+    /** 用户在关闭标签页的确认框中取消了操作。 */
+    CLOSE_REJECTED,
+}
+
 internal fun dispatchCompletedPeerReview(
     sessionId: String,
     running: Set<String>,
@@ -392,6 +416,64 @@ class SessionMonitor(
         updateOpenTabIcons(setOf(key))
         updateFrameTitle()
         notifyListeners()
+    }
+
+    /**
+     * 该会话是否正在运行但没有打开标签页。
+     *
+     * 覆盖所有三种智能体：Claude 走 [runtime]（后台进程），Codex / Pi 走
+     * [runningIds]（TurnWatcher 推断）。两者取并集再排除有标签页的。
+     *
+     * 没有标签页意味着 imux 无法终止进程——关标签页是唯一的终止路径。
+     * 直接删除文件会让进程继续写入已删除的路径。
+     */
+    fun isRunningWithoutTab(sessionId: String): Boolean =
+        isRunningWithoutTab(
+            hasTab = TerminalHost.getInstance(project).openTabKeys().contains(sessionId),
+            inRunningIds = sessionId in runningIds,
+            runtimeOccupied = runtime[sessionId]?.isOccupied == true,
+        )
+
+    /**
+     * 删除一个会话：关标签页 → 删文件 → 清状态 → 刷新列表。
+     *
+     * 必须在 EDT 调用。文件删除走 IO 线程，完成后刷新列表。
+     *
+     * [NonCancellable]：有意脱离 [coroutineScope] 的父 Job。用户确认删除后，
+     * 即使项目立即关闭，文件也必须被删掉——否则下次打开项目它又会出现在列表里。
+     * `Files.deleteIfExists` 是单次 syscall，项目关闭后继续执行是无害的；
+     * EDT 回调仍检查 `project.isDisposed`，跳过已销毁项目的 UI 操作。
+     */
+    fun deleteSession(session: AgentSession): DeleteResult {
+        ApplicationManager.getApplication().assertIsDispatchThread()
+        if (isRunningWithoutTab(session.id)) return DeleteResult.RUNNING_WITHOUT_TAB
+        val host = TerminalHost.getInstance(project)
+        if (!host.closeTabBySessionKey(session.id)) return DeleteResult.CLOSE_REJECTED
+        sessionClosed(session.id)
+
+        coroutineScope.launch(NonCancellable + Dispatchers.IO) {
+            val result = runCatching { java.nio.file.Files.deleteIfExists(session.filePath) }
+            withContext(Dispatchers.EDT) {
+                if (project.isDisposed) return@withContext
+                result.onFailure { error ->
+                    LOG.warn("删除会话文件失败: ${session.filePath}", error)
+                    NotificationGroupManager
+                        .getInstance()
+                        .getNotificationGroup(TITLE_NOTIFICATION_GROUP)
+                        .createNotification(
+                            ImuxBundle.message("action.delete.session.text"),
+                            ImuxBundle.message(
+                                "notification.delete.failed",
+                                session.title,
+                                error.message ?: ImuxBundle.message("notification.title.unknown.error"),
+                            ),
+                            NotificationType.WARNING,
+                        ).notify(project)
+                }
+                refresh()
+            }
+        }
+        return DeleteResult.ACCEPTED
     }
 
     /**
@@ -707,6 +789,7 @@ class SessionMonitor(
     override fun dispose() = Unit
 
     companion object {
+        private val LOG = com.intellij.openapi.diagnostic.logger<SessionMonitor>()
         private const val TITLE_NOTIFICATION_GROUP = "imux.turnCompleted"
 
         fun getInstance(project: Project): SessionMonitor = project.getService(SessionMonitor::class.java)

@@ -371,6 +371,8 @@ class AgentSessionTree(
                                 actions.add(regenerateSessionTitleAction(project, source))
                                 actions.addSeparator()
                                 actions.add(handoffActionGroup(project, source))
+                                actions.addSeparator()
+                                actions.add(deleteSessionAction(project, monitor, source, data.running))
                             }
                         }
 
