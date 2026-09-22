@@ -29,7 +29,12 @@ import java.nio.file.Path
  */
 class CodexThreadIndex(private val codexHome: Path) {
 
-    /** 返回 sessionId -> 标题。 */
+    /**
+     * 返回 sessionId -> 标题。
+     *
+     * 优先读新版 `codex-dev.db`，只有它不存在时才回退到旧版 `state_*.sqlite`。
+     * 不合并：Codex CLI 以 `codex-dev.db` 为准，旧 DB 里的会话 CLI 也不显示。
+     */
     fun load(): Map<String, String> {
         val dir = codexSqliteDir(codexHome)
         return loadFromDevDb(dir).ifEmpty { loadFromLegacyDb(dir) }

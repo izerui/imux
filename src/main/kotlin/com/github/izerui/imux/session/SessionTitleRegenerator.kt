@@ -122,21 +122,38 @@ internal fun writeGeneratedTitle(
 
         AgentType.CODEX -> {
             val codexHome = userHome.resolve(".codex")
-            val db =
-                latestVersionedDbIn(codexSqliteDir(codexHome), "state")
-                    ?: error("Codex 会话数据库不存在")
-            check(Files.isRegularFile(db)) { "Codex 会话数据库不存在" }
+            val dir = codexSqliteDir(codexHome)
+            val devDb = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
+                .firstOrNull { Files.isRegularFile(it) }
             val config = SQLiteConfig().apply { setBusyTimeout(SQLITE_BUSY_TIMEOUT_MS) }
-            SQLiteDataSource(config)
-                .apply { url = "jdbc:sqlite:${db.toAbsolutePath()}" }
-                .connection
-                .use { connection ->
-                    connection.prepareStatement("UPDATE threads SET name = ? WHERE id = ?").use { statement ->
-                        statement.setString(1, title)
-                        statement.setString(2, session.id)
-                        check(statement.executeUpdate() == 1) { "Codex 会话不存在" }
+            if (devDb != null) {
+                SQLiteDataSource(config)
+                    .apply { url = "jdbc:sqlite:${devDb.toAbsolutePath()}" }
+                    .connection
+                    .use { connection ->
+                        connection.prepareStatement(
+                            "UPDATE local_thread_catalog SET display_title = ? WHERE thread_id = ?",
+                        ).use { statement ->
+                            statement.setString(1, title)
+                            statement.setString(2, session.id)
+                            check(statement.executeUpdate() == 1) { "Codex 会话不存在" }
+                        }
                     }
-                }
+            } else {
+                val db = latestVersionedDbIn(dir, "state")
+                    ?: error("Codex 会话数据库不存在")
+                check(Files.isRegularFile(db)) { "Codex 会话数据库不存在" }
+                SQLiteDataSource(config)
+                    .apply { url = "jdbc:sqlite:${db.toAbsolutePath()}" }
+                    .connection
+                    .use { connection ->
+                        connection.prepareStatement("UPDATE threads SET name = ? WHERE id = ?").use { statement ->
+                            statement.setString(1, title)
+                            statement.setString(2, session.id)
+                            check(statement.executeUpdate() == 1) { "Codex 会话不存在" }
+                        }
+                    }
+            }
         }
 
         AgentType.PI -> {
