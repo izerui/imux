@@ -47,6 +47,15 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
+    fun `横幅结对选项弹窗不显示重复标题`() {
+        assertTrue(
+            SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt")
+                .compact(editor)
+                .contains("createActionGroupPopup(null,group,"),
+        )
+    }
+
+    @Test
     fun `横幅使用紧凑操作和较小纵向内边距`() {
         assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.cancel"))"""))
         assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.close"))"""))

@@ -141,7 +141,7 @@ class AgentTerminalFileEditor(
                 val group = DefaultActionGroup(*peerProgrammingActions(project, virtualFile.sessionKey, targets))
                 JBPopupFactory.getInstance()
                     .createActionGroupPopup(
-                        ImuxBundle.message("action.peer.group.text"),
+                        null,
                         group,
                         com.intellij.openapi.actionSystem.impl.SimpleDataContext.getProjectContext(project),
                         JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
