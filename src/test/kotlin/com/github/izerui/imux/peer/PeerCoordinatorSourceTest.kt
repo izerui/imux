@@ -154,20 +154,50 @@ class PeerCoordinatorSourceTest {
         assertTrue("send 应在 peerInjectedSessions.add 之前", sendPos < addPos)
     }
 
+    /**
+     * 两条发送路径（生产走 viewOf，测试走 sendAutoFeedback 注入点）必须都在重试循环**体内**。
+     * 曾经把循环只套在 sendAutoFeedback 分支上，结果真实路径只尝试一次，
+     * 终端那一刻没开括号粘贴就直接丢反馈——而重试测试全都跑在注入点上，照样通过。
+     *
+     * 断言必须切出循环体再看：只比较「调用写在 for 之后」的话，把循环改成空循环、
+     * 两个分支挪到循环后面，这条测试照样绿。
+     */
     @Test
-    fun `自动反馈使用括号粘贴但不以能力探测阻断发送`() {
+    fun `自动反馈要求括号粘贴模式且两条发送路径都在重试循环体内`() {
+        val peer = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
+        // bodyAfter 在锚点出现不止一次时直接失败，「只应存在一个重试循环」由它一并守住。
+        val loopBody = peer.bodyAfter("while (true)", '{')
+        assertTrue(
+            "终端发送应在重试循环体内",
+            loopBody.contains("trySendPeerFeedback(view.createSendTextBuilder(), prompt)"),
+        )
+        assertTrue("测试注入点也应在同一个重试循环体内", loopBody.contains("sendAutoFeedback.invoke("))
+
         val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
         val sendPos = injectFun.indexOf("trySendPeerFeedback(view.createSendTextBuilder(), prompt)")
         val countPos = injectFun.indexOf("incrementAndGet()")
-        assertTrue("应尝试强制括号粘贴发送", sendPos >= 0)
+        assertTrue("发送应出现", sendPos >= 0)
         assertTrue("发送结果应在更新计数前确认", countPos > sendPos)
-        assertFalse("不应用能力探测阻断终端发送", coordinator.contains("requireBracketedPasteMode"))
         assertTrue(
-            "发送函数应使用括号粘贴并执行",
-            SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
-                .compact(coordinator)
-                .contains("builder.useBracketedPasteMode().shouldExecute().send(prompt)"),
+            "发送函数应要求括号粘贴模式并如实返回结果",
+            peer.compact(coordinator).contains("builder.requireBracketedPasteMode().shouldExecute().trySend(prompt)"),
         )
+    }
+
+    /**
+     * 等待没有时限，只认逻辑过期：本轮作废就静默退出，终端没了才交给兜底。
+     * 轮次计数必须留在循环之外——没送出去的反馈不该占掉用户的一轮审查额度。
+     */
+    @Test
+    fun `终端消失时交给兜底且未送达不登记轮次`() {
+        val peer = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt")
+        val loopBody = peer.bodyAfter("while (true)", '{')
+        assertTrue("终端消失时应交给兜底", loopBody.contains("onFeedbackUndelivered"))
+        assertFalse("未送达时不得登记轮次", loopBody.contains("incrementAndGet()"))
+        assertFalse("未送达时不得标记已注入", loopBody.contains("peerInjectedSessions.add("))
+        assertFalse("不应再有重试次数上限", coordinator.contains("SEND_READY_ATTEMPTS"))
+        assertFalse("兜底不应动剪贴板", coordinator.contains("copyTextToClipboard("))
+        assertTrue("兜底应通知用户", coordinator.contains("action.peer.notification.undelivered"))
     }
 
     @Test

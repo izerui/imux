@@ -70,8 +70,17 @@ class PeerCoordinatorDispatchTest {
         }
     }
 
+    /**
+     * 为什么必须是 require 而不是 use（手工抓包结论，非本测试守住的行为）：
+     * `useBracketedPasteMode()` 只是尽力而为，终端没开 `?2004h` 时它会静默退化成裸发整段文本，
+     * 而裸发会命中 Claude Code 的 byte-run 启发式被当成一次粘贴、末尾回车一并被吞，
+     * 文本永远停在输入框，调用方却以为成功了。
+     *
+     * 这里只能钉住：调用形态是 require + shouldExecute + trySend，且 trySend 的结果被如实返回
+     * ——代理观察不到括号粘贴模式，也看不到 PTY 字节。
+     */
     @Test
-    fun `自动反馈使用括号粘贴并始终提交`() {
+    fun `trySend 返回 false 时如实返回 false 并按 require 与 shouldExecute 调用`() {
         val calls = mutableListOf<String>()
         val builder = Proxy.newProxyInstance(
             TerminalSendTextBuilder::class.java.classLoader,
@@ -79,10 +88,40 @@ class PeerCoordinatorDispatchTest {
         ) { proxy, method, args ->
             calls += method.name
             when (method.name) {
-                "useBracketedPasteMode", "shouldExecute" -> proxy
-                "send" -> {
+                "requireBracketedPasteMode", "shouldExecute" -> proxy
+                "trySend" -> {
                     assertEquals("first line\nsecond line", args?.single())
-                    null
+                    false
+                }
+                else -> error("不应调用 ${method.name}")
+            }
+        } as TerminalSendTextBuilder
+
+        assertFalse(trySendPeerFeedback(builder, "first line\nsecond line"))
+        assertEquals(
+            listOf("requireBracketedPasteMode", "shouldExecute", "trySend"),
+            calls,
+        )
+    }
+
+    /**
+     * shouldExecute 与正文同一次 trySend 发出，平台由此生成 `ESC[200~ 正文 ESC[201~ \r`、
+     * 回车落在括号外——那是手工抓包确认的字节形态，**不是这条单测守住的行为**。
+     * 这里只钉住调用形态与返回值。
+     */
+    @Test
+    fun `trySend 返回 true 时如实返回 true 并按 require 与 shouldExecute 调用`() {
+        val calls = mutableListOf<String>()
+        val builder = Proxy.newProxyInstance(
+            TerminalSendTextBuilder::class.java.classLoader,
+            arrayOf(TerminalSendTextBuilder::class.java),
+        ) { proxy, method, args ->
+            calls += method.name
+            when (method.name) {
+                "requireBracketedPasteMode", "shouldExecute" -> proxy
+                "trySend" -> {
+                    assertEquals("first line\nsecond line", args?.single())
+                    true
                 }
                 else -> error("不应调用 ${method.name}")
             }
@@ -90,7 +129,7 @@ class PeerCoordinatorDispatchTest {
 
         assertTrue(trySendPeerFeedback(builder, "first line\nsecond line"))
         assertEquals(
-            listOf("useBracketedPasteMode", "shouldExecute", "send"),
+            listOf("requireBracketedPasteMode", "shouldExecute", "trySend"),
             calls,
         )
     }
@@ -140,6 +179,55 @@ class PeerCoordinatorDispatchTest {
             assertEquals("仅重试一次", 2, attempts.get())
             coordinator.onTurnCompleted("s-retry")
             assertEquals("受理后应计入轮次上限", 1, cliCalls.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    /**
+     * 等待没有时限，唯一"没地方放"的情形是终端标签已经没了。
+     * 这里只钉住"交给兜底、且带上原文"；兜底具体做什么（弹通知）由默认实现负责。
+     */
+    @Test
+    fun `终端已消失时把反馈交给兜底而不是静默丢弃`() {
+        val undelivered = ConcurrentLinkedQueue<String>()
+        val done = CountDownLatch(1)
+        val cliCalls = AtomicInteger()
+        val twoReviews = CountDownLatch(2)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliCalls.incrementAndGet()
+                twoReviews.countDown()
+                "feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            onFeedbackUndelivered = { sessionKey, feedback ->
+                undelivered.add("$sessionKey: $feedback")
+                done.countDown()
+            },
+        )
+        try {
+            coordinator.bind("s-undeliver", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-undeliver")
+            assertTrue("重试耗尽后应触发兜底", done.await(5, TimeUnit.SECONDS))
+            assertEquals(listOf("s-undeliver: feedback"), undelivered.toList())
+            val review = scope.coroutineContext[Job]!!.children.singleOrNull()
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
+            // 没送达就不该计入轮次上限，否则用户白白少一轮审查。
+            coordinator.onTurnCompleted("s-undeliver")
+            assertTrue("未送达不应计入轮次，应能再次审查", twoReviews.await(5, TimeUnit.SECONDS))
         } finally {
             coordinator.dispose()
             scope.cancel()

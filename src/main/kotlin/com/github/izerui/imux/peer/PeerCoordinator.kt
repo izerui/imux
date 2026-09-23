@@ -84,6 +84,8 @@ class PeerCoordinator internal constructor(
     },
     private val buildPrompt: ((task: String, conversation: String) -> String)? = null,
     private val sendAutoFeedback: ((sessionKey: String, feedback: String) -> Boolean)? = null,
+    /** 终端已消失、反馈无处可放时的兜底。为 null 时用 [notifyFeedbackUndelivered]：弹通知告知。 */
+    private val onFeedbackUndelivered: ((sessionKey: String, feedback: String) -> Unit)? = null,
 ) : Disposable {
     private val edt: kotlin.coroutines.CoroutineContext by lazy { edtDispatcher ?: Dispatchers.EDT }
     @Volatile private var disposed = false
@@ -447,32 +449,37 @@ class PeerCoordinator internal constructor(
     ) {
         if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
         var hint: PeerFeedbackHint? = null
-        var sent = false
-        if (sendAutoFeedback != null) {
-            for (attempt in 0 until SEND_READY_ATTEMPTS) {
-                if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
-                sent = sendAutoFeedback.invoke(mainSessionKey, prompt)
-                if (sent) break
-                if (attempt < SEND_READY_ATTEMPTS - 1) delay(SEND_READY_RETRY_MILLIS)
-            }
-        } else {
-            sent =
-                run {
+        // 一直等到终端能安全接收为止：**时间不是终止条件，逻辑过期才是**。
+        //
+        // 唯一被验证能提交的形态，是终端开着括号粘贴时的那一次原子发送；模式没开时
+        // 无论怎么发都不可靠（裸发会被当成一次粘贴、连回车一起吞掉）。所以这里不设时限，
+        // 只认三种收尾：终端恢复就发出去；本轮作废（用户开了新一轮、解绑、关项目）就放弃，
+        // 那时反馈本来也过时了；终端标签没了就交给兜底——输入框都不在了，只能告诉用户。
+        //
+        // 重试循环必须套在两条发送路径外面。只套住 sendAutoFeedback 分支的话，
+        // 生产路径（该参数为 null）只会尝试一次，终端那一刻没开括号粘贴就直接丢反馈。
+        while (true) {
+            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
+            val delivered =
+                if (sendAutoFeedback != null) {
+                    sendAutoFeedback.invoke(mainSessionKey, prompt)
+                } else {
                     val view = viewOf(mainSessionKey)
                     if (view == null) {
-                        LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
+                        LOG.warn("结对编程：主会话终端已消失，反馈未能送达 $mainSessionKey")
+                        // 轮次计数与 peerInjectedSessions 都在循环之后，这里一个都不动：
+                        // 没送出去的反馈不该占掉用户的一轮审查额度。
+                        (onFeedbackUndelivered ?: ::notifyFeedbackUndelivered).invoke(mainSessionKey, prompt)
                         return
                     }
                     val outputModel = view.outputModels.active.value
                     val sendOffset = outputModel.endOffset.toAbsolute()
-                    sent = trySendPeerFeedback(view.createSendTextBuilder(), prompt)
-                    if (sent) hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
-                    sent
+                    trySendPeerFeedback(view.createSendTextBuilder(), prompt).also { accepted ->
+                        if (accepted) hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
+                    }
                 }
-        }
-        if (!sent) {
-            LOG.warn("结对编程：主会话终端未受理反馈 $mainSessionKey")
-            return
+            if (delivered) break
+            delay(SEND_READY_RETRY_MILLIS)
         }
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
@@ -485,6 +492,18 @@ class PeerCoordinator internal constructor(
         }
     }
 
+    /**
+     * **已知缺陷，本次未修**：这里仍用 `useBracketedPasteMode()`，而它只是尽力而为——
+     * 终端没开 `?2004h` 时会静默退化成裸发，且平台会把正文里的 `\n` 一律转成 `\r`
+     * （与 [trySendPeerFeedback] 同一次抓包确认）。裸发出去的 `正文\r正文\r正文` 一旦没被
+     * TUI 当成一次粘贴，那些 `\r` 就是回车键，多行反馈会被**提前提交**——恰好违反
+     * 暂存路径"只放进输入框、发不发由用户决定"的契约。
+     *
+     * 没有顺手照抄 [injectFeedback] 的 require + 重试：自动注入失败可以重试满 10 秒再记
+     * WARN 丢弃，暂存路径不能这么干——用户正等着这段文字出现在输入框里，静默丢弃比迟到更糟。
+     * 它需要自己的降级设计（放弃发送并提示？落到剪贴板？先等待再退化？），那是一次独立的
+     * 产品决策，不该塞进这次修复里。
+     */
     private fun stageFeedback(
         mainSessionKey: String,
         prompt: String,
@@ -498,6 +517,29 @@ class PeerCoordinator internal constructor(
         view.createSendTextBuilder()
             .useBracketedPasteMode()
             .send(prompt)
+    }
+
+    /**
+     * 反馈没能送达时的默认兜底：弹通知告知用户。
+     *
+     * 只有"终端标签已经没了"才会走到这里——输入框都不存在了，没地方放那段文字，
+     * 唯一还能做的就是让用户知道这轮反馈没送出去。不碰剪贴板：那会悄悄覆盖掉
+     * 用户自己复制的东西，代价比这条通知大。
+     */
+    private fun notifyFeedbackUndelivered(
+        sessionKey: String,
+        prompt: String,
+    ) {
+        LOG.warn("结对编程：反馈未能送达 $sessionKey（${prompt.length} 字符）")
+        NotificationGroupManager
+            .getInstance()
+            .getNotificationGroup(NOTIFICATION_GROUP)
+            .createNotification(
+                ImuxBundle.message("action.peer.notification.title"),
+                ImuxBundle.message("action.peer.notification.undelivered"),
+                NotificationType.WARNING,
+            )
+            .notify(project)
     }
 
     private fun notifyCliError(binding: PeerBinding, detail: String) {
@@ -520,7 +562,7 @@ class PeerCoordinator internal constructor(
         private const val CONVERSATION_TAIL_BYTES = 32L * 1024 * 1024
         private const val CLI_TIMEOUT_SECONDS = 300L
         private const val MAX_FEEDBACK_HINTS = 200
-        private const val SEND_READY_ATTEMPTS = 100
+        /** 等待终端进入括号粘贴的轮询间隔。没有重试次数上限，理由见 injectFeedback。 */
         private const val SEND_READY_RETRY_MILLIS = 100L
 
         private const val MODE_AUTO_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
@@ -580,11 +622,19 @@ Nothing new to add this round — no observation, question, idea, or suggestion?
     }
 }
 
+/**
+ * 必须用 require 而不是 use：`useBracketedPasteMode()` 只是尽力而为，终端没开 `?2004h` 时
+ * 会静默退化成裸发整段文本。裸发会命中 Claude Code 的 byte-run 启发式被当成一次粘贴，
+ * 连末尾回车一起并进粘贴内容，于是反馈完整停在输入框、永远不提交，调用方却以为成功了。
+ *
+ * require 在模式未开启时一个字节都不写并返回 false，交给 injectFeedback 的重试循环。
+ * shouldExecute 与正文同一次 trySend 发出：平台生成的是 `ESC[200~ 正文 ESC[201~ \r`，
+ * 回车落在括号外，是抓包验证过可提交的形态；拆成两次发送只会多出取消窗口。
+ */
 internal fun trySendPeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
-    builder.useBracketedPasteMode()
+    builder.requireBracketedPasteMode()
         .shouldExecute()
-        .send(prompt)
-        .let { true }
+        .trySend(prompt)
 
 internal fun latestConversation(
     messages: List<SessionTranscriptMessage>,
