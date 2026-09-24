@@ -1123,6 +1123,362 @@ class PeerCoordinatorDispatchTest {
         }
     }
 
+    /**
+     * 贯通测试：stdout JSON 报上下文溢出 → runPeerCli 合并进异常 → 协调器识别并缩减重试。
+     *
+     * 注入的 runCli 第一次真实调用 runPeerCli，用临时 shell 脚本在 stdout 输出 marker +
+     * Claude 超限 JSON、stderr 为空、退出码非零；第二次返回成功反馈。
+     * 断言：CLI 调用两次，且第二次 prompt 比第一次短。
+     */
+    @Test
+    fun `stdout JSON 报上下文溢出经 runPeerCli 合并后触发协调器缩减重试`() {
+        org.junit.Assume.assumeFalse("需要 POSIX shell", com.intellij.openapi.util.SystemInfo.isWindows)
+        val sessionFile = java.io.File.createTempFile("imux-e2e-", ".jsonl").also { it.deleteOnExit() }
+        val longMessage = "x".repeat(10_000)
+        sessionFile.writeText(buildString {
+            appendLine("""{"message":{"role":"user","content":[{"type":"text","text":"$longMessage"}]}}""")
+            appendLine("""{"message":{"role":"assistant","content":[{"type":"text","text":"$longMessage"}]}}""")
+        })
+        val session = com.github.izerui.imux.model.AgentSession(
+            id = "s-e2e", title = "e2e", agentType = AgentType.CLAUDE,
+            lastActiveAt = Instant.now(), createdAt = Instant.now(),
+            filePath = sessionFile.toPath(),
+        )
+        val capturedPrompts = ConcurrentLinkedQueue<String>()
+        val callCount = AtomicInteger()
+        val feedbackSent = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val model = SessionListModel(scan = { listOf(session) }, clock = Instant::now)
+        model.refresh()
+        val tmpDir = System.getProperty("java.io.tmpdir")
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = tmpDir,
+            model = model,
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { agentType, _, cwd, prompt, _, timeoutSeconds, onProcess, onProgress ->
+                capturedPrompts.add(prompt)
+                if (callCount.incrementAndGet() == 1) {
+                    runPeerCli(
+                        agentType,
+                        listOf("/bin/sh", "-c",
+                            "echo '${PEER_OUTPUT_MARKER}'; " +
+                            """echo '{"type":"result","subtype":"success","is_error":true,"result":"Your prompt is too long. Please reduce the number of tokens."}'; """ +
+                            "exit 1",
+                        ),
+                        cwd,
+                        prompt,
+                        emptyMap(),
+                        timeoutSeconds,
+                        onProcess,
+                        onProgress,
+                    )
+                } else {
+                    "feedback after shrink"
+                }
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { task, conversation -> "task=$task\nconversation=$conversation" },
+            sendAutoFeedback = { _, feedback ->
+                assertEquals("feedback after shrink", feedback)
+                feedbackSent.countDown()
+                true
+            },
+        )
+        try {
+            coordinator.bind("s-e2e", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-e2e")
+            assertTrue("缩减重试后应成功发送反馈", feedbackSent.await(10, TimeUnit.SECONDS))
+            assertEquals("CLI 应调用两次", 2, callCount.get())
+            val prompts = capturedPrompts.toList()
+            assertTrue(
+                "第二次 prompt (${prompts[1].length}) 应比第一次 (${prompts[0].length}) 短",
+                prompts[1].length < prompts[0].length,
+            )
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+            sessionFile.delete()
+        }
+    }
+
+    @Test
+    fun `非上下文溢出错误不触发重试`() {
+        val callCount = AtomicInteger()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                callCount.incrementAndGet()
+                throw PeerCliException("authentication failed")
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+        )
+        try {
+            coordinator.bind("s-auth", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-auth")
+            val review = scope.coroutineContext[Job]!!.children.single()
+            runBlocking { withTimeout(5_000) { review.join() } }
+            assertEquals("非溢出错误只应调用 CLI 一次", 1, callCount.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `对话已无法缩减时上下文溢出不做无意义重试`() {
+        val callCount = AtomicInteger()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                callCount.incrementAndGet()
+                throw PeerCliException("context window exceeded")
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "fixed size prompt" },
+        )
+        try {
+            coordinator.bind("s-noshrink", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-noshrink")
+            val review = scope.coroutineContext[Job]!!.children.single()
+            runBlocking { withTimeout(5_000) { review.join() } }
+            assertEquals("对话无法缩减时不应重试", 1, callCount.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `前三次仍超限第四次缩减成功且每次 prompt 严格递减`() {
+        val sessionFile = java.io.File.createTempFile("imux-multi-", ".jsonl").also { it.deleteOnExit() }
+        val msg = "x".repeat(20_000)
+        sessionFile.writeText(buildString {
+            appendLine("""{"message":{"role":"user","content":[{"type":"text","text":"$msg"}]}}""")
+            appendLine("""{"message":{"role":"assistant","content":[{"type":"text","text":"$msg"}]}}""")
+        })
+        val session = com.github.izerui.imux.model.AgentSession(
+            id = "s-multi", title = "multi", agentType = AgentType.CLAUDE,
+            lastActiveAt = Instant.now(), createdAt = Instant.now(),
+            filePath = sessionFile.toPath(),
+        )
+        val capturedPrompts = ConcurrentLinkedQueue<String>()
+        val callCount = AtomicInteger()
+        val feedbackSent = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val model = SessionListModel(scan = { listOf(session) }, clock = Instant::now)
+        model.refresh()
+        val templatePrefix = "TEMPLATE:"
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = System.getProperty("java.io.tmpdir"),
+            model = model,
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, prompt, _, _, _, _ ->
+                capturedPrompts.add(prompt)
+                if (callCount.incrementAndGet() <= 3) {
+                    throw PeerCliException("context window exceeded")
+                }
+                "feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { task, conv -> "$templatePrefix$task\n$conv" },
+            sendAutoFeedback = { _, _ ->
+                feedbackSent.countDown()
+                true
+            },
+        )
+        try {
+            coordinator.bind("s-multi", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-multi")
+            assertTrue("多次缩减后应成功", feedbackSent.await(10, TimeUnit.SECONDS))
+            val prompts = capturedPrompts.toList()
+            assertEquals("应调用 CLI 四次（前三次超限+第四次成功）", 4, prompts.size)
+            for (i in 1 until prompts.size) {
+                assertTrue(
+                    "第 ${i + 1} 次 prompt (${prompts[i].length}) 应严格短于第 $i 次 (${prompts[i - 1].length})",
+                    prompts[i].length < prompts[i - 1].length,
+                )
+            }
+            assertTrue("每次 prompt 都应包含完整模板", prompts.all { it.startsWith(templatePrefix) })
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+            sessionFile.delete()
+        }
+    }
+
+    @Test
+    fun `大模板加较短对话时上下文溢出仍能缩减`() {
+        val sessionFile = java.io.File.createTempFile("imux-tmpl-", ".jsonl").also { it.deleteOnExit() }
+        val shortConversation = "x".repeat(2_000)
+        sessionFile.writeText(buildString {
+            appendLine("""{"message":{"role":"user","content":[{"type":"text","text":"$shortConversation"}]}}""")
+            appendLine("""{"message":{"role":"assistant","content":[{"type":"text","text":"$shortConversation"}]}}""")
+        })
+        val session = com.github.izerui.imux.model.AgentSession(
+            id = "s-tmpl", title = "tmpl", agentType = AgentType.CLAUDE,
+            lastActiveAt = Instant.now(), createdAt = Instant.now(),
+            filePath = sessionFile.toPath(),
+        )
+        val capturedPrompts = ConcurrentLinkedQueue<String>()
+        val callCount = AtomicInteger()
+        val feedbackSent = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val model = SessionListModel(scan = { listOf(session) }, clock = Instant::now)
+        model.refresh()
+        val largeTemplate = "T".repeat(10_000)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = System.getProperty("java.io.tmpdir"),
+            model = model,
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, prompt, _, _, _, _ ->
+                capturedPrompts.add(prompt)
+                if (callCount.incrementAndGet() == 1) {
+                    throw PeerCliException("context window exceeded")
+                }
+                "feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, conv -> "$largeTemplate\n$conv" },
+            sendAutoFeedback = { _, _ ->
+                feedbackSent.countDown()
+                true
+            },
+        )
+        try {
+            coordinator.bind("s-tmpl", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-tmpl")
+            assertTrue("大模板 + 较短对话应能缩减后成功", feedbackSent.await(5, TimeUnit.SECONDS))
+            assertEquals("应调用 CLI 两次", 2, callCount.get())
+            val prompts = capturedPrompts.toList()
+            assertTrue(
+                "第二次 prompt (${prompts[1].length}) 应比第一次 (${prompts[0].length}) 短",
+                prompts[1].length < prompts[0].length,
+            )
+            assertTrue(
+                "两次 prompt 都应包含完整模板",
+                prompts.all { it.startsWith(largeTemplate) },
+            )
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+            sessionFile.delete()
+        }
+    }
+
+    @Test
+    fun `stdout is_error 且 exit 0 仍判失败并触发缩减重试`() {
+        org.junit.Assume.assumeFalse("需要 POSIX shell", com.intellij.openapi.util.SystemInfo.isWindows)
+        val sessionFile = java.io.File.createTempFile("imux-exit0-", ".jsonl").also { it.deleteOnExit() }
+        val msg = "x".repeat(10_000)
+        sessionFile.writeText(buildString {
+            appendLine("""{"message":{"role":"user","content":[{"type":"text","text":"$msg"}]}}""")
+            appendLine("""{"message":{"role":"assistant","content":[{"type":"text","text":"$msg"}]}}""")
+        })
+        val session = com.github.izerui.imux.model.AgentSession(
+            id = "s-exit0", title = "exit0", agentType = AgentType.CLAUDE,
+            lastActiveAt = Instant.now(), createdAt = Instant.now(),
+            filePath = sessionFile.toPath(),
+        )
+        val capturedPrompts = ConcurrentLinkedQueue<String>()
+        val callCount = AtomicInteger()
+        val feedbackSent = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val model = SessionListModel(scan = { listOf(session) }, clock = Instant::now)
+        model.refresh()
+        val tmpDir = System.getProperty("java.io.tmpdir")
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = tmpDir,
+            model = model,
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { agentType, _, cwd, prompt, _, timeoutSeconds, onProcess, onProgress ->
+                capturedPrompts.add(prompt)
+                if (callCount.incrementAndGet() == 1) {
+                    runPeerCli(
+                        agentType,
+                        listOf("/bin/sh", "-c",
+                            "echo '${PEER_OUTPUT_MARKER}'; " +
+                            """echo '{"type":"result","subtype":"success","is_error":true,"result":"prompt_too_long"}'; """ +
+                            "exit 0",
+                        ),
+                        cwd,
+                        prompt,
+                        emptyMap(),
+                        timeoutSeconds,
+                        onProcess,
+                        onProgress,
+                    )
+                } else {
+                    "feedback after exit0 retry"
+                }
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { task, conv -> "task=$task\nconv=$conv" },
+            sendAutoFeedback = { _, feedback ->
+                assertEquals("feedback after exit0 retry", feedback)
+                feedbackSent.countDown()
+                true
+            },
+        )
+        try {
+            coordinator.bind("s-exit0", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s-exit0")
+            assertTrue("exit 0 + is_error 应触发缩减重试后成功", feedbackSent.await(10, TimeUnit.SECONDS))
+            val prompts = capturedPrompts.toList()
+            assertEquals("应调用两次", 2, prompts.size)
+            assertTrue(
+                "第二次 prompt (${prompts[1].length}) 应严格短于第一次 (${prompts[0].length})",
+                prompts[1].length < prompts[0].length,
+            )
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+            sessionFile.delete()
+        }
+    }
+
     private fun testProject(): Project =
         Proxy.newProxyInstance(
             Project::class.java.classLoader,

@@ -149,8 +149,13 @@ internal fun runPeerCli(
         finishedWriting.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         awaitPeerCliDrain(finishedReading, "output", READ_DRAIN_TIMEOUT_SECONDS)
         finishedStderr.await(READ_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        if (started.exitValue() != 0) {
-            val detail = stderr.toString().trim().ifEmpty { "exit code ${started.exitValue()}" }
+        val jsonError = parser.failureDetail()
+        if (jsonError != null || started.exitValue() != 0) {
+            val stderrText = stderr.toString().trim()
+            val detail = listOfNotNull(
+                stderrText.ifEmpty { null },
+                jsonError,
+            ).joinToString("; ").ifEmpty { "exit code ${started.exitValue()}" }
             throw PeerCliException(detail)
         }
         parser.finalText()

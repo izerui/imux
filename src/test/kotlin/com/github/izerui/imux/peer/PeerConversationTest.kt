@@ -142,6 +142,42 @@ class PeerConversationTest {
     }
 
     @Test
+    fun `isContextOverflowError 匹配各种上下文超限模式`() {
+        val patterns = listOf(
+            "context window exceeded for model",
+            "context length exceeded",
+            "token limit exceeded",
+            "maximum tokens exceeded",
+            "too many tokens in request",
+            "prompt is too long",
+            "input too large for model",
+            "prompt_too_long",
+        )
+        for (pattern in patterns) {
+            assertTrue(
+                "应匹配: $pattern",
+                isContextOverflowError(PeerCliException(pattern)),
+            )
+        }
+    }
+
+    @Test
+    fun `isContextOverflowError 不匹配无关错误`() {
+        val irrelevant = listOf(
+            "authentication failed",
+            "rate limited",
+            "internal server error",
+            "connection refused",
+        )
+        for (msg in irrelevant) {
+            assertFalse(
+                "不应匹配: $msg",
+                isContextOverflowError(PeerCliException(msg)),
+            )
+        }
+    }
+
+    @Test
     fun `PeerCoordinator 通过共享函数选择默认提示词`() {
         val source = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt").normalized
         assertTrue(

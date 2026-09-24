@@ -2,6 +2,8 @@ package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -107,6 +109,100 @@ class PeerProgressTest {
 
         assertEquals(MAX_PEER_OUTPUT_CHARS, parser.finalText()!!.length)
         assertTrue(parser.finalText()!!.endsWith("y".repeat(10)))
+    }
+
+    @Test
+    fun `Claude is_error 事件保留 failureDetail`() {
+        val events = mutableListOf<PeerProgressEvent>()
+        val parser = PeerJsonEventParser(AgentType.CLAUDE, events::add)
+
+        parser.accept(
+            """{"type":"result","is_error":true,"errors":["context window exceeded for model"]}""",
+        )
+
+        assertEquals(PeerProgressKind.FAILED, events.last().kind)
+        assertEquals("context window exceeded for model", parser.failureDetail())
+    }
+
+    @Test
+    fun `Claude is_error 无 errors 数组时回退到 result 字段`() {
+        val events = mutableListOf<PeerProgressEvent>()
+        val parser = PeerJsonEventParser(AgentType.CLAUDE, events::add)
+
+        parser.accept(
+            """{"type":"result","subtype":"success","is_error":true,"result":"Your prompt is too long. Please reduce the number of tokens."}""",
+        )
+
+        assertEquals(PeerProgressKind.FAILED, events.last().kind)
+        assertEquals("Your prompt is too long. Please reduce the number of tokens.", parser.failureDetail())
+    }
+
+    @Test
+    fun `Claude is_error 空 result 时回退到 terminal_reason`() {
+        val parser = PeerJsonEventParser(AgentType.CLAUDE) {}
+
+        parser.accept(
+            """{"type":"result","subtype":"success","is_error":true,"result":"","terminal_reason":"prompt_too_long","api_error_status":400}""",
+        )
+
+        assertEquals("prompt_too_long", parser.failureDetail())
+    }
+
+    @Test
+    fun `Claude is_error 无 result 无 terminal_reason 时回退到数字 api_error_status`() {
+        val parser = PeerJsonEventParser(AgentType.CLAUDE) {}
+
+        parser.accept(
+            """{"type":"result","subtype":"success","is_error":true,"api_error_status":400}""",
+        )
+
+        assertEquals("400", parser.failureDetail())
+    }
+
+    @Test
+    fun `Codex turn·failed 事件保留 failureDetail`() {
+        val events = mutableListOf<PeerProgressEvent>()
+        val parser = PeerJsonEventParser(AgentType.CODEX, events::add)
+
+        parser.accept("""{"type":"turn.failed","message":"token limit exceeded"}""")
+
+        assertEquals(PeerProgressKind.FAILED, events.last().kind)
+        assertEquals("token limit exceeded", parser.failureDetail())
+    }
+
+    @Test
+    fun `无错误事件时 failureDetail 为 null`() {
+        val parser = PeerJsonEventParser(AgentType.CLAUDE) {}
+
+        parser.accept("""{"type":"result","subtype":"success","is_error":false,"result":"PASS"}""")
+
+        assertNull(parser.failureDetail())
+    }
+
+    @Test
+    fun `failureDetail 按 4000 字符截断而进度 subject 按 300 字符截断`() {
+        val events = mutableListOf<PeerProgressEvent>()
+        val parser = PeerJsonEventParser(AgentType.CLAUDE, events::add)
+
+        val prefix = "a".repeat(500)
+        val keyword = "context window exceeded for model"
+        val suffix = "z".repeat(4_000)
+        val errorText = prefix + keyword + suffix
+        assertTrue("测试数据应超过 4000 字符", errorText.length > 4_000)
+        val errorsJson = """["${errorText.replace("\"", "\\\"")}"]"""
+        parser.accept("""{"type":"result","is_error":true,"errors":$errorsJson}""")
+
+        val detail = parser.failureDetail()!!
+        assertEquals("failureDetail 应截断到 4000 字符", 4_000, detail.length)
+        assertTrue("关键词在 300 之后", prefix.length > 300)
+        assertTrue("关键词在 4000 之前", prefix.length + keyword.length < 4_000)
+        assertTrue("failureDetail 应保留超限关键词", detail.contains(keyword))
+
+        val subject = events.last().subject
+        assertEquals("进度 subject 应截到 300 字符", 300, subject.length)
+        assertFalse("进度 subject 不应包含超限关键词", subject.contains(keyword))
+
+        assertTrue("保留关键词的 failureDetail 应能触发重试", isContextOverflowError(PeerCliException(detail)))
     }
 
     /**

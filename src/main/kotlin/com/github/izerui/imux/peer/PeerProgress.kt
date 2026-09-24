@@ -34,6 +34,7 @@ internal class PeerJsonEventParser(
 ) {
     private val claudeTools = mutableMapOf<String, String>()
     private var latestFinalText: String? = null
+    private var lastFailureDetail: String? = null
 
     fun accept(line: String): Boolean {
         val root =
@@ -49,6 +50,8 @@ internal class PeerJsonEventParser(
     }
 
     fun finalText(): String? = latestFinalText?.trim()?.takeIf(String::isNotEmpty)
+
+    fun failureDetail(): String? = lastFailureDetail
 
     private fun acceptCodex(root: JsonObject) {
         val type = root.string("type") ?: return
@@ -124,13 +127,18 @@ internal class PeerJsonEventParser(
             }
 
             "result" -> {
-                root.string("result")?.let(::rememberFinalText)
+                val resultText = root.string("result")
+                resultText?.let(::rememberFinalText)
                 if (root.boolean("is_error") == true) {
                     val detail =
                         root.arrayValue("errors")
                             ?.mapNotNull(JsonElement::stringOrNull)
                             ?.joinToString("; ")
-                            .orEmpty()
+                            ?.takeIf(String::isNotEmpty)
+                            ?: resultText?.takeIf(String::isNotEmpty)
+                            ?: root.string("terminal_reason")
+                            ?: root.integer("api_error_status")?.toString()
+                            ?: ""
                     emit(PeerProgressKind.FAILED, detail)
                 } else {
                     emit(PeerProgressKind.COMPLETED)
@@ -169,6 +177,7 @@ internal class PeerJsonEventParser(
     }
 
     private fun emit(kind: PeerProgressKind, subject: String = "") {
+        if (kind == PeerProgressKind.FAILED) lastFailureDetail = subject.take(MAX_FAILURE_DETAIL_CHARS)
         onProgress(PeerProgressEvent(kind, subject.take(MAX_PROGRESS_SUBJECT_CHARS)))
     }
 
@@ -224,6 +233,7 @@ internal class PeerJsonEventParser(
 
     companion object {
         private const val MAX_PROGRESS_SUBJECT_CHARS = 300
+        private const val MAX_FAILURE_DETAIL_CHARS = 4_000
         private const val MAX_TOOL_DETAIL_CHARS = 240
     }
 }

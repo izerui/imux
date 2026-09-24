@@ -279,8 +279,10 @@ class PeerCoordinator internal constructor(
         if (currentBinding.generation != run.bindingGeneration) return
         val freshTask = extractTask(mainSessionKey)
         if (!runIsCurrent(mainSessionKey, run, guard)) return
-        val conversation = collectLatestConversation(mainSessionKey)
-        val prompt = (buildPrompt ?: ::buildReviewPrompt)(freshTask, conversation)
+        val buildFn = buildPrompt ?: ::buildReviewPrompt
+        var conversation = collectLatestConversation(mainSessionKey)
+        var maxConvChars = conversation.length
+        var prompt = buildFn(freshTask, conversation)
         val mcpConfig = resolveMcpConfig(currentBinding.targetAgentType)
         val invocation = buildPeerCliInvocation(shell, currentBinding.targetAgentType, projectPath, mcpConfig)
         val command = invocation.command
@@ -291,37 +293,64 @@ class PeerCoordinator internal constructor(
 
         if (!runIsCurrent(mainSessionKey, run, guard)) return
 
-        val result =
-            runCatching {
-                runCli(
-                    currentBinding.targetAgentType,
-                    command,
-                    Path.of(projectPath),
-                    prompt,
-                    environment,
-                    CLI_TIMEOUT_SECONDS,
-                    run::attach,
-                ) { event ->
-                    run.recordProgress(event)
-                    coroutineScope.launch(edt) {
-                        if (runIsCurrent(mainSessionKey, run, guard)) {
-                            notifyStateChanged(mainSessionKey)
+        var rawOutput: String? = null
+        var contextRetry = 0
+        var retryContextOverflow = true
+        do {
+            if (!runIsCurrent(mainSessionKey, run, guard)) return
+            retryContextOverflow = false
+
+            val result =
+                runCatching {
+                    runCli(
+                        currentBinding.targetAgentType,
+                        command,
+                        Path.of(projectPath),
+                        prompt,
+                        environment,
+                        CLI_TIMEOUT_SECONDS,
+                        run::attach,
+                    ) { event ->
+                        run.recordProgress(event)
+                        coroutineScope.launch(edt) {
+                            if (runIsCurrent(mainSessionKey, run, guard)) {
+                                notifyStateChanged(mainSessionKey)
+                            }
                         }
                     }
                 }
+
+            if (!runIsCurrent(mainSessionKey, run, guard)) return
+
+            val error = result.exceptionOrNull()
+            if (error != null && isContextOverflowError(error)) {
+                maxConvChars = maxOf(maxConvChars / 2, 0)
+                conversation = collectLatestConversation(mainSessionKey, maxConvChars)
+                val shrunk = buildFn(freshTask, conversation)
+                if (shrunk.length >= prompt.length) {
+                    LOG.warn("结对编程：上下文溢出但对话已无法进一步缩减")
+                    withContext(edt) {
+                        if (!project.isDisposed) notifyCliError(currentBinding, error.message ?: error.javaClass.simpleName)
+                    }
+                    return
+                }
+                contextRetry++
+                LOG.warn("结对编程：检测到上下文溢出，收缩对话重试 (retry=$contextRetry, ${prompt.length} -> ${shrunk.length})")
+                prompt = shrunk
+                retryContextOverflow = true
+                continue
             }
 
-        if (!runIsCurrent(mainSessionKey, run, guard)) return
-
-        val rawOutput = result.getOrNull()
-        val error = result.exceptionOrNull()
-        if (error != null) {
-            LOG.warn("结对编程：CLI 调用失败", error)
-            withContext(edt) {
-                if (!project.isDisposed) notifyCliError(currentBinding, error.message ?: error.javaClass.simpleName)
+            if (error != null) {
+                LOG.warn("结对编程：CLI 调用失败", error)
+                withContext(edt) {
+                    if (!project.isDisposed) notifyCliError(currentBinding, error.message ?: error.javaClass.simpleName)
+                }
+                return
             }
-            return
-        }
+
+            rawOutput = result.getOrNull()
+        } while (retryContextOverflow)
 
         val feedback = actionablePeerFeedback(rawOutput)
         if (feedback == null) {
@@ -427,7 +456,7 @@ class PeerCoordinator internal constructor(
         return peerTask(session)
     }
 
-    private fun collectLatestConversation(sessionKey: String): String {
+    private fun collectLatestConversation(sessionKey: String, maxConversationChars: Int = MAX_CONVERSATION_LENGTH): String {
         val session = model.sessionOf(sessionKey) ?: return ""
         if (!Files.isRegularFile(session.filePath)) return ""
         return scanTail(
@@ -439,7 +468,7 @@ class PeerCoordinator internal constructor(
                 lines.mapNotNull {
                     transcriptMessage(it, session.agentType, MAX_MESSAGE_LENGTH, includeToolContent = true)
                 },
-                MAX_CONVERSATION_LENGTH,
+                maxConversationChars,
             )
         }.orEmpty()
     }
@@ -650,6 +679,20 @@ internal fun trySendPeerFeedback(builder: TerminalSendTextBuilder, prompt: Strin
     builder.requireBracketedPasteMode()
         .shouldExecute()
         .trySend(prompt)
+
+private val CONTEXT_OVERFLOW_PATTERNS = listOf(
+    Regex("context.{0,20}(window|length|limit|exceed|overflow)", RegexOption.IGNORE_CASE),
+    Regex("token.{0,20}(limit|exceed|overflow|maximum)", RegexOption.IGNORE_CASE),
+    Regex("(too many|maximum).{0,20}tokens", RegexOption.IGNORE_CASE),
+    Regex("prompt.{0,20}(too.?long|too.?large|exceed)", RegexOption.IGNORE_CASE),
+    Regex("input.{0,20}(too.?long|too.?large|exceed)", RegexOption.IGNORE_CASE),
+    Regex("\\bprompt_too_long\\b", RegexOption.IGNORE_CASE),
+)
+
+internal fun isContextOverflowError(error: Throwable): Boolean {
+    val message = error.message ?: return false
+    return CONTEXT_OVERFLOW_PATTERNS.any { it.containsMatchIn(message) }
+}
 
 internal fun latestConversation(
     messages: List<SessionTranscriptMessage>,
