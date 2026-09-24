@@ -51,4 +51,22 @@ class ImuxSettingsUiSourceTest {
     fun `恢复默认同时更新提示词文本框`() {
         assertTrue(source.contains("defaultPeerPromptForLanguage(selectedLanguage)"))
     }
+
+    @Test
+    fun `语言切换后视口滚回顶部`() {
+        val block = source.substringAfter("promptAfterLanguageSwitch").substringBefore("selectedLanguage")
+        assertTrue("语言切换 addActionListener 块内缺少 scrollToTop", block.contains("scrollToTop(promptArea)"))
+    }
+
+    @Test
+    fun `恢复默认后视口滚回顶部`() {
+        val block = source.substringAfter("settings.peer.prompt.restore").substringBefore("settings.group.project.window")
+        assertTrue("恢复默认按钮回调内缺少 scrollToTop", block.contains("scrollToTop(promptArea)"))
+    }
+
+    @Test
+    fun `onReset 后视口滚回顶部`() {
+        val block = source.substringAfter("onReset").substringBefore("onIsModified")
+        assertTrue("onReset 回调内缺少 scrollToTop", block.contains("scrollToTop(promptArea)"))
+    }
 }

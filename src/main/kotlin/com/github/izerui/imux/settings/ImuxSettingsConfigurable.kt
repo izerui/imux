@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBCheckBox
 import com.github.izerui.imux.peer.PeerCoordinator
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.dsl.builder.AlignX
+import javax.swing.text.JTextComponent
 import com.intellij.ui.dsl.builder.MutableProperty
 import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindItem
@@ -32,6 +33,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     addActionListener {
                         val newLang = selectedItem as? PluginLanguage ?: return@addActionListener
                         promptArea.text = promptAfterLanguageSwitch(promptArea.text, newLang)
+                        scrollToTop(promptArea)
                         selectedLanguage = newLang
                     }
                 }
@@ -101,6 +103,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 row {
                     button(ImuxBundle.message("settings.peer.prompt.restore")) {
                         promptArea.text = defaultPeerPromptForLanguage(selectedLanguage)
+                        scrollToTop(promptArea)
                     }
                 }
             }
@@ -116,6 +119,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 agentCheckBoxes.forEach { (agentType, checkBox) ->
                     checkBox.isSelected = agentType in settings.enabledAgentTypes
                 }
+                scrollToTop(promptArea)
             }
             onIsModified {
                 selectedAgentTypes(agentCheckBoxes) != settings.enabledAgentTypes.toSet()
@@ -161,3 +165,8 @@ internal fun promptAfterLanguageSwitch(currentText: String, newLanguage: PluginL
 /** 判断提示词是否为任一语言的默认值（不需要持久化）。 */
 internal fun isDefaultPeerPrompt(text: String): Boolean =
     text == PeerCoordinator.DEFAULT_PROMPT_ZH || text == PeerCoordinator.DEFAULT_PROMPT_EN
+
+internal fun scrollToTop(component: JTextComponent) {
+    component.caretPosition = 0
+    component.scrollRectToVisible(java.awt.Rectangle(0, 0, 1, 1))
+}
