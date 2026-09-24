@@ -364,6 +364,8 @@ class AgentTerminalFileEditor(
                                 status.targetAgentType.displayName,
                                 status.progress,
                             )
+                        } else if (status.lastReviewPassed) {
+                            ImuxBundle.message("action.peer.passed", status.targetAgentType.displayName)
                         } else {
                             ImuxBundle.message("action.peer.enabled", status.targetAgentType.displayName)
                         }

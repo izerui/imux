@@ -79,6 +79,18 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
+    fun `横幅在 PASS 时显示 action-peer-passed 文案`() {
+        val editorCompact = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt")
+            .compact(editor)
+        assertTrue(
+            "lastReviewPassed 分支应切到 action.peer.passed 文案",
+            editorCompact.contains(
+                """elseif(status.lastReviewPassed){ImuxBundle.message("action.peer.passed",status.targetAgentType.displayName)}""",
+            ),
+        )
+    }
+
+    @Test
     fun `协调器绑定到项目生命周期`() {
         assertTrue(monitor.contains("Disposer.register(this, peerCoordinator)"))
         assertTrue(coordinator.contains("override fun dispose()"))

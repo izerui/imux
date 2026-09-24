@@ -1479,6 +1479,108 @@ class PeerCoordinatorDispatchTest {
         }
     }
 
+    private fun passCoordinator(
+        scope: CoroutineScope,
+        runCli: (AgentType, List<String>, Path, String, Map<String, String>, Long, (Process?) -> Unit, (PeerProgressEvent) -> Unit) -> String? = { _, _, _, _, _, _, _, _ -> "PASS" },
+    ): PeerCoordinator = PeerCoordinator(
+        project = testProject(),
+        projectPath = "/tmp/test-project",
+        model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+        viewOf = { null },
+        coroutineScope = scope,
+        shell = "/bin/zsh",
+        edtDispatcher = Dispatchers.Unconfined,
+        peerMaxRounds = { 5 },
+        peerAutoInject = { true },
+        runCli = runCli,
+        resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+        buildPrompt = { _, _ -> "test prompt" },
+    )
+
+    private fun awaitReviewDone(coordinator: PeerCoordinator, sessionKey: String): CountDownLatch {
+        val latch = CountDownLatch(1)
+        coordinator.addStateListener(coordinator) { key ->
+            val s = coordinator.status(key)
+            if (key == sessionKey && s != null && !s.running) latch.countDown()
+        }
+        return latch
+    }
+
+    @Test
+    fun `副驾驶明确输出 PASS 时 lastReviewPassed 为 true`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope)
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertTrue(coordinator.status("s1")!!.lastReviewPassed)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `副驾驶返回空输出时 lastReviewPassed 为 false`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope) { _, _, _, _, _, _, _, _ -> null }
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertFalse(coordinator.status("s1")!!.lastReviewPassed)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `旧 review 被新轮次抢占后不回写 PASS`() {
+        val cliStarted = CountDownLatch(1)
+        val cliBlocked = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope) { _, _, _, _, _, _, _, _ ->
+            cliStarted.countDown()
+            cliBlocked.await(5, TimeUnit.SECONDS)
+            "PASS"
+        }
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s1")
+            assertTrue(cliStarted.await(5, TimeUnit.SECONDS))
+            val oldReview = scope.coroutineContext[Job]!!.children.single()
+            coordinator.onTurnStarted("s1")
+            cliBlocked.countDown()
+            runBlocking { withTimeout(5_000) { oldReview.join() } }
+            assertFalse(coordinator.status("s1")!!.lastReviewPassed)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `新轮次开始时清除 lastReviewPassed`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope)
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertTrue(coordinator.status("s1")!!.lastReviewPassed)
+            coordinator.onTurnStarted("s1")
+            assertFalse(coordinator.status("s1")!!.lastReviewPassed)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
     private fun testProject(): Project =
         Proxy.newProxyInstance(
             Project::class.java.classLoader,

@@ -40,6 +40,7 @@ data class PeerStatus(
     val targetAgentType: AgentType,
     val running: Boolean,
     val progress: PeerProgressSnapshot?,
+    val lastReviewPassed: Boolean,
 )
 
 internal data class PeerMcpConfig(
@@ -96,6 +97,7 @@ class PeerCoordinator internal constructor(
     private val guards = ConcurrentHashMap<String, PeerSessionGuard>()
     private val peerInjectedSessions = ConcurrentHashMap.newKeySet<String>()
     private val feedbackHints = mutableMapOf<String, ArrayDeque<PeerFeedbackHint>>()
+    private val passedSessions = ConcurrentHashMap.newKeySet<String>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
 
     fun addStateListener(
@@ -112,6 +114,7 @@ class PeerCoordinator internal constructor(
                 targetAgentType = it.targetAgentType,
                 running = guard?.isReviewing == true,
                 progress = guard?.progressSnapshot(),
+                lastReviewPassed = sessionKey in passedSessions,
             )
         }
 
@@ -146,6 +149,7 @@ class PeerCoordinator internal constructor(
         bindings.remove(sessionKey)
         roundCounts.remove(sessionKey)
         peerInjectedSessions.remove(sessionKey)
+        passedSessions.remove(sessionKey)
         return guards.remove(sessionKey)?.cancelAndDetach()
     }
 
@@ -188,11 +192,18 @@ class PeerCoordinator internal constructor(
             try {
                 runReviewAndInject(sessionKey, run, guard)
             } finally {
-                guard.onFinished(run)?.killProcess()
                 if (!disposed) {
+                    var runToKill: PeerRun? = null
                     withContext(edt) {
+                        runToKill = guard.onFinished(run)
+                        if (runToKill != null && run.passed) {
+                            passedSessions.add(sessionKey)
+                        }
                         notifyStateChanged(sessionKey)
                     }
+                    runToKill?.killProcess()
+                } else {
+                    guard.onFinished(run)?.killProcess()
                 }
             }
         }
@@ -213,6 +224,7 @@ class PeerCoordinator internal constructor(
         if (disposed || !bindings.containsKey(sessionKey)) return
         // 自动注入也会使主会话进入运行态，只有非注入轮次才开启新的计数周期。
         if (sessionKey !in peerInjectedSessions) roundCounts[sessionKey]?.set(0)
+        passedSessions.remove(sessionKey)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()
         notifyStateChanged(sessionKey)
@@ -233,11 +245,13 @@ class PeerCoordinator internal constructor(
         roundCounts.remove(from)
         peerInjectedSessions.remove(from)
         feedbackHints.remove(from)
+        passedSessions.remove(from)
         val r1 = guards.remove(from)?.cancelAndDetach()
         bindings.remove(to)
         roundCounts.remove(to)
         peerInjectedSessions.remove(to)
         feedbackHints.remove(to)
+        passedSessions.remove(to)
         val r2 = guards.remove(to)?.cancelAndDetach()
         if (binding != null) {
             bindings[to] = binding.copy(task = "")
@@ -257,6 +271,7 @@ class PeerCoordinator internal constructor(
         roundCounts.clear()
         peerInjectedSessions.clear()
         feedbackHints.clear()
+        passedSessions.clear()
         guardsToCancel.forEach { it.cancel() }
     }
 
@@ -355,6 +370,8 @@ class PeerCoordinator internal constructor(
         val feedback = actionablePeerFeedback(rawOutput)
         if (feedback == null) {
             LOG.info("结对编程：副驾驶无有效反馈，本轮结束")
+            val isExplicitPass = rawOutput?.trim().orEmpty().let { it.isNotEmpty() && PASS_PATTERN.matches(it) }
+            if (isExplicitPass) run.passed = true
             return
         }
 

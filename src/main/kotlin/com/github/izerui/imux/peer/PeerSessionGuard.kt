@@ -8,6 +8,7 @@ internal class PeerRun {
     val reviewing = AtomicBoolean(false)
     val process = AtomicReference<Process?>()
     @Volatile var bindingGeneration: Long = 0
+    @Volatile var passed: Boolean = false
     private val progressLock = Any()
     private var round = 0
     private var startedAtMillis = System.currentTimeMillis()
