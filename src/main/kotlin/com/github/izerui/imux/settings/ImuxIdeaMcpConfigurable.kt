@@ -89,7 +89,7 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                             .align(AlignX.FILL)
                             .bindText(
                                 MutableProperty(
-                                    { settings.ideaMcpGuidance },
+                                    { settings.state.ideaMcpGuidanceOverride ?: defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage) },
                                     settings::setIdeaMcpGuidance,
                                 ),
                             ).component
@@ -97,13 +97,19 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                     .enabledIf(guidanceToggle.selected)
                 row {
                     button(ImuxBundle.message("settings.idea.mcp.guidance.restore")) {
-                        guidanceArea?.text = DEFAULT_IDEA_MCP_GUIDANCE
+                        guidanceArea?.text = defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)
                         resetGuidanceView(guidanceArea)
                     }
                 }.enabledIf(guidanceToggle.selected)
             }
             onReset {
                 resetGuidanceView(guidanceArea)
+            }
+        }.also {
+            settings.addLanguageListener(disposable!!) {
+                val area = guidanceArea ?: return@addLanguageListener
+                area.text = guidanceAfterLanguageSwitch(area.text, settings.effectiveLanguage)
+                resetGuidanceView(area)
             }
         }
     }

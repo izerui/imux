@@ -21,25 +21,31 @@ class ImuxIdeaMcpUiSourceTest {
     }
 
     @Test
-    fun `IDEA MCP 页面包含可编辑引导和恢复默认操作`() {
+    fun `IDEA MCP 页面使用 effectiveLanguage 显示引导词`() {
         val text = source.normalized
 
         assertTrue(text.contains("""group(ImuxBundle.message("settings.idea.mcp.guidance.group"))"""))
         assertTrue(text.contains("bindSelected(settings.state::ideaMcpGuidanceEnabled)"))
         assertTrue(text.contains("textArea()"))
         assertTrue(text.contains("settings::setIdeaMcpGuidance"))
-        assertTrue(text.contains("""button(ImuxBundle.message("settings.idea.mcp.guidance.restore"))"""))
-        assertTrue(text.contains("guidanceArea?.text = DEFAULT_IDEA_MCP_GUIDANCE"))
+        assertTrue(text.contains("defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)"))
         assertTrue(
             source.compact(text).contains(
                 source.compact(
                     """
-                    guidanceArea?.text = DEFAULT_IDEA_MCP_GUIDANCE
+                    guidanceArea?.text = defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)
                     resetGuidanceView(guidanceArea)
                     """.trimIndent(),
                 ),
             ),
         )
+    }
+
+    @Test
+    fun `IDEA MCP 页面 MutableProperty getter 使用 effectiveLanguage`() {
+        val text = source.normalized
+
+        assertTrue(text.contains("settings.state.ideaMcpGuidanceOverride ?: defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)"))
     }
 
     @Test
@@ -66,5 +72,24 @@ class ImuxIdeaMcpUiSourceTest {
         val main = SourceCode("src/main/kotlin/com/github/izerui/imux/settings/ImuxSettingsConfigurable.kt")
 
         assertFalse(main.normalized.contains("settings.group.idea.mcp"))
+    }
+
+    @Test
+    fun `IDEA MCP 页面监听语言变化并联动切换引导词`() {
+        val text = source.normalized
+
+        assertTrue(text.contains("addLanguageListener"))
+        assertTrue(text.contains("guidanceAfterLanguageSwitch"))
+        assertTrue(text.contains("settings.effectiveLanguage"))
+    }
+
+    @Test
+    fun `主设置页切语言时设置 previewLanguage 并在 dispose 和 reset 时清除`() {
+        val main = SourceCode("src/main/kotlin/com/github/izerui/imux/settings/ImuxSettingsConfigurable.kt")
+        val text = main.normalized
+
+        assertTrue(text.contains("setPreviewLanguage"))
+        assertTrue(text.contains("clearPreviewLanguage"))
+        assertTrue(text.contains("disposeUIResources"))
     }
 }

@@ -18,6 +18,11 @@ import com.intellij.ui.dsl.builder.panel
 
 /** Application-level imux preferences. */
 class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
+    override fun disposeUIResources() {
+        ImuxSettings.getInstanceOrNull()?.clearPreviewLanguage()
+        super.disposeUIResources()
+    }
+
     override fun createPanel(): DialogPanel {
         val settings = ImuxSettings.getInstance()
         val agentCheckBoxes = mutableMapOf<AgentType, JBCheckBox>()
@@ -35,6 +40,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                         promptArea.text = promptAfterLanguageSwitch(promptArea.text, newLang)
                         scrollToTop(promptArea)
                         selectedLanguage = newLang
+                        settings.setPreviewLanguage(newLang)
                     }
                 }
                 comment(ImuxBundle.message("settings.interface.language.comment"))
@@ -119,6 +125,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 agentCheckBoxes.forEach { (agentType, checkBox) ->
                     checkBox.isSelected = agentType in settings.enabledAgentTypes
                 }
+                settings.clearPreviewLanguage()
                 scrollToTop(promptArea)
             }
             onIsModified {
