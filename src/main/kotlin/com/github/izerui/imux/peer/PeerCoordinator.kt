@@ -8,6 +8,8 @@ import com.github.izerui.imux.session.scanTail
 import com.github.izerui.imux.session.sessionTranscriptMessages
 import com.github.izerui.imux.session.transcriptMessage
 import com.github.izerui.imux.settings.ImuxSettings
+import com.github.izerui.imux.settings.PluginLanguage
+import com.github.izerui.imux.settings.defaultPeerPromptForLanguage
 import com.github.izerui.imux.terminal.IdeaMcpEndpoint
 import com.github.izerui.imux.terminal.configuredIdeaMcpEndpoint
 import com.github.izerui.imux.terminal.configuredIdeaMcpGuidance
@@ -357,7 +359,7 @@ class PeerCoordinator internal constructor(
     ): String {
         val customPrompt = ImuxSettings.getInstance().state.peerPromptOverride
         if (customPrompt != null) {
-            val isChinese = ImuxBundle.currentLanguage().id in setOf("zh_CN", "zh_TW")
+            val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
             val autoInject = peerAutoInject()
             val modeText = if (isChinese) {
                 if (autoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
@@ -372,7 +374,7 @@ class PeerCoordinator internal constructor(
             val missingConversation = "\${conversation}" !in customPrompt && conversation.isNotBlank()
             if (missingTask || missingConversation) {
                 LOG.warn("结对编程：自定义提示词未包含 \${task} 或 \${conversation}，自动追加上下文")
-                val isChinese = ImuxBundle.currentLanguage().id in setOf("zh_CN", "zh_TW")
+                val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
                 val appendix = buildString {
                     append("\n\n")
                     if (missingTask) {
@@ -389,7 +391,8 @@ class PeerCoordinator internal constructor(
             return result
         }
 
-        val isChinese = ImuxBundle.currentLanguage().id in setOf("zh_CN", "zh_TW")
+        val currentLanguage = ImuxBundle.currentLanguage()
+        val isChinese = currentLanguage in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
         val taskSection =
             if (task.isBlank()) {
                 ""
@@ -413,7 +416,7 @@ class PeerCoordinator internal constructor(
             } else {
                 if (autoInject) MODE_AUTO_EN else MODE_STAGE_EN
             }
-        return (if (isChinese) DEFAULT_PROMPT_ZH else DEFAULT_PROMPT_EN)
+        return defaultPeerPromptForLanguage(currentLanguage)
             .replace("\${mode}", modeSection)
             .replace("\${task}", taskSection)
             .replace("\${conversation}", conversationSection)

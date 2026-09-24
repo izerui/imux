@@ -42,12 +42,13 @@ class ImuxSettingsUiSourceTest {
 
     @Test
     fun `副驾驶默认提示词跟随界面语言`() {
-        assertTrue(source.contains("ImuxBundle.currentLanguage().id in setOf(\"zh_CN\", \"zh_TW\")"))
-        assertTrue(source.contains("PeerCoordinator.DEFAULT_PROMPT_EN"))
+        assertTrue("应通过抽取函数选择提示词", source.contains("defaultPeerPromptForLanguage"))
+        assertTrue("语言切换应调用抽取函数", source.contains("promptAfterLanguageSwitch"))
+        assertTrue("语言切换时应联动更新提示词文本框", source.contains("addActionListener"))
     }
 
     @Test
     fun `恢复默认同时更新提示词文本框`() {
-        assertTrue(source.contains("promptArea.text = defaultPeerPrompt"))
+        assertTrue(source.contains("defaultPeerPromptForLanguage(selectedLanguage)"))
     }
 }

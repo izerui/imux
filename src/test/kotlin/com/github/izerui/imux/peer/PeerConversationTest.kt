@@ -4,6 +4,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.session.SessionTranscriptMessage
 import com.github.izerui.imux.session.transcriptMessage
+import com.github.izerui.imux.SourceCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -140,4 +141,16 @@ class PeerConversationTest {
         assertTrue("应包含 PASS", prompt.contains("PASS"))
     }
 
+    @Test
+    fun `PeerCoordinator 通过共享函数选择默认提示词`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt").normalized
+        assertTrue(
+            "应调用 defaultPeerPromptForLanguage 而非内联判断",
+            source.contains("defaultPeerPromptForLanguage(currentLanguage)"),
+        )
+        assertFalse(
+            "不应使用下划线格式的字符串 ID（zh_CN/zh_TW）",
+            source.contains("\"zh_CN\"") || source.contains("\"zh_TW\""),
+        )
+    }
 }

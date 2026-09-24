@@ -20,12 +20,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
     override fun createPanel(): DialogPanel {
         val settings = ImuxSettings.getInstance()
         val agentCheckBoxes = mutableMapOf<AgentType, JBCheckBox>()
-        val defaultPeerPrompt =
-            if (ImuxBundle.currentLanguage().id in setOf("zh_CN", "zh_TW")) {
-                PeerCoordinator.DEFAULT_PROMPT_ZH
-            } else {
-                PeerCoordinator.DEFAULT_PROMPT_EN
-            }
+        var selectedLanguage = settings.language
         lateinit var promptArea: JBTextArea
 
         return panel {
@@ -33,7 +28,13 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 comboBox(PluginLanguage.entries).bindItem(
                     { settings.language },
                     { language -> language?.let { applyLanguageSelection(settings, it) } },
-                )
+                ).applyToComponent {
+                    addActionListener {
+                        val newLang = selectedItem as? PluginLanguage ?: return@addActionListener
+                        promptArea.text = promptAfterLanguageSwitch(promptArea.text, newLang)
+                        selectedLanguage = newLang
+                    }
+                }
                 comment(ImuxBundle.message("settings.interface.language.comment"))
             }
             group(ImuxBundle.message("settings.group.sessions")) {
@@ -92,14 +93,14 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                         .align(AlignX.FILL)
                         .bindText(
                             MutableProperty(
-                                { settings.state.peerPromptOverride ?: defaultPeerPrompt },
-                                { settings.state.peerPromptOverride = it.takeUnless { v -> v == defaultPeerPrompt } },
+                                { settings.state.peerPromptOverride ?: defaultPeerPromptForLanguage(selectedLanguage) },
+                                { settings.state.peerPromptOverride = it.takeUnless(::isDefaultPeerPrompt) },
                             ),
                         ).component
                 }.resizableRow()
                 row {
                     button(ImuxBundle.message("settings.peer.prompt.restore")) {
-                        promptArea.text = defaultPeerPrompt
+                        promptArea.text = defaultPeerPromptForLanguage(selectedLanguage)
                     }
                 }
             }
@@ -137,3 +138,26 @@ internal fun applyLanguageSelection(
 
 private fun selectedAgentTypes(agentCheckBoxes: Map<AgentType, JBCheckBox>): Set<AgentType> =
     agentCheckBoxes.filterValues(JBCheckBox::isSelected).keys
+
+/** 根据语言返回对应的默认提示词。 */
+internal fun defaultPeerPromptForLanguage(language: PluginLanguage): String =
+    if (language in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)) {
+        PeerCoordinator.DEFAULT_PROMPT_ZH
+    } else {
+        PeerCoordinator.DEFAULT_PROMPT_EN
+    }
+
+/**
+ * 语言切换时决定提示词文本框是否需要跟随更新。
+ * 返回新的文本框内容：如果当前内容是某个语言的默认值则切换，否则保持不变。
+ */
+internal fun promptAfterLanguageSwitch(currentText: String, newLanguage: PluginLanguage): String =
+    if (currentText == PeerCoordinator.DEFAULT_PROMPT_ZH || currentText == PeerCoordinator.DEFAULT_PROMPT_EN) {
+        defaultPeerPromptForLanguage(newLanguage)
+    } else {
+        currentText
+    }
+
+/** 判断提示词是否为任一语言的默认值（不需要持久化）。 */
+internal fun isDefaultPeerPrompt(text: String): Boolean =
+    text == PeerCoordinator.DEFAULT_PROMPT_ZH || text == PeerCoordinator.DEFAULT_PROMPT_EN
