@@ -359,7 +359,7 @@ class SessionMonitor(
 
     fun hasUnread(): Boolean = unreadTracker.hasUnread()
 
-    fun unreadCount(): Int = unreadTracker.unreadCount()
+    fun unreadCount(excluding: Set<String> = emptySet()): Int = unreadTracker.unreadCount(excluding)
 
     fun isUnread(sessionId: String): Boolean = unreadTracker.isUnread(sessionId)
 

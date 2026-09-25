@@ -18,7 +18,14 @@ internal class UnreadTracker(
 
     fun hasUnread(): Boolean = unread.isNotEmpty()
 
-    fun unreadCount(): Int = unread.size
+    /**
+     * 窗口标题按会话数展示状态时，运行中的会话不能再重复计作未读。
+     *
+     * 这里只调整计数口径，不删除未读状态：会话停止运行后，之前没看的结果仍应重新
+     * 出现在未读计数里。
+     */
+    fun unreadCount(excluding: Set<String> = emptySet()): Int =
+        if (excluding.isEmpty()) unread.size else unread.count { it !in excluding }
 
     fun isUnread(sessionId: String): Boolean = sessionId in unread
 

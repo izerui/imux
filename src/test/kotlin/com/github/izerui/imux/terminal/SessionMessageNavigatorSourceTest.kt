@@ -55,10 +55,74 @@ class SessionMessageNavigatorSourceTest {
     }
 
     @Test
-    fun `Terminal active buffer 切换不进入消息导航刷新链路`() {
-        assertFalse(editor.normalized.contains("messageNavigator.outputModelChanged()"))
-        assertFalse(editor.normalized.contains("outputModelChanged = true"))
-        assertFalse(navigator.normalized.contains("fun outputModelChanged()"))
+    fun `Terminal active buffer 切换通过共享 ActiveModelDispatcher 调度`() {
+        val collectBody = editor.bodyAfter("outputModels.active.collect", '{')
+        assertTrue(
+            "collect 应调用 activeModelDispatcher.emission()",
+            collectBody.contains("activeModelDispatcher.emission()"),
+        )
+        assertFalse(
+            "collect 不应直接调用 activeOutputModelChanged",
+            collectBody.contains("activeOutputModelChanged"),
+        )
+        val compact = editor.compact(editor.normalized)
+        assertTrue(
+            "dispatcher 的 schedule 应通过 invokeLater + disposed 守卫",
+            compact.contains(
+                editor.compact("schedule = { runnable -> ApplicationManager.getApplication().invokeLater { if (!disposed && !project.isDisposed) runnable.run() } }"),
+            ),
+        )
+        assertTrue(
+            "dispatcher 的 activeModel 应读取当下 active.value",
+            compact.contains(
+                editor.compact("activeModel = { virtualFile.terminalView.outputModels.active.value }"),
+            ),
+        )
+        assertTrue(
+            "dispatcher 的 onActiveModel 应委托给导航器",
+            compact.contains(
+                editor.compact("onActiveModel = { messageNavigator.activeOutputModelChanged(it) }"),
+            ),
+        )
+    }
+
+    @Test
+    fun `activeOutputModelChanged 守卫并委托给 OutputModelBinding`() {
+        val body = navigator.bodyAfter("fun activeOutputModelChanged(model: TerminalOutputModel)", '{')
+        assertTrue("释放后应跳过", body.contains("disposed"))
+        assertTrue("未绑定 editor 时应跳过", body.contains("editor == null"))
+        assertTrue("应委托 OutputModelBinding.activeModelChanged", body.contains("outputModelBinding.activeModelChanged(model)"))
+    }
+
+    @Test
+    fun `activeModelChanged 包含短路和刷新请求`() {
+        val body = navigator.bodyAfter("fun activeModelChanged(model: TerminalOutputModel): Boolean", '{')
+        assertTrue("相同实例应短路", body.contains("model === observedModel"))
+        assertTrue("应绑定新 model", body.contains("bind(model)"))
+        assertTrue("应调用 onRefreshRequested", body.contains("onRefreshRequested()"))
+    }
+
+    @Test
+    fun `bind 与 activeModelChanged 共用 OutputModelBinding 确保监听器注册路径一致`() {
+        val bindBody = navigator.bodyAfter("fun bind(editor: Editor?)", '{')
+        assertTrue("bind 应通过 outputModelBinding.bind 注册监听器", bindBody.contains("outputModelBinding.bind("))
+        assertFalse("bind 不应直接调用 addListener", bindBody.contains(".addListener("))
+    }
+
+    @Test
+    fun `OutputModelBinding 的 onRefreshRequested 回调设置 locateRequested 并安排刷新`() {
+        assertTrue(
+            "OutputModelBinding 构造时应注入 locateRequested + scheduleRefresh",
+            navigator.compactArgs(navigator.normalized).contains(
+                navigator.compactArgs("OutputModelBinding(outputModelListener) { locateRequested.set(true) scheduleRefresh() }"),
+            ),
+        )
+    }
+
+    @Test
+    fun `解绑时通过 OutputModelBinding 清理`() {
+        val body = navigator.bodyAfter("private fun unbind()", '{')
+        assertTrue(body.contains("outputModelBinding.unbind()"))
     }
 
     @Test
@@ -72,7 +136,7 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(
             "必须监听官方 TerminalOutputModel，而不是重新监听 Editor Document",
             navigator.normalized.contains("TerminalOutputModelListener") &&
-                    navigator.normalized.contains("outputModels.active.value.addListener"),
+                    navigator.normalized.contains("model.addListener(disposable, listener)"),
         )
         assertFalse(navigator.normalized.contains("DocumentListener"))
     }

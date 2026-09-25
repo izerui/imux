@@ -8,6 +8,7 @@ import com.github.izerui.imux.session.SessionExchange
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -100,6 +101,33 @@ class SessionMessageNavigatorTest {
         val anchors = peerFeedbackAnchors(emptyList(), listOf(hint), 1_000L, 1_050L)
 
         assertTrue(anchors.isEmpty())
+    }
+
+    @Test
+    fun `feedbackHints 按 outputModel 引用过滤时不同 buffer 的 hint 互不干扰`() {
+        val normalModel = outputModel
+        val alternateModel = Proxy.newProxyInstance(
+            TerminalOutputModel::class.java.classLoader,
+            arrayOf(TerminalOutputModel::class.java),
+        ) { _, _, _ -> null } as TerminalOutputModel
+        val hint = PeerFeedbackHint("检查并发边界", 1_020L, normalModel)
+
+        val onAlternate = peerFeedbackAnchors(
+            emptyList(),
+            listOf(hint).filter { it.outputModel === alternateModel },
+            1_000L,
+            1_050L,
+        )
+        assertTrue("alternate buffer 上不应显示 normal buffer 的锚点", onAlternate.isEmpty())
+
+        val backOnNormal = peerFeedbackAnchors(
+            emptyList(),
+            listOf(hint).filter { it.outputModel === normalModel },
+            1_000L,
+            1_050L,
+        )
+        assertEquals("切回 normal buffer 后锚点应恢复", 1, backOnNormal.size)
+        assertEquals(1_020L, backOnNormal.single().absoluteOffset)
     }
 
     @Test
@@ -649,4 +677,212 @@ class SessionMessageNavigatorTest {
         )
     }
 
+}
+
+class OutputModelBindingTest {
+
+    private class FakeOutputModel : java.lang.reflect.InvocationHandler {
+        private val listeners = mutableListOf<Pair<com.intellij.openapi.Disposable, org.jetbrains.plugins.terminal.view.TerminalOutputModelListener>>()
+        var addListenerCount = 0
+            private set
+
+        override fun invoke(proxy: Any, method: java.lang.reflect.Method, args: Array<out Any>?): Any? {
+            if (method.name == "addListener" && args?.size == 2) {
+                val disposable = args[0] as com.intellij.openapi.Disposable
+                val listener = args[1] as org.jetbrains.plugins.terminal.view.TerminalOutputModelListener
+                listeners += disposable to listener
+                addListenerCount++
+            }
+            return null
+        }
+
+        fun fireContentChanged() {
+            val event = Proxy.newProxyInstance(
+                org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent::class.java.classLoader,
+                arrayOf(org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent::class.java),
+            ) { _, _, _ -> null } as org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent
+            listeners
+                .filter { !com.intellij.openapi.util.Disposer.isDisposed(it.first) }
+                .forEach { it.second.afterContentChanged(event) }
+        }
+
+        fun lastDisposable(): com.intellij.openapi.Disposable = listeners.last().first
+
+        companion object {
+            fun create(): Pair<TerminalOutputModel, FakeOutputModel> {
+                val handler = FakeOutputModel()
+                val proxy = Proxy.newProxyInstance(
+                    TerminalOutputModel::class.java.classLoader,
+                    arrayOf(TerminalOutputModel::class.java),
+                    handler,
+                ) as TerminalOutputModel
+                return proxy to handler
+            }
+        }
+    }
+
+    private var listenerCallCount = 0
+    private val listener = object : org.jetbrains.plugins.terminal.view.TerminalOutputModelListener {
+        override fun afterContentChanged(event: org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent) {
+            listenerCallCount++
+        }
+    }
+
+    @Test
+    fun `bind 在新 model 上注册监听器并记录 observedModel`() {
+        val (model, fake) = FakeOutputModel.create()
+        val binding = OutputModelBinding(listener)
+
+        binding.bind(model)
+
+        assertEquals(1, fake.addListenerCount)
+        assertTrue("observedModel 应指向绑定的 model", binding.observedModel === model)
+    }
+
+    @Test
+    fun `绑定后 model 内容变化触发 listener 回调`() {
+        val (model, fake) = FakeOutputModel.create()
+        val binding = OutputModelBinding(listener)
+
+        binding.bind(model)
+        fake.fireContentChanged()
+
+        assertEquals("listener 应被调用一次", 1, listenerCallCount)
+    }
+
+    @Test
+    fun `切换 model 后旧 model 内容变化不再触发回调`() {
+        val (normalModel, normalFake) = FakeOutputModel.create()
+        val (alternateModel, alternateFake) = FakeOutputModel.create()
+        val binding = OutputModelBinding(listener)
+
+        binding.bind(normalModel)
+        binding.bind(alternateModel)
+
+        assertTrue("旧 disposable 应已被释放", com.intellij.openapi.util.Disposer.isDisposed(normalFake.lastDisposable()))
+        listenerCallCount = 0
+        normalFake.fireContentChanged()
+        assertEquals("旧 model 的内容变化不应触发回调", 0, listenerCallCount)
+
+        alternateFake.fireContentChanged()
+        assertEquals("新 model 的内容变化应触发回调", 1, listenerCallCount)
+    }
+
+    @Test
+    fun `unbind 后内容变化不再触发回调`() {
+        val (model, fake) = FakeOutputModel.create()
+        val binding = OutputModelBinding(listener)
+
+        binding.bind(model)
+        binding.unbind()
+
+        assertTrue("disposable 应已被释放", com.intellij.openapi.util.Disposer.isDisposed(fake.lastDisposable()))
+        assertNull("observedModel 应为 null", binding.observedModel)
+        listenerCallCount = 0
+        fake.fireContentChanged()
+        assertEquals("unbind 后不应触发回调", 0, listenerCallCount)
+    }
+
+    @Test
+    fun `activeModelChanged 相同实例短路不重绑`() {
+        val (model, fake) = FakeOutputModel.create()
+        val binding = OutputModelBinding(listener)
+
+        binding.bind(model)
+        assertFalse("相同实例应短路", binding.activeModelChanged(model))
+        assertEquals("不应重复注册", 1, fake.addListenerCount)
+    }
+
+    @Test
+    fun `activeModelChanged 切换时请求刷新且新 model 收到监听器`() {
+        val (normalModel, normalFake) = FakeOutputModel.create()
+        val (alternateModel, alternateFake) = FakeOutputModel.create()
+        var refreshCount = 0
+        val binding = OutputModelBinding(listener) { refreshCount++ }
+
+        binding.bind(normalModel)
+
+        assertTrue("不同实例应执行切换", binding.activeModelChanged(alternateModel))
+        assertEquals("应请求刷新", 1, refreshCount)
+        assertTrue("旧 disposable 应被释放", com.intellij.openapi.util.Disposer.isDisposed(normalFake.lastDisposable()))
+        assertEquals("alternate 应收到监听器", 1, alternateFake.addListenerCount)
+    }
+
+    /**
+     * 通过生产入口 [OutputModelBinding.activeModelChanged] 驱动 normal → alternate → normal。
+     *
+     * 每次切换断言 onRefreshRequested 被调用。在 onRefreshRequested 回调中模拟导航器的
+     * refresh 行为：按 observedModel === 过滤 hints → peerFeedbackAnchors → 记录应用的锚点。
+     * 最终断言：alternate 时无锚点，切回 normal 后锚点恢复。
+     */
+    @Test
+    fun `activeModelChanged 驱动 normal → alternate → normal 切换控制器到锚点计算边界验证`() {
+        val (normalModel, normalFake) = FakeOutputModel.create()
+        val (alternateModel, _) = FakeOutputModel.create()
+        val hint = PeerFeedbackHint("检查并发边界", 1_020L, normalModel)
+        val allHints = listOf(hint)
+        var lastAppliedAnchors = emptyList<UserMessageAnchor>()
+        lateinit var binding: OutputModelBinding
+
+        binding = OutputModelBinding(listener) {
+            val hints = allHints.filter { it.outputModel === binding.observedModel }
+            lastAppliedAnchors = peerFeedbackAnchors(emptyList(), hints, 1_000L, 1_050L)
+        }
+
+        // 初始绑定 normal
+        binding.bind(normalModel)
+
+        // 切到 alternate → onRefreshRequested → hints 不匹配 → 无锚点
+        binding.activeModelChanged(alternateModel)
+        assertTrue("alternate 上不应有锚点", lastAppliedAnchors.isEmpty())
+
+        // 切回 normal → onRefreshRequested → hints 匹配 → 锚点恢复
+        binding.activeModelChanged(normalModel)
+        assertEquals("切回 normal 后应恢复一个锚点", 1, lastAppliedAnchors.size)
+        assertEquals(1_020L, lastAppliedAnchors.single().absoluteOffset)
+        assertEquals("检查并发边界", lastAppliedAnchors.single().userPreview)
+
+        // 切回后 normal model 的内容变化应触发回调
+        listenerCallCount = 0
+        normalFake.fireContentChanged()
+        assertEquals("切回后监听器应在 normal model 上生效", 1, listenerCallCount)
+    }
+
+    /**
+     * 通过生产共享的 [ActiveModelDispatcher] 验证 EDT 调度竞态：
+     * collect 发出 A 的 emission 排队后，active 已变成 B。
+     *
+     * 不预绑定任何 model——binding 从空开始。A emission 排队时 active 是 A，
+     * 执行前 active 已变成 B。dispatcher 执行时读到 B，交给真实
+     * [OutputModelBinding.activeModelChanged]，B 被绑定、A 从未被绑定。
+     */
+    @Test
+    fun `陈旧 emission 通过共享 ActiveModelDispatcher 不会覆盖最新 model`() {
+        val (modelA, fakeA) = FakeOutputModel.create()
+        val (modelB, fakeB) = FakeOutputModel.create()
+
+        val binding = OutputModelBinding(listener)
+        var currentActive: TerminalOutputModel = modelA
+        val pendingRunnables = mutableListOf<Runnable>()
+
+        val dispatcher = ActiveModelDispatcher(
+            schedule = { pendingRunnables += it },
+            activeModel = { currentActive },
+            onActiveModel = { binding.activeModelChanged(it) },
+        )
+
+        // A 的 emission 排队
+        dispatcher.emission()
+
+        // 排队后 active 变成 B
+        currentActive = modelB
+
+        // 执行排队的 runnable——dispatcher 读到当下的 B，交给绑定器
+        pendingRunnables.forEach(Runnable::run)
+        pendingRunnables.clear()
+
+        assertTrue("observedModel 应是 B", binding.observedModel === modelB)
+        assertEquals("B 应收到 addListener", 1, fakeB.addListenerCount)
+        assertEquals("A 不应收到 addListener", 0, fakeA.addListenerCount)
+    }
 }

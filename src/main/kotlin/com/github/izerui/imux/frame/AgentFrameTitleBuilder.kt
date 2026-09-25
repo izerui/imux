@@ -26,10 +26,13 @@ import com.intellij.openapi.wm.impl.PlatformFrameTitleBuilder
 class AgentFrameTitleBuilder : PlatformFrameTitleBuilder() {
     override fun getProjectTitle(project: Project): String {
         val monitor = monitorOf(project)
+        val runningIds = monitor?.runningIds.orEmpty()
         return decorate(
             super.getProjectTitle(project),
-            unreadCount = monitor?.unreadCount() ?: 0,
-            runningCount = monitor?.runningIds?.size ?: 0,
+            // 同一会话可保留上一轮未读并开始下一轮；标题按会话数展示时运行中优先，
+            // 避免一个会话显示成「1 个未读 · 1 个运行中」。
+            unreadCount = monitor?.unreadCount(excluding = runningIds) ?: 0,
+            runningCount = runningIds.size,
         )
     }
 

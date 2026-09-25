@@ -186,6 +186,27 @@ class PlatformApiAlignmentSourceTest {
         assertTrue(builder.contains("project.isDisposed"))
     }
 
+    @Test
+    fun `窗口标题中运行会话不重复计入未读数量`() {
+        val builder =
+            source(
+                "src/main/kotlin/com/github/izerui/imux/frame/AgentFrameTitleBuilder.kt",
+            )
+
+        assertTrue(
+            "标题计数必须先取得运行会话集合",
+            builder.contains("val runningIds = monitor?.runningIds.orEmpty()"),
+        )
+        assertTrue(
+            "未读数量必须排除同一批运行会话",
+            builder.contains("monitor?.unreadCount(excluding = runningIds)"),
+        )
+        assertTrue(
+            "运行数量仍应来自完整运行会话集合",
+            builder.contains("runningCount = runningIds.size"),
+        )
+    }
+
     /**
      * 光有 builder 不够：它只在平台自发重算标题时被调用（切文件、项目状态变化）。
      * 未读刚变化的那一刻没有任何重算触发，标记要等到用户下次切文件才出现或消失——

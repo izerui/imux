@@ -98,6 +98,15 @@ class AgentTerminalFileEditor(
     private var observedEditor: Editor? = null
     private var imeCompositionSupport: AgentImeCompositionSupport? = null
     private val messageNavigator = SessionMessageNavigator(project, virtualFile, this)
+    private val activeModelDispatcher = ActiveModelDispatcher(
+        schedule = { runnable ->
+            ApplicationManager.getApplication().invokeLater {
+                if (!disposed && !project.isDisposed) runnable.run()
+            }
+        },
+        activeModel = { virtualFile.terminalView.outputModels.active.value },
+        onActiveModel = { messageNavigator.activeOutputModelChanged(it) },
+    )
     private val visibleAreaListener =
         VisibleAreaListener {
             refreshScrollButton()
@@ -421,6 +430,7 @@ class AgentTerminalFileEditor(
             virtualFile.terminalView.coroutineScope.launch {
                 virtualFile.terminalView.outputModels.active.collect {
                     scheduleScrollButtonRefresh()
+                    activeModelDispatcher.emission()
                 }
             }
     }

@@ -342,7 +342,6 @@ internal class SessionMessageNavigator(
     @Volatile
     private var disposed = false
 
-    private var outputListenerDisposable: Disposable? = null
     private val sessionChangeTracker = NavigationSessionChangeTracker()
     private var previewAnchor: UserMessageAnchor? = null
     private var previewBalloon: Balloon? = null
@@ -362,6 +361,10 @@ internal class SessionMessageNavigator(
                 scheduleRefresh()
             }
         }
+    private val outputModelBinding = OutputModelBinding(outputModelListener) {
+        locateRequested.set(true)
+        scheduleRefresh()
+    }
 
     init {
         SessionMonitor.getInstance(project).addListener(this, ::sessionStateChanged)
@@ -399,14 +402,19 @@ internal class SessionMessageNavigator(
         locateRequested.set(true)
         this.editor = editor
         if (editor != null) {
-            val listenerDisposable = Disposer.newDisposable("imux-session-message-output")
-            outputListenerDisposable = listenerDisposable
-            virtualFile.terminalView.outputModels.active.value.addListener(
-                listenerDisposable,
-                outputModelListener,
-            )
+            outputModelBinding.bind(virtualFile.terminalView.outputModels.active.value)
         }
         scheduleRefresh()
+    }
+
+    fun activeOutputModelChanged(model: TerminalOutputModel) {
+        if (disposed) return
+        if (editor == null) return
+        val oldId = System.identityHashCode(outputModelBinding.observedModel).toString(16)
+        if (!outputModelBinding.activeModelChanged(model)) return
+        NAVIGATOR_LOG.info(
+            "active model 切换：$oldId -> ${System.identityHashCode(model).toString(16)}"
+        )
     }
 
     fun scheduleRefresh() {
@@ -477,6 +485,12 @@ internal class SessionMessageNavigator(
             )
         val stableAnchors = stableAnchorsForNavigation(transcript.exchanges, indexedAnchors)
         val latestResolved = latestExchangeResolved(transcript.exchanges, indexedAnchors)
+        if (snapshot.feedbackHints.isEmpty() && feedbackGeneration.get() > 0) {
+            NAVIGATOR_LOG.info(
+                "refreshAnchors: feedbackHints 为空但 feedbackGeneration=${feedbackGeneration.get()}，" +
+                        "snapshot.outputModel=${System.identityHashCode(snapshot.outputModel).toString(16)}"
+            )
+        }
         val allAnchors = peerFeedbackAnchors(
             stableAnchors,
             snapshot.feedbackHints,
@@ -573,8 +587,7 @@ internal class SessionMessageNavigator(
     private fun unbind() {
         hidePreview()
         awaitingTerminalContent.set(false)
-        outputListenerDisposable?.let(Disposer::dispose)
-        outputListenerDisposable = null
+        outputModelBinding.unbind()
         clearHighlighters()
         editor = null
     }
@@ -921,6 +934,48 @@ internal class SessionMessageNavigator(
                 "Imux.SessionMessageNavigator.activeMarker",
                 JBColor(0x2563EB, 0x60A5FA),
             )
+    }
+}
+
+private val NAVIGATOR_LOG = com.intellij.openapi.diagnostic.Logger.getInstance("imux.SessionMessageNavigator")
+
+internal class ActiveModelDispatcher(
+    private val schedule: (Runnable) -> Unit,
+    private val activeModel: () -> TerminalOutputModel,
+    private val onActiveModel: (TerminalOutputModel) -> Unit,
+) {
+    fun emission() {
+        schedule(Runnable { onActiveModel(activeModel()) })
+    }
+}
+
+internal class OutputModelBinding(
+    private val listener: TerminalOutputModelListener,
+    private val onRefreshRequested: () -> Unit = {},
+) {
+    var observedModel: TerminalOutputModel? = null
+        private set
+    private var listenerDisposable: Disposable? = null
+
+    fun bind(model: TerminalOutputModel) {
+        listenerDisposable?.let(Disposer::dispose)
+        val disposable = Disposer.newDisposable("imux-session-message-output")
+        listenerDisposable = disposable
+        observedModel = model
+        model.addListener(disposable, listener)
+    }
+
+    fun activeModelChanged(model: TerminalOutputModel): Boolean {
+        if (model === observedModel) return false
+        bind(model)
+        onRefreshRequested()
+        return true
+    }
+
+    fun unbind() {
+        listenerDisposable?.let(Disposer::dispose)
+        listenerDisposable = null
+        observedModel = null
     }
 }
 

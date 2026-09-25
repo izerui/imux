@@ -530,7 +530,7 @@ class PeerCoordinator internal constructor(
             if (delivered) break
             delay(SEND_READY_RETRY_MILLIS)
         }
-        LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符）")
+        LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符，outputModel=${hint?.let { System.identityHashCode(it.outputModel).toString(16) } ?: "none"}，offset=${hint?.absoluteOffset ?: -1}）")
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
         hint?.let {
