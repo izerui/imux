@@ -26,6 +26,7 @@ import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener
 import com.intellij.openapi.wm.impl.content.ToolWindowContentUi
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.content.ContentFactory
 
@@ -80,10 +81,12 @@ class AgentToolWindowFactory :
 
         val newSessionAction = NewSessionAction()
         val refreshAction = RefreshAction()
+        val closeOtherEditorsAction = CloseOtherEditorsAction()
         toolWindow.setTitleActions(
             listOf(
                 newSessionAction,
                 refreshAction,
+                closeOtherEditorsAction,
             ),
         )
 
@@ -98,6 +101,7 @@ class AgentToolWindowFactory :
         ImuxSettings.getInstance().addLanguageListener(contentDisposable) {
             behaviorGroup.templatePresentation.text = ImuxBundle.message("group.behavior")
             newSessionAction.refreshPresentation()
+            closeOtherEditorsAction.refreshPresentation()
             refreshAction.refreshPresentation()
             singleClickAction.refreshPresentation()
             toolWindow.component.repaint()
@@ -247,6 +251,54 @@ private class RefreshAction :
 
     override fun actionPerformed(event: AnActionEvent) {
         event.project?.let { SessionMonitor.getInstance(it).refresh() }
+    }
+}
+
+internal fun closeNonSessionEditors(
+    openFiles: Array<VirtualFile>,
+    isSessionFile: (VirtualFile) -> Boolean,
+    closeFile: (VirtualFile) -> Unit,
+) {
+    openFiles
+        .filter { !isSessionFile(it) }
+        .forEach(closeFile)
+}
+
+internal fun hasClosableEditors(
+    openFiles: Array<VirtualFile>,
+    isSessionFile: (VirtualFile) -> Boolean,
+): Boolean = openFiles.any { !isSessionFile(it) }
+
+private class CloseOtherEditorsAction :
+    DumbAwareAction(
+        ImuxBundle.message("action.close.other.editors.text"),
+        ImuxBundle.message("action.close.other.editors.description"),
+        AllIcons.General.CloseSmallHovered,
+    ) {
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    override fun update(event: AnActionEvent) {
+        event.presentation.text = ImuxBundle.message("action.close.other.editors.text")
+        event.presentation.description = ImuxBundle.message("action.close.other.editors.description")
+        val project = event.project
+        event.presentation.isEnabled = project != null &&
+            hasClosableEditors(
+                FileEditorManager.getInstance(project).openFiles,
+            ) { it is AgentTerminalVirtualFile }
+    }
+
+    fun refreshPresentation() {
+        templatePresentation.text = ImuxBundle.message("action.close.other.editors.text")
+        templatePresentation.description = ImuxBundle.message("action.close.other.editors.description")
+    }
+
+    override fun actionPerformed(event: AnActionEvent) {
+        val project = event.project ?: return
+        val manager = FileEditorManager.getInstance(project)
+        closeNonSessionEditors(
+            manager.openFiles,
+            { it is AgentTerminalVirtualFile },
+        ) { manager.closeFile(it) }
     }
 }
 

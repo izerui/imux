@@ -14,11 +14,17 @@ import java.io.File
  *
  * 每条规则为什么长这样，见各成员的 KDoc。
  */
-class SourceCode(
-    path: String,
+class SourceCode private constructor(
+    sourceProvider: () -> String,
 ) {
+    constructor(path: String) : this({ File(path).readText() })
+
     /** 原始文本。**绝大多数断言不该用它**，理由见 [normalized]。 */
-    val source: String by lazy { File(path).readText() }
+    val source: String by lazy(sourceProvider)
+
+    companion object {
+        fun fromText(text: String): SourceCode = SourceCode { text }
+    }
 
     /**
      * 剥掉注释、再把空白归一后的源码。**几乎所有断言都必须跑在它上面，而不是 [source]。**
