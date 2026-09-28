@@ -169,5 +169,14 @@
                 popup="true">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
+        <action
+                id="imux.CloseNonSessionEditors"
+                class="com.github.izerui.imux.terminal.CloseNonSessionEditorsAction"
+                text="Close Non-Session Tabs"
+                description="Close all editor tabs except AI agent sessions"
+                icon="AllIcons.General.CloseSmallHovered">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="before"
+                          relative-to-action="imux.CopySessionIdentity"/>
+        </action>
     </actions>
 </idea-plugin>
