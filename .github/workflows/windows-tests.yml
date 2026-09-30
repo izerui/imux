@@ -26,6 +26,7 @@ jobs:
           ./gradlew.bat test --console=plain
           --tests "com.github.izerui.imux.session.AgentHomesTest"
           --tests "com.github.izerui.imux.session.PiSessionReaderTest"
+          --tests "com.github.izerui.imux.session.PiSettingsSessionDirTest"
           --tests "com.github.izerui.imux.session.SessionRepositoryTest"
           --tests "com.github.izerui.imux.session.SessionTitleRegeneratorTest"
           --tests "com.github.izerui.imux.session.CodexRuntimeIndexTest"

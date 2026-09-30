@@ -725,7 +725,7 @@ class SessionMonitor(
                 claudeHome = agentHomes.claude,
                 codexHome = agentHomes.codex,
                 claudeProjectDirName = ClaudeSessionReader(agentHomes.claude).let { reader -> { reader.projectDirName(projectPath) } },
-                piSessionDir = PiSessionReader(agentHomes.piAgent, agentHomes.piSessions).sessionDir(projectPath),
+                piSessionDir = PiSessionReader(agentHomes.piAgent, agentHomes.piSessions).let { reader -> { reader.sessionDir(projectPath) } },
                 onChange = ::refresh,
                 onTick = ::checkCompletedTurns,
                 // 一个标签页都没开时没人看运行中标记，退回慢节奏

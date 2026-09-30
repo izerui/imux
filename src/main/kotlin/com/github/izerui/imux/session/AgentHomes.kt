@@ -17,7 +17,8 @@ import java.nio.file.Paths
  *   但 `config.toml` 的 `sqlite_home` 优先级更高，见 [codexSqliteDir]
  * - pi：`PI_CODING_AGENT_DIR` 覆盖的是 `~/.pi/agent` 而非 `~/.pi`；
  *   `PI_CODING_AGENT_SESSION_DIR` 直接指定会话目录，此时会话**平铺**在该目录下，
- *   不再按 cwd 分子目录（pi 的 `SessionManager.create(cwd, sessionDir)`）
+ *   不再按 cwd 分子目录（pi 的 `SessionManager.create(cwd, sessionDir)`）。
+ *   设置里的 `sessionDir` 与项目有关，不在这里解析，见 `PiSessionReader.sessionDir`
  *
  * 只认绝对路径（允许 `~` 开头）。CLI 会把相对路径解析到自己启动时的 cwd，
  * imux 无从得知那个 cwd，与其猜错目录不如退回默认值。

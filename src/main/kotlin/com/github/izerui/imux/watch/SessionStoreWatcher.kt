@@ -31,10 +31,11 @@ class SessionStoreWatcher(
     /**
      * 本项目的 pi 会话目录，见 PiSessionReader.sessionDir。
      *
-     * 设置了 `PI_CODING_AGENT_SESSION_DIR` 时这是所有项目共用的平铺目录，别的项目
-     * 写会话也会触发 [onChange]。多一次重扫而已，结果由 reader 按 cwd 过滤。
+     * 每轮重新求值：目录可能来自 pi 设置里的 `sessionDir`，用户改了设置要能跟上。
+     * 指定了会话目录时这是所有项目共用的平铺目录，别的项目写会话也会触发 [onChange]。
+     * 多一次重扫而已，结果由 reader 按 cwd 过滤。
      */
-    private val piSessionDir: Path,
+    private val piSessionDir: () -> Path,
     private val onChange: () -> Unit,
     /**
      * 刷新运行状态，与会话文件是否变化无关。
@@ -122,7 +123,7 @@ class SessionStoreWatcher(
             codexSessions.resolve(datePath(day)),
             codexSessions.resolve(datePath(day.minusDays(1))),
             // pi 与 claude 一样按 cwd 分目录，一个项目一个目录，不必按日期回看
-            piSessionDir,
+            piSessionDir(),
         )
     }
 
