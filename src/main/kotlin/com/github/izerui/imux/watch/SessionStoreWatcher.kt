@@ -98,7 +98,12 @@ class SessionStoreWatcher(
         onChange()
     }
 
-    /** 被监听目录的廉价指纹：文件名 + 大小 + 修改时间。任一变化即视为会话库有更新。 */
+    /**
+     * 被监听目录的廉价指纹：文件完整路径 + 大小 + 修改时间。任一变化即视为会话库有更新。
+     *
+     * 用完整路径而不只是文件名：pi 的会话目录可由设置切换，用户把会话整体挪到新目录
+     * （保留文件属性）再改设置时，只看文件名的指纹一模一样，列表会一直指向旧位置的文件。
+     */
     fun signature(): String =
         watchedDirs()
             .filter { Files.isDirectory(it) }
@@ -109,7 +114,7 @@ class SessionStoreWatcher(
                         .filter { it.fileName.toString().endsWith(".jsonl") }
                         .map { file ->
                             val attrs = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
-                            "${file.fileName}:${attrs.size()}:${attrs.lastModifiedTime().toMillis()}"
+                            "$file:${attrs.size()}:${attrs.lastModifiedTime().toMillis()}"
                         }
                 }
             }.sorted()

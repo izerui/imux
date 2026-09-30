@@ -1,12 +1,14 @@
 package com.github.izerui.imux.watch
 
 import com.github.izerui.imux.session.ClaudeSessionReader
+import com.github.izerui.imux.session.PiSessionReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.nio.file.Files
 import java.time.LocalDate
 
 /**
@@ -127,6 +129,55 @@ class SessionStoreWatcherTest {
         assertEquals(baseline + 1, changes)
         assertTrue(w.watchedDirs()[0].endsWith(actual))
         assertEquals(listOf("late"), reader.read(projectPath).map { it.id })
+    }
+
+    /**
+     * 用户把 pi 会话整体挪到新目录（保留文件名、大小、修改时间）后改设置里的 sessionDir。
+     * 指纹若只看文件名，前后完全一样，列表就一直指向旧位置的文件，恢复和写标题都会落空。
+     */
+    @Test
+    fun `pi 会话目录经设置切换后即使文件属性相同也会刷新`() {
+        val project = tmp.newFolder("proj").toPath()
+        val agentDir = tmp.newFolder("pi-agent").toPath()
+        val oldDir = tmp.newFolder("old-sessions").toPath()
+        val newDir = tmp.newFolder("new-sessions").toPath()
+        val settings = agentDir.resolve("settings.json")
+        fun pointTo(dir: java.nio.file.Path) =
+            Files.writeString(settings, """{"sessionDir":"${dir.toString().replace("\\", "\\\\")}"}""")
+
+        val cwd = project.toString().replace("\\", "\\\\")
+        val content =
+            """{"type":"session","version":3,"id":"pi-1","timestamp":"2026-08-13T08:03:09.173Z","cwd":"$cwd"}""" + "\n" +
+                    """{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T08:03:20.000Z","message":{"role":"user","content":"消息"}}"""
+        val name = "2026-08-13T08-03-09-173Z_pi-1.jsonl"
+        val mtime = java.nio.file.attribute.FileTime.fromMillis(1_786_000_000_000)
+        listOf(oldDir, newDir).forEach { dir ->
+            Files.setLastModifiedTime(Files.writeString(dir.resolve(name), content), mtime)
+        }
+
+        pointTo(oldDir)
+        val reader = PiSessionReader(agentDir, userHome = tmp.root.toPath())
+        val w =
+            SessionStoreWatcher(
+                claudeHome = File(tmp.root, "claude").toPath(),
+                codexHome = File(tmp.root, "codex").toPath(),
+                claudeProjectDirName = { "p" },
+                piSessionDir = { reader.sessionDir(project.toString()) },
+                onChange = { changes++ },
+                today = { today },
+            )
+        w.start()
+        try {
+            assertEquals(oldDir.resolve(name), reader.read(project.toString()).single().filePath)
+
+            pointTo(newDir)
+            repeat(3) { w.tick() }
+
+            assertEquals(1, changes)
+            assertEquals(newDir.resolve(name), reader.read(project.toString()).single().filePath)
+        } finally {
+            w.dispose()
+        }
     }
 
     /** 跨月要借位到上个月的最后一天，不能变成 08/00。 */
