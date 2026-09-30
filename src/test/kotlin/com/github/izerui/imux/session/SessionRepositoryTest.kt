@@ -21,7 +21,7 @@ class SessionRepositoryTest {
         return SessionRepository(
             ClaudeSessionReader(claudeHome.toPath()),
             CodexSessionReader(codexHome.toPath()),
-            PiSessionReader(piHome.toPath()),
+            PiSessionReader(piHome.toPath().resolve("agent")),
         )
     }
 

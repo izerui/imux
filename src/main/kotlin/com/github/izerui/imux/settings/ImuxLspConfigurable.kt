@@ -19,6 +19,7 @@ import com.github.izerui.imux.lsp.runTabName
 import com.github.izerui.imux.lsp.runTabTarget
 import com.github.izerui.imux.lsp.statusIconKind
 import com.github.izerui.imux.lsp.statusMessageKey
+import com.github.izerui.imux.session.AgentHomes
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.resolveShell
 import com.intellij.icons.AllIcons
@@ -275,6 +276,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         LspDiagnostics(
             userHome = Path.of(System.getProperty("user.home")),
             binaryProbe = ShellBinaryProbe(),
+            homes = AgentHomes.current(),
         )
 
     private fun showChecking() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.checking")) }

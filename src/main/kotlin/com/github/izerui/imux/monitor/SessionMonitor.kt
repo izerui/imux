@@ -4,6 +4,7 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.peer.PeerCoordinator
+import com.github.izerui.imux.session.AgentHomes
 import com.github.izerui.imux.session.ClaudeRuntimeIndex
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.ClaudeSessionReader
@@ -48,7 +49,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
-import java.nio.file.Paths
 import java.time.Instant
 import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
@@ -182,7 +182,8 @@ class SessionMonitor(
     private val coroutineScope: CoroutineScope,
 ) : Disposable {
     private val projectPath = project.basePath ?: System.getProperty("user.home")
-    private val repository = SessionRepository.forUserHome()
+    private val agentHomes = AgentHomes.current()
+    private val repository = SessionRepository.of(agentHomes)
 
     val model =
         SessionListModel(
@@ -191,9 +192,7 @@ class SessionMonitor(
         )
 
     private val runtimeIndex =
-        ClaudeRuntimeIndex(
-            Paths.get(System.getProperty("user.home")).resolve(".claude"),
-        )
+        ClaudeRuntimeIndex(agentHomes.claude)
     private val statusTracker = RuntimeStatusTracker()
 
     private val unreadTracker =
@@ -230,7 +229,7 @@ class SessionMonitor(
 
     private val titleRegenerator by lazy {
         SessionTitleRegenerator(
-            userHome = Paths.get(System.getProperty("user.home")),
+            homes = agentHomes,
             shell =
                 resolveShell(
                     System.getenv("SHELL"),
@@ -721,16 +720,12 @@ class SessionMonitor(
     }
 
     private fun startWatching() {
-        val home = Paths.get(System.getProperty("user.home"))
-        val claudeHome = home.resolve(".claude")
-        val piHome = home.resolve(".pi")
         val watcher =
             SessionStoreWatcher(
-                claudeHome = claudeHome,
-                codexHome = home.resolve(".codex"),
-                piHome = piHome,
-                claudeProjectDirName = ClaudeSessionReader(claudeHome).let { reader -> { reader.projectDirName(projectPath) } },
-                piProjectDirName = PiSessionReader(piHome).projectDirName(projectPath),
+                claudeHome = agentHomes.claude,
+                codexHome = agentHomes.codex,
+                claudeProjectDirName = ClaudeSessionReader(agentHomes.claude).let { reader -> { reader.projectDirName(projectPath) } },
+                piSessionDir = PiSessionReader(agentHomes.piAgent, agentHomes.piSessions).sessionDir(projectPath),
                 onChange = ::refresh,
                 onTick = ::checkCompletedTurns,
                 // 一个标签页都没开时没人看运行中标记，退回慢节奏

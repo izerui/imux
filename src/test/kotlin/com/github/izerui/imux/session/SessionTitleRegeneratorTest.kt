@@ -260,7 +260,7 @@ class SessionTitleRegeneratorTest {
             """.trimIndent(),
         )
 
-        writeGeneratedTitle(session(AgentType.CLAUDE, file, "claude-1"), "新标题", temp.root.toPath())
+        writeGeneratedTitle(session(AgentType.CLAUDE, file, "claude-1"), "新标题", AgentHomes.defaults(temp.root.toPath()))
 
         assertEquals("新标题", reader.read("/tmp/project").single().title)
     }
@@ -279,7 +279,7 @@ class SessionTitleRegeneratorTest {
         var receivedCommand: List<String>? = null
         val regenerator =
             SessionTitleRegenerator(
-                userHome = home,
+                homes = AgentHomes.defaults(home),
                 shell = "/bin/zsh",
                 runCli = { command, _, _ ->
                     receivedCommand = command
@@ -311,7 +311,7 @@ class SessionTitleRegeneratorTest {
         }
         val rollout = temp.newFile("rollout.jsonl").toPath()
 
-        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", home)
+        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["codex-1"])
         DriverManager.getConnection("jdbc:sqlite:$oldDb").use { connection ->
@@ -340,7 +340,7 @@ class SessionTitleRegeneratorTest {
         }
         val rollout = temp.newFile("rollout.jsonl").toPath()
 
-        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", home)
+        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["codex-1"])
     }
@@ -367,7 +367,7 @@ class SessionTitleRegeneratorTest {
             }
         }
 
-        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("mixed-rollout.jsonl").toPath(), "state-new"), "新标题", home)
+        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("mixed-rollout.jsonl").toPath(), "state-new"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["state-new"])
         DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
@@ -402,7 +402,7 @@ class SessionTitleRegeneratorTest {
             }
         }
 
-        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("dev-rollout.jsonl").toPath(), "dev-new"), "新标题", home)
+        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("dev-rollout.jsonl").toPath(), "dev-new"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["dev-new"])
         DriverManager.getConnection("jdbc:sqlite:$stateDb").use { connection ->
@@ -432,7 +432,7 @@ class SessionTitleRegeneratorTest {
             }
         }
 
-        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("multi-host-rollout.jsonl").toPath(), "codex-1"), "新标题", home)
+        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("multi-host-rollout.jsonl").toPath(), "codex-1"), "新标题", AgentHomes.defaults(home))
 
         DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
             connection.createStatement().use { statement ->
@@ -452,7 +452,7 @@ class SessionTitleRegeneratorTest {
     @Test
     fun `Pi 标题追加 session_info 并被 Reader 读取`() {
         val home = temp.newFolder("pi-home").toPath()
-        val reader = PiSessionReader(home)
+        val reader = PiSessionReader(home.resolve("agent"))
         val dir = home.resolve("agent/sessions").resolve(reader.projectDirName("/tmp/project"))
         Files.createDirectories(dir)
         val file = dir.resolve("pi.jsonl")
@@ -465,7 +465,7 @@ class SessionTitleRegeneratorTest {
         )
 
         val before = reader.read("/tmp/project").single().lastActiveAt
-        writeGeneratedTitle(session(AgentType.PI, file, "pi-1"), "新标题", home)
+        writeGeneratedTitle(session(AgentType.PI, file, "pi-1"), "新标题", AgentHomes.defaults(home))
         val renamed = reader.read("/tmp/project").single()
 
         assertEquals("新标题", renamed.title)

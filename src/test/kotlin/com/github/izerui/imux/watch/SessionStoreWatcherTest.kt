@@ -41,9 +41,8 @@ class SessionStoreWatcherTest {
         return SessionStoreWatcher(
             claudeHome = claudeHome.toPath(),
             codexHome = codexHome.toPath(),
-            piHome = piHome.toPath(),
             claudeProjectDirName = { "-Users-demo-proj" },
-            piProjectDirName = "--Users-demo-proj--",
+            piSessionDir = piHome.toPath().resolve("agent/sessions/--Users-demo-proj--"),
             onChange = { changes++ },
             onTick = onTick,
             fastTickWanted = fastTickWanted,
@@ -101,9 +100,8 @@ class SessionStoreWatcherTest {
             SessionStoreWatcher(
                 claudeHome = claudeHome.toPath(),
                 codexHome = File(tmp.root, "codex").apply { mkdirs() }.toPath(),
-                piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
                 claudeProjectDirName = { reader.projectDirName(projectPath) },
-                piProjectDirName = "--p--",
+                piSessionDir = File(tmp.root, "pi/agent/sessions/--p--").toPath(),
                 onChange = { changes++ },
                 today = { today },
             )
@@ -136,9 +134,8 @@ class SessionStoreWatcherTest {
             SessionStoreWatcher(
                 claudeHome = claudeHome.toPath(),
                 codexHome = codexHome.toPath(),
-                piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
                 claudeProjectDirName = { "p" },
-                piProjectDirName = "--p--",
+                piSessionDir = File(tmp.root, "pi/agent/sessions/--p--").toPath(),
                 onChange = {},
                 today = { LocalDate.of(2026, 8, 1) },
             )

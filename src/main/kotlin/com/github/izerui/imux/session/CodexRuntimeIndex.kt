@@ -46,11 +46,13 @@ internal class CodexRuntimeIndex(
     private val processStartOf: (Long) -> Instant? = ::processStartInstantOf,
     /** 单条查询的时间上界，毫秒。见 [withQueryDeadline]。 */
     private val queryTimeoutMs: Long = QUERY_TIMEOUT_MS,
+    /** `CODEX_SQLITE_HOME`，见 [codexSqliteDir]。 */
+    private val sqliteHome: Path? = null,
 ) {
 
     /** 该进程此刻在写的 rollout 路径；查不到返回 null。 */
     fun rolloutPathOf(pid: Long): String? {
-        val dir = codexSqliteDir(codexHome)
+        val dir = codexSqliteDir(codexHome, sqliteHome)
         val thread = latestThreadOf(pid, dir) ?: return null
         return rolloutOf(thread, dir)
     }
@@ -219,11 +221,15 @@ private const val CLOCK_SLACK_SECONDS = 5L
 /**
  * Codex 实际存放版本化 SQLite 库的目录。
  *
- * `sqlite_home` 同时控制 logs、state 等库；未配置、配置不可读或路径非法时退回
- * [codexHome]。标题索引、标题写回和运行态查询必须共用这条规则，否则自定义目录下会
+ * 优先级与 Codex 一致：`config.toml` 的 `sqlite_home` > `CODEX_SQLITE_HOME`（[envSqliteHome]）
+ * > [codexHome]。`sqlite_home` 同时控制 logs、state 等库；配置不可读或路径非法时视为未配置。
+ * 标题索引、标题写回和运行态查询必须共用这条规则，否则自定义目录下会
  * 出现「会话漂移正常，但标题读写失效」的半工作状态。
  */
-internal fun codexSqliteDir(codexHome: Path): Path {
+internal fun codexSqliteDir(
+    codexHome: Path,
+    envSqliteHome: Path? = null,
+): Path {
     val configured =
         runCatching {
             val file = codexHome.resolve("config.toml")
@@ -231,6 +237,7 @@ internal fun codexSqliteDir(codexHome: Path): Path {
         }.getOrNull()
     return codexSqliteHomeFrom(configured)
         ?.let { runCatching { Path.of(it) }.getOrNull() }
+        ?: envSqliteHome
         ?: codexHome
 }
 

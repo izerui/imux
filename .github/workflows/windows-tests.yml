@@ -1,0 +1,38 @@
+name: Windows tests
+
+# 数据目录解析（AgentHomes）与各 reader 的路径逻辑在 Windows 上走盘符路径，
+# macOS 开发机上验证不到，必须在真实 Windows 上跑。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run path-related tests
+        run: >
+          ./gradlew.bat test --console=plain
+          --tests "com.github.izerui.imux.session.AgentHomesTest"
+          --tests "com.github.izerui.imux.session.PiSessionReaderTest"
+          --tests "com.github.izerui.imux.session.SessionRepositoryTest"
+          --tests "com.github.izerui.imux.session.SessionTitleRegeneratorTest"
+          --tests "com.github.izerui.imux.session.CodexRuntimeIndexTest"
+          --tests "com.github.izerui.imux.watch.SessionStoreWatcherTest"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-results
+          path: build/test-results/test/

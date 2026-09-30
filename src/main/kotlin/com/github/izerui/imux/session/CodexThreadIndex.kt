@@ -28,7 +28,11 @@ import java.sql.Connection
  *
  * 这个差异单测复现不了：Gradle 的测试 JVM 里 DriverManager 一切正常。
  */
-class CodexThreadIndex(private val codexHome: Path) {
+class CodexThreadIndex(
+    private val codexHome: Path,
+    /** `CODEX_SQLITE_HOME`，见 [codexSqliteDir]。 */
+    private val sqliteHome: Path? = null,
+) {
     internal enum class Source { DEV, STATE }
 
     internal data class Catalog(
@@ -52,7 +56,7 @@ class CodexThreadIndex(private val codexHome: Path) {
     fun load(): Map<String, String>? = currentCatalog()?.titles
 
     internal fun currentCatalog(): Catalog? {
-        val dir = codexSqliteDir(codexHome)
+        val dir = codexSqliteDir(codexHome, sqliteHome)
         val devDbFile = sequenceOf(dir.resolve("sqlite/codex-dev.db"), dir.resolve("codex-dev.db"))
             .firstOrNull { Files.isRegularFile(it) }
         val dev = devDbFile?.let(::readDevDb)

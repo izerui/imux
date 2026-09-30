@@ -10,14 +10,21 @@ import kotlin.io.path.useLines
 /**
  * 读取 pi 的会话库。
  *
- * 布局：<piHome>/agent/sessions/<cwd 编码>/<时间戳>_<session-uuid>.jsonl
+ * 布局：<agentDir>/sessions/<cwd 编码>/<时间戳>_<session-uuid>.jsonl
  *
  * 与 Claude 一样是「一个项目一个目录」，可由项目路径直接算出，
  * 不必像 Codex 那样扫全库再按首行 cwd 归属。
  *
- * 构造器接收 piHome 而非硬编码 ~/.pi，是为了测试能指向临时目录。
+ * 例外是设置了 `PI_CODING_AGENT_SESSION_DIR`（[customSessionDir]）：所有项目的会话
+ * 平铺在同一个目录里，归属只能靠首行 cwd——[readOne] 本来就逐个比对 cwd，读法不变。
+ *
+ * 构造器接收 agentDir 而非硬编码 ~/.pi/agent，一是 `PI_CODING_AGENT_DIR` 可以改它，
+ * 二是测试能指向临时目录。
  */
-class PiSessionReader(private val piHome: Path) {
+class PiSessionReader(
+    private val agentDir: Path,
+    private val customSessionDir: Path? = null,
+) {
 
     /**
      * 目录名编码，与 pi 的 `dist/core/session-manager.js` 保持一致：
@@ -38,8 +45,12 @@ class PiSessionReader(private val piHome: Path) {
             append("--")
         }
 
+    /** 该项目的会话所在目录。 */
+    fun sessionDir(projectPath: String): Path =
+        customSessionDir ?: agentDir.resolve("sessions").resolve(projectDirName(projectPath))
+
     fun read(projectPath: String): List<AgentSession> {
-        val dir = piHome.resolve("agent").resolve("sessions").resolve(projectDirName(projectPath))
+        val dir = sessionDir(projectPath)
         if (!Files.isDirectory(dir)) return emptyList()
 
         return Files.list(dir).use { stream ->

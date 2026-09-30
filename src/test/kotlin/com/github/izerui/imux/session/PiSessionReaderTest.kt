@@ -14,7 +14,7 @@ class PiSessionReaderTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
-    private fun reader() = PiSessionReader(tmp.root.toPath())
+    private fun reader() = PiSessionReader(tmp.root.toPath().resolve("agent"))
 
     /**
      * 目录名规则取自 pi 的 `dist/core/session-manager.js`：
@@ -46,6 +46,24 @@ class PiSessionReaderTest {
 
     private fun stringUserMessage(text: String, at: String = "2026-08-13T08:03:20.000Z") =
         """{"type":"message","id":"u1","parentId":null,"timestamp":"$at","message":{"role":"user","content":"$text"}}"""
+
+    @Test
+    fun `自定义会话目录下会话平铺，按首行 cwd 归属`() {
+        // PI_CODING_AGENT_SESSION_DIR：pi 不再按 cwd 分子目录，所有项目混在一起
+        val flat = File(tmp.root, "custom-sessions").apply { mkdirs() }
+        fun write(uuid: String, cwd: String) =
+            File(flat, "2026-08-13T08-03-09-173Z_$uuid.jsonl").writeText(
+                """{"type":"session","version":3,"id":"$uuid","timestamp":"2026-08-13T08:03:09.173Z","cwd":"$cwd"}""" +
+                    "\n" + userMessage("消息-$uuid"),
+            )
+        write("uuid-mine", "/Users/demo/proj")
+        write("uuid-other", "/Users/demo/other")
+
+        val reader = PiSessionReader(tmp.root.toPath().resolve("agent"), flat.toPath())
+
+        assertEquals(flat.toPath(), reader.sessionDir("/Users/demo/proj"))
+        assertEquals(listOf("uuid-mine"), reader.read("/Users/demo/proj").map { it.id })
+    }
 
     @Test
     fun `按项目路径编码后的目录读取会话`() {

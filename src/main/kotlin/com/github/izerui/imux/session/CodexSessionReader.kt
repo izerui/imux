@@ -63,8 +63,10 @@ class CodexSessionReader(
      * 项目的」上，而 Windows 那条分支在 macOS 开发机上一条也走不到。
      */
     private val isWindows: Boolean = SystemInfo.isWindows,
+    /** `CODEX_SQLITE_HOME`，见 [codexSqliteDir]。 */
+    sqliteHome: Path? = null,
 ) {
-    private val threadIndex = CodexThreadIndex(codexHome)
+    private val threadIndex = CodexThreadIndex(codexHome, sqliteHome)
 
     fun read(projectPath: String): List<AgentSession> {
         val root = codexHome.resolve("sessions")
