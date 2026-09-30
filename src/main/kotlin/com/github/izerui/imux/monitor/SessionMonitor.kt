@@ -729,7 +729,7 @@ class SessionMonitor(
                 claudeHome = claudeHome,
                 codexHome = home.resolve(".codex"),
                 piHome = piHome,
-                claudeProjectDirName = ClaudeSessionReader(claudeHome).projectDirName(projectPath),
+                claudeProjectDirName = ClaudeSessionReader(claudeHome).let { reader -> { reader.projectDirName(projectPath) } },
                 piProjectDirName = PiSessionReader(piHome).projectDirName(projectPath),
                 onChange = ::refresh,
                 onTick = ::checkCompletedTurns,

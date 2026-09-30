@@ -1,5 +1,6 @@
 package com.github.izerui.imux.watch
 
+import com.github.izerui.imux.session.ClaudeSessionReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -41,7 +42,7 @@ class SessionStoreWatcherTest {
             claudeHome = claudeHome.toPath(),
             codexHome = codexHome.toPath(),
             piHome = piHome.toPath(),
-            claudeProjectDirName = "-Users-demo-proj",
+            claudeProjectDirName = { "-Users-demo-proj" },
             piProjectDirName = "--Users-demo-proj--",
             onChange = { changes++ },
             onTick = onTick,
@@ -86,6 +87,46 @@ class SessionStoreWatcherTest {
         assertEquals(1, changes)
     }
 
+    /**
+     * 超长路径的目录名带 Bun.hash，Claude 建出目录之前只能猜。
+     * 同一个 reader 与 watcher 联动：目录在监听启动后才出现，也必须被后续 tick 发现。
+     * 这钉住两件事——watcher 每轮重新解析目录名，reader 不缓存未命中。
+     */
+    @Test
+    fun `长路径的 claude 目录在监听启动后才创建也能被发现`() {
+        val projectPath = "/Users/demo/" + "very_long_directory_name/".repeat(9) + "proj"
+        claudeHome = File(tmp.root, "claude").apply { mkdirs() }
+        val reader = ClaudeSessionReader(claudeHome.toPath(), isWindows = false)
+        val w =
+            SessionStoreWatcher(
+                claudeHome = claudeHome.toPath(),
+                codexHome = File(tmp.root, "codex").apply { mkdirs() }.toPath(),
+                piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
+                claudeProjectDirName = { reader.projectDirName(projectPath) },
+                piProjectDirName = "--p--",
+                onChange = { changes++ },
+                today = { today },
+            )
+
+        // 目录还不存在：第一个慢周期只建立基线
+        repeat(3) { w.tick() }
+        val baseline = changes
+        assertTrue(reader.read(projectPath).isEmpty())
+
+        // 原生安装包的哈希与 djb2 兜底值不同，只能靠 cwd 在磁盘上认出来
+        val guessed = reader.projectDirName(projectPath)
+        val actual = guessed.substringBeforeLast('-') + "-bunhash9"
+        File(claudeHome, "projects/$actual").apply { mkdirs() }
+            .resolve("late.jsonl")
+            .writeText("""{"type":"user","cwd":"$projectPath","message":{"content":"迟到的会话"}}""")
+
+        repeat(3) { w.tick() }
+
+        assertEquals(baseline + 1, changes)
+        assertTrue(w.watchedDirs()[0].endsWith(actual))
+        assertEquals(listOf("late"), reader.read(projectPath).map { it.id })
+    }
+
     /** 跨月要借位到上个月的最后一天，不能变成 08/00。 */
     @Test
     fun `月初回看上个月最后一天`() {
@@ -96,7 +137,7 @@ class SessionStoreWatcherTest {
                 claudeHome = claudeHome.toPath(),
                 codexHome = codexHome.toPath(),
                 piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
-                claudeProjectDirName = "p",
+                claudeProjectDirName = { "p" },
                 piProjectDirName = "--p--",
                 onChange = {},
                 today = { LocalDate.of(2026, 8, 1) },

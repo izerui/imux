@@ -24,7 +24,11 @@ class SessionStoreWatcher(
     private val claudeHome: Path,
     private val codexHome: Path,
     private val piHome: Path,
-    private val claudeProjectDirName: String,
+    /**
+     * 每轮重新求值：超长路径的目录名带哈希，Claude 建出目录之前只能猜，
+     * 建出之后才能在磁盘上认出来，见 ClaudeSessionReader.projectDirName。
+     */
+    private val claudeProjectDirName: () -> String,
     private val piProjectDirName: String,
     private val onChange: () -> Unit,
     /**
@@ -109,7 +113,7 @@ class SessionStoreWatcher(
         val day = today()
         val codexSessions = codexHome.resolve("sessions")
         return listOf(
-            claudeHome.resolve("projects").resolve(claudeProjectDirName),
+            claudeHome.resolve("projects").resolve(claudeProjectDirName()),
             codexSessions.resolve(datePath(day)),
             codexSessions.resolve(datePath(day.minusDays(1))),
             // pi 与 claude 一样按 cwd 分目录，一个项目一个目录，不必按日期回看

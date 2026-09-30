@@ -64,6 +64,17 @@ class CodexSessionReaderTest {
     }
 
     @Test
+    fun `只列交互式来源，过滤 codex exec 会话`() {
+        writeRollout("uuid-cli", "/Users/demo/proj")
+        writeRollout("uuid-vscode", "/Users/demo/proj", source = "\"vscode\"")
+        writeRollout("uuid-exec", "/Users/demo/proj", source = "\"exec\"", threadSource = "user")
+
+        val ids = reader().read("/Users/demo/proj").map { it.id }.sorted()
+
+        assertEquals(listOf("uuid-cli", "uuid-vscode"), ids)
+    }
+
+    @Test
     fun `标题回退为最后一条用户消息`() {
         writeRollout(
             "uuid-msg",

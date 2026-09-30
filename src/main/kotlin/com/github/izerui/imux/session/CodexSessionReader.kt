@@ -104,6 +104,12 @@ class CodexSessionReader(
             val meta = firstLine(file) ?: return null
             if (!meta.contains(META_MARKER)) return null
             if (JsonLineScanner.stringValue(meta, "thread_source") == SUBAGENT_THREAD_SOURCE) return null
+            // 与 codex 自己的 thread/list 默认口径一致：只列交互式来源 cli / vscode。
+            // `codex exec` 的非交互会话（本插件的副驾驶、标题生成就是这么跑的）不该混进列表。
+            // 取不到字符串的情况（子代理的 source 是对象、老版本没有这个字段）不在这里拦。
+            JsonLineScanner.objectStringValue(meta, "payload", "source")?.let {
+                if (it !in INTERACTIVE_SOURCES) return null
+            }
 
             val cwd = JsonLineScanner.stringValue(meta, "cwd") ?: return null
             if (!sameCodexCwd(cwd, projectPath, isWindows)) return null
@@ -153,5 +159,6 @@ class CodexSessionReader(
         const val META_MARKER = "\"session_meta\""
         const val USER_ROLE_MARKER = "\"role\":\"user\""
         const val SUBAGENT_THREAD_SOURCE = "subagent"
+        val INTERACTIVE_SOURCES = setOf("cli", "vscode")
     }
 }
