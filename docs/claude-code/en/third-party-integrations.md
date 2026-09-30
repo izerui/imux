@@ -84,13 +84,13 @@ Organizations can deploy Claude Code through Anthropic directly or through a clo
 
 For most organizations, Claude for Teams or Claude for Enterprise provides the best experience. Team members get access to both Claude Code and Claude on the web with a single subscription, centralized billing, and no infrastructure setup required.
 
-**Claude for Teams** is self-service and includes collaboration features, admin tools, and billing management. Best for smaller teams that need to get started quickly.
+**Claude for Teams** is self-service and includes collaboration features, admin tools, SSO, billing management, and [server-managed settings](/docs/en/server-managed-settings) for organization-wide Claude Code configuration. Best for smaller teams that need to get started quickly.
 
-**Claude for Enterprise** adds SSO and domain capture, role-based permissions, compliance API access, and managed policy settings for deploying organization-wide Claude Code configurations. Best for larger organizations with security and compliance requirements.
+**Claude for Enterprise** adds domain capture, role-based permissions, and compliance API access. Best for larger organizations with security and compliance requirements.
 
 Learn more about [Team plans](https://support.claude.com/en/articles/9266767-what-is-the-team-plan) and [Enterprise plans](https://support.claude.com/en/articles/9797531-what-is-the-enterprise-plan).
 
-The deployment options compared below cover where model inference runs. To run [Claude Code on the web](/docs/en/claude-code-on-the-web) sessions on compute your organization operates, see [self-hosted environments](/docs/en/self-hosted-environments).
+The deployment options compared below cover where model inference runs. To run Claude Code [cloud sessions](/docs/en/claude-code-on-the-web) on compute your organization operates, see [self-hosted environments](/docs/en/self-hosted-environments).
 
 If your organization has specific infrastructure requirements, compare the options below:
 
@@ -120,7 +120,7 @@ If your organization has specific infrastructure requirements, compare the optio
 
     <tr>
       <td>Billing</td>
-      <td><strong>Teams:</strong> \$150/seat (Premium) with PAYG available<br /><strong>Enterprise:</strong> <a href="https://claude.com/contact-sales?utm_source=claude_code&utm_medium=docs&utm_content=third_party_enterprise">Contact Sales</a></td>
+      <td><strong>Teams:</strong> per-seat subscription with PAYG available, see <a href="https://claude.com/pricing?utm_source=claude_code&utm_medium=docs&utm_content=third_party_pricing#team-&-enterprise">pricing</a><br /><strong>Enterprise:</strong> <a href="https://claude.com/contact-sales?utm_source=claude_code&utm_medium=docs&utm_content=third_party_enterprise">Contact Sales</a></td>
       <td>PAYG</td>
       <td>PAYG through AWS</td>
       <td>PAYG through AWS Marketplace</td>
@@ -150,7 +150,7 @@ If your organization has specific infrastructure requirements, compare the optio
 
     <tr>
       <td>Authentication</td>
-      <td>Claude.ai SSO or email</td>
+      <td>claude.ai SSO or email</td>
       <td>API key or a [Console sign-in without one](/docs/en/authentication#sign-in-without-an-api-key)</td>
       <td>API key or AWS credentials</td>
       <td>API key or AWS credentials</td>
@@ -219,12 +219,7 @@ If your organization uses [customer-managed encryption keys](https://platform.cl
 
 ### Invest in documentation and memory
 
-We strongly recommend investing in documentation so that Claude Code understands your codebase. Organizations can deploy CLAUDE.md files at multiple levels:
-
-* **Organization-wide**: Deploy to system directories such as `/Library/Application Support/ClaudeCode/CLAUDE.md` (macOS), `/etc/claude-code/CLAUDE.md` (Linux and WSL), or `C:\Program Files\ClaudeCode\CLAUDE.md` (Windows) for company-wide standards
-* **Repository-level**: Create `CLAUDE.md` files in repository roots containing project architecture, build commands, and contribution guidelines. Check these into source control so all users benefit
-
-Learn more in [Memory and CLAUDE.md files](/docs/en/memory).
+We strongly recommend investing in documentation so that Claude Code understands your codebase. Organizations can deploy CLAUDE.md files at multiple levels. See [where CLAUDE.md files can live](/docs/en/memory#choose-where-to-put-claude-md-files) and [how to deploy an organization-wide CLAUDE.md](/docs/en/memory#deploy-organization-wide-claude-md).
 
 ### Simplify deployment
 

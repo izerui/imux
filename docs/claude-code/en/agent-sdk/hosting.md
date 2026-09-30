@@ -10,7 +10,7 @@ The Agent SDK spawns and supervises a `claude` CLI subprocess that owns a shell,
 
 This page covers self-hosting on your own infrastructure. For deployable Dockerfiles and Kubernetes manifests, see the [hosting cookbook](https://github.com/anthropics/claude-cookbooks/tree/main/claude_agent_sdk/hosting).
 
-If you do not need infrastructure control, custom isolation, or your own data plane, consider [Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) instead: a hosted REST API where Anthropic runs the agent and the sandbox, so your application sends events and streams back results with no hosting infrastructure to operate.
+If you don't need to run the agent loop itself on your own infrastructure, consider [Managed Agents](https://platform.claude.com/docs/en/managed-agents/overview) instead. Anthropic hosts the agent loop, and your application sends events and receives streamed results through the client SDKs or the REST API. Tool execution runs in an Anthropic-managed cloud sandbox or a [self-hosted sandbox](https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes) on your own infrastructure.
 
 ## The subprocess model
 
@@ -58,11 +58,11 @@ The TypeScript examples on this page use top-level `await`, so save them as `.mt
 
 Three kinds of agent state live on the container's filesystem by default. None of them survive a container restart, a scale-down, or a move to a different node.
 
-| State                       | Default location                                                                                 |
-| --------------------------- | ------------------------------------------------------------------------------------------------ |
-| Session transcripts         | `~/.claude/projects/`, or the `projects/` directory under `CLAUDE_CONFIG_DIR` if set             |
-| `CLAUDE.md` memory files    | `~/.claude/CLAUDE.md` for the user tier and the session's working directory for the project tier |
-| Working-directory artifacts | The session's working directory                                                                  |
+| State | Default location |
+| - | - |
+| Session transcripts | `~/.claude/projects/`, or the `projects/` directory under `CLAUDE_CONFIG_DIR` if set |
+| `CLAUDE.md` memory files | `~/.claude/CLAUDE.md` for the user tier and the session's working directory for the project tier |
+| Working-directory artifacts | The session's working directory |
 
 To persist transcripts across hosts, configure a [`SessionStore` adapter](/docs/en/agent-sdk/session-storage). Memory files and other working-directory artifacts need their own storage strategy, such as a mounted volume or an object-store sync.
 
@@ -117,7 +117,12 @@ Run persistent container instances, often hosting multiple SDK processes per con
 
 Example workloads include an email agent that triages and responds to incoming mail, a site builder that hosts a per-user editable site through container ports, and a chat bot that handles continuous traffic from a platform like Slack.
 
-The container exposes an HTTP or WebSocket endpoint and maps each active session to a long-lived query and the subprocess behind it. In TypeScript, use [`streamInput()`](/docs/en/agent-sdk/typescript#query-object) to add turns to an active session and [`startup()`](/docs/en/agent-sdk/typescript#startup) to pre-warm subprocesses ahead of incoming traffic. In Python, use [`ClaudeSDKClient`](/docs/en/agent-sdk/python#claudesdkclient) to hold a session open across turns. Size the container so it can hold the maximum number of concurrent sessions in memory.
+The container exposes an HTTP or WebSocket endpoint and maps each active session to a long-lived query and the subprocess behind it. The calls that keep sessions open and warm differ between the SDKs:
+
+* **TypeScript**: use [`streamInput()`](/docs/en/agent-sdk/typescript#query-object) to add turns to an active session. Call [`startup()`](/docs/en/agent-sdk/typescript#startup) to pre-warm subprocesses ahead of incoming traffic. If you don't know a session's working directory until its first request arrives, pre-warm with [`prewarm()`](/docs/en/agent-sdk/typescript#prewarm) instead.
+* **Python**: use [`ClaudeSDKClient`](/docs/en/agent-sdk/python#claudesdkclient) to hold a session open across turns.
+
+Size the container so it can hold the maximum number of concurrent sessions in memory.
 
 ### Hybrid sessions
 
@@ -135,7 +140,7 @@ The pattern hinges on resuming a session by ID with a shared store attached:
 
   declare const userInput: string;
   declare const sessionId: string;          // looked up from your database by user
-  declare const sessionStore: SessionStore; // S3, Redis, Postgres, or your own adapter
+  declare const sessionStore: SessionStore; // an object store, key-value store, database, or your own adapter
 
   for await (const message of query({
     prompt: userInput,
@@ -151,7 +156,7 @@ The pattern hinges on resuming a session by ID with a shared store attached:
 
   user_input: str = ...
   session_id: str = ...              # looked up from your database by user
-  session_store: SessionStore = ...  # S3, Redis, Postgres, or your own adapter
+  session_store: SessionStore = ...  # an object store, key-value store, database, or your own adapter
 
 
   async def main():
@@ -216,7 +221,7 @@ Work through these decisions before shipping a self-hosted agent.
 
 ### Session and state persistence
 
-Default local disk is lost on restart, scale-down, or a move to a different node. For any session a user expects to resume, mirror the transcript to durable storage with a [`SessionStore` adapter](/docs/en/agent-sdk/session-storage). See [Reference implementations](/docs/en/agent-sdk/session-storage#reference-implementations) for S3, Redis, and Postgres adapters and a conformance suite for your own.
+Default local disk is lost on restart, scale-down, or a move to a different node. For any session a user expects to resume, mirror the transcript to durable storage with a [`SessionStore` adapter](/docs/en/agent-sdk/session-storage). See [Reference implementations](/docs/en/agent-sdk/session-storage#reference-implementations) for example adapters for an object store, a key-value store, and a database, and a conformance suite for your own.
 
 Three things to know about how `SessionStore` behaves:
 
@@ -276,7 +281,7 @@ To isolate tenants inside a shared container:
 
 * Pass `settingSources: []` in TypeScript or `setting_sources=[]` in Python to skip user, project, and local settings.
 * Set `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in `env`. [Auto memory](/docs/en/memory#auto-memory) at `~/.claude/projects/<project>/memory/` loads into the system prompt regardless of `settingSources`. See [What settingSources does not control](/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control) for the other inputs that load unconditionally.
-* Point `CLAUDE_CONFIG_DIR` at a per-tenant directory so tenants do not share the `~/.claude.json` global config. When each config directory serves one working directory and you don't share a [`SessionStore`](/docs/en/agent-sdk/session-storage) across tenants, you can also set [`CLAUDE_CODE_PROJECT_DIR_NAME`](/docs/en/sessions#name-the-project-directory-yourself) in `env` to keep the transcript paths under it short. Requires TypeScript Agent SDK v0.3.234 or later, or Python Agent SDK v0.2.140 or later.
+* Point `CLAUDE_CONFIG_DIR` at a per-tenant directory so tenants do not share the `~/.claude.json` global config. When each config directory serves one working directory and you don't pass a [`SessionStore`](/docs/en/agent-sdk/session-storage), you can also set [`CLAUDE_CODE_PROJECT_DIR_NAME`](/docs/en/sessions#name-the-project-directory-yourself) in `env` to keep the transcript paths under it short. Requires TypeScript Agent SDK v0.3.234 or later, or Python Agent SDK v0.2.140 or later.
 * Use a per-tenant working directory. Pass `cwd` explicitly on every `query()` call.
 * Apply per-tenant egress rules at your proxy, such as distinct outbound IPs, credentials, or domain allowlists, so a compromised tenant cannot exfiltrate data via another tenant's outbound policy.
 
@@ -338,12 +343,12 @@ The example below applies the settings, auto memory, config directory, and worki
 
 Plan around these in your deployment design.
 
-| Limitation                                          | What to do                                                                                                                                                                                                                               |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No top-level session timeout                        | A session does not time out on its own. Set `maxTurns` in TypeScript or `max_turns` in Python to bound how many tool-use round trips the agent takes before stopping.                                                                    |
-| Memory growth over long sessions                    | Cap session length or recycle subprocesses periodically. See [Scaling and concurrency](#scaling-and-concurrency).                                                                                                                        |
-| Large parallel-subagent fanouts can hit rate limits | Break work into smaller batches rather than issuing one wide dispatch.                                                                                                                                                                   |
-| No per-subagent wall-clock deadline                 | Cap each [subagent](/docs/en/agent-sdk/subagents) with `maxTurns` in its `AgentDefinition`. `CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS` sets a stall watchdog that fires when a subagent stops producing output; it isn't a total-runtime deadline. |
+| Limitation | What to do |
+| - | - |
+| No top-level session timeout | A session does not time out on its own. Set `maxTurns` in TypeScript or `max_turns` in Python to bound how many tool-use round trips the agent takes before stopping. |
+| Memory growth over long sessions | Cap session length or recycle subprocesses periodically. See [Scaling and concurrency](#scaling-and-concurrency). |
+| Large parallel-subagent fanouts can hit rate limits | Break work into smaller batches rather than issuing one wide dispatch. |
+| No per-subagent wall-clock deadline | Cap each [subagent](/docs/en/agent-sdk/subagents) with `maxTurns` in its `AgentDefinition`. `CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS` sets a stall watchdog that fires when a subagent stops producing output; it isn't a total-runtime deadline. |
 
 ## Troubleshoot deployment failures
 

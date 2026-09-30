@@ -140,7 +140,7 @@
         {
           title: "ChatGPT desktop app",
           description:
-            "Install the Linux preview on Ubuntu, Debian, or Fedora.",
+            "Install the Linux preview on Ubuntu, Debian, Fedora, or Arch Linux.",
           href: "/codex/linux/linux-app",
           icon: "computerUse",
         },

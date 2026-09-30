@@ -33,10 +33,10 @@
 无论哪种产品提供网关，它必须：
 
 * **接受支持的 API 格式**：[API 格式表](/docs/zh-CN/llm-gateway-protocol#api-formats)中的格式之一。下面的推出步骤假设 Anthropic Messages API 位于 `POST /v1/messages`，大多数网关都提供此格式
-* **流式传输响应**：按到达时传递服务器发送的事件，而不是缓冲整个响应
+* **流式传输响应**：按到达时传递服务器发送的事件，包括保活 ping，而不是缓冲整个响应；[流式传输](/docs/zh-CN/llm-gateway-protocol#streaming)涵盖了缓冲或剥离 ping 会破坏什么
 * **路由 Claude 模型名称**：将开发者使用的每个名称映射到上游模型。Claude Code 在每个请求中发送模型名称，例如 `claude-sonnet-4-6`；在大多数网关产品中，映射是网关自己配置中的模型列表或路由表
 * **转发标头和正文不变**：在两个方向上传递 `anthropic-beta`、`anthropic-version` 和请求正文；[功能传递表](/docs/zh-CN/llm-gateway-protocol#feature-pass-through)将每个映射到没有它就会中断的功能
-* **返回未修改的上游错误**：Claude Code 的自动恢复与错误措辞匹配，因此在网关自己的信封中包装错误会破坏它
+* **返回未修改的上游错误**：Claude Code 的自动恢复与错误措辞匹配，因此在网关自己的信封中包装错误会破坏它，除非信封的消息包含 [Claude apps 网关为云提供商的错误措辞替换](/docs/zh-CN/claude-apps-gateway-config#upstream-error-messages)的 `capability_rejected:` 令牌之一
 * **豁免路径免受请求正文 WAF 检查**：Claude Code 提示包含源代码和 XML 样式标签，与跨站脚本正文规则匹配；网关前面的 WAF 在真实会话中返回 `403`，而短测试请求通过
 
 可选地，提供 `GET /v1/models` 以便 Claude Code 可以使用[模型发现](/docs/zh-CN/llm-gateway-protocol#model-discovery)从您的网关填充模型选择器。
@@ -55,11 +55,11 @@
 
 这些步骤涉及三个不同的凭证，检查点用占位符命名它们，以便您可以在出现问题时判断哪个有问题：
 
-| 凭证     | 谁持有它                                                 | 检查点中的占位符           |
-| :----- | :--------------------------------------------------- | :----------------- |
-| 提供商凭证  | 网关，它将其转发给上游提供商                                       | 在网关上配置；从不出现在客户端命令中 |
-| 网关管理凭证 | 您，如果您的网关产品为其管理或测试界面颁发一个                              | `<gateway-key>`    |
-| 开发者密钥  | 每个开发者，由网关在[颁发开发者凭证](#issue-developer-credentials)中颁发 | `<developer-key>`  |
+| 凭证 | 谁持有它 | 检查点中的占位符 |
+| :- | :- | :- |
+| 提供商凭证 | 网关，它将其转发给上游提供商 | 在网关上配置；从不出现在客户端命令中 |
+| 网关管理凭证 | 您，如果您的网关产品为其管理或测试界面颁发一个 | `<gateway-key>` |
+| 开发者密钥 | 每个开发者，由网关在[颁发开发者凭证](#issue-developer-credentials)中颁发 | `<developer-key>` |
 
 <h3 id="confirm-the-gateway-routes-your-models">
   确认网关路由您的模型
@@ -171,7 +171,7 @@ claude -p "Reply with one word: connected"
   分发配置
 </h3>
 
-每个开发者机器都需要网关地址和凭证。您可以通过[托管设置](/docs/zh-CN/settings#settings-files)集中分发它们，以便开发者不配置任何内容，或者手动向开发者提供值以自己设置。
+每个开发者机器都需要网关地址和凭证。您可以通过[托管设置](/docs/zh-CN/managed-settings#delivery-mechanisms)集中分发它们，以便开发者不配置任何内容，或者手动向开发者提供值以自己设置。
 
 <h4 id="what-to-distribute">
   要分发的内容
@@ -179,21 +179,23 @@ claude -p "Reply with one word: connected"
 
 无论您选择哪条路径，都适用相同的变量集。大多数推出只需要 `ANTHROPIC_BASE_URL` 和凭证；当您的网关设置需要时包括条件行。
 
-| 变量或设置                                                                                                                                                                                                | 它的作用                                                                                   | 包括时间                                                                                                                                                                                    |
-| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTHROPIC_BASE_URL`                                                                                                                                                                                 | 将 Claude Code 的 API 请求发送到网关而不是 `api.anthropic.com`                                     | 总是                                                                                                                                                                                      |
-| `apiKeyHelper`，或 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY` 中的凭证                                                                                                                                   | 对网关的每个请求进行身份验证。助手运行命令来获取密钥；变量保存静态密钥，分别作为 `Authorization: Bearer` 和 `x-api-key` 发送      | 总是；三个中的一个                                                                                                                                                                               |
-| `ANTHROPIC_CUSTOM_HEADERS`                                                                                                                                                                           | 向每个 API 请求添加额外的 HTTP 标头                                                                | 您的网关在每个请求上需要租户或路由标头                                                                                                                                                                     |
-| `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`                                                                                                                                                         | 在启动时查询网关的 `/v1/models` 并将返回的名称添加到 `/model` 选择器                                         | 您的网关提供 `/v1/models` 并且您希望开发者的选择器从中填充                                                                                                                                                    |
-| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`                                                                                                                                                             | 停止 Claude Code 发送预发布功能标头和正文字段                                                          | 您的网关转发到拒绝 beta 字段的 Amazon Bedrock 或 Google Cloud 的 Agent Platform 上游；请参阅[网关要求](#gateway-requirements)                                                                                   |
-| `ANTHROPIC_MODEL` 或 [`ANTHROPIC_DEFAULT_HAIKU_MODEL`](/docs/zh-CN/model-config)                                                                                                                           | 设置 Claude Code 为主会话和后台流量请求的模型名称                                                        | 您的网关路由与 Claude Code 默认值不匹配的模型名称，或您将[后台功能](/docs/zh-CN/costs#background-token-usage)路由到不同的模型。在网关处路由覆盖名称和 Claude Code 的默认名称，因为某些子调用可以请求默认名称，无论覆盖如何；[模型配置](/docs/zh-CN/model-config)涵盖了会话的每个部分使用哪个模型 |
-| `ANTHROPIC_BEDROCK_BASE_URL`、`ANTHROPIC_VERTEX_BASE_URL`、`ANTHROPIC_FOUNDRY_BASE_URL` 或 `ANTHROPIC_AWS_BASE_URL` 以及[该提供商的变量](/docs/zh-CN/llm-gateway-connect#route-to-a-cloud-provider-through-a-gateway) | 通过网关将 Claude Code 指向网关。Amazon Bedrock 和 Google Cloud 的 Agent Platform 也切换到这些提供商的本机请求格式 | 您的网关前置 Amazon Bedrock、Google Cloud 的 Agent Platform、Microsoft Foundry 或 AWS 上的 Claude 平台；请参阅 [API 格式](/docs/zh-CN/llm-gateway-protocol#api-formats)                                          |
+| 变量或设置 | 它的作用 | 包括时间 |
+| :- | :- | :- |
+| `ANTHROPIC_BASE_URL` | 将 Claude Code 的 API 请求发送到网关而不是 `api.anthropic.com` | 总是 |
+| `apiKeyHelper`，或 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY` 中的凭证 | 对网关的每个请求进行身份验证。助手运行命令来获取密钥；变量保存静态密钥，分别作为 `Authorization: Bearer` 和 `x-api-key` 发送 | 总是；三个中的一个 |
+| `ANTHROPIC_CUSTOM_HEADERS` | 向每个 API 请求添加额外的 HTTP 标头 | 您的网关在每个请求上需要租户或路由标头 |
+| `CLAUDE_CODE_GATEWAY_HINT_HEADERS` | 发送[网关提示标头](/docs/zh-CN/llm-gateway-protocol#gateway-hint-headers)，它们为网关处的路由和调度决策对每个请求进行分类。需要 Claude Code v2.1.273 或更高版本 | 您的网关读取提示标头 |
+| `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY` | 在启动时查询网关的 `/v1/models` 并将返回的名称添加到 `/model` 选择器 | 您的网关提供 `/v1/models` 并且您希望开发者的选择器从中填充 |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | 停止 Claude Code 发送预发布功能标头和正文字段。[禁用预发布功能](/docs/zh-CN/llm-gateway-protocol#disable-pre-release-capabilities)涵盖了确切的范围 | 您的网关转发到拒绝 beta 字段的 Amazon Bedrock 或 Google Cloud 的 Agent Platform 上游。请参阅[网关要求](#gateway-requirements) |
+| `CLAUDE_CODE_SKIP_FAST_MODE_NETWORK_ERRORS` 或 `CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK` | 当其可用性检查（直接调用 `api.anthropic.com` 而不是遵循 `ANTHROPIC_BASE_URL`）失败、被拦截或因缺少 Anthropic 凭证而被跳过时，恢复[快速模式](/docs/zh-CN/fast-mode) | 您的组织使用快速模式，开发者仅使用 `ANTHROPIC_AUTH_TOKEN` 进行身份验证，在 `ANTHROPIC_API_KEY` 中使用网关颁发的密钥或来自 `apiKeyHelper`，或您的网络阻止或拦截对 `api.anthropic.com` 的直接请求；[在代理和 LLM 网关后面使用快速模式](/docs/zh-CN/fast-mode#use-fast-mode-behind-proxies-and-llm-gateways)涵盖了哪两个变量中的哪一个与您的配置匹配 |
+| `ANTHROPIC_MODEL` 或 [`ANTHROPIC_DEFAULT_HAIKU_MODEL`](/docs/zh-CN/model-config) | 设置 Claude Code 为主会话和后台流量请求的模型名称 | 您的网关路由与 Claude Code 默认值不匹配的模型名称，或您将[后台功能](/docs/zh-CN/costs#background-token-usage)路由到不同的模型。在网关处路由覆盖名称和 Claude Code 的内置模型 ID，因为某些后台子调用可以请求内置 ID，无论覆盖如何；[模型配置](/docs/zh-CN/model-config)涵盖了会话的每个部分使用哪个模型 |
+| `ANTHROPIC_BEDROCK_BASE_URL`、`ANTHROPIC_VERTEX_BASE_URL`、`ANTHROPIC_FOUNDRY_BASE_URL` 或 `ANTHROPIC_AWS_BASE_URL` 以及[该提供商的变量](/docs/zh-CN/llm-gateway-connect#route-to-a-cloud-provider-through-a-gateway) | 通过网关将 Claude Code 指向网关。Amazon Bedrock 和 Google Cloud 的 Agent Platform 也切换到这些提供商的本机请求格式 | 您的网关前置 Amazon Bedrock、Google Cloud 的 Agent Platform、Microsoft Foundry 或 AWS 上的 Claude 平台；请参阅 [API 格式](/docs/zh-CN/llm-gateway-protocol#api-formats) |
 
 <h4 id="distribute-through-managed-settings">
   通过托管设置分发
 </h4>
 
-通过[托管设置文件](/docs/zh-CN/settings#settings-files)的 `env` 块交付变量，由 MDM、注册表策略或配置管理推送：
+通过[托管设置文件](/docs/zh-CN/managed-settings#delivery-mechanisms)的 `env` 块交付变量，由 MDM、注册表策略或配置管理推送：
 
 ```json theme={null}
 {
@@ -206,7 +208,7 @@ claude -p "Reply with one word: connected"
 
 将表中的条件变量添加到相同的 `env` 块。托管的 `ANTHROPIC_BASE_URL` 被强制执行，不能被开发者的 shell 导出覆盖，因为 Claude Code 在进程环境和较低优先级设置上应用它。
 
-不要在托管设置中与网关凭证一起包括 `forceLoginMethod` 或 `forceLoginOrgUUID`。在 Claude Code v2.1.146 及更高版本上，任一密钥在启动时阻止 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 和 `apiKeyHelper`，因此开发者看到 `This machine's managed settings require a first-party login` 并且无法继续。
+不要在托管设置中与网关凭证一起包括 `forceLoginMethod`、`forceLoginOrgUUID` 或 `forceLoginGatewayUrl`。`forceLoginMethod` 或 `forceLoginOrgUUID`，具有任何值，在启动时阻止 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 和 `apiKeyHelper`，开发者无法继续。他们看到 `This machine's managed settings require a first-party login`，或当文件将 `forceLoginMethod` 设置为 `"gateway"` 或设置 `forceLoginGatewayUrl` 时看到 [`Administrator policy requires a Cloud gateway sign-in`](/docs/zh-CN/errors#administrator-policy-requires-a-cloud-gateway-sign-in)。
 
 [服务器管理的设置](/docs/zh-CN/server-managed-settings#platform-availability)交付需要直接连接到 `api.anthropic.com`，因此它不会到达网关路由的会话。网关部署使用这个基于文件的托管设置路径，它强制执行相同的密钥。
 
@@ -214,9 +216,9 @@ claude -p "Reply with one word: connected"
 
 某些环境需要单独的交付：
 
-* 桌面应用仅从其 MDM 交付的第三方推理配置读取网关路由；部署该文件以及托管设置，以便桌面会话也通过网关路由。请参阅[桌面第三方配置文档](https://claude.com/docs/third-party/claude-desktop/configuration)和[桌面网关文档](https://claude.com/docs/third-party/claude-desktop/gateway)
+* 桌面应用从其第三方推理配置读取网关路由，而不是从托管设置；通过 MDM 部署该文件以及托管设置，以便桌面会话也通过网关路由。请参阅[桌面第三方配置文档](https://claude.com/docs/third-party/claude-desktop/configuration)和[桌面网关文档](https://claude.com/docs/third-party/claude-desktop/gateway)
 * CI 运行器需要在[运行器的环境](/docs/zh-CN/llm-gateway-connect#configure-each-surface)中设置 `ANTHROPIC_BASE_URL` 和凭证
-* 托管 Windows 机器上的 WSL 仅在 [`wslInheritsWindowsSettings`](/docs/zh-CN/settings#available-settings) 为 `true` 时读取 Windows 托管设置
+* 托管 Windows 机器上的 WSL 仅在 [`wslInheritsWindowsSettings`](/docs/zh-CN/settings-reference#wslinheritswindowssettings) 为 `true` 时读取 Windows 托管设置
 
 <h4 id="hand-developers-the-values-to-set-themselves">
   手动向开发者提供值以自己设置
@@ -270,6 +272,8 @@ claude -p "Reply with one word: connected"
 * `Failed to authenticate` 错误意味着网关拒绝请求；其日志说明了哪个凭证失败。网关自己记录的拒绝命名开发者密钥，而来自 `api.anthropic.com` 或您的提供商端点的 `401` 意味着网关持有的提供商凭证被拒绝
 * 当网关期望密钥在 `x-api-key` 标头中时，在首次使用时出现一次性批准提示是预期的，设置为 `ANTHROPIC_API_KEY`。使用 `ANTHROPIC_AUTH_TOKEN`，不会出现提示，变量会无声地接管；以前保存的 claude.ai 登录对该会话无效
 
+如果您的组织使用[快速模式](/docs/zh-CN/fast-mode)，也在这里运行 `/fast`：可用性检查直接调用 `api.anthropic.com` 而不是遵循网关基础 URL，因此网关路由的会话可以报告快速模式不可用或禁用，即使推理有效。[在代理和 LLM 网关后面使用快速模式](/docs/zh-CN/fast-mode#use-fast-mode-behind-proxies-and-llm-gateways)将每条消息映射到恢复它的变量，与[配置的其余部分](#distribute-the-configuration)一起分发。
+
 最后，检查网关的日志以查看您发送的消息：凭证标识开发者，[`x-claude-code-session-id` 标头](/docs/zh-CN/llm-gateway-protocol#request-headers)按会话对请求进行分组。如果功能因[故障排除症状](/docs/zh-CN/llm-gateway-connect#troubleshoot-gateway-errors)而失败，网关正在剥离标头或重写错误；请参阅上面的[网关要求](#gateway-requirements)。
 
 <h2 id="maintain-the-gateway">
@@ -278,19 +282,34 @@ claude -p "Reply with one word: connected"
 
 推出后，三种变化会随着时间到达网关。每一种都有一个症状要观察和一个要采取的行动。
 
-| 变化                                            | 当网关没有跟上时的症状                                                                                       | 行动                                                                                                                                  |
-| :-------------------------------------------- | :------------------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------- |
-| 新的 Claude Code 版本添加 `anthropic-beta` 值和请求正文字段 | 开发者在更新 Claude Code 后报告 `400` 错误，命名新字段；请参阅[功能传递](/docs/zh-CN/llm-gateway-protocol#feature-pass-through) | 逐字转发 `anthropic-*` 标头和请求正文，而不是允许列表；在新 Claude Code 版本到达开发者之前针对网关测试它们                                                                 |
-| 新的 Claude 模型变得可用                              | 开发者选择新模型名称得到 `404`；`/model` 选择器不列出它                                                               | 将模型名称添加到网关的路由配置，然后重新运行[路由检查](#confirm-the-gateway-routes-your-models)。如果您分发 `ANTHROPIC_MODEL` 或默认模型变量，更新托管设置                        |
-| 凭证过期或需要轮换                                     | 所有开发者请求开始从上游失败，出现 `401`                                                                           | 按照自己的计划轮换网关的提供商凭证；开发者密钥在网关处轮换，[`apiKeyHelper`](/docs/zh-CN/llm-gateway-connect#rotate-credentials-with-apikeyhelper) 处理每个开发者的轮换，无需重新分发设置 |
+| 变化 | 当网关没有跟上时的症状 | 行动 |
+| :- | :- | :- |
+| 新的 Claude Code 版本添加 `anthropic-beta` 值和请求正文字段 | 开发者在更新 Claude Code 后报告 `400` 错误，命名新字段；请参阅[功能传递](/docs/zh-CN/llm-gateway-protocol#feature-pass-through) | 逐字转发 `anthropic-*` 标头和请求正文，而不是允许列表；在新 Claude Code 版本到达开发者之前针对网关测试它们，检查[规划 Claude Code 版本升级](#plan-claude-code-version-upgrades)中的区域 |
+| 新的 Claude 模型变得可用 | 开发者选择新模型名称得到 `404`；`/model` 选择器不列出它 | 将模型名称添加到网关的路由配置，然后重新运行[路由检查](#confirm-the-gateway-routes-your-models)。如果您分发 `ANTHROPIC_MODEL` 或默认模型变量，更新托管设置 |
+| 凭证过期或需要轮换 | 所有开发者请求开始从上游失败，出现 `401` | 按照自己的计划轮换网关的提供商凭证；开发者密钥在网关处轮换，[`apiKeyHelper`](/docs/zh-CN/llm-gateway-connect#rotate-credentials-with-apikeyhelper) 处理每个开发者的轮换，无需重新分发设置 |
 
-在调整每个密钥的速率限制时，考虑客户端[重试瞬时故障](/docs/zh-CN/errors#automatic-retries)，包括 `429` 响应，最多 10 次，带有退避，遵守 `Retry-After`。将[协议参考](/docs/zh-CN/llm-gateway-protocol)保持为每个 Claude Code 版本发送的内容的合同。
+在调整每个密钥的速率限制时，考虑客户端[重试瞬时故障](/docs/zh-CN/errors#automatic-retries)，包括 `429` 响应，最多 10 次，带有退避，遵守 `Retry-After`。将[兼容性指南](/docs/zh-CN/llm-gateway-protocol)作为每个 Claude Code 版本发送的内容的参考。
+
+<h3 id="plan-claude-code-version-upgrades">
+  规划 Claude Code 版本升级
+</h3>
+
+某些 Claude Code 行为内置于已安装的版本中，而不是在您的网关处设置，因此将开发者移至新版本可以改变整个部署中的行为，即使网关配置没有改变。要控制何时发生这种情况，请使用 [`requiredMaximumVersion`](/docs/zh-CN/settings-reference#requiredmaximumversion) 将开发者固定到已测试的版本，或者如果您通过自己的渠道分发 Claude Code，请使用 [`DISABLE_UPDATES`](/docs/zh-CN/setup#disable-auto-updates)。在提高固定版本之前，请阅读新版本的[更新日志](/docs/en/changelog)条目并[针对网关测试它](#test-claude-code-against-the-gateway)。
+
+当您测试一个版本时，网关拒绝的新标头或请求字段显示为[维护网关](#maintain-the-gateway)中描述的 `400` 错误。下表涵盖不产生错误的版本相关变化，以及保持每个变化在升级中保持不变的设置。
+
+| 区域 | 开发者升级时可能改变的内容 | 保持其不变的设置 |
+| :- | :- | :- |
+| 功能标志默认值 | [不从 Anthropic 获取功能标志](/docs/zh-CN/env-vars#features-that-need-feature-flag-fetching)的会话，例如云提供商上的会话或关闭遥测的会话，使用内置于已安装版本中的标志默认值。当版本改变其中一个默认值时，这些开发者的行为在他们升级后立即改变 | 版本固定本身，`requiredMaximumVersion` 或 `DISABLE_UPDATES` |
+| 模型能力假设 | 已安装版本不识别的模型 ID，例如网关别名 `prod-opus`，对[自适应推理](/docs/zh-CN/model-config#adaptive-reasoning-and-fixed-thinking-budgets)、努力参数和[上下文窗口](/docs/zh-CN/model-config#correct-the-window-for-a-gateway-or-custom-model-id)运行默认假设，直到更高版本识别该 ID 或您映射它 | 在网关处路由 Anthropic 模型 ID，或添加[`modelOverrides`](/docs/zh-CN/model-config#override-model-ids-per-version)条目，将 Anthropic 模型 ID 映射到您的别名。在云提供商连接上，您可以改为[声明固定模型的能力](/docs/zh-CN/model-config#customize-pinned-model-display-and-capabilities) |
+| 默认模型和别名 | 新会话默认启动的模型，以及别名（如 `opus` 和 `sonnet`）解析到的模型，[内置于每个版本](/docs/zh-CN/model-config#pin-models-for-third-party-deployments)中，开发者升级时可能改变 | [`ANTHROPIC_DEFAULT_MODEL`](/docs/zh-CN/model-config#set-a-default-model-for-new-sessions) 用于新会话启动的模型，以及 [`ANTHROPIC_DEFAULT_*_MODEL` 变量](/docs/zh-CN/model-config#environment-variables)，例如 `ANTHROPIC_DEFAULT_OPUS_MODEL`，用于每个别名解析到的内容。`ANTHROPIC_DEFAULT_MODEL` 需要 Claude Code v2.1.236 或更高版本 |
 
 <h2 id="related-resources">
   相关资源
 </h2>
 
 * [将 Claude Code 连接到 LLM 网关](/docs/zh-CN/llm-gateway-connect)：面向开发者的设置步骤，具有每个表面的配置和您可以交给开发者的故障排除表
-* [网关协议参考](/docs/zh-CN/llm-gateway-protocol)：网关运营商的有线合同，涵盖端点、要转发的标头以及功能传递表
-* [设置文件和优先级](/docs/zh-CN/settings#settings-files)：托管、项目和用户设置如何组合，以及托管文件在每个平台上的位置
+* [网关兼容性指南](/docs/zh-CN/llm-gateway-protocol)：网关运营商的参考指南，涵盖端点、要转发的标头以及功能传递表
+* [Claude Code 使用的值](/docs/zh-CN/settings#which-value-claude-code-uses)：托管、项目和用户设置如何组合
+* [交付机制](/docs/zh-CN/managed-settings#delivery-mechanisms)：托管文件在每个平台上的位置
 * [为您的组织设置 Claude Code](/docs/zh-CN/admin-setup)：这个网关是其中一部分的更广泛推出，包括策略强制执行、使用可见性和数据处理

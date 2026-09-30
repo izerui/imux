@@ -18,16 +18,30 @@ The CLI and IDE extension share the same configuration layers. You can use them 
 
 ## Configuration precedence
 
+Requirements constrain behavior; configuration values provide defaults. Local computer access with Work Cloud follows these requirements:
+
+- **Across policies:** A higher-priority policy wins over a lower-priority policy, even when the lower-priority policy is more specific.
+- **Within one policy:** OS-specific environment overrides take priority over all-OS environment overrides, followed by Global.
+- **For local execution:** MDM and legacy managed-device requirements rank above Agent Security. The device's system requirements file ranks below Agent Security.
+- **For Work Cloud:** Work cloud containers retain existing Work Cloud policies. For Work with local access and dots, supported Global policy governs the shared cloud orchestrator when managed policy is enabled; applicable local execution requirements govern the connected computer.
+
+Some requirements have field-specific merge rules. See [Managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration) for policy scope and runtime limits, and the [Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference) for Work compatibility.
+
 Codex resolves values in this order (highest precedence first):
 
 1. CLI flags and `--config` overrides
 2. Project config files: `.codex/config.toml`, ordered from the project root down to your current working directory (closest wins; trusted projects only)
 3. [Profile](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles) files selected with `--profile profile-name` (`~/.codex/profile-name.config.toml`)
 4. User config: `~/.codex/config.toml`
-5. System config (if present): `/etc/codex/config.toml` on Unix
-6. Built-in defaults
+5. Cloud-managed `config.toml` defaults, when delivered for the signed-in workspace
+6. System config (if present): `/etc/codex/config.toml` on Unix
+7. Built-in defaults
 
 Use that precedence to set shared defaults in `config.toml` and keep [profile files](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles) focused on the values that differ.
+
+Cloud-managed and system configuration can define plugin marketplaces and set
+whether plugins are enabled by default. These are separate from enforced `requirements.toml`
+policies. See [Configure plugin marketplaces and defaults](https://learn.chatgpt.com/docs/enterprise/managed-configuration#configure-plugin-marketplaces-and-defaults).
 
 If you mark a project as untrusted, Codex skips project-scoped `.codex/` layers, including project-local config, hooks, and rules. User and system config still load, including user/global hooks and rules.
 
@@ -48,7 +62,7 @@ Here are a few options people change most often:
 Choose the model Codex uses by default in the CLI and IDE.
 
 ```toml
-model = "gpt-5.6"
+model = "gpt-6.1-sol"
 ```
 
 
@@ -60,7 +74,7 @@ Control when Codex pauses to ask before running generated commands.
 approval_policy = "on-request"
 ```
 
-For behavior differences between `untrusted`, `on-request`, and `never`, see [Run without approval prompts](https://learn.chatgpt.com/docs/agent-approvals-security#run-without-approval-prompts) and [Common sandbox and approval combinations](https://learn.chatgpt.com/docs/agent-approvals-security#common-sandbox-and-approval-combinations).
+For behavior differences between `on-request` and `never`, see [Run without approval prompts](https://learn.chatgpt.com/docs/agent-approvals-security#run-without-approval-prompts) and [Common sandbox and approval combinations](https://learn.chatgpt.com/docs/agent-approvals-security#common-sandbox-and-approval-combinations). If an existing configuration uses `approval_policy = "untrusted"`, see [Migrate from the retired `untrusted` approval policy](https://learn.chatgpt.com/docs/agent-approvals-security#migrate-from-the-retired-untrusted-approval-policy).
 
 #### Sandbox level
 
@@ -91,7 +105,7 @@ sandbox = "elevated"   # Recommended
 
 #### Web search mode
 
-Codex enables web search by default for local chats and serves results from a web search cache. The cache is an OpenAI-maintained index of web results, so cached mode returns pre-indexed results instead of fetching live pages. This reduces exposure to prompt injection from arbitrary live content, but you should still treat web results as untrusted. If you are using `--yolo` or another [full access sandbox setting](https://learn.chatgpt.com/docs/agent-approvals-security#common-sandbox-and-approval-combinations), web search defaults to live results. Choose a mode with `web_search`:
+Codex enables web search by default for local chats and serves results from a web search cache. The cache is an OpenAI-maintained index of web results, so cached mode returns pre-indexed results instead of fetching live pages. This reduces exposure to prompt injection from arbitrary live content. Treat web results as untrusted. If you are using `--yolo` or another [full access sandbox setting](https://learn.chatgpt.com/docs/agent-approvals-security#common-sandbox-and-approval-combinations), web search defaults to live results. Choose a mode with `web_search`:
 
 - `"cached"` (default) serves results from the web search cache.
 - `"indexed"` permits external web access only when the search index gates the request.
@@ -110,7 +124,7 @@ web_search = "cached"  # default; serves results from the web search cache
 Tune how much reasoning effort the model applies when supported.
 
 ```toml
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 ```
 
 #### Communication style

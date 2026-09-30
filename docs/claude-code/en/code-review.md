@@ -38,13 +38,13 @@ Reviews scale in cost with PR size and complexity, completing in 20 minutes on a
 
 Each finding is tagged with a severity level:
 
-| Marker | Severity     | Meaning                                                             |
-| :----- | :----------- | :------------------------------------------------------------------ |
-| 🔴     | Important    | A bug that should be fixed before merging                           |
-| 🟡     | Nit          | A minor issue, worth fixing but not blocking                        |
-| 🟣     | Pre-existing | A bug that exists in the codebase but was not introduced by this PR |
+| Marker | Severity | Meaning |
+| :- | :- | :- |
+| 🔴 | Important | A bug that should be fixed before merging |
+| 🟡 | Nit | A minor issue, worth fixing but not blocking |
+| 🟣 | Pre-existing | A bug that exists in the codebase but was not introduced by this PR |
 
-Findings include a collapsible extended reasoning section you can expand to understand why Claude flagged the issue and how it verified the problem.
+Findings include a collapsed **Why this was flagged** section that you can expand to read why Claude flagged the issue and how it verified the problem.
 
 ### Rate and reply to findings
 
@@ -52,14 +52,16 @@ Each review comment from Claude arrives with 👍 and 👎 already attached so b
 
 Replying to an inline comment does not prompt Claude to respond or update the PR. To act on a finding, fix the code and push. If the PR is subscribed to push-triggered reviews, the next run resolves the thread when the issue is fixed. To request a fresh review without pushing, comment `@claude review` as a [top-level PR comment](#manually-trigger-reviews).
 
+To dismiss a finding without a code change, resolve its thread; replying doesn't dismiss it.
+
 ### Check run output
 
 Beyond the inline review comments, each review populates the **Claude Code Review** check run that appears alongside your CI checks. Expand its **Details** link to see a summary of every finding in one place, sorted by severity:
 
-| Severity     | File:Line                 | Issue                                                          |
-| ------------ | ------------------------- | -------------------------------------------------------------- |
+| Severity | File:Line | Issue |
+| - | - | - |
 | 🔴 Important | `src/auth/session.ts:142` | Token refresh races with logout, leaving stale sessions active |
-| 🟡 Nit       | `src/auth/session.ts:88`  | `parseExpiry` silently returns 0 on malformed input            |
+| 🟡 Nit | `src/auth/session.ts:88` | `parseExpiry` silently returns 0 on malformed input |
 
 Each finding also appears as an annotation in the **Files changed** tab, marked directly on the relevant diff lines. Important findings render with a red marker, nits with a yellow warning, and pre-existing bugs with a gray notice. Annotations and the severity table are written to the check run independently of inline review comments, so they remain available even if GitHub rejects an inline comment on a line that moved.
 
@@ -120,11 +122,11 @@ To verify setup, open a test PR. If you chose an automatic trigger, a check run 
 
 Comment commands start a review on demand. They work regardless of the repository's configured trigger, so you can use them to opt specific PRs into review in Manual mode or to get an immediate re-review in other modes.
 
-| Command                 | What it does                                                                  |
-| :---------------------- | :---------------------------------------------------------------------------- |
-| `@claude review`        | Starts a single review without subscribing the PR to future pushes            |
+| Command | What it does |
+| :- | :- |
+| `@claude review` | Starts a single review without subscribing the PR to future pushes |
 | `@claude review always` | Starts a review and subscribes the PR to push-triggered reviews going forward |
-| `@claude review once`   | Same as `@claude review`: starts a single review without subscribing          |
+| `@claude review once` | Same as `@claude review`: starts a single review without subscribing |
 
 Use `@claude review always` when you want every subsequent push to the PR to start a fresh review, such as on a high-priority PR in a repository set to Manual mode. Because the bare command doesn't subscribe the PR, you can request a one-off second opinion without changing whether later pushes trigger reviews.
 
@@ -173,7 +175,7 @@ For review-specific guidance that you don't want applied to general Claude Code 
 
 `REVIEW.md` is a file at your repository root that tailors Code Review to your repo. The agents in the review pipeline that find and verify findings receive its contents as your repository's review instructions, alongside Code Review's default review guidance, and the agents that rank and report findings consult it before settling severity and writing the review.
 
-The agents read the file's text as-is, so `REVIEW.md` is plain instructions: [`@` import syntax](/docs/en/memory#import-additional-files) is not expanded, and referenced files are not read along with it. Put the rules you want enforced directly in the file.
+Put the rules you want enforced directly in `REVIEW.md`.
 
 #### What you can tune
 
@@ -236,12 +238,12 @@ Length has a cost: a long `REVIEW.md` dilutes the rules that matter most. Keep i
 
 Go to [claude.ai/analytics/code-review](https://claude.ai/analytics/code-review) to see Code Review activity across your organization. The dashboard shows:
 
-| Section              | What it shows                                                                            |
-| :------------------- | :--------------------------------------------------------------------------------------- |
-| PRs reviewed         | Daily count of pull requests reviewed over the selected time range                       |
-| Cost weekly          | Weekly spend on Code Review                                                              |
-| Feedback             | Count of review comments that were auto-resolved because a developer addressed the issue |
-| Repository breakdown | Per-repo counts of PRs reviewed and comments resolved                                    |
+| Section | What it shows |
+| :- | :- |
+| PRs reviewed | Daily count of pull requests reviewed over the selected time range |
+| Cost weekly | Weekly spend on Code Review |
+| Feedback | Count of review comments that were auto-resolved because a developer addressed the issue |
+| Repository breakdown | Per-repo counts of PRs reviewed and comments resolved |
 
 Dashboard cost figures are estimates for monitoring activity. For invoice-accurate spend, refer to your Anthropic bill.
 
@@ -263,11 +265,11 @@ Monitor spend via the weekly cost chart in [analytics](#view-usage) or the per-r
 
 ## Troubleshooting
 
-Review runs are best-effort. A failed run never blocks your PR, but it also doesn't retry on its own. This section covers how to recover from a failed run and where to look when the check run reports issues you can't find.
+Review runs are best-effort, and a failed run never blocks your PR. Code Review retries some interrupted reviews on its own. This section covers how to run a review again yourself and where to look when the check run reports issues you can't find.
 
 ### Retrigger a failed or timed-out review
 
-When the review infrastructure hits an internal error or exceeds its time limit, the check run completes with a title of **Code review encountered an error** or **Code review timed out**. The conclusion is still neutral, so nothing blocks your merge, but no findings are posted.
+When a review fails or exceeds its time limit, the check run completes with a title such as **Code review failed** or **Code review timed out**. The conclusion is still neutral, so nothing blocks your merge. Unless the check run's summary says a new review of the commit has been queued automatically, run the review again yourself.
 
 To run the review again, comment `@claude review` on the PR. This starts a fresh review without subscribing the PR to future pushes. If the PR isn't [from a fork](#review-pull-requests-from-forks), you can instead click **Re-run** on the **Claude Code Review** check in GitHub's Checks tab. A re-run also starts a fresh review without subscribing the PR.
 
@@ -302,8 +304,12 @@ The [`/code-review` command](/docs/en/commands) reviews a diff in your terminal 
     You can also add flags:
 
     * `--fix`: applies the findings to your working tree after the review
-    * `--comment`: posts the findings as inline PR comments
+    * `--comment`: posts the findings on a GitHub pull request as inline comments, or on a GitLab merge request as a single note
     * `--post`: on an `ultra` cloud review of a `github.com` pull request, preselects posting the finished findings to the PR in the launch dialog; see [Post findings to the pull request](/docs/en/ultrareview#post-findings-to-the-pull-request). Requires Claude Code v2.1.227 or later
+
+    When you pass `--comment` for a GitLab merge request, Claude Code posts the findings through GitLab's `glab` CLI. Requires Claude Code v2.1.257 or later. When `glab` isn't installed, Claude prints the findings in the terminal instead.
+
+    Pass the merge request as its URL or a `!123` reference. Claude Code treats a bare number or branch name as a merge request only when the checkout's origin is on `gitlab.com`. On a self-managed GitLab instance, pass the URL or `!123` form.
   </Step>
 
   <Step title="Keep working">
@@ -315,7 +321,7 @@ The [`/code-review` command](/docs/en/commands) reviews a diff in your terminal 
   </Step>
 </Steps>
 
-Claude reports the findings as text in the reply in both of these runs, even when a host application requests the findings list described below:
+Claude reports the findings as text in the reply in both of these runs, even when a host application requests a findings list:
 
 * In a terminal session, where `/code-review` runs the review as a [forked subagent](/docs/en/skills#run-skills-in-a-subagent)
 * In a `-p` run with text or JSON output

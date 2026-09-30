@@ -50,6 +50,15 @@ Your agreement and applicable rate card determine the credits each eligible
 activity consumes. Existing subscription or seat fees are separate from an
 estimate of credits consumed.
 
+### Understand tokens and credits
+
+**Tokens** measure the information the model reads and writes, including input,
+cached input, and output. On credit-based agreements, **credits** pay for
+eligible usage from the shared workspace allocation. See
+[token rates](https://learn.chatgpt.com/docs/pricing#token-rates) for credit pricing.
+
+If your Enterprise agreement instead specifies usage-based billing in USD, use the [Enterprise USD rate card](https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing) and your agreement. Don't apply the credit calculation to a USD-billed workspace or treat consumed credits as an additional invoice charge.
+
 ## When usage affects your bill
 
 Whether eligible Work usage results in an additional charge depends on your
@@ -193,6 +202,11 @@ Depending on the task, your organization might measure:
 Review these customer-measured outcomes alongside observed credit consumption
 and any actual billing impact. Usage alone doesn't establish savings, and
 projected time improvements aren't guaranteed financial returns.
+
+To explore the activity behind your usage, see
+[Usage Insights](https://learn.chatgpt.com/docs/enterprise/usage-insights).
+Learn how to interpret the Insights overview and category details, then use the
+findings in a conversation with your team.
 
 ## Start with a controlled rollout
 

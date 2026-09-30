@@ -37,7 +37,7 @@ With Chrome connected, you can chain browser actions with coding tasks in a sing
 Before using Claude Code with Chrome, you need:
 
 * [Google Chrome](https://www.google.com/chrome/), [Microsoft Edge](https://www.microsoft.com/edge), or another Chromium-based browser such as Brave, Arc, Vivaldi, or Opera
-* [Claude in Chrome extension](https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn) version 1.0.36 or higher, available in the Chrome Web Store
+* [Claude in Chrome extension](https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn) version 1.0.36 or later, available in the Chrome Web Store
 * [Claude Code](/docs/en/quickstart#step-1-install-claude-code)
 * A direct Anthropic plan (Pro, Max, Team, or Enterprise)
 
@@ -90,7 +90,10 @@ The prompt offers three choices:
 * **Not now**: continues the task without browser tools. Claude Code can ask again in a later session.
 * **Don't ask again**: stops the prompt in future sessions. You can still set up the integration anytime with `/chrome`.
 
-If your organization blocks the `claude-in-chrome` MCP server with the [`deniedMcpServers` managed setting](/docs/en/managed-mcp#policy-based-control-with-allowlists-and-denylists), Claude Code doesn't show the install prompt.
+Two managed MCP policies turn the prompt off:
+
+* If your organization blocks the `claude-in-chrome` MCP server with the [`deniedMcpServers` managed setting](/docs/en/managed-mcp#policy-based-control-with-allowlists-and-denylists), Claude Code doesn't show the install prompt.
+* If your organization deploys a [`managed-mcp.json`](/docs/en/managed-mcp#exclusive-control-with-managed-mcp-json) file without [allowing Claude in Chrome alongside the managed set](/docs/en/managed-mcp#allow-claude-in-chrome-alongside-the-managed-set), Claude Code doesn't show the install prompt.
 
 ### Enable Chrome by default
 
@@ -106,16 +109,13 @@ In the [VS Code extension](/docs/en/vs-code#automate-browser-tasks-with-chrome),
 
 ### Manage site permissions
 
-Site-level permissions are inherited from the Chrome extension. Manage permissions in the Chrome extension settings to control which sites Claude can browse, click, and type on.
+Site-level permissions are inherited from the Chrome extension. Manage permissions in the Chrome extension settings to control which sites Claude can browse, click, and type on. In [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode), when the auto mode classifier itself approves a browser call to a site, the extension skips its own per-site check for that call, unless your permission rules deny any site to Claude in Chrome.
 
 ### Browser tools in plan mode
 
-In [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode), browser tool calls that only read the page or browser state run without a permission prompt, and calls that change state prompt for approval.
+In [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode), a permission prompt appears before Claude records a GIF, opens a new tab, or runs a shortcut. If [bypass permissions mode is available](/docs/en/permission-modes#skip-all-checks-with-bypasspermissions-mode) in your session and [feature-flag fetching](/docs/en/env-vars#features-that-need-feature-flag-fetching) is off, these calls run without a prompt.
 
-* **Read-only calls**: `read_page`, `get_page_text`, `find`, reading console messages or network requests, and taking a screenshot
-* **State-changing calls**: clicks, typing, navigation, tab and window management, and recording a GIF
-
-An otherwise read-only call also prompts for approval when it sets a state-changing input flag, such as `createIfEmpty` on `tabs_context_mcp`, `clear` on the console and network readers, or `save_to_disk` on a screenshot. A `browser_batch` call runs without a prompt only when every action inside it is read-only.
+A `tabs_context_mcp` call also prompts when it sets `createIfEmpty`, and so does a `browser_batch` call that includes any of these actions.
 
 ## Example workflows
 
@@ -284,12 +284,12 @@ On Windows, you may encounter:
 
 These are the most frequently encountered errors and how to resolve them:
 
-| Error                                       | Cause                                                                                                                                          | Fix                                                                                                                                                                                                                                                  |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Browser extension is not connected"        | Native messaging host cannot reach the extension, or your organization's IP allowlist rejects the connection to `bridge.claudeusercontent.com` | Restart Chrome and Claude Code, then run `/chrome` to reconnect. If your organization uses IP allowlisting and the error persists, see [Organization IP allowlists and proxy egress](/docs/en/network-config#organization-ip-allowlists-and-proxy-egress) |
-| Extension shows "Not detected" in `/chrome` | Chrome extension is not installed or is disabled                                                                                               | Install or enable the extension in `chrome://extensions`                                                                                                                                                                                             |
-| "No tab available"                          | Claude tried to act before a tab was ready                                                                                                     | Ask Claude to create a new tab and retry                                                                                                                                                                                                             |
-| "Receiving end does not exist"              | Extension service worker went idle                                                                                                             | Run `/chrome` and select "Reconnect extension"                                                                                                                                                                                                       |
+| Error | Cause | Fix |
+| - | - | - |
+| "Browser extension is not connected" | Native messaging host cannot reach the extension, or your organization's IP allowlist rejects the connection to `bridge.claudeusercontent.com` | Restart Chrome and Claude Code, then run `/chrome` to reconnect. If your organization uses IP allowlisting and the error persists, see [Organization IP allowlists and proxy egress](/docs/en/network-config#organization-ip-allowlists-and-proxy-egress) |
+| Extension shows "Not detected" in `/chrome` | Chrome extension is not installed or is disabled | Install or enable the extension in `chrome://extensions` |
+| "No tab available" | Claude tried to act before a tab was ready | Ask Claude to create a new tab and retry |
+| "Receiving end does not exist" | Extension service worker went idle | Run `/chrome` and select "Reconnect extension" |
 
 ## See also
 

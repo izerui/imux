@@ -65,6 +65,13 @@
           icon: "tools",
         },
         {
+          title: "Annotations Extensibility",
+          description:
+            "Customize website selection, context, and controls for browser annotations.",
+          href: "/codex/annotations-extensibility",
+          icon: "chat",
+        },
+        {
           title: "Hooks",
           description: "Run custom commands when Codex emits lifecycle events.",
           href: "/codex/hooks",
@@ -90,16 +97,24 @@
           icon: "terminal",
         },
         {
-          title: "Cloud environment",
-          description: "Delegate work to a configured cloud environment.",
-          href: "/codex/environments/cloud-environment",
-          icon: "storage",
-        },
-        {
           title: "Git worktrees",
           description: "Isolate parallel changes in separate working trees.",
           href: "/codex/environments/git-worktrees",
           icon: "folder",
+        },
+      ],
+    },
+    {
+      title: "Codex Cloud",
+      description:
+        "Run coding tasks in the cloud with your project tools and service access.",
+      pages: [
+        {
+          title: "Cloud environments",
+          description:
+            "Create, configure, and share reusable setups for cloud tasks.",
+          href: "/codex/environments/cloud-environments",
+          icon: "storage",
         },
       ],
     },
@@ -118,13 +133,6 @@
           description: "Integrate with the protocol that powers Codex clients.",
           href: "/codex/app-server",
           icon: "storage",
-        },
-        {
-          title: "MCP Server",
-          description:
-            "Expose Codex capabilities through Model Context Protocol.",
-          href: "/codex/mcp-server",
-          icon: "connect",
         },
         {
           title: "GitHub Action",
@@ -161,7 +169,7 @@
         {
           title: "Slack",
           description:
-            "Start Codex chats from external discussions and return results.",
+            "Start requests with ChatGPT in Slack and delegate repository work to Codex Cloud.",
           href: "/codex/third-party/slack",
           icon: "chat",
         },

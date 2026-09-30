@@ -8,7 +8,7 @@
 
 Claude Security 插件在 Claude Code 会话中运行代码库的多代理漏洞扫描。一个 Claude 代理团队映射您的架构、构建威胁模型、搜寻漏洞，并在编写报告前独立审查每个发现。使用该插件扫描整个存储库或[仅扫描一组更改](#scan-only-your-changes)，例如分支的差异、拉取请求的差异或单个提交，然后将您选择的发现转化为您自己审查和应用的补丁。
 
-该插件在您的会话中本地运行，每次扫描都会计入您的计划使用限额。如果您想要一个监控您的存储库的托管服务，请参阅 [Claude Security](https://claude.com/product/claude-security) 产品，该产品在企业计划中可用。该插件可以访问托管产品无法访问的代码，例如托管在 GitLab 或 Bitbucket 上的存储库，或在不允许入站连接的网络上的存储库。
+该插件在您的会话中本地运行，使用您在 Claude Code 中有权访问的任何模型，每次扫描都会计入您的计划使用限额。如果您想要一个监控您的存储库的托管服务，或想要在 [Claude Mythos 5](https://platform.claude.com/docs/en/about-claude/models/introducing-claude-fable-5-and-claude-mythos-5) 上运行扫描，请参阅 [Claude Security](https://claude.com/product/claude-security) 产品，该产品在企业计划中可用。该插件可以访问托管产品无法访问的代码，例如托管在 GitLab 或 Bitbucket 上的存储库，或在不允许入站连接的网络上的存储库。
 
 该插件也不同于 Claude Code 中已有的审查工具：[security guidance 插件](/docs/zh-CN/security-guidance)在 Claude 编写代码时审查代码，[`/security-review`](/docs/zh-CN/commands#all-commands) 对您的分支运行单次扫描，[Code Review](/docs/zh-CN/code-review) 审查拉取请求。有关这些层如何堆叠的信息，请参阅[该插件如何与其他安全工具配合](#how-the-plugin-fits-with-other-security-tools)。
 
@@ -18,8 +18,8 @@ Claude Security 插件在 Claude Code 会话中运行代码库的多代理漏洞
 
 要运行该插件，您需要：
 
-* Claude Code v2.1.154 或更高版本，在付费计划上，用于扫描用来编排其代理的[动态工作流](/docs/zh-CN/workflows)。在 Pro 上，从 `/config` 中的"动态工作流"行启用它们。
-* Python 3.9.6 或更高版本在您的 `PATH` 上可用，名称为 `python3`。使用 `python3 --version` 检查。该插件的工具仅使用 Python 标准库，因此不会安装任何内容。
+* 付费计划，用于扫描用来编排其代理的[动态工作流](/docs/zh-CN/workflows)。在 Pro 上，从 `/config` 中的"动态工作流"行启用它们。
+* Python 3.9 或更高版本在您的 `PATH` 上可用，名称为 `python3`。使用 `python3 --version` 检查。该插件的工具仅使用 Python 标准库，因此不会安装任何内容。
 * Linux、macOS 或 Windows。
 * Git，用于更改扫描和将发现转化为补丁；这些任务不支持其他版本控制系统。完整扫描在任何目录中都有效，无论是否有版本控制。
 
@@ -27,24 +27,22 @@ Claude Security 插件在 Claude Code 会话中运行代码库的多代理漏洞
   安装插件
 </h2>
 
-在 Claude Code 会话中，从[官方 Anthropic 市场](/docs/zh-CN/discover-plugins#official-anthropic-marketplace)安装：
+在 Claude Code 会话中，从[官方 Anthropic 市场](/docs/zh-CN/plugins/anthropic-marketplaces)安装：
 
 ```text theme={null}
 /plugin install claude-security@claude-plugins-official
 ```
 
+该命令打开插件的详细信息，您可以在其中选择[安装范围](/docs/zh-CN/plugins/install#install-a-plugin)来开始安装。
+
 如果安装失败，修复方法取决于 Claude Code 报告的消息：
 
 * 如果它报告 `Marketplace "claude-plugins-official" not found`，使用 `/plugin marketplace add anthropics/claude-plugins-official` 添加市场，然后重试安装。
-* 如果它报告在市场中找不到该插件，检查插件名称是否有拼写错误，然后使用 `/plugin marketplace update claude-plugins-official` 刷新您的本地市场副本，并重试安装。
+* 如果它报告[在市场中找不到该插件](/docs/zh-CN/plugins/install#install-a-plugin)，检查插件名称是否有拼写错误。
 
-然后使用 `/reload-plugins` 在当前会话中激活该插件，这会应用待处理的插件更改而无需重启：
+检查安装摘要。如果它报告 `Run /reload-plugins to activate.`，请参阅[应用插件更改而无需重启](/docs/zh-CN/plugins/cli-reference#reload-plugins)以在当前会话中激活插件。
 
-```text theme={null}
-/reload-plugins
-```
-
-该插件现在处于活跃状态，您已准备好[扫描和修复您的代码库](#scan-and-fix-your-codebase)。
+一旦插件处于活跃状态，您已准备好[扫描和修复您的代码库](#scan-and-fix-your-codebase)。
 
 <h3 id="uninstall-the-plugin">
   卸载插件
@@ -84,7 +82,7 @@ Claude Security 插件在 Claude Code 会话中运行代码库的多代理漏洞
   </Step>
 </Steps>
 
-您不必从菜单开始：直接要求一个任务，作为命令的参数，例如 `/claude-security scan my branch`，或用纯语言，例如"scan commit abc1234"。该插件在[自动模式](/docs/zh-CN/permission-modes)中效果最佳，这允许扫描的代理在每一步都无需权限提示地进行；当任务开始时，该插件会提醒您如何启用它。
+您不必从菜单开始：直接要求一个任务，作为命令的参数，例如 `/claude-security scan my branch`，或用纯语言，例如"scan commit abc1234"。该插件在[自动模式](/docs/zh-CN/permission-modes)中效果最佳，这允许扫描的代理在每一步都无需权限提示地进行。
 
 <h3 id="scan-only-your-changes">
   仅扫描您的更改
@@ -108,6 +106,7 @@ Claude Security 插件在 Claude Code 会话中运行代码库的多代理漏洞
 
 * **`CLAUDE-SECURITY-RESULTS.md`**：报告，包含每个发现的 ID，例如 `F1`，加上其影响、利用场景、严重性、置信度和建议
 * **`CLAUDE-SECURITY-RESULTS.jsonl`**：相同的发现以机器可读的形式，每行一个 JSON 对象
+* **`CLAUDE-SECURITY-RESULTS.sarif`**：相同的发现作为 [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) 日志，用于 GitHub 代码扫描和任何其他读取该标准的工具。扫描将发现分类在其 [CWE](https://cwe.mitre.org/) 弱点类别下
 * **`CLAUDE-SECURITY-REVISION-<commit>.json`**：修订戳，记录扫描了哪个提交、以什么工作量、未提交的更改是否是扫描树的一部分，以及运行的验证程度如何，因此报告始终与它描述的代码相关联。版本控制外的扫描在提交位置戳上 `UNVERSIONED`
 
 该目录是扫描对您的检出所做的唯一更改，它有自己的 `.gitignore`，因此随意的 `git add` 永远不会将报告扫入提交。要在历史中保留报告以供审计跟踪，删除那一个 `.gitignore` 文件并像任何其他文件一样提交目录。
@@ -140,14 +139,14 @@ git apply CLAUDE-SECURITY-<timestamp>/patches/F1.patch
 
 Claude Security 插件是深度扫描层，在纵深防御堆栈中，与[security guidance 插件](/docs/zh-CN/security-guidance)、[`/security-review`](/docs/zh-CN/commands#all-commands)、[Code Review](/docs/zh-CN/code-review)、托管的 [Claude Security](https://claude.com/product/claude-security) 产品和您现有的扫描器一起：
 
-| 阶段      | 工具                                                                          | 覆盖内容                        |
-| :------ | :-------------------------------------------------------------------------- | :-------------------------- |
-| 在会话中    | [Security guidance 插件](/docs/zh-CN/security-guidance)                            | Claude 编写的代码中的常见漏洞，在同一会话中修复 |
-| 按需，单次扫描 | [`/security-review`](/docs/zh-CN/commands#all-commands)                          | 当前分支上的一次性安全扫描               |
-| 按需，深度扫描 | Claude Security 插件                                                          | 存储库或差异的多代理扫描，具有独立审查的发现和补丁   |
-| 在拉取请求上  | [Code Review](/docs/zh-CN/code-review)，Team 和 Enterprise 计划                      | 具有完整代码库上下文的多代理正确性和安全审查      |
-| 托管      | [Claude Security](https://claude.com/product/claude-security)，Enterprise 计划 | 监控连接存储库的托管扫描                |
-| 在 CI 中  | 您现有的静态分析和依赖扫描器                                                              | 特定于语言的规则、供应链检查和策略执行         |
+| 阶段 | 工具 | 覆盖内容 |
+| :- | :- | :- |
+| 在会话中 | [Security guidance 插件](/docs/zh-CN/security-guidance) | Claude 编写的代码中的常见漏洞，在同一会话中修复 |
+| 按需，单次扫描 | [`/security-review`](/docs/zh-CN/commands#all-commands) | 当前分支上的一次性安全扫描 |
+| 按需，深度扫描 | Claude Security 插件 | 存储库或差异的多代理扫描，具有独立审查的发现和补丁 |
+| 在拉取请求上 | [Code Review](/docs/zh-CN/code-review)，Team 和 Enterprise 计划 | 具有完整代码库上下文的多代理正确性和安全审查 |
+| 托管 | [Claude Security](https://claude.com/product/claude-security)，Enterprise 计划 | 监控连接存储库的托管扫描 |
+| 在 CI 中 | 您现有的静态分析和依赖扫描器 | 特定于语言的规则、供应链检查和策略执行 |
 
 该插件不会替换您现有的源代码安全工具。与静态分析、依赖扫描和代码审查一起运行它：它以人类安全研究人员的方式推理您的代码，这补充了这些工具提供的确定性检查。
 
@@ -155,9 +154,9 @@ Claude Security 插件是深度扫描层，在纵深防御堆栈中，与[securi
   故障排除
 </h2>
 
-**`/claude-security` 菜单打开时出现 Python 警告。** 该插件需要 `python3` 3.9.6 或更高版本在您的 `PATH` 上。当它根本找不到 `python3` 时，菜单警告 Claude Security 在安装一个之前不会工作；当您的 `PATH` 上的第一个 `python3` 较旧时，警告会命名它找到的版本。安装 Python 3，或在您的 `PATH` 上放置一个较新的 `python3`，然后启动一个新会话。
+**`/claude-security` 菜单打开时出现 Python 警告。** 该插件需要 `python3` 3.9 或更高版本在您的 `PATH` 上。当它根本找不到 `python3` 时，菜单警告 Claude Security 在安装一个之前不会工作；当您的 `PATH` 上的第一个 `python3` 较旧时，警告会命名它找到的版本。安装 Python 3，或在您的 `PATH` 上放置一个较新的 `python3`，然后启动一个新会话。
 
-**使用 Fable 5 时，您可能会看到 "Fable 5's safeguards flagged this message"。** 由于 Fable 5 的网络安全安全分类器，某些模型活动将被阻止并自动降级到 Opus。这是预期的，扫描应该仍然成功完成。
+**使用 Fable 模型扫描时，您可能会看到"safeguards flagged this message"通知。** 该消息命名模型，例如"Fable 5.1's safeguards flagged this message"。Fable 的网络安全安全分类器标记某些请求，Claude Code 通过[自动模型回退](/docs/zh-CN/model-config#automatic-model-fallback)在 Opus 模型上重新运行标记的请求。这是预期的，扫描应该仍然成功完成。
 
 <h2 id="related-resources">
   相关资源
@@ -169,4 +168,4 @@ Claude Security 插件是深度扫描层，在纵深防御堆栈中，与[securi
 * [Code Review](/docs/zh-CN/code-review)：设置 PR 时间多代理审查
 * [Claude Security](https://claude.com/product/claude-security)：监控连接存储库的托管服务
 * [Claude Code 安全](/docs/zh-CN/security)：Claude Code 如何处理信任、权限和保护措施
-* [发现和安装插件](/docs/zh-CN/discover-plugins#official-anthropic-marketplace)：浏览其他官方插件
+* [安装和管理插件](/docs/zh-CN/plugins/install)：从官方市场查找和安装其他插件

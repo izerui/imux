@@ -24,7 +24,7 @@ from a compatible local project, then return to the Sites view to manage it.
 
 Use Sites in ChatGPT on the web to create and manage hosted sites. Select
 **More** > **Sites**, or go directly to
-[chatgpt.com/sites](https://chatgpt.com/sites), to find Sites you've created.
+[Sites in ChatGPT](https://chatgpt.com/sites), to find Sites you've created.
 
 </ContentModeSwitch>
 
@@ -85,25 +85,37 @@ context would help.
 
 </ContentModeSwitch>
 
+
+
+    {"For help creating and managing Sites, see "}
+    [{"Creating and managing ChatGPT Sites"}](https://help.openai.com/articles/20001339)
+    {" in the Help Center."}
+  
+
+
 ## Prompt Sites for common tasks
 
 For a new website, dashboard, or internal tool, include the audience, core
 experience, and required information:
 
+
+
+**Prompt:**
+
 ```text
-Build a project request dashboard for my operations team. Let team members
-submit requests, see who owns each one, update the status, and filter the list.
-Require people to sign in with their workspace account, and keep the request
-data saved between visits.
+Build a project request dashboard for my operations team. Let team members submit requests, see who owns each one, update the status, and filter the list. Require people to sign in with their workspace account, and keep the request data saved between visits.
 ```
 
 <ContentModeSwitch group="codex-surface" ids="app,cli,ide">
 
 For an existing project, ask Sites to prepare and publish the current app:
 
+
+
+**Prompt:**
+
 ```text
-Deploy this project with Sites. Check whether it is compatible, make any
-required changes, and give me the deployment URL.
+Deploy this project with Sites. Check whether it is compatible, make any required changes, and give me the deployment URL.
 ```
 
 </ContentModeSwitch>
@@ -111,9 +123,12 @@ required changes, and give me the deployment URL.
 When a site needs durable application data or uploaded files, say so in the
 request:
 
+
+
+**Prompt:**
+
 ```text
-Add player scores and avatar uploads to this game. Keep the scores and uploaded
-avatars between visits.
+Add player scores and avatar uploads to this game. Keep the scores and uploaded avatars between visits.
 ```
 
 Browse the [Sites showcase](https://developers.openai.com/showcase) for deployed internal apps and the full
@@ -134,7 +149,7 @@ Open **Sites**, find the Site, then select **More actions** > **Analytics**.
 
 <ContentModeSwitch group="codex-surface" id="web">
 
-Go to [chatgpt.com/sites](https://chatgpt.com/sites), find the Site, then select
+Go to [Sites in ChatGPT](https://chatgpt.com/sites), find the Site, then select
 **More actions** > **Analytics**.
 
 </ContentModeSwitch>
@@ -164,6 +179,10 @@ use ChatGPT identity to enforce their sharing settings.
 
 Ask Sites to add the sign-in experience:
 
+
+
+**Prompt:**
+
 ```text
 Add Sign in with ChatGPT to this public Site. Keep the Site available to signed-out visitors. Show a Sign in with ChatGPT action when someone is signed out. After they sign in, greet them with their full name when available, or their email address otherwise. Add a Sign out action, and keep authorization decisions in server-side code.
 ```
@@ -189,6 +208,73 @@ Keep authorization decisions in server-side code, and don't depend on
 name-split headers.
 
 </ToggleSection>
+
+<a id="load-visitor-data-via-plugins"></a>
+
+## Bring user data to your Site with plugins
+
+Use plugins in Sites to build a Site that loads
+data from each Site viewer's own connected apps. For example, an issue dashboard
+can show your assigned issues to you and your teammate's assigned issues to
+them. Each visitor signs in with ChatGPT and chooses which connected accounts
+and access to allow.
+
+Using plugins in Sites requires a workspace where the feature is enabled and a
+  Site that is private to that workspace. Connected features require membership
+  in the Site's workspace and remain subject to each visitor's existing app
+  permissions. Admins can follow [Enable plugin use in
+  Sites](https://learn.chatgpt.com/docs/enterprise/sites#enable-plugin-use-in-sites) to review
+  individual plugin permissions and check tenant restrictions.
+
+### Build a Site with connected data
+
+<WorkflowSteps>
+
+1. Ask ChatGPT Work or Codex to build a Site. Name the plugin connector and what it should do, or ask which plugins are available.
+2. Try the preview with real data. The agent uses your available connections
+   while building and previewing the Site.
+3. Ask the agent to publish the Site for your workspace and
+   share its link with teammates.
+
+</WorkflowSteps>
+
+For example:
+
+
+
+**Prompt:**
+
+```text
+Build a Site using my connected issue tracker that shows issues assigned to me, grouped by priority. Add project filters, links to the original issues, and a Refresh button.
+```
+
+GPT-6 Astra · Medium
+
+You can also build a document finder that links to original documents or a
+project overview that combines tickets and messages.
+
+### Data loading
+
+On page load, Sites reads connected data using the visitor's connection and permissions. Sites manages caching and reloading; ask ChatGPT Work or Codex to add a manual refresh action if needed.
+
+By default, Sites uses a **Load more** action to fetch another page when the connector returns a cursor.
+
+Sites uses `getContext()` to find a plugin's actions. It returns cached tool names, descriptions, and schemas; it doesn't refresh discovery.
+
+### Write to an app
+
+If your Site needs to write to an app, ask for write access. Write actions must be enabled and configured, and require visitor consent and an explicit user action.
+
+### Let visitors choose their connections
+
+To use connected features, a visitor signs in with ChatGPT, reviews the app
+access the Site requests, chooses the connected account and access to allow,
+and returns to the Site. Sharing the Site doesn't grant access to your
+connected accounts. The Site receives data from the apps each visitor allows.
+
+Visitors can continue without granting app access, but features that need it
+won't work. If an app is unavailable, check that it's connected in the right
+workspace and allowed by workspace settings.
 
 ## Understand projects, versions, and deployments
 
@@ -271,6 +357,7 @@ Depending on your account and workspace settings, sharing options can include:
 
 - **Owner and workspace admins**
 - **Selected active users or groups**, where supported
+- **Invited external viewers**, when external invitations are available
 - **Anyone in the workspace**, where supported
 - **Anyone on the internet**, only when public publishing is enabled
 
@@ -285,10 +372,49 @@ controls.
 
 For example:
 
+
+
+**Prompt:**
+
 ```text
-Change this Site's access to everyone in my workspace after showing me the
-current Site and confirming its URL.
+Change this Site's access to everyone in my workspace after showing me the current Site and confirming its URL.
 ```
+
+### Invite people outside your workspace
+
+External invitations let you give named people access to a Site without making
+it public. You can invite viewers outside your workspace, or share a private
+Site from a personal account. The feature is rolling out to Sites users on
+Plus, Pro, Business, and Enterprise plans.
+
+<WorkflowSteps>
+
+1. Open a Site you own and select **Share**.
+2. To keep the Site private, set **Who has access** to **Only those invited**.
+3. Enter the viewer's email address under **Search for people or groups**, or
+   **Enter an email address** for a personal Site, then select the recipient.
+4. Review the audience and the recipient's **Viewer** access, then select
+   **Invite**.
+5. Confirm that the viewer appears in the saved access list. Share the Site's
+   link and ask them to sign in with the account that received access.
+
+</WorkflowSteps>
+
+External viewers can open and use the Site. They don't become workspace
+members or Site editors, and can't edit or publish the Site. The invitation
+grants access to this Site; review its content and connected data before sharing.
+
+In Enterprise, admins manage **Allow members to invite external visitors to
+sites** under **Workspace settings > Permissions & roles**. This permission
+is separate from permission to publish Sites publicly.
+Business workspaces don't have a separate external-invitation permission
+toggle; Sites must be enabled, and the feature must be available to the account.
+If the invitation option is missing, check the selected account, Site
+ownership, workspace permissions, and rollout availability.
+
+To remove a viewer, open the Site's sharing controls and remove their access.
+Also check the remaining audience settings: removing one invitation doesn't
+remove access the person has through public, workspace, or group sharing.
 
 ### Collaborate on a Site
 
@@ -332,7 +458,7 @@ files, and Site content.
 
 <ContentModeSwitch group="codex-surface" id="web">
 
-Go to [chatgpt.com/sites](https://chatgpt.com/sites), find the Site, then select
+Go to [Sites in ChatGPT](https://chatgpt.com/sites), find the Site, then select
 **More actions** > **Settings**.
 
 </ContentModeSwitch>

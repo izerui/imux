@@ -14,4 +14,6 @@
 - `llms-full.txt`：官方英文全量 Markdown 合并文件
 - `zh-CN-missing.txt`：官方目录中暂时没有中文 Markdown 的页面
 
-当前快照同时保留完整中英文资料：172 个中文页面、191 个英文页面，以及官方英文全量 Markdown 合并文件。
+当前快照（2026-09-30）同时保留完整中英文资料：208 个中文页面、209 个英文页面，以及官方英文全量 Markdown 合并文件。索引中的 `claude-tag` 已迁到 claude.com，不再提供 Markdown。
+
+更新：`python3 docs/sync-docs.py claude-code`

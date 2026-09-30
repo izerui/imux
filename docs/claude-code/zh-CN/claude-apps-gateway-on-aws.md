@@ -30,7 +30,7 @@ gateway 在您的网络上作为私有 HTTPS 端点运行，开发人员通过�
 * **Amazon ECR** 存储库用于 gateway 镜像
 * **Amazon RDS for PostgreSQL** 实例在私有子网中，不可公开访问，用于 gateway 的[存储](/docs/zh-CN/claude-apps-gateway-config#store)
 * **AWS Secrets Manager** 机密用于 JWT 签名密钥、OIDC 客户端机密和 Postgres URL
-* **IAM 角色**具有 `bedrock:InvokeModel` 和 `bedrock:InvokeModelWithResponseStream`，作为 ECS 任务角色附加或通过 EKS 上的 IAM Roles for Service Accounts (IRSA) 绑定
+* **IAM 角色**具有 `bedrock:InvokeModel`、`bedrock:InvokeModelWithResponseStream` 和 `bedrock:CountTokens`，作为 ECS 任务角色附加或通过 EKS 上的 IAM Roles for Service Accounts (IRSA) 绑定
 * **内部应用负载均衡器**用于 HTTPS
 
 <h2 id="prerequisites">
@@ -111,7 +111,7 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
       "Version": "2012-10-17",
       "Statement": [{
         "Effect": "Allow",
-        "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:CountTokens"],
         "Resource": [
           "arn:aws:bedrock:${AWS_REGION}:${ACCOUNT_ID}:inference-profile/us.anthropic.*",
           "arn:aws:bedrock:*::foundation-model/anthropic.*"
@@ -220,12 +220,14 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
   <Step title="编写 gateway.yaml">
     `upstreams` 块使用 `auth: {}` 指向 Bedrock，因此 gateway 通过 ECS 上的任务角色或 EKS 上的 IRSA 角色从 AWS 默认凭证链进行身份验证。有关每个字段，请参阅[配置参考](/docs/zh-CN/claude-apps-gateway-config)。
 
-    两个 `listen` 字段取决于什么位于 gateway 前面：
+    两个 `listen` 字段描述什么位于 gateway 前面：
 
-    * `public_url`：在负载均衡器后面需要。gateway 仅从此值构建 IdP `redirect_uri` 和其发现文档，从不从 `X-Forwarded-*` 标头构建。
+    * `public_url`：外部 `https://` 源，对于任何非环回绑定都是必需的；请参阅 [`listen` 参考](/docs/zh-CN/claude-apps-gateway-config#listen)。gateway 仅从此值构建 IdP `redirect_uri` 和其发现文档，从不从 `X-Forwarded-*` 标头构建。
     * `trusted_proxies`：前端的源范围。gateway 仅当 TCP 对等体在此列表中时才遵守 `X-Forwarded-For`，然后遍历链越过受信任的跳跃，因此每 IP 登录速率限制和审计事件记录开发人员 IP 而不是负载均衡器的。
 
     在两个轨道上，前端是内部 ALB，无论是直接创建还是由 AWS Load Balancer Controller 创建，ALB 的节点从它附加到的子网中获取地址，因此将 `trusted_proxies` 设置为这些子网的 CIDR。这将这些子网中的每个主机信任为代理。保持 ALB 的入站源（您的企业 CIDR）不与它们重叠，并且不要与可能通过 `X-Forwarded-For` 欺骗客户端 IP 的不受信任的工作负载共享子网。
+
+    ALB 的客户端端口保留属性 `routing.http.xff_client_port.enabled` 可以保持任一设置：启用时，ALB 将客户端写为 `203.0.113.7:54321` 或 `[2001:db8::1]:54321`，gateway 读取两者并删除端口。
 
     ```yaml gateway.yaml theme={null}
     listen:
@@ -253,6 +255,7 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
 
     store:
       postgres_url: ${GATEWAY_POSTGRES_URL}          # EKS: ${file:/secrets/postgres-url}
+      # readiness_grace_seconds: 300                 # 通过 RDS 故障转移保持通过健康检查
 
     upstreams:
       - provider: bedrock
@@ -331,7 +334,7 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
   <Step title="部署">
     <Tabs>
       <Tab title="ECS Fargate">
-        创建集群和 gateway 的日志组，用于其 stderr，其中包含其审计事件和操作日志。保留是一个单独的调用，没有一个 CloudWatch 会永远保留日志；将 90 天与您的审计保留策略对齐：
+        创建集群和 gateway 的日志组，用于其 stderr，其中包含其审计事件和操作日志。保留期需要通过单独的调用来设置；如果不设置，CloudWatch 会永远保留日志；将 90 天与您的审计保留策略对齐：
 
         ```bash theme={null}
         aws ecs create-cluster --cluster-name claude-gateway
@@ -395,7 +398,9 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
           --query 'TargetGroups[0].TargetGroupArn' --output text)"
         ```
 
-        添加 HTTPS 侦听器并提高空闲超时。`--ssl-policy` 固定现代 TLS 下限，因为省略它会回退到遗留 `ELBSecurityPolicy-2016-08` 默认值，仍然接受 TLS 1.0/1.1。空闲超时对流很重要：ALB 在默认情况下 60 秒无数据后关闭连接，这会在安静期间（例如长提示处理后的第一个令牌之前）切断流：
+        添加 HTTPS 侦听器。`--ssl-policy` 固定现代 TLS 下限，因为省略它会回退到遗留 `ELBSecurityPolicy-2016-08` 默认值，仍然接受 TLS 1.0/1.1。
+
+        ALB 在默认情况下 60 秒无数据后关闭连接。gateway 的保活 ping 保持流在该默认值内，因此提高超时在 ping 节奏上方增加余量；[故障排除](#troubleshooting)行关于丢弃的流涵盖了机制和较旧的 gateway。下面的命令添加侦听器并提高超时：
 
         ```bash theme={null}
         aws elbv2 create-listener --load-balancer-arn "$ALB_ARN" \
@@ -419,7 +424,7 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
           --load-balancers "targetGroupArn=$TG_ARN,containerName=gateway,containerPort=8080"
         ```
 
-        60 秒的宽限期给冷任务时间拉取镜像、连接到存储并在 ECS 开始计算针对部署的失败之前回答其第一个健康检查。目标组对 `GET /readyz` 的健康检查验证存储是否可达，因此无法到达 Postgres 的任务永远不会进入轮换；有关权衡和 `/healthz` 替代方案，请参阅[中断行为](/docs/zh-CN/claude-apps-gateway-deploy#outage-behavior)。
+        60 秒的宽限期给冷任务时间拉取镜像、连接到存储并在 ECS 开始计算针对部署的失败之前回答其第一个健康检查。目标组对 `GET /readyz` 的健康检查验证存储是否可达，因此无法到达 Postgres 的任务永远不会进入轮换。要通过短数据库中断（例如 RDS 故障转移）保持任务通过检查，请按照[中断行为](/docs/zh-CN/claude-apps-gateway-deploy#outage-behavior)中所述设置 `store.readiness_grace_seconds`，其中也涵盖了 `/healthz` 替代方案。
 
         任务在私有子网中运行，没有公共 IP，因此所有出站（到 Bedrock、您的 IdP、Secrets Manager、ECR 和 CloudWatch Logs）都通过 NAT 网关。要将 Bedrock 流量保持在公共路径之外，创建一个 `bedrock-runtime` 接口 VPC 端点并将上游的 `base_url` 指向它，如 [Bedrock 上游参考](/docs/zh-CN/claude-apps-gateway-config#amazon-bedrock)所示；IdP 仍然需要互联网出站。
 
@@ -458,11 +463,11 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
         对于前端，由 AWS Load Balancer Controller 管理的 Ingress 配置内部 ALB。使用以下注解：
 
         * `alb.ingress.kubernetes.io/scheme: internal` 和 `alb.ingress.kubernetes.io/target-type: ip`
-        * `alb.ingress.kubernetes.io/ip-address-type: ipv4`，因此不会为 `/login` [私有网络检查](/docs/zh-CN/claude-apps-gateway#prerequisites)拒绝发布公共范围 AAAA 记录
+        * `alb.ingress.kubernetes.io/ip-address-type: ipv4`，因此不会发布会被 `/login` [私有网络检查](/docs/zh-CN/claude-apps-gateway#prerequisites)拒绝的公共范围 AAAA 记录
         * `alb.ingress.kubernetes.io/inbound-cidrs: <your-corporate-cidr>`，因此控制器管理的前端安全组仅允许您的企业网络而不是其 `0.0.0.0/0` 默认值
         * `alb.ingress.kubernetes.io/certificate-arn` 与 ACM 证书
         * `alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06`，因此侦听器不会回退到接受 TLS 1.0 和 1.1 的遗留默认策略
-        * `alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600`，因此流中 60 秒的数据间隙不会关闭连接
+        * `alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600`，gateway 流式保活上方的余量；请参阅[故障排除](#troubleshooting)
 
         使用 IRSA，AWS SDK 读取投影的服务账户令牌并与 AWS STS 交换它，因此 pod 永远不需要 EC2 实例元数据服务；出站 NetworkPolicy 可能会为 gateway pod 阻止 `169.254.169.254`。下面[故障排除](#troubleshooting)中的节点跳跃限制问题仅适用于跳过 IRSA 并依赖节点实例角色的集群。
       </Tab>
@@ -493,16 +498,16 @@ export PRIVATE_SUBNETS="<subnet-id-a> <subnet-id-b>"
 
 有关 gateway 启动和登录错误，请参阅平台无关的[故障排除表](/docs/zh-CN/claude-apps-gateway-deploy#troubleshooting)。下面的条目特定于 AWS。
 
-| 症状                                                                                                                                        | 原因                                                                                                                                  | 修复                                                                                                                                                                                                |
-| ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CLI `/login`：`Gateway hosts must be on your organization's private network; <host> resolves to the public (or unrecognized) address <ip>` | gateway 名称解析为至少一个公共地址。双栈内部 ALB 发布公共范围 AAAA 记录，[私有网络检查](/docs/zh-CN/claude-apps-gateway#prerequisites)要求每个解析的地址都是私有的                      | 使用 `--ip-address-type ipv4` 创建 ALB，或提供没有公共 AAAA 记录的单独内部 DNS 名称                                                                                                                                    |
-| 每个 Bedrock 请求返回 502；日志显示 `Could not load credentials from any providers`                                                                  | 任务在没有任务角色的 ECS EC2 启动类型上运行，或 pod 在没有 IRSA 的 EKS 节点上运行，因此凭证来自实例元数据，IMDSv2 的默认跳跃限制 1 在容器内停止。本页上的两个轨道都不受影响：Fargate 任务角色和 IRSA 不使用实例元数据 | 更喜欢任务角色和 IRSA。在实例凭证不可避免的地方，使用 `aws ec2 modify-instance-metadata-options --instance-id <id> --http-put-response-hop-limit 2` 提高跳跃限制；[平台无关表](/docs/zh-CN/claude-apps-gateway-deploy#troubleshooting)涵盖权衡 |
-| Bedrock 请求返回 `403 AccessDeniedException`                                                                                                  | 账户未提交 Anthropic 的一次性用例表单，启动自动 AWS Marketplace 订阅的账户首次调用尚未完成，或任务角色的策略缺少推理配置文件或基础模型 ARN                                               | 从 Bedrock 控制台的模型目录提交用例表单；如果刚刚提交或这是账户的首次调用，请在几分钟后重试。在两个 ARN 系列上授予 `bedrock:InvokeModel` 和 `bedrock:InvokeModelWithResponseStream`。                                                                 |
-| Bedrock 返回 `ValidationException` 说按需吞吐量不受支持                                                                                               | 自定义 `models:` 条目映射到区域仅通过推理配置文件提供的裸基础模型 ID                                                                                           | 改为将模型映射到其跨区域推理配置文件 ID (`us.anthropic.*`)；内置目录已经这样做了                                                                                                                                               |
-| ECS 任务在 gateway 记录任何内容之前以 `ResourceInitializationError` 停止                                                                                | 执行角色无法读取 Secrets Manager 机密，或私有子网没有到 Secrets Manager 或 ECR 的路径                                                                      | 在三个 `gateway-` 机密的 ARN 上向执行角色授予 `secretsmanager:GetSecretValue`，并通过 NAT 网关提供出站，或者没有一个，Secrets Manager、ECR 和 CloudWatch Logs 的接口端点，`awslogs` 驱动程序在同一阶段需要，加上 S3 网关端点                                |
-| Gateway 启动退出，出现 Postgres 连接超时错误                                                                                                           | 数据库安全组不允许 gateway 的安全组在 5432 上，或服务在数据库的 VPC 之外运行；存储在 5 秒后停止等待                                                                       | 在数据库的安全组上允许来自 gateway 安全组的 5432，并在与 DB 子网组相同的 VPC 中运行服务                                                                                                                                           |
-| Gateway 启动退出，出现 Postgres TLS 证书验证错误                                                                                                       | 连接字符串设置 `sslmode=verify-full` 但镜像不信任 RDS CA 包：包未复制到镜像中，或 `NODE_EXTRA_CA_CERTS` 不指向它                                                 | 添加构建步骤的两个 Dockerfile 行，复制包并设置 `NODE_EXTRA_CA_CERTS`，然后重建、在新标签下推送并重新部署                                                                                                                             |
-| 流式响应在安静期间中途下降                                                                                                                             | ALB 空闲超时在默认情况下 60 秒无数据后关闭连接。主动发出令牌的流不受影响；一个安静的流，在长提示处理之前或扩展思考没有流式输出期间，在间隙处被切断                                                       | 通过 `modify-load-balancer-attributes` 或 EKS 上的 `load-balancer-attributes` Ingress 注解将 `idle_timeout.timeout_seconds` 属性设置为 `3600`                                                                  |
+| 症状 | 原因 | 修复 |
+| - | - | - |
+| CLI `/login`：`Gateway hosts must be on your organization's private network; <host> resolves to the public (or unrecognized) address <ip>` | gateway 名称解析为至少一个公共地址。双栈内部 ALB 发布公共范围 AAAA 记录，[私有网络检查](/docs/zh-CN/claude-apps-gateway#prerequisites)要求每个解析的地址都是私有的 | 使用 `--ip-address-type ipv4` 创建 ALB，或提供没有公共 AAAA 记录的单独内部 DNS 名称 |
+| 每个 Bedrock 请求返回 502；日志显示 `Could not load credentials from any providers` | 任务在没有任务角色的 ECS EC2 启动类型上运行，或 pod 在没有 IRSA 的 EKS 节点上运行，因此凭证来自实例元数据，IMDSv2 的默认跳跃限制 1 在容器内停止。本页上的两个轨道都不受影响：Fargate 任务角色和 IRSA 不使用实例元数据 | 更喜欢任务角色和 IRSA。在实例凭证不可避免的地方，使用 `aws ec2 modify-instance-metadata-options --instance-id <id> --http-put-response-hop-limit 2` 提高跳跃限制；[平台无关表](/docs/zh-CN/claude-apps-gateway-deploy#troubleshooting)涵盖权衡 |
+| Bedrock 请求返回 `403 AccessDeniedException` | 账户未提交 Anthropic 的一次性用例表单，启动自动 AWS Marketplace 订阅的账户首次调用尚未完成，或任务角色的策略缺少推理配置文件或基础模型 ARN | 从 Bedrock 控制台的模型目录提交用例表单；如果刚刚提交或这是账户的首次调用，请在几分钟后重试。在两个 ARN 系列上授予 `bedrock:InvokeModel` 和 `bedrock:InvokeModelWithResponseStream`。 |
+| Bedrock 返回 `ValidationException` 说按需吞吐量不受支持 | 自定义 `models:` 条目映射到区域仅通过推理配置文件提供的裸基础模型 ID | 改为将模型映射到其跨区域推理配置文件 ID (`us.anthropic.*`)；内置目录已经这样做了 |
+| ECS 任务在 gateway 记录任何内容之前以 `ResourceInitializationError` 停止 | 执行角色无法读取 Secrets Manager 机密，或私有子网没有到 Secrets Manager 或 ECR 的路径 | 在三个 `gateway-` 机密的 ARN 上向执行角色授予 `secretsmanager:GetSecretValue`，并通过 NAT 网关提供出站，或者没有一个，Secrets Manager、ECR 和 CloudWatch Logs 的接口端点，`awslogs` 驱动程序在同一阶段需要，加上 S3 网关端点 |
+| Gateway 启动退出，出现 Postgres 连接超时错误 | 数据库安全组不允许 gateway 的安全组在 5432 上，或服务在数据库的 VPC 之外运行 | 在数据库的安全组上允许来自 gateway 安全组的 5432，并在与 DB 子网组相同的 VPC 中运行服务 |
+| Gateway 启动退出，出现 Postgres TLS 证书验证错误 | 连接字符串设置 `sslmode=verify-full` 但镜像不信任 RDS CA 包：包未复制到镜像中，或 `NODE_EXTRA_CA_CERTS` 不指向它 | 添加构建步骤的两个 Dockerfile 行，复制包并设置 `NODE_EXTRA_CA_CERTS`，然后重建、在新标签下推送并重新部署 |
+| 流式响应在安静期间中途下降 | v2.1.229 之前的 gateway 在 Bedrock 或 Claude Platform on AWS 上游上在上游安静时不发送任何内容，例如在没有流式输出的扩展思考期间。ALB 在默认情况下 60 秒无数据后关闭连接，因此它在该间隙处切断流。v2.1.229 及更高版本的 gateway 在该超时内保持安静流：在这些上游上，gateway 在大约 15 秒无流数据后发出 SSE `ping` 事件，在 Anthropic API 上游上它中继 API 自己的 ping | 将 gateway 更新到 v2.1.229 或更高版本，或通过 `modify-load-balancer-attributes` 或 EKS 上的 `load-balancer-attributes` Ingress 注解将 `idle_timeout.timeout_seconds` 属性设置为 `3600` |
 
 <h2 id="telemetry">
   遥测
@@ -520,7 +525,7 @@ gateway 本身是经过身份验证的 OTLP 中继。将 [`telemetry.forward_to`
 
 将 `telemetry.forward_to` 指向 OpenTelemetry 收集器，例如 [AWS Distro for OpenTelemetry (ADOT) 收集器](https://aws-otel.github.io/)，并从那里导出到 Amazon CloudWatch、Amazon Managed Service for Prometheus 或任何 OTLP 后端。
 
-将收集器作为其自己的内部服务运行，可通过 `https://` 到达：gateway 仅接受明文 `http://` 用于环回 URL，即使这样其[SSRF 防护](/docs/zh-CN/claude-apps-gateway-deploy#threat-model-summary)默认在发送时阻止环回连接。`http://localhost:4318` 上的边车收集器通过配置验证但不接收流量，导出失败为 `ECONNREFUSED_SSRF` 在 gateway 日志中，除非在 gateway 的环境中设置 `CLAUDE_GATEWAY_ALLOW_LOOPBACK=1`。该变量放松每个操作员配置的 URL 的环回块，不仅仅是遥测，因此更喜欢内部服务模式并为网络以其他方式锁定的任务保留边车加标志设置。
+将收集器作为其自己的内部服务运行，可通过 `https://` 到达；[`telemetry` 参考](/docs/zh-CN/claude-apps-gateway-config#telemetry)涵盖环回异常和 `CLAUDE_GATEWAY_ALLOW_LOOPBACK`。
 
 <h3 id="gateway-logs">
   Gateway 日志

@@ -19,7 +19,7 @@
   检查现有配置
 </h2>
 
-管理员可以通过[托管设置](/docs/zh-CN/settings#settings-files)、设备管理或 [`apiKeyHelper`](#rotate-credentials-with-apikeyhelper) 分发网关地址和凭证，以便 Claude Code 在启动时自动获取，无需您进行任何设置。要检查您的组织是否已这样做：
+管理员可以通过[托管设置](/docs/zh-CN/managed-settings)、设备管理或 [`apiKeyHelper`](#rotate-credentials-with-apikeyhelper) 分发网关地址和凭证，以便 Claude Code 在启动时自动获取，无需您进行任何设置。要检查您的组织是否已这样做：
 
 <Steps>
   <Step title="启动 Claude Code">
@@ -63,11 +63,11 @@
 
 要向网关验证 Claude Code，请在环境变量中设置您的凭证。哪个变量取决于您的网关团队告诉您的内容：
 
-| 在以下位置设置凭证                                               | 使用时机                                         |
-| :------------------------------------------------------ | :------------------------------------------- |
-| `ANTHROPIC_AUTH_TOKEN`                                  | 您的网关团队说"bearer token"或"Authorization header" |
-| `ANTHROPIC_API_KEY`                                     | 您的网关团队说"API key"或"x-api-key"                 |
-| [`apiKeyHelper`](#rotate-credentials-with-apikeyhelper) | 凭证轮换或来自保管库                                   |
+| 在以下位置设置凭证 | 使用时机 |
+| :- | :- |
+| `ANTHROPIC_AUTH_TOKEN` | 您的网关团队说"bearer token"或"Authorization header" |
+| `ANTHROPIC_API_KEY` | 您的网关团队说"API key"或"x-api-key" |
+| [`apiKeyHelper`](#rotate-credentials-with-apikeyhelper) | 凭证轮换或来自保管库 |
 
 如果您没有被告知是哪种类型，请使用 `ANTHROPIC_AUTH_TOKEN`；下面的[验证请求](#verify-the-connection)显示了如何判断您是否需要切换。
 
@@ -101,16 +101,18 @@
   </Tab>
 </Tabs>
 
-Shell 导出仅适用于该终端会话和从它启动的程序；从 dock 或开始菜单启动的编辑器不会看到它们。要使它们在新终端中持续，请将相同的行添加到您的 shell 配置文件，例如 `~/.zshrc`、`~/.bashrc` 或您的 PowerShell `$PROFILE`，或改用设置文件。
+Shell 导出仅适用于该终端会话和从它启动的程序。从 dock 或开始菜单启动的编辑器不会看到它们。要使值在新终端中持续，请将相同的行添加到您的 shell 配置文件，例如 `~/.zshrc`、`~/.bashrc` 或您的 PowerShell `$PROFILE`。
+
+如果您仅在 shell 中导出网关，它不会可靠地到达由[主管程序](/docs/zh-CN/agent-view#how-background-sessions-are-hosted)托管的后台代理；请参阅[每个后台会话如何获取其网关](/docs/zh-CN/agent-view#llm-gateway)。对于后台代理必须始终路由的任何网关，请使用设置文件。
 
 <h4 id="set-in-a-settings-file">
   在设置文件中设置
 </h4>
 
-要使配置在 Claude Code 运行的任何地方应用而不依赖于您的 shell，请在[设置文件](/docs/zh-CN/settings)的 `env` 块中设置变量。设置文件有不同的范围：
+要使配置在 Claude Code 运行的任何地方应用，包括[后台代理](/docs/zh-CN/agent-view#how-background-sessions-are-hosted)，请在[设置文件](/docs/zh-CN/settings)的 `env` 块中设置变量，而不是依赖您的 shell。设置文件有不同的范围：
 
 * `~/.claude/settings.json` 适用于您的所有项目。在 Windows 上，路径是 `%USERPROFILE%\.claude\settings.json`
-* `.claude/settings.local.json` 适用于一个项目。Claude Code 在创建文件时将其添加到您的 gitignore；如果您自己创建它，请首先手动将其添加到您的 gitignore，以便您不会意外提交您的凭证
+* `.claude/settings.local.json` 适用于一个项目。Claude Code 在保存设置时将其添加到您的全局 gitignore；如果您手动创建它或让 Claude 编写它，请首先自己将其添加到您的 gitignore，以便您不会意外提交您的凭证
 
 <Warning>
   不要将凭证放在项目的 `.claude/settings.json` 中。该文件被提交并与克隆存储库的每个人共享。
@@ -138,7 +140,7 @@ Shell 导出仅适用于该终端会话和从它启动的程序；从 dock 或�
 <Tabs>
   <Tab title="Bash or Zsh">
     ```bash theme={null}
-    curl -X POST "$ANTHROPIC_BASE_URL/v1/messages" \
+    curl -sS -w '\n%{http_code}\n' -X POST "$ANTHROPIC_BASE_URL/v1/messages" \
       -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
       -H "anthropic-version: 2023-06-01" \
       -H "content-type: application/json" \
@@ -284,15 +286,15 @@ steps:
   ```
 </CodeGroup>
 
-<h3 id="slack-web-and-remote-control">
-  Slack、网络和远程控制
+<h3 id="slack-cloud-sessions-and-remote-control">
+  Slack、云会话和远程控制
 </h3>
 
-[Slack 中的 Claude Code](/docs/zh-CN/slack) 和[网络上的 Claude Code](/docs/zh-CN/claude-code-on-the-web) 是 Anthropic 托管的产品，始终使用 Anthropic 的 API；它们不是网关部署的一部分。在云会话的环境配置中设置的网关变量不适用。如果您的流量必须保持在网关上，请不要为这些用户启用这些界面。
+[Slack 中的 Claude Code](/docs/zh-CN/slack) 和[云会话](/docs/zh-CN/claude-code-on-the-web)始终使用 Anthropic 的 API；它们不是网关部署的一部分。在云会话的环境配置中设置的网关变量不适用。如果您的流量必须保持在网关上，请不要为这些用户启用这些界面。
 
-[远程控制](/docs/zh-CN/remote-control)和[语音听写](/docs/zh-CN/voice-dictation)都依赖于 claude.ai 身份：远程控制将实时会话与您的账户配对，语音听写到达 claude.ai 转录端点。当 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper` 处于活动状态时，它们不可用。从 v2.1.196 开始，当 `ANTHROPIC_BASE_URL` 指向非 Anthropic 主机时，远程控制也被禁用，因此仅使用 claude.ai 登录是不够的。
+[远程控制](/docs/zh-CN/remote-control)和[语音听写](/docs/zh-CN/voice-dictation)都依赖于 claude.ai 身份：远程控制将实时会话与您的账户配对，语音听写到达 claude.ai 转录端点。当 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper` 处于活动状态时，它们不可用。远程控制在 `ANTHROPIC_BASE_URL` 指向非 Anthropic 主机时也被禁用，因此仅使用 claude.ai 登录是不够的。在 v2.1.196 之前，非 Anthropic 基础 URL 不会阻止远程控制。
 
-要恢复任一功能，请使用 claude.ai 登录并取消设置它检查的网关变量。`claude doctor` 的远程控制部分命名要取消设置的凭证变量。
+要恢复任一功能，请使用 claude.ai 登录并取消设置该功能检查的网关变量。`claude doctor` 的远程控制部分命名当前阻止远程控制的内容。
 
 * 语音听写：取消设置网关凭证
 * 远程控制：取消设置网关凭证和 `ANTHROPIC_BASE_URL`
@@ -333,17 +335,21 @@ steps:
 }
 ```
 
+像这样的路由和租户标头名称计为[需要批准的标头](/docs/zh-CN/server-managed-settings#environment-variables-and-the-approval-dialog)。当标头来自项目设置文件时，Claude Code 在[应用 `env` 值的规则](/docs/zh-CN/settings-reference#when-claude-code-applies-env-values)下应用它们。
+
 <h3 id="add-gateway-models-to-the-model-picker">
   将网关模型添加到模型选择器
 </h3>
 
-模型发现在启动时查询网关的模型列表，并将这些名称添加到 `/model` 选择器中，与内置条目一起。
+启用模型发现后，Claude Code 在启动时查询网关的模型列表，并将这些名称添加到 `/model` 选择器中，与内置条目一起。如果您或您的管理员在 [`modelPicker`](/docs/zh-CN/settings-reference#modelpicker) 排列中设置了 `replaceBuiltInOptions`，Claude Code 也会隐藏发现的名称。它为会话已在使用的模型保留一行。
 
 如果您的网关提供不在 Claude Code 内置列表中的模型名称，并且您想从选择器中选择它们，请启用它。如果内置模型是您使用的，您不需要发现；您的管理员也可能已通过托管设置启用它。
 
-要启用它，请在您的 shell 或 `~/.claude/settings.json` 的 `env` 块中设置 `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`。发现需要 Claude Code v2.1.129 或更高版本。
+要启用它，请在您的 shell 或 `~/.claude/settings.json` 的 `env` 块中设置 `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`。
 
-发现的模型显示为标记为 `From gateway` 的其他 `/model` 条目。要确认发现运行，启动 `claude --debug` 并查找 `[gatewayDiscovery]` 行：成功记录缓存了多少模型，`404`、超时或重定向也记录在那里。有关发现何时运行、它过滤什么以及网关提供的响应格式，请参阅[模型发现参考](/docs/zh-CN/llm-gateway-protocol#model-discovery)。
+发现的模型显示为其他 `/model` 条目。每个条目显示您的网关为模型提供的描述，或在它不提供描述时显示 `From gateway`。
+
+要确认发现运行，启动 `claude --debug` 并在 `~/.claude/debug/<session-id>.txt` 的调试日志中查找 `[gatewayDiscovery]` 行。第一次发现成功时，Claude Code 记录它缓存了多少模型，仅当网关的列表更改时才再次记录。`404`、超时或重定向也会出现在那里。有关发现何时运行、它过滤什么以及网关提供的响应格式，请参阅[模型发现参考](/docs/zh-CN/llm-gateway-protocol#model-discovery)。
 
 <h3 id="rotate-credentials-with-apikeyhelper">
   使用 apiKeyHelper 轮换凭证
@@ -353,7 +359,7 @@ steps:
 
 当凭证按计划过期、来自保管库或 SSO 命令，或您的管理员告诉您配置一个时，使用助手。如果您的凭证是您设置一次的固定字符串，[凭证变量](#set-the-credential-variable)是您需要的全部，您可以跳过本部分。
 
-助手是任何将当前凭证打印到 stdout 的 shell 命令。Claude Code 通过您的系统 shell 运行它，因此在 Windows 上它可以是可执行文件或 PowerShell 调用。编写脚本，使其可执行，并从您的[设置文件](/docs/zh-CN/settings)中的 `apiKeyHelper` 引用它：
+助手是任何将当前凭证打印到 stdout 的 shell 命令。Claude Code 通过您的系统 shell 运行它，因此在 Windows 上它可以是可执行文件或 PowerShell 调用。使命令仅打印凭证，不打印其他内容。在 Claude Code v2.1.227 或更高版本上，与密钥一起打印的横幅或日志行会使[助手失败](/docs/zh-CN/errors#your-apikeyhelper-script-is-failing)。编写脚本，使其可执行，并从您的[设置文件](/docs/zh-CN/settings)中的 `apiKeyHelper` 引用它：
 
 <Tabs>
   <Tab title="Bash or Zsh">
@@ -390,7 +396,9 @@ steps:
   </Tab>
 </Tabs>
 
-Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 时重新运行它。要更改缓存生命周期，请以毫秒为单位设置 `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`，例如 `CLAUDE_CODE_API_KEY_HELPER_TTL_MS=900000` 表示 15 分钟。
+Claude Code 默认缓存助手的输出五分钟，并在缓存生命周期过期后重新运行助手。要更改生命周期，请以毫秒为单位设置 `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`，例如 `CLAUDE_CODE_API_KEY_HELPER_TTL_MS=900000` 表示 15 分钟。
+
+有关 Claude Code 重新运行助手的其他情况，请参阅 [`apiKeyHelper`](/docs/zh-CN/settings-reference#apikeyhelper)。
 
 助手的值在 `Authorization` 和 `x-api-key` 标头中都发送，因此它适用于您的网关读取的任何标头。
 
@@ -398,7 +406,9 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
   关闭网关路径外的流量
 </h3>
 
-网关承载模型请求，但 Claude Code 也向网关路径外发送非必要的后台流量，发送到 Anthropic 和第三方服务（如 GitHub）：版本检查、遥测、错误报告、发行说明和类似请求。在仅允许出站到网关的网络上，这些请求失败，并可能在您的出站监控中显示为被阻止的连接。
+网关承载模型请求，但 Claude Code 也向网关路径外发送非必要的后台流量，发送到 Anthropic 和第三方服务（如 GitHub）：版本检查、遥测、发行说明和类似请求。在仅允许出站到网关的网络上，这些请求失败，并可能在您的出站监控中显示为被阻止的连接。
+
+Claude Code 仅在请求发送到凭证所属的主机时才将凭证附加到遥测或使用指标请求。当 `ANTHROPIC_BASE_URL` 指向网关时，Claude Code 将其遥测事件发送到 Anthropic，不使用您的网关凭证。使用[凭证变量](#set-the-credential-variable)或 `apiKeyHelper` 时，Claude Code 不会向控制台[分析仪表板](/docs/zh-CN/analytics#access-analytics-for-api-customers)报告使用指标。在 v2.1.246 之前，Claude Code 可能会将网关凭证附加到发往 Anthropic 主机的遥测和使用指标请求；模型请求始终使用网关期望的凭证发送到网关。
 
 要关闭该流量，请在与网关变量相同的 shell 导出或设置文件 `env` 块中设置 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`：
 
@@ -420,7 +430,7 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
 
 * 它禁用自动更新，因此请为另一个更新路径做计划，例如您的包管理器或托管分发。
 * 它抑制 [fast mode](/docs/zh-CN/fast-mode) 可用性检查。除非之前的检查已在机器上启用了 fast mode，否则 `/fast` 报告 fast mode 不可用。
-* 它关闭[网关模型发现](#add-gateway-models-to-the-model-picker)，尽管发现查询网关本身。之前发现的模型从本地缓存保持可用，但列表不会刷新。
+* 它不影响[网关模型发现](#add-gateway-models-to-the-model-picker)，它仅查询您的网关。在 v2.1.257 之前，该变量也停止了发现刷新，因此选择器保留了之前缓存的列表。
 * WebFetch 工具的[域安全检查](/docs/zh-CN/data-usage#webfetch-domain-safety-check)不受影响，仍然调用 `api.anthropic.com`。如果您的网络阻止该主机，请在[设置](/docs/zh-CN/settings)中使用 `skipWebFetchPreflight: true` 单独关闭它。
 * 对于每个遥测流及控制它的变量，请参阅[遥测服务](/docs/zh-CN/data-usage#telemetry-services)。
 
@@ -428,15 +438,20 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
   通过网关路由到云提供商
 </h3>
 
-这些配置使用提供商特定的基础 URL 变量代替 `ANTHROPIC_BASE_URL` 将 Claude Code 指向通过网关的云提供商。Amazon Bedrock 和 Google Cloud 的 Agent Platform 网关接受这些提供商的本机请求格式；Microsoft Foundry 和 AWS 上的 Claude Platform 网关接受 Anthropic Messages 格式，仅在哪个基础 URL 变量到达它们方面有所不同。
+这些配置使用提供商特定的基础 URL 变量代替 `ANTHROPIC_BASE_URL` 将 Claude Code 指向通过网关的云提供商。Amazon Bedrock 和 Google Cloud 的 Agent Platform 网关接受这些提供商的本机请求格式；Microsoft Foundry 和 AWS 上的 Claude Platform 网关接受 Anthropic Messages 格式。在 Amazon Bedrock 和 Google Cloud 的 Agent Platform 路由上，Claude Code 也将它发送的 beta 标头和请求字段限制为该提供商接受的集合。有关您的网关在每条路由上接收的内容，请参阅[网关兼容性指南](/docs/zh-CN/llm-gateway-protocol)。
 
 仅在您的网关团队特别命名 Amazon Bedrock、Google Cloud 的 Agent Platform、Microsoft Foundry 或 AWS 上的 Claude Platform 时使用一个。如果上面的[验证请求](#verify-the-connection)返回 JSON，您可以跳过本部分。
 
-为您的网关团队命名的提供商设置块。跳过身份验证变量告诉 Claude Code 不要使用提供商凭证签署请求，因为网关持有这些。如果网关需要自己的令牌，请在块后添加 `ANTHROPIC_AUTH_TOKEN`，除了 Microsoft Foundry，它使用 `ANTHROPIC_FOUNDRY_API_KEY`，如所示。期望持有者令牌的 Microsoft Foundry 网关可以改用 [`ANTHROPIC_FOUNDRY_AUTH_TOKEN`](/docs/zh-CN/env-vars)；当两者都设置时，它优先于 `ANTHROPIC_FOUNDRY_API_KEY`。`ANTHROPIC_FOUNDRY_AUTH_TOKEN` 需要 Claude Code v2.1.203 或更高版本。
+为您的网关团队命名的提供商设置块。Amazon Bedrock、Google Cloud 的 Agent Platform 和 AWS 上的 Claude Platform 块中的跳过身份验证变量告诉 Claude Code 不要使用提供商凭证签署请求，因为网关持有这些。如果网关也需要自己的令牌，您放置它的位置取决于提供商：
+
+* **Amazon Bedrock、Google Cloud 的 Agent Platform 或 AWS 上的 Claude Platform**：在块后添加 `ANTHROPIC_AUTH_TOKEN`。Claude Code 将其作为 `Authorization: Bearer` 标头发送到网关。对于不同方案或标头中的凭证，请改用 [`ANTHROPIC_CUSTOM_HEADERS`](#send-additional-headers)。无论如何都保持跳过身份验证变量设置，因为没有它，Claude Code 会删除 `ANTHROPIC_AUTH_TOKEN`、[`apiKeyHelper`](#rotate-credentials-with-apikeyhelper) 或 `ANTHROPIC_CUSTOM_HEADERS` 会添加的任何 `Authorization` 标头。
+* **Microsoft Foundry**：使用 `ANTHROPIC_FOUNDRY_API_KEY`，如[其块](#microsoft-foundry)所示
 
 <h4 id="amazon-bedrock">
   Amazon Bedrock
 </h4>
+
+当网关发出自己的凭证时，将 `AWS_BEARER_TOKEN_BEDROCK` 保留为未设置。如果您设置它，Claude Code 会将该 [Amazon Bedrock API 密钥](/docs/zh-CN/amazon-bedrock#2-configure-aws-credentials)作为 `Authorization` 标头发送，而不是您的网关令牌，即使设置了 `CLAUDE_CODE_SKIP_BEDROCK_AUTH`。
 
 <Tabs>
   <Tab title="Bash or Zsh">
@@ -460,6 +475,8 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
   Google Cloud 的 Agent Platform
 </h4>
 
+将项目 ID 和区域替换为您自己的值。Claude Code 在它发送到网关的每个请求的路径中包含两者：
+
 <Tabs>
   <Tab title="Bash or Zsh">
     ```bash theme={null}
@@ -481,6 +498,12 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
     ```
   </Tab>
 </Tabs>
+
+该块涵盖路由和身份验证。来自 [Agent Platform 设置](/docs/zh-CN/google-vertex-ai#4-configure-claude-code)的区域覆盖和模型固定也通过网关应用：
+
+* **按模型区域**：如果您的网关从 `CLOUD_ML_REGION` 以外的区域提供某些模型，请为每个设置匹配的 `VERTEX_REGION_CLAUDE_*` 变量，例如 `VERTEX_REGION_CLAUDE_4_6_SONNET=europe-west1`。[环境变量参考](/docs/zh-CN/env-vars)列出了确切的名称。
+* **模型版本**：如[固定模型版本](/docs/zh-CN/google-vertex-ai#5-pin-model-versions)中所示，固定 `ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`。设置 `ANTHROPIC_DEFAULT_HAIKU_MODEL` 也会将后台任务（如会话标题）移动到该模型，该部分解释了哪个模型在其他情况下运行它们。
+* **模型功能**：如果您固定您的 Claude Code 版本不识别的模型 ID，功能（如努力级别或扩展思考）可能在其上保持禁用。使用 [`ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES`](/docs/zh-CN/model-config#customize-pinned-model-display-and-capabilities) 及其 Sonnet 和 Haiku 对应项声明模型支持的内容。
 
 <h4 id="microsoft-foundry">
   Microsoft Foundry
@@ -534,28 +557,46 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
   </Tab>
 </Tabs>
 
+<h4 id="confirm-the-provider-route">
+  确认提供商路由
+</h4>
+
+从您设置块的 shell 启动 `claude` 并运行 `/status`。使用 Amazon Bedrock 块，**Status** 标签页显示如下行：
+
+```text theme={null}
+API provider: Amazon Bedrock
+Bedrock base URL: https://llm-gateway.example.com/bedrock
+AWS auth skipped
+```
+
+其他块在其提供商的名称下产生相同的行，例如 Google Cloud 的 Agent Platform 的 `Vertex base URL` 和 `GCP auth skipped`；Microsoft Foundry 块仅在您设置 `CLAUDE_CODE_SKIP_FOUNDRY_AUTH` 时显示跳过身份验证行。如果您也通过公司代理路由，`Proxy` 行显示代理 URL。如果基础 URL 行缺失，该变量没有到达会话。
+
 <h2 id="troubleshoot-gateway-errors">
   故障排除网关错误
 </h2>
 
 这些是通过网关运行 Claude Code 时最常见的错误，包括网关端的原因和修复：
 
-| 错误                                                                                                                                            | 原因                                                                                                                                              | 修复                                                                                                                                                                                                             |
-| :-------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 启动警告命名两个凭证源并以 `auth may not work as expected` 结尾。较旧的版本显示 `Auth conflict: Both a token (SOURCE) and an API key (SOURCE) are set` 代替。           | 网关凭证和保存的登录都处于活动状态；变量用于请求，但过时的登录可能导致意外的身份验证行为                                                                                                    | 取消设置变量以使用保存的登录，或运行 `/logout` 以使用网关凭证                                                                                                                                                                           |
-| `401` 错误命名无效或无法识别的令牌                                                                                                                          | 凭证不是网关颁发的，或它处于网关不读取的标头中                                                                                                                         | 确认变量与[凭证表](#set-the-credential-variable)中的凭证类型匹配，如果凭证被撤销，请在网关处重新生成密钥                                                                                                                                           |
-| `Your apiKeyHelper script is failing`                                                                                                         | [`apiKeyHelper`](/docs/zh-CN/settings#available-settings) 设置中的命令以错误退出、超时或未打印任何内容，因此请求携带占位符密钥                                                         | 直接运行该命令以查看失败原因，如果报告会话过期，请使用您的凭证提供商重新身份验证；请参阅[错误参考](/docs/zh-CN/errors#your-apikeyhelper-script-is-failing)                                                                                                          |
-| `Unable to connect to API (ConnectionRefused)`，或来自 npm 安装的 `(ECONNREFUSED)`，通常在 Claude Code [使用退避重试](/docs/zh-CN/errors#automatic-retries)时的静默暂停之后 | 没有任何东西在基础 URL 处应答：地址错误，或 VPN 或防火墙阻止了网关的路径                                                                                                       | 运行上面的 [curl 测试](#verify-the-connection)，它会立即因相同原因失败，并与您的网关团队确认 URL 和网络路径                                                                                                                                       |
-| `API returned an empty or malformed response (HTTP 200)`                                                                                      | 网关或中间代理返回了非 API 响应，通常是 HTML 错误或登录页面                                                                                                             | 使用上面的 [curl 请求](#verify-the-connection)测试；修复返回非 JSON 的网关路由                                                                                                                                                     |
-| `400` 错误命名 `context_management`、`Extra inputs are not permitted` 或其他无法识别的字段                                                                   | 网关将请求转发到上游，该上游拒绝 Claude Code 发送到 Anthropic 格式端点的字段                                                                                              | 设置 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，它抑制大多数预发布字段；请参阅[功能传递](/docs/zh-CN/llm-gateway-protocol#feature-pass-through)。某些 beta 不受此标志限制；对于那些，设置匹配的 `CLAUDE_CODE_USE_*` 提供商变量，以便 Claude Code 仅发送该提供商接受的内容         |
-| `400` 错误命名 `thinking` 或 `adaptive`，例如 `Input tag 'adaptive' found`                                                                            | 上游模型构建不接受自适应推理，Claude Code 为 Claude 4.6 及更高版本的模型请求                                                                                              | 升级网关的上游。在 Opus 4.6 和 Sonnet 4.6 上，`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` 代替有效。[模型配置](/docs/zh-CN/model-config)能力变量仅适用于提供商配置，例如 `CLAUDE_CODE_USE_BEDROCK` 和 `CLAUDE_CODE_USE_VERTEX`，不在 `ANTHROPIC_BASE_URL` 网关后面 |
-| `400` 错误声明网关自己的措辞中的上下文或令牌限制，例如 `ContextWindowExceededError` 或 `prompt token count of N exceeds the limit of M`                                | 网关强制执行比模型的本机窗口更小的上下文，并重写上游错误，因此自动紧凑和重试（与 Anthropic 的 `prompt is too long` 措辞匹配）不会触发                                                             | 运行 `/compact` 以恢复会话。要防止它，请将 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 设置为网关的限制；该值被限制在至少 100,000 令牌和最多模型的上下文窗口，因此低于 100,000 的网关限制无法匹配，`/compact` 仍然是那里的恢复。还要将 `CLAUDE_CODE_MAX_OUTPUT_TOKENS` 设置为低于网关模型的输出限制            |
-| 模型从 `/model` 选择器中缺失                                                                                                                           | 网关模型名称不在 Claude Code 的内置列表中                                                                                                                     | 启用[网关模型发现](#add-gateway-models-to-the-model-picker)或使用[模型配置](/docs/zh-CN/model-config)变量添加名称                                                                                                                        |
-| Claude Code 要求您登录，即使 [curl 测试](#verify-the-connection)成功                                                                                      | CLI 没有自己的凭证：可达的基础 URL 不是一个，项目的 `.claude/settings.json` 或 `.claude/settings.local.json` 中的 `env` 块仅在第一次运行向导和信任提示之后应用                             | 在 Claude Code 在首次运行设置之前读取的某处设置 `ANTHROPIC_AUTH_TOKEN`：shell 导出、`~/.claude/settings.json` 中的 `env` 块或托管设置                                                                                                       |
-| `ANTHROPIC_API_KEY` 已设置但被忽略，没有提示                                                                                                              | 密钥需要在交互会话中进行一次性批准，之前拒绝的密钥被忽略而不再询问                                                                                                               | 在 `/config` 下使用 `Use custom API key` 选项启用它                                                                                                                                                                     |
-| `This machine's managed settings require a first-party login`                                                                                 | 托管设置包括 `forceLoginMethod` 或 `forceLoginOrgUUID`，在 Claude Code v2.1.146 及更高版本上不能与 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper` 共存 | 您的管理员必须从托管设置中删除 `forceLoginMethod` 和 `forceLoginOrgUUID` 以使用网关凭证，或删除网关凭证以使用第一方登录。两者不能组合                                                                                                                        |
-| `403` 带有 HTML 正文，例如 `403 Forbidden`，当网关自己的日志显示没有收到请求时                                                                                         | 网关前面的 Web 应用防火墙或反向代理在请求到达网关之前阻止了请求正文。Claude Code 提示包括 XML 样式标签和与跨站脚本正文规则匹配的源代码，因此短 curl 测试通过而实际会话不通过                                            | 从请求正文检查中豁免网关的 `/v1/messages` 路径。在 AWS WAF 上这是 `CrossSiteScripting_Body` 托管规则；在带有 ModSecurity 的 nginx 上它是等效的 OWASP CRS 正文规则                                                                                     |
-| 证书或 TLS 错误，例如 `SSL certificate verification failed` 或 `Self-signed certificate detected`，当 [curl 测试](#verify-the-connection)成功时               | Claude Code 的运行时不信任 `curl` 使用的相同证书颁发机构。常见于企业 TLS 检查代理后面                                                                                         | 将 `NODE_EXTRA_CA_CERTS` 设置为 CA 包路径；请参阅 [CA 证书存储](/docs/zh-CN/network-config#ca-certificate-store)                                                                                                                   |
+| 错误 | 原因 | 修复 |
+| :- | :- | :- |
+| 启动警告命名两个凭证源并以 `auth may not work as expected` 结尾。较旧的版本显示 `Auth conflict: Both a token (SOURCE) and an API key (SOURCE) are set` 代替。 | 网关凭证和保存的登录都处于活动状态；变量用于请求，但过时的登录可能导致意外的身份验证行为 | 取消设置变量以使用保存的登录，或运行 `/logout` 以使用网关凭证 |
+| `401` 错误命名无效或无法识别的令牌 | 凭证不是网关颁发的，或它处于网关不读取的标头中 | 确认变量与[凭证表](#set-the-credential-variable)中的凭证类型匹配，如果凭证被撤销，请在网关处重新生成密钥 |
+| `Your apiKeyHelper script is failing`，或在非交互模式下 stderr 上的 `apiKeyHelper failed:` | [`apiKeyHelper`](/docs/zh-CN/settings-reference#apikeyhelper) 设置中的命令未生成可用的密钥，因此请求携带占位符密钥 | 直接运行该命令以查看失败原因，如果报告会话过期，请使用您的凭证提供商重新身份验证；请参阅[错误参考](/docs/zh-CN/errors#your-apikeyhelper-script-is-failing) |
+| 当没有任何东西在地址处应答时 `Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)`，或当主机名无法解析时 `Can't reach the API server — check your internet or DNS (ENOTFOUND)`，通常在 Claude Code [使用退避重试](/docs/zh-CN/errors#automatic-retries)时的静默暂停之后。括号中的代码会变化；[Unable to connect to API](/docs/zh-CN/errors#unable-to-connect-to-api) 涵盖代码拼写和较早的措辞 | 没有任何东西在基础 URL 处应答：地址错误，或 VPN 或防火墙阻止了网关的路径 | 运行上面的 [curl 测试](#verify-the-connection)，它会立即因相同原因失败，并与您的网关团队确认 URL 和网络路径 |
+| `API returned an empty or malformed response (HTTP 200)` | 网关或中间代理返回了非 API 响应，通常是 HTML 错误或登录页面 | 使用上面的 [curl 请求](#verify-the-connection)测试；修复返回非 Claude API 响应的网关路由。[错误参考](/docs/zh-CN/errors#api-returned-an-empty-or-malformed-response)解释了消息报告的详细信息 |
+| `400` 错误命名 `context_management`、`Extra inputs are not permitted` 或其他无法识别的字段 | 网关将请求转发到上游，该上游拒绝 Claude Code 发送到 Anthropic 格式端点的字段 | 设置 `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`，它抑制大多数预发布字段；请参阅[功能传递](/docs/zh-CN/llm-gateway-protocol#feature-pass-through)。某些 beta 不受此标志限制；对于那些，设置匹配的 `CLAUDE_CODE_USE_*` 提供商变量，以便 Claude Code 仅发送该提供商接受的内容 |
+| `400` 错误命名 `thinking` 或 `adaptive`，例如 `Input tag 'adaptive' found` | 上游模型构建不接受自适应推理，Claude Code 为 Claude 4.6 及更高版本的模型请求 | 升级网关的上游。在 Opus 4.6 和 Sonnet 4.6 上，`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` 代替有效。[模型配置](/docs/zh-CN/model-config)能力变量仅适用于提供商配置，例如 `CLAUDE_CODE_USE_BEDROCK` 和 `CLAUDE_CODE_USE_VERTEX`，不在 `ANTHROPIC_BASE_URL` 网关后面 |
+| `400` 错误声明网关自己的措辞中的上下文或令牌限制，例如 `ContextWindowExceededError` 或 `prompt token count of N exceeds the limit of M` | 网关强制执行比模型的本机窗口更小的上下文，并重写上游错误，因此 Claude Code 不会将其识别为[过长错误](/docs/zh-CN/errors#prompt-is-too-long)，也不会自动紧凑和重试 | 运行 `/compact` 以恢复会话。要防止它，请将 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` 设置为网关的限制；Claude Code 将该值限制在至少 100,000 令牌和最多模型的上下文窗口，因此您无法匹配低于 100,000 的网关限制，`/compact` 仍然是那里的恢复。还要将 `CLAUDE_CODE_MAX_OUTPUT_TOKENS` 设置为低于网关模型的输出限制 |
+| `400` 错误在每个请求上，在网关自己的措辞中拒绝工具的输入架构或其 `pattern`，在 Claude Code v2.1.265 到 v2.1.267 上 | 在这些版本的逐步推出中，[Artifact 工具](/docs/zh-CN/artifacts#availability)架构携带带有 `\p{...}` Unicode 字符类的正则表达式。Anthropic API 接受它，但检查每个工具架构的 `pattern` 的网关或上游使用其自己的正则表达式引擎拒绝整个请求 | 更新到 v2.1.268 或更高版本，它不发送正则表达式。在受影响的版本上，[关闭 artifacts](/docs/zh-CN/artifacts#disable-artifacts)，这会从请求中删除工具及其架构 |
+| `400` 错误在每个请求上，在网关自己的措辞中拒绝无法识别的工具类型，例如 `Input tag 'advisor_20260301'`，在 Claude Code v2.1.275 上 | 在该版本的逐步推出中，即使关闭了 advisor，请求也会携带 [advisor 工具](/docs/zh-CN/advisor)条目。Anthropic API 接受它，但验证工具类型的网关或上游拒绝整个请求；一个[按原样转发请求正文字段](/docs/zh-CN/llm-gateway-protocol#forward-as-open-lists)的网关不受影响地通过它。该条目是一个不携带任何对话内容的声明 | 更新到 v2.1.276 或更高版本，除非您打开 advisor，否则它不会在 `ANTHROPIC_BASE_URL` 网关后面发送该条目。在 v2.1.275 上，设置 [`CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1`](/docs/zh-CN/env-vars)，这会从请求中删除该条目 |
+| 模型从 `/model` 选择器中缺失 | 网关模型名称不在 Claude Code 的内置列表中，或 Claude Code 显示替换内置选项的 [`modelPicker`](/docs/zh-CN/settings-reference#modelpicker) 阵容 | 启用[网关模型发现](#add-gateway-models-to-the-model-picker)或使用[模型配置](/docs/zh-CN/model-config)变量添加名称。如果 Claude Code 显示替换 `modelPicker` 阵容，请将网关模型添加到其中，或在托管设置提供时要求您的管理员添加它们 |
+| `/fast` 报告 `Fast mode unavailable due to network connectivity issues`，而推理请求有效 | [快速模式](/docs/zh-CN/fast-mode)可用性检查直接转到 `api.anthropic.com`，不遵循 `ANTHROPIC_BASE_URL`，因此阻止的直接出口会导致检查失败。当检查呈现来自 `ANTHROPIC_API_KEY` 或 `apiKeyHelper` 的网关颁发的密钥且 Anthropic 拒绝它时，在开放网络上也会出现相同的消息 | 如果出口被阻止，请将 `api.anthropic.com` 列入白名单，或设置跳过变量；对于被拒绝的网关密钥，只有跳过变量有帮助。请参阅[在代理和 LLM 网关后面使用快速模式](/docs/zh-CN/fast-mode#use-fast-mode-behind-proxies-and-llm-gateways) |
+| `/fast` 在使用 `ANTHROPIC_AUTH_TOKEN` 进行身份验证的会话中报告 `Fast mode has been disabled by your organization`，即使组织已启用快速模式 | 可用性检查需要 claude.ai 登录或 Anthropic API 密钥；仅使用持有者令牌，Claude Code 会将快速模式视为已禁用，而不发送检查 | 设置 `CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK=1`；请参阅[在代理和 LLM 网关后面使用快速模式](/docs/zh-CN/fast-mode#use-fast-mode-behind-proxies-and-llm-gateways) |
+| Claude Code 要求您登录，即使 [curl 测试](#verify-the-connection)成功 | CLI 没有自己的凭证：可达的基础 URL 不是一个，在交互会话中，项目的 `.claude/settings.json` 或 `.claude/settings.local.json` 中的 `env` 块仅在首次运行向导和[信任提示](/docs/zh-CN/permissions#what-runs-before-you-trust-a-folder)之后应用 | 在 Claude Code 在首次运行设置之前读取的某处设置 `ANTHROPIC_AUTH_TOKEN`：shell 导出、`~/.claude/settings.json` 中的 `env` 块或托管设置 |
+| `ANTHROPIC_API_KEY` 已设置但被忽略，没有提示 | 密钥需要在交互会话中进行一次性批准，之前拒绝的密钥被忽略而不再询问 | 在 `/config` 下使用 `Use custom API key` 选项启用它 |
+| `This machine's managed settings require a first-party login`，或当托管设置将 `forceLoginMethod` 设置为 `"gateway"` 或也设置 `forceLoginGatewayUrl` 时 [`Administrator policy requires a Cloud gateway sign-in`](/docs/zh-CN/errors#administrator-policy-requires-a-cloud-gateway-sign-in) | 托管设置包括 `forceLoginMethod` 或 `forceLoginOrgUUID`，不能与 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper` 共存 | 您的管理员必须从托管设置中删除 `forceLoginMethod`、`forceLoginOrgUUID` 和 `forceLoginGatewayUrl` 以使用网关凭证，或删除网关凭证以使用托管设置要求的登录。两者不能组合 |
+| `403` 带有 HTML 正文，例如 `403 Forbidden`，当网关自己的日志显示没有收到请求时 | 网关前面的 Web 应用防火墙或反向代理在请求到达网关之前阻止了请求正文。Claude Code 提示包括 XML 样式标签和与跨站脚本正文规则匹配的源代码，因此短 curl 测试通过而实际会话不通过 | 从请求正文检查中豁免网关的 `/v1/messages` 路径。在 AWS WAF 上这是 `CrossSiteScripting_Body` 托管规则；在带有 ModSecurity 的 nginx 上它是等效的 OWASP CRS 正文规则 |
+| 证书或 TLS 错误，例如 `SSL certificate verification failed` 或 `Self-signed certificate detected`，当 [curl 测试](#verify-the-connection)成功时 | Claude Code 的运行时不信任 `curl` 使用的相同证书颁发机构。常见于企业 TLS 检查代理后面 | 将 `NODE_EXTRA_CA_CERTS` 设置为 CA 包路径；请参阅 [CA 证书存储](/docs/zh-CN/network-config#ca-certificate-store) |
 
 如果 Claude Code 在删除网关配置后重复提示您登录，原因通常是凭证存储而不是网关；请参阅[身份验证错误](/docs/zh-CN/errors#authentication-errors)。
 
@@ -565,6 +606,6 @@ Claude Code 默认缓存助手的输出五分钟，并在请求返回 HTTP 401 �
 
 * [LLM 网关概述](/docs/zh-CN/llm-gateway)：什么是网关以及它如何与 claude.ai 订阅交互
 * [为您的组织推出 LLM 网关](/docs/zh-CN/llm-gateway-rollout)：部署和分发网关配置的面向管理员的检查清单
-* [网关协议参考](/docs/zh-CN/llm-gateway-protocol)：Claude Code 发送到网关的内容，包括网关必须转发的标头和字段
+* [网关兼容性指南](/docs/zh-CN/llm-gateway-protocol)：Claude Code 发送到网关的内容，包括网关必须转发的标头和字段
 * [设置](/docs/zh-CN/settings)：设置文件的位置以及如何读取 `env` 块
 * [身份验证](/docs/zh-CN/authentication)：凭证变量、`apiKeyHelper` 和 OAuth 登录如何交互

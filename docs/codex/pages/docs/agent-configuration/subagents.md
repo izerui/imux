@@ -162,27 +162,31 @@ reasoning effort. To balance intelligence, speed, and price for each task,
 request a specific model or reasoning effort in your prompt,
 configure `[agents]` defaults in `config.toml`, or set `model` and
 `model_reasoning_effort` directly in the custom agent file.
-For example, use `gpt-5.6-terra` for fast scans or a higher-effort `gpt-5.6` configuration for more demanding reasoning.
+For example, use `gpt-6-luna` for fast scans or a higher-effort `gpt-6.1-sol` configuration for more demanding reasoning.
 
 For most tasks in Codex, start with 
-  `gpt-5.6`. Use 
-  `gpt-5.6-terra` when you want
-  a faster, lower-cost option for lighter subagent work.
+  `gpt-6.1-sol` when your
+  signed-in account or workspace has [access](https://learn.chatgpt.com/docs/models#gpt-6.1-sol).
+  Otherwise, choose a model available to you. Use `gpt-6-luna` when you want a
+  faster, lower-cost option for lighter subagent work.
 
 ### Model choice
 
-- **`gpt-5.6`**: Start here for demanding agents. It's strongest for ambiguous, multi-step work that needs planning, tool use, validation, and follow-through across a larger context.
-- **`gpt-5.6-terra`**: Use for agents that favor speed and efficiency over depth, such as exploration, read-heavy scans, large-file review, or processing supporting documents. It works well for parallel workers that return distilled results to the main agent.
-- **`gpt-5.6-luna`**: Use for fast, narrowly scoped agents handling clear, repeatable, or high-volume work.
+- **`gpt-6.1-sol`**: Start here for demanding agents. Use it for ambiguous, multi-step work that needs planning, tool use, validation, and follow-through across a larger context.
+- **`gpt-6-luna`**: Use for fast, narrowly scoped agents handling clear, repeatable, or high-volume work.
 
 ### Reasoning effort (`model_reasoning_effort`)
+
+For GPT-6.1 Sol, use a reasoning effort supported by your client and selected
+model. For explicit model settings, start with `high` for GPT-6 Luna or `low`
+for GPT-6 Astra. Adjust for the task using a level the selected model supports.
 
 - **`ultra`**: Use for the deepest reasoning when the selected model supports
   it.
 - **`max`** and **`xhigh`**: Use for especially demanding reasoning when the
   selected model supports these levels.
 - **`high`**: Use when an agent needs to trace complex logic, check assumptions, or work through edge cases (for example, reviewer or security-focused agents).
-- **`medium`**: A balanced default for most agents.
+- **`medium`**: Balances speed and depth.
 - **`low`**: Use when the task is straightforward and speed matters most.
 
 Higher reasoning effort increases response time and token usage, but it can improve quality for complex work. For details, see [Models](https://learn.chatgpt.com/docs/models), [Config basics](https://learn.chatgpt.com/docs/config-file/config-basic), and [Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference).
@@ -400,6 +404,10 @@ The best custom agents are narrow and opinionated. Give each one clear job, a
 tool surface that matches that job, and instructions that keep it from
 drifting into adjacent work.
 
+The examples use [GPT-6.1 Sol](https://learn.chatgpt.com/docs/models#gpt-6.1-sol) where your signed-in
+account or workspace has access. If it isn't available, choose a model you can
+use.
+
 #### Example 1: PR review
 
 This pattern splits review across three focused custom agents:
@@ -420,8 +428,8 @@ max_concurrent_threads_per_session = 8
 ```toml
 name = "pr_explorer"
 description = "Read-only codebase explorer for gathering evidence before changes are proposed."
-model = "gpt-5.3-codex-spark"
-model_reasoning_effort = "medium"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
 Stay in exploration mode.
@@ -435,8 +443,8 @@ Prefer fast search and targeted file reads over broad scans.
 ```toml
 name = "reviewer"
 description = "PR reviewer focused on correctness, security, and missing tests."
-model = "gpt-5.6-terra"
-model_reasoning_effort = "high"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """
 Review code like an owner.
@@ -445,13 +453,14 @@ Lead with concrete findings, include reproduction steps when possible, and avoid
 """
 ```
 
+
 `.codex/agents/docs-researcher.toml`:
 
 ```toml
 name = "docs_researcher"
 description = "Documentation specialist that uses the docs MCP server to verify APIs and framework behavior."
-model = "gpt-5.6-luna"
-model_reasoning_effort = "medium"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
 Use the docs MCP server to confirm APIs, options, and version-specific behavior.
@@ -485,8 +494,8 @@ max_concurrent_threads_per_session = 6
 ```toml
 name = "code_mapper"
 description = "Read-only codebase explorer for locating the relevant frontend and backend code paths."
-model = "gpt-5.6-luna"
-model_reasoning_effort = "medium"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """
 Map the code that owns the failing UI flow.
@@ -499,27 +508,27 @@ Identify entry points, state transitions, and likely files before the worker sta
 ```toml
 name = "browser_debugger"
 description = "UI debugger that uses browser tooling to reproduce issues and capture evidence."
-model = "gpt-5.6-terra"
-model_reasoning_effort = "high"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 Reproduce the issue in the browser, capture exact steps, and report what the UI actually does.
 Use browser tooling for screenshots, console output, and network evidence.
 Do not edit application code.
 """
-
 [mcp_servers.chrome_devtools]
 url = "http://localhost:3000/mcp"
 startup_timeout_sec = 20
 ```
+
 
 `.codex/agents/ui-fixer.toml`:
 
 ```toml
 name = "ui_fixer"
 description = "Implementation-focused agent for small, targeted fixes after the issue is understood."
-model = "gpt-5.3-codex-spark"
-model_reasoning_effort = "medium"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
 developer_instructions = """
 Own the fix once the issue is reproduced.
 Make the smallest defensible change, keep unrelated files untouched, and validate only the behavior you changed.

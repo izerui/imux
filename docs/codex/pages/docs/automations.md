@@ -7,6 +7,19 @@ eligible plans can also run tasks from supported app events. Review active,
 paused, and completed tasks and recent runs in **Scheduled**. You can combine
 scheduled tasks with [skills](https://learn.chatgpt.com/docs/build-skills) for more complex work.
 
+**For workspace admins:** See [Set up and manage teams and Team Tasks](https://learn.chatgpt.com/docs/enterprise/teams) for recurring or event-triggered work shared by a team, including permissions and connection setup. Team Tasks run in the cloud through the team's service account and configured app connections.
+
+<ContentModeSwitch group="codex-surface" ids="app,web">
+
+GPT-5.5 retires from ChatGPT, ChatGPT Work, and Codex on all plans on
+October 14, 2026. Review scheduled tasks that use GPT-5.5 and choose an
+available replacement before that date. For Codex with ChatGPT sign-in, choose
+`gpt-6-sol` (GPT-6 Sol) if your plan and workspace provide access. The OpenAI API isn't
+affected. See [GPT-5.5 retirement](https://learn.chatgpt.com/docs/models#gpt-55-retirement) for
+plan-specific replacements.
+
+</ContentModeSwitch>
+
 
 
 [Watch: Schedule tasks with ChatGPT](https://www.youtube.com/watch?v=CToxp125mhc)
@@ -139,15 +152,8 @@ project directory.
 You can also leave the model and reasoning effort on their default settings, or
 choose them explicitly if you want more control over how the scheduled task runs.
 
-If a scheduled task uses `gpt-5.4` or `gpt-5.4-mini` with ChatGPT sign-in,
-update it before those models retire on August 31, 2026. Replace `gpt-5.4` with
-`gpt-5.6-terra` and `gpt-5.4-mini` with `gpt-5.6-luna`.
-
-
-
-> Illustration: ChatGPT composer ready to create a scheduled task with 5.6 Sol Extended selected.
-
-
+If a scheduled task uses a retired model, update it to an available replacement.
+See [model migration guidance](https://learn.chatgpt.com/docs/models#deprecated-codex-models).
 
 Scheduled tasks run unattended with your default sandbox settings. Start with the
 narrowest access that lets the task succeed, and grant network or broader file
@@ -160,12 +166,6 @@ app sidebar.
 
 The **Scheduled** view acts as your inbox. Scheduled task runs with findings
 appear there, and an unread indicator shows when a run needs your attention.
-
-
-
-> Illustration: Scheduled tasks page with All, Active, and Paused filters and three scheduled tasks.
-
-
 
 Standalone scheduled tasks start a new chat for each scheduled run and report
 results in **Scheduled**. Use them when each run should be independent or when one

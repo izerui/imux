@@ -20,14 +20,14 @@ Claude Code 可以在多种隔离环境中运行，从轻量级的按命令沙�
 
 下表中的前两种方法在主机操作系统上运行，不使用容器。其余方法将 Claude Code 放在容器或虚拟机内。
 
-| 方法                                                | 隔离的内容                                   | 需要 Docker | 设置工作量                      |
-| :------------------------------------------------ | :-------------------------------------- | :-------- | :------------------------- |
-| [Sandboxed Bash tool](#sandboxed-bash-tool)       | Bash 命令及其子进程                            | 否         | macOS 上最少；Linux 和 WSL2 上较少 |
-| [Sandbox runtime](#sandbox-runtime)               | 整个 Claude Code 进程，包括文件工具、MCP 服务器和 hooks | 否         | 较少                         |
-| [Dev container](#dev-containers)                  | 完整开发环境                                  | 是         | 中等                         |
-| [Custom container](#custom-container)             | 完整开发环境                                  | 是         | 中等到高                       |
-| [Virtual machine](#virtual-machine)               | 完整操作系统                                  | 否         | 高                          |
-| [Claude Code on the web](#claude-code-on-the-web) | 完整操作系统，由 Anthropic 托管                   | 否         | 无；需要 Claude 订阅和 GitHub     |
+| 方法 | 隔离的内容 | 需要 Docker | 设置工作量 |
+| :- | :- | :- | :- |
+| [Sandboxed Bash tool](#sandboxed-bash-tool) | Bash、PowerShell 和 Monitor 命令及其子进程 | 否 | macOS 上最少；Linux 和 WSL2 上较少 |
+| [Sandbox runtime](#sandbox-runtime) | 整个 Claude Code 进程，包括文件工具、MCP 服务器和 hooks | 否 | 较少 |
+| [Dev container](#dev-containers) | 完整开发环境 | 是 | 中等 |
+| [Custom container](#custom-container) | 完整开发环境 | 是 | 中等到高 |
+| [Virtual machine](#virtual-machine) | 完整操作系统 | 否 | 高 |
+| [Cloud sessions](#cloud-sessions) | 完整操作系统，由 Anthropic 托管 | 否 | 无；需要 Claude 订阅和已连接的 GitHub 账户，除非您使用 `claude --cloud` 启动 |
 
 [Sandboxed Bash tool](/docs/zh-CN/sandboxing) 内置于 Claude Code 中，仅限制 Bash 命令。内置文件工具、MCP 服务器和 hooks 仍直接在您的主机上运行。表中的所有其他方法都将整个 Claude Code 进程放在隔离边界内，因此文件工具、MCP 服务器和 hooks 也受到限制。
 
@@ -43,16 +43,16 @@ Claude Code 可以在多种隔离环境中运行，从轻量级的按命令沙�
 
 将您的目标与下面的一行匹配，然后阅读随后的详细部分。
 
-| 您想要                                                      | 开始使用                                                                                          |
-| :------------------------------------------------------- | :-------------------------------------------------------------------------------------------- |
-| 在您自己的机器上日常工作期间减少权限提示                                     | [sandboxed Bash tool](/docs/zh-CN/sandboxing)，使用 `/sandbox` 启用                                     |
-| 让 Claude 使用 `--dangerously-skip-permissions` 或自动模式无人值守工作 | 预配置的 [dev container](/docs/zh-CN/devcontainer)、任何容器或虚拟机，或 [sandbox runtime](#sandbox-runtime)      |
-| 隔离 MCP 服务器和 hooks 以及 Bash，不使用 Docker                     | sandbox runtime                                                                               |
-| 在不受信任的存储库上工作                                             | 专用虚拟机，或 [Claude Code on the web](/docs/zh-CN/claude-code-on-the-web)（如果您有 Claude 订阅和连接的 GitHub 账户） |
-| 在团队中标准化沙箱环境                                              | 预配置的 [dev container](/docs/zh-CN/devcontainer)，复制到您的存储库中                                           |
-| 从没有本地设置的设备使用 Claude Code                                 | [Claude Code on the web](/docs/zh-CN/claude-code-on-the-web)，需要 Claude 订阅和连接的 GitHub 账户            |
-| 为组织中的每个开发人员要求隔离                                          | [在整个组织中强制实施隔离](#enforce-isolation-across-an-organization)                                     |
-| 在本机 Windows 主机上工作                                        | 容器或虚拟机，或在 WSL2 内运行 Bash 沙箱                                                                    |
+| 您想要 | 开始使用 |
+| :- | :- |
+| 在您自己的机器上日常工作期间减少权限提示 | [sandboxed Bash tool](/docs/zh-CN/sandboxing)，使用 `/sandbox` 启用 |
+| 让 Claude 使用 `--dangerously-skip-permissions` 或自动模式无人值守工作 | 预配置的 [dev container](/docs/zh-CN/devcontainer)、任何容器或虚拟机，或 [sandbox runtime](#sandbox-runtime) |
+| 隔离 MCP 服务器和 hooks 以及 Bash，不使用 Docker | sandbox runtime |
+| 在不受信任的存储库上工作 | 专用虚拟机，或 [cloud session](/docs/zh-CN/claude-code-on-the-web)（如果您有 Claude 订阅）；使用 `claude --cloud` 启动时不需要 GitHub |
+| 在团队中标准化沙箱环境 | 预配置的 [dev container](/docs/zh-CN/devcontainer)，复制到您的存储库中 |
+| 从没有本地设置的设备使用 Claude Code | [cloud session](/docs/zh-CN/claude-code-on-the-web)，需要 Claude 订阅和连接的 GitHub 账户 |
+| 为组织中的每个开发人员要求隔离 | [在整个组织中强制实施隔离](#enforce-isolation-across-an-organization) |
+| 在本机 Windows 主机上工作 | 容器或虚拟机，或在 WSL2 内运行 Bash 沙箱 |
 
 <h3 id="how-isolation-relates-to-permission-modes">
   隔离与权限模式的关系
@@ -60,11 +60,13 @@ Claude Code 可以在多种隔离环境中运行，从轻量级的按命令沙�
 
 [Permission modes](/docs/zh-CN/permission-modes) 决定工具调用是否运行以及是否首先提示您。隔离限制命令运行后可以访问的内容。两者协同工作：当权限模式允许操作在不询问您的情况下运行时，隔离边界限制这些操作可以到达的内容。
 
-当您传递 `--dangerously-skip-permissions` 时，Claude 在不首先询问您的情况下行动；您仅会被提示显式 [ask rules](/docs/zh-CN/permissions#manage-permissions)、连接器工具 [您的组织设置为 `ask`](/docs/zh-CN/mcp#organization-controls-on-connector-tools)、标记为 [`requiresUserInteraction`](/docs/zh-CN/mcp#require-approval-for-a-specific-tool) 的 MCP 工具，以及针对 `/` 或您的主目录的删除。没有提示来捕捉错误，您选择的隔离边界是保护您的系统的东西。始终在容器、虚拟机或 [sandbox runtime](#sandbox-runtime) 内运行 `--dangerously-skip-permissions` 会话，以便文件工具、MCP 服务器和 hooks 也在边界内。
+当您传递 `--dangerously-skip-permissions` 时，Claude 在不首先询问您的情况下行动。[actions no mode auto-approves](/docs/zh-CN/permission-modes#actions-no-mode-auto-approves) 仍然适用。
 
-[Auto mode](/docs/zh-CN/permission-modes#eliminate-prompts-with-auto-mode) 用审查操作的分类器替换提示，并阻止超出请求范围、针对无法识别的基础设施或似乎由 Claude 读取的恶意内容驱动的操作。分类器是按操作控制，而不是隔离边界，因此隔离边界仍然为无人值守运行添加纵深防御，并且不像 `--dangerously-skip-permissions` 那样是必需的。
+没有提示来捕捉错误，您选择的隔离边界是保护您的系统的东西。始终在容器、虚拟机或 [sandbox runtime](#sandbox-runtime) 内运行 `--dangerously-skip-permissions` 会话，以便文件工具、MCP 服务器和 hooks 也在边界内。在 Linux 和 macOS 上，当以 root 用户身份运行时，Claude Code 拒绝使用此标志启动，因此请以非 root 用户身份运行容器、虚拟机或 sandbox runtime。
 
-[sandboxed Bash tool](#sandboxed-bash-tool) 本身仅限制 Bash，因此对于任一模式的完全无人值守运行都不足够。您可以分层方法：在容器或虚拟机内运行沙箱化 Bash 工具可在外部环境边界之上为您提供操作系统级命令限制。有关 Bash 沙箱本身如何与权限规则和模式交互的信息，请参阅 [How sandboxing relates to permissions and permission modes](/docs/zh-CN/sandboxing#how-sandboxing-relates-to-permissions-and-permission-modes)。
+[Auto mode](/docs/zh-CN/permission-modes#eliminate-prompts-with-auto-mode) 用审查操作的分类器替换提示。分类器是按操作控制，而不是隔离边界，因此隔离边界仍然为无人值守运行添加纵深防御，并且不像 `--dangerously-skip-permissions` 那样是必需的。
+
+[sandboxed Bash tool](#sandboxed-bash-tool) 本身仅限制 shell 命令，因此对于任一模式的完全无人值守运行都不足够。您可以分层方法：在容器或虚拟机内运行沙箱化 Bash 工具可在外部环境边界之上为您提供操作系统级命令限制。有关 Bash 沙箱本身如何与权限规则和权限模式交互的信息，请参阅 [How sandboxing relates to permissions and permission modes](/docs/zh-CN/sandboxing#how-sandboxing-relates-to-permissions-and-permission-modes)。
 
 <h2 id="sandboxed-bash-tool">
   Sandboxed Bash tool
@@ -74,14 +76,14 @@ Claude Code 可以在多种隔离环境中运行，从轻量级的按命令沙�
   此选项不支持本机 Windows。在 Windows 主机上，使用 WSL2 或下面的容器或虚拟机方法之一。
 </Note>
 
-Sandboxed Bash tool 内置于 Claude Code 中。它使用操作系统原语来限制 Claude 运行的每个 Bash 命令的文件系统和网络访问：Seatbelt（内置 macOS 沙箱）和 Linux 和 WSL2 上的 [bubblewrap](https://github.com/containers/bubblewrap)。默认情况下，它允许写入工作目录，并在命令首次需要新网络域时提示。
+Sandboxed Bash tool 内置于 Claude Code 中。它使用操作系统原语来限制 Claude 运行的每个 Bash、PowerShell 或 Monitor 命令的文件系统和网络访问。
 
-使用 `/sandbox` 命令启用它。[Sandboxing](/docs/zh-CN/sandboxing) 指南涵盖批准模式、默认边界以及如何扩大或缩小它。
+运行 `/sandbox` 命令打开沙箱面板并选择一个模式。[Sandboxing](/docs/zh-CN/sandboxing) 指南涵盖批准模式、默认边界以及如何扩大或缩小它。
 
 按命令沙箱不涵盖会话中运行的所有内容：
 
 * 其他 [built-in tools](/docs/zh-CN/tools-reference)（如 Read、Edit 和 WebFetch）在 Claude Code 进程内运行，不会生成任意代码。[Permission rules](/docs/zh-CN/permissions) 用于路径或域来控制它们。
-* [MCP](/docs/zh-CN/mcp) 服务器和 hooks 是在主机上无约束运行的单独进程。
+* [MCP](/docs/zh-CN/mcp) 服务器和 [command hooks](/docs/zh-CN/hooks#command-hook-fields) 是在主机上无约束运行的单独进程。
 
 要将内置工具、MCP 服务器和 hooks 都放在一个操作系统边界后面，请在 [sandbox runtime](#sandbox-runtime)、[dev container](#dev-containers) 或 [custom container](#custom-container) 内运行整个 Claude Code 进程。
 
@@ -89,9 +91,34 @@ Sandboxed Bash tool 内置于 Claude Code 中。它使用操作系统原语来�
   Sandbox runtime
 </h2>
 
-[`@anthropic-ai/sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime) 包将整个进程包装在内置 Bash 沙箱使用的相同 Seatbelt 或 bubblewrap 隔离中。通过它运行 Claude Code 会限制会话中的每个工具、hook 和 MCP 服务器，而不仅仅是 Bash。运行时是测试版研究预览，其配置格式可能会随着包的发展而改变。
+[`@anthropic-ai/sandbox-runtime`](https://github.com/anthropic-experimental/sandbox-runtime) 包将整个进程包装在内置 Bash 沙箱使用的相同 Seatbelt 或 bubblewrap 隔离中。通过它运行 Claude Code 会限制会话中的每个工具、hook 和 MCP 服务器，而不仅仅是 Bash 命令。运行时是测试版研究预览，其配置格式可能会随着包的发展而改变。
 
-运行时默认拒绝所有写入和网络访问，因此在通过它启动 Claude Code 之前配置它。在 `~/.srt-settings.json` 中，或您使用 `--settings` 传递的文件中，至少允许写入您的项目目录和 Claude Code 的配置路径 `~/.claude` 和 `~/.claude.json`。允许您的会话需要的网络域，包括 `api.anthropic.com` 或您配置的提供商的端点。有关完整的配置架构，请参阅包 [README](https://github.com/anthropic-experimental/sandbox-runtime)。
+本部分涵盖您配置的内容以及运行时自身强制执行的内容。有关在 Agent SDK 应用程序中部署运行时，请参阅[安全部署指南](/docs/zh-CN/agent-sdk/secure-deployment#sandbox-runtime)。
+
+<h3 id="set-up-and-launch-the-runtime">
+  设置和启动运行时
+</h3>
+
+在 Linux 和 WSL2 上，运行时依赖于与内置沙箱相同的 `bubblewrap` 和 `socat` 包，加上 `ripgrep`，Claude Code 捆绑了它，但独立运行时从您的 PATH 中解析。按照[设置 Linux 和 WSL2](/docs/zh-CN/sandboxing#set-up-linux-and-wsl2) 中的说明安装 `bubblewrap` 和 `socat`，以及从您的发行版包管理器安装 `ripgrep`。在 macOS 上，您不需要任何额外的包。运行时在那里使用内置的 Seatbelt 沙箱。
+
+默认情况下，运行时拒绝网络访问并将写入限制在一小组内置运行时路径，因此在通过它启动 Claude Code 之前配置它。将您的配置放在 `~/.srt-settings.json` 中，或在您使用 `--settings` 传递的文件中。包 [README](https://github.com/anthropic-experimental/sandbox-runtime) 记录了完整的配置架构。
+
+至少允许写入访问：
+
+* 您的项目目录。
+* Claude Code 的配置路径 `~/.claude` 和 `~/.claude.json`。
+* `/tmp`，Claude Code 在其中写入运行时文件。
+
+允许您的会话需要的网络域：
+
+* `api.anthropic.com`，或您配置的提供商的端点。在第三方提供商上，也保留 `api.anthropic.com`：WebFetch 域安全检查默认仍会调用它，除非您设置 `skipWebFetchPreflight: true`。
+* `claude.ai` 和 `platform.claude.com`，[OAuth 登录和令牌刷新](/docs/zh-CN/network-config#network-access-requirements)需要这些。使用 API 密钥进行身份验证的运行可以删除这两个。
+
+在 Linux 和 WSL2 上，运行时仅对已存在的路径应用写入授权。在全新环境中，在首次启动前创建 Claude Code 的配置路径：
+
+```bash theme={null}
+mkdir -p ~/.claude && { [ -f ~/.claude.json ] || echo '{}' > ~/.claude.json; }
+```
 
 配置文件就位后，使用 `npx` 启动 Claude Code 并传递 `claude` 作为要包装的命令：
 
@@ -100,6 +127,27 @@ npx @anthropic-ai/sandbox-runtime claude
 ```
 
 Claude Code 在沙箱内启动，具有您配置的文件系统和网络边界。相同的命令适用于沙箱化独立 MCP 服务器或其他辅助进程。
+
+<h3 id="what-the-runtime-blocks-on-its-own">
+  运行时自身阻止的内容
+</h3>
+
+运行时在没有您任何配置的情况下阻止最高风险的写入：
+
+* `denyWrite` 优先于 `allowWrite`。
+* 在项目根目录，运行时拒绝 `.git/hooks`，拒绝 `.git/config` 除非您设置 `filesystem.allowGitConfig: true`，并拒绝 `.mcp.json`、`.claude/commands`、`.claude/agents` 和 shell 启动文件。
+* 在 macOS 上，这些拒绝在写入发生时被检查，因此它们也涵盖嵌套文件和在会话期间创建的存储库。
+* 在 Linux 和 WSL2 上，运行时在启动时构建拒绝列表一次。它可靠地涵盖项目根目录，对当时存在的嵌套副本进行最佳努力的浅层扫描，并不涵盖会话稍后创建的任何内容，例如 `git init`、`git clone` 或脚手架。README 的 `mandatoryDenySearchDepth` 部分描述了扫描的确切语义。
+* 没有有效的 `~/.srt-settings.json`，运行时仍然启动，阻止网络访问，并将写入限制在内置运行时路径，例如 `/tmp/claude`、`~/.npm/_logs` 和 `~/.claude/debug`。不要将干净的启动作为您的设置已加载的证明。
+* 当您传递 `--settings` 时，如果文件加载失败，运行时拒绝启动。
+
+您的写入授权仍然包括 Claude Code 加载配置的其他路径，因此使用 `denyWrite` 拒绝这些路径。可以写入它们的沙箱化会话可以持久化 hook、权限规则或 MCP 服务器，这些在您下次启动 Claude Code 时以未沙箱化的方式运行。
+
+<h3 id="after-unattended-runs">
+  无人值守运行后
+</h3>
+
+审查您保持可写的路径。在 Linux 和 WSL2 上，也审查会话创建的任何内容。
 
 <h2 id="dev-containers">
   Dev containers
@@ -123,25 +171,25 @@ Claude Code 存储库发布了一个 [example dev container](/docs/zh-CN/devcont
   Virtual machine
 </h2>
 
-专用虚拟机提供最强的分离，具有自己的内核，在云或 microVM 部署中，还有自己的虚拟化硬件。选项包括云实例、本地虚拟机管理程序和 microVM（如 Firecracker）。
+专用虚拟机提供最强的分离，具有自己的内核，在云或 microVM 部署中，还有自己的虚拟化硬件。选项包括云实例、本地虚拟机管理程序和 microVM（如 Firecracker）。当您评估不受信任的代码、您的安全策略要求代理和主机之间的内核级分离，或没有主机级方法满足您的合规要求时，使用此方法。
 
-当您评估不受信任的代码、您的安全策略要求代理和主机之间的内核级分离，或没有主机级方法满足您的合规要求时，使用此方法。Docker Desktop 的 [sandboxes feature](https://docs.docker.com/ai/sandboxes/) 提供了一个具有自己的 Docker 守护程序和工作区同步的 microVM，可以在已经拥有 Docker Desktop 的主机上运行 Claude Code。
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) 提供了一个具有自己的 Docker 守护程序和工作区同步的 microVM，可以在任何安装了 Docker Sandboxes 的主机上运行 Claude Code。它是来自 Docker 的免费独立产品，不需要 Docker Desktop。
 
-<h2 id="claude-code-on-the-web">
-  Claude Code on the web
+<h2 id="cloud-sessions">
+  云会话
 </h2>
 
-[Claude Code on the web](/docs/zh-CN/claude-code-on-the-web) 在隔离的、由 Anthropic 管理的虚拟机中运行每个会话。网络代理强制执行默认允许列表，单独的代理在沙箱外保存您的 GitHub 令牌，同时在其内部为存储库访问发出作用域凭据。
+[云会话](/docs/zh-CN/claude-code-on-the-web)在隔离的、由 Anthropic 管理的虚拟机中运行。网络代理强制执行默认允许列表，单独的代理在沙箱外保存您的 GitHub 令牌，同时在其内部为存储库访问发出作用域凭据。您的组织路由到[自托管环境](/docs/zh-CN/self-hosted-environments)的会话在您配置的基础设施上运行，其中隔离、出站控制和 git 凭据是您部署的责任。
 
-当您想要完整的虚拟机隔离而无需自己配置基础设施，或当您从没有本地开发环境的设备委派任务时，使用此方法。它需要 Claude 订阅和连接的 GitHub 账户，会话从 GitHub 克隆您的存储库。有关计划可用性和 GitHub 身份验证选项，请参阅 [Claude Code on the web](/docs/zh-CN/claude-code-on-the-web)。
+当您想要完整的虚拟机隔离而无需自己配置基础设施，或当您从没有本地开发环境的设备委派任务时，使用此方法。它需要 Claude 订阅。除非您从 CLI 启动，否则您还需要一个连接的 GitHub 账户，以便沙箱可以克隆您的存储库。当您使用 `--cloud` 从 CLI 启动时，Claude Code 可以[捆绑并上传您的本地存储库](/docs/zh-CN/claude-code-on-the-web#send-local-repositories-without-github)。有关计划可用性和 GitHub 身份验证选项，请参阅[在云中使用 Claude Code](/docs/zh-CN/claude-code-on-the-web)。
 
 <h2 id="enforce-isolation-across-an-organization">
   在整个组织中强制实施隔离
 </h2>
 
-个别开发人员可以选择上述任何方法。组织可以强制实施什么，以及使用哪些工具，取决于方法：
+个别开发人员可以选择本页面上的任何沙箱方法。组织可以强制实施什么，以及使用哪些工具，取决于该方法：
 
-* **Built-in Bash sandbox**：Claude Code 强制实施的唯一方法。通过 [managed settings](/docs/zh-CN/settings#settings-files) 传递 `sandbox` 设置密钥，可以是由您的 MDM 管理的文件，也可以通过 Claude.ai 上的 [server-managed settings](/docs/zh-CN/server-managed-settings)。有关要部署的密钥以及如何防止开发人员扩大策略，请参阅 [Enforce sandboxing with managed settings](/docs/zh-CN/sandboxing#enforce-sandboxing-with-managed-settings)。
+* **Built-in Bash sandbox**：Claude Code 强制实施的唯一方法。通过 [managed settings](/docs/zh-CN/managed-settings#delivery-mechanisms) 传递 `sandbox` 设置密钥，可以是由您的 MDM 管理的文件，也可以通过 Claude.ai 上的 [server-managed settings](/docs/zh-CN/server-managed-settings)。有关要部署的密钥以及如何防止开发人员扩大策略，请参阅 [Enforce sandboxing with managed settings](/docs/zh-CN/sandboxing#enforce-sandboxing-with-managed-settings)。
 * **Dev containers**：将 [example dev container](/docs/zh-CN/devcontainer) 提交到您的存储库以在团队中标准化环境。这是一个约定而不是强制边界，因为 Claude Code 不需要容器。如果开发人员不应该能够在其外部运行 Claude Code，请使用您组织的设备管理或软件允许列表工具强制实施。
 * **Custom containers and VMs**：通过批准的镜像分发 Claude Code，并使用您组织的设备管理或软件允许列表工具防止在其外部安装。
 
@@ -155,4 +203,4 @@ Claude Code 存储库发布了一个 [example dev container](/docs/zh-CN/devcont
 * [Dev container](/docs/zh-CN/devcontainer)：预配置的 Docker 开发容器
 * [Security](/docs/zh-CN/security)：完整的 Claude Code 安全模型
 * [Secure deployment](/docs/zh-CN/agent-sdk/secure-deployment)：Agent SDK 应用程序的隔离指导
-* [Settings](/docs/zh-CN/settings#sandbox-settings)：所有沙箱配置密钥，包括托管设置传递
+* [Settings](/docs/zh-CN/settings-reference#sandbox-settings)：所有沙箱配置密钥，包括托管设置传递

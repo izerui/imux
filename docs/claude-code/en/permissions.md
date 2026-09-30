@@ -12,27 +12,19 @@ Claude Code supports fine-grained permissions so that you can specify exactly wh
 
 Claude Code uses a tiered permission system to balance power and safety. The table shows, for each tool type, whether Manual mode asks before the action runs. The other [permission modes](#permission-modes) change which of these ask you; in auto mode a classifier reviews actions instead of you, and [how the classifier evaluates actions](/docs/en/permission-modes#how-the-classifier-evaluates-actions) lists which ones it sees.
 
-| Tool type         | Example          | Approval required                                                                                             | "Yes, and don't ask again" behavior    |
-| :---------------- | :--------------- | :------------------------------------------------------------------------------------------------------------ | :------------------------------------- |
-| Read-only         | File reads, Grep | No, within the [working directory and additional directories](#working-directories)                           | N/A                                    |
-| Bash commands     | Shell execution  | Yes, except a built-in set of [read-only commands](#read-only-commands)                                       | Permanently per repository and command |
-| File modification | Edit/write files | Yes                                                                                                           | Until session end                      |
-| Web fetch         | WebFetch         | Yes, except a built-in set of [preapproved documentation domains](/docs/en/tools-reference#webfetch-tool-behavior) | Permanently per repository and domain  |
-| Web search        | WebSearch        | Yes                                                                                                           | Permanently per repository             |
+| Tool type | Example | Approval required | "Yes, and don't ask again" behavior |
+| :- | :- | :- | :- |
+| Read-only | File reads, Grep | No, within the [working directory and additional directories](#working-directories) | N/A |
+| Bash commands | Shell execution | Yes, except a built-in set of [read-only commands](#read-only-commands) | Permanently per repository and command |
+| File modification | Edit/write files | Yes | Until session end |
+| Web fetch | WebFetch | Yes, except a built-in set of [preapproved documentation domains](/docs/en/tools-reference#webfetch-tool-behavior) | Permanently per repository and domain |
+| Web search | WebSearch | Yes | Permanently per repository |
 
 When you choose "Yes, and don't ask again" and the approval saves permanently, such as for a Bash command or a WebFetch domain, Claude Code saves the rule to `.claude/settings.local.json` at the root of the git repository, resolved through [worktrees](/docs/en/worktrees) to the main checkout. The rule applies to future sessions anywhere in that repository, including sessions started in subdirectories and in worktrees. A file-modification approval isn't saved to the file: as the table shows, it lasts until the session ends. In some cases, such as outside a git repository or on Windows, Claude Code doesn't use the repository root; [Where Claude Code looks for each file](/docs/en/settings#where-claude-code-looks-for-each-file) lists those cases and where it saves the rule instead.
 
 Before v2.1.211, Claude Code always saved the rule in the starting directory, so an approval granted in a worktree or subdirectory didn't apply to the rest of the repository. Rules that earlier versions saved in a subdirectory or worktree still apply to sessions started there.
 
-Sometimes a permission prompt offers only a one-time approval, with no "don't ask again" option and no option to allow the action for the rest of the session. Claude Code offers those options only when the prompt can show you everything they would allow, so a rule you save from a prompt covers only what its option named.
-
-When the directory you started Claude Code in is what makes the option's label too long, Claude Code shortens it in the label, replacing your home directory with `~` and then the end of the path with `…`, and keeps the option. You still save the same rule. Claude Code leaves the options out in three cases:
-
-* **Command or edit:** too large to show in full.
-* **Commands or paths the rule would cover:** the label can't fit them all.
-* **Starting directory too long, not shortened:** it contains characters Claude Code can't display safely, or even its start doesn't fit.
-
-Approve the action once, or add the rule yourself in [`/permissions`](#manage-permissions).
+Sometimes a permission prompt offers only a one-time approval, with no "don't ask again" option and no option to allow the action for the rest of the session. Claude Code offers those options only when the prompt can show you everything they would allow, so a rule you save from a prompt covers only what its option named. When a prompt offers only the one-time approval, approve the action once, or add the rule yourself in [`/permissions`](#manage-permissions).
 
 ### Add a comment when you answer a permission prompt
 
@@ -59,9 +51,11 @@ You can view and manage Claude Code's tool permissions with `/permissions`. The 
 
 Rules are evaluated in order: deny, then ask, then allow. The first match in that order determines the outcome, and rule specificity doesn't change the order.
 
-A broad deny rule like `Bash(aws *)` blocks every matching call, including calls that also match a narrower allow rule like `Bash(aws s3 ls)`, so a deny rule can't carry allowlist exceptions. The same precedence applies between ask and allow: a matching ask rule prompts even when a more specific allow rule also matches the same call.
+A broad deny rule like `Bash(aws *)` blocks every matching call, including calls that also match a narrower allow rule like `Bash(aws s3 ls)`. An allow rule can't carve an exception out of a deny rule. The same precedence applies between ask and allow: a matching ask rule prompts even when a more specific allow rule also matches the same call.
 
-Deny rules behave differently depending on whether they name a tool or scope a pattern within one. A bare tool name like `Bash` removes the tool from Claude's context entirely, so Claude never sees it. Bare-name removal applies to every tool except [`EndConversation`](/docs/en/tools-reference#endconversation-tool-behavior): a deny rule can't remove it while any other tool remains, and an ask rule never prompts for it. A scoped rule like `Bash(rm *)` leaves the tool available and blocks matching calls when Claude attempts them.
+Deny rules behave differently depending on whether they name a tool or scope a pattern within one. A bare tool name like `Bash` removes the tool from Claude's context entirely, so Claude never sees it. If you add such a rule mid-session, Claude can't call the tool from its next tool call on; [Denying an entire tool](/docs/en/prompt-caching#denying-an-entire-tool) covers what happens to a definition Claude has already seen. A scoped rule like `Bash(rm *)` leaves the tool available and blocks matching calls when Claude attempts them.
+
+Bare-name removal applies to every tool except [`EndConversation`](/docs/en/tools-reference#endconversation-tool-behavior): a deny rule can't remove it while any other tool remains, and an ask rule never prompts for it.
 
 <Note>
   Permission rules are enforced by Claude Code, not by the model. Instructions in your prompt or `CLAUDE.md` shape what Claude tries to do, but they don't change what Claude Code allows. To grant or revoke access, use `/permissions`, the rules described here, a [permission mode](/docs/en/permission-modes), or a [PreToolUse hook](#extend-permissions-with-hooks).
@@ -73,34 +67,34 @@ When [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode) is 
 
 Claude Code supports several permission modes that control how it approves tool calls. See [Permission modes](/docs/en/permission-modes) for when to use each one. To change the mode sessions start in, set `defaultMode` in your [settings files](/docs/en/settings#where-settings-live). [Which mode a session starts in](/docs/en/permission-modes#which-mode-a-session-starts-in) covers the built-in default for each plan and what the VS Code extension reads.
 
-| Mode                | Description                                                                                                                                                                                                                                                                                                                                                                                            |
-| :------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default`           | Prompts for permission on first use of each tool. Labeled Manual in the CLI, the VS Code and JetBrains extensions, and the desktop app, and Claude Code accepts `manual` as an alias. The label and alias require Claude Code v2.1.200 or later. The desktop app's label doesn't depend on your CLI version                                                                                            |
-| `acceptEdits`       | Automatically accepts file edits and common filesystem commands such as `mkdir`, `touch`, `mv`, and `cp` for paths in the working directory or `additionalDirectories`                                                                                                                                                                                                                                 |
-| `plan`              | Claude reads files and runs read-only shell commands to explore but doesn't edit your source files; with [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode) available, classifier-approved commands also run. Labeled Plan in the CLI and the VS Code extension                                                                                                                        |
-| `auto`              | Auto-approves tool calls with background safety checks that verify actions align with your request                                                                                                                                                                                                                                                                                                     |
-| `dontAsk`           | Auto-denies tools unless pre-approved via `/permissions` or `permissions.allow` rules. `AskUserQuestion`, MCP tools marked [`requiresUserInteraction`](/docs/en/mcp#require-approval-for-a-specific-tool), and connector tools [your organization set to `ask`](/docs/en/mcp#organization-controls-on-connector-tools) in sessions where that setting reaches Claude Code are denied even if you've allowed them |
-| `bypassPermissions` | Skips permission prompts, except for the [actions no mode auto-approves](/docs/en/permission-modes#actions-no-mode-auto-approves)                                                                                                                                                                                                                                                                           |
+| Mode | Description |
+| :- | :- |
+| `default` | Prompts for permission on first use of each tool. Labeled Manual in the CLI, the VS Code and JetBrains extensions, and the desktop app, and Claude Code accepts `manual` as an alias. The label and alias require Claude Code v2.1.200 or later. The desktop app's label doesn't depend on your CLI version |
+| `acceptEdits` | Automatically accepts file edits and common filesystem commands such as `mkdir`, `touch`, `mv`, and `cp` for paths in the working directory or `additionalDirectories` |
+| `plan` | Claude reads files and runs read-only shell commands to explore but doesn't edit your source files; with [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode) available, classifier-approved commands also run. Labeled Plan in the CLI and the VS Code extension |
+| `auto` | Auto-approves tool calls with background safety checks that verify actions align with your request |
+| `dontAsk` | Auto-denies every call that would otherwise prompt; file reads in your working directories and other actions that need no approval still run, as do tools pre-approved via `/permissions` or `permissions.allow` rules. `AskUserQuestion`, MCP tools marked [`requiresUserInteraction`](/docs/en/mcp#require-approval-for-a-specific-tool), and connector tools [your organization set to `ask`](/docs/en/mcp#organization-controls-on-connector-tools) in sessions where that setting reaches Claude Code are denied even if you've allowed them |
+| `bypassPermissions` | Skips permission prompts, except for the [actions no mode auto-approves](/docs/en/permission-modes#actions-no-mode-auto-approves) |
 
 <Warning>
-  `bypassPermissions` mode skips permission prompts, including for writes to [protected paths](/docs/en/permission-modes#protected-paths) such as `.git` and `.claude`. The [cross-session messaging safeguards](/docs/en/permission-modes#skip-all-checks-with-bypasspermissions-mode) still apply. Only use this mode in isolated environments like containers or VMs where Claude Code can't cause damage.
+  In `bypassPermissions` mode, Claude Code skips permission prompts, including for writes to [protected paths](/docs/en/permission-modes#protected-paths) such as `.git` and `.claude`. The [cross-session messaging safeguards](/docs/en/permission-modes#skip-all-checks-with-bypasspermissions-mode) still apply. Only use this mode in isolated environments like containers or VMs where Claude Code can't cause damage.
 </Warning>
 
 To prevent `bypassPermissions` or `auto` mode from being used, set `permissions.disableBypassPermissionsMode` or `permissions.disableAutoMode` to `"disable"` in any [settings file](/docs/en/settings#where-settings-live). These are most useful in [managed settings](#managed-settings) where they can't be overridden.
 
 ## Permission rule syntax
 
-Permission rules follow the format `Tool` or `Tool(specifier)`.
+Permission rules follow the format `Tool` or `Tool(specifier)`. Parentheses inside the specifier are literal, so a command or path that contains them needs no escaping.
 
 ### Match all uses of a tool
 
 To match all uses of a tool, use only the tool name without parentheses:
 
-| Rule       | Effect                         |
-| :--------- | :----------------------------- |
-| `Bash`     | Matches all Bash commands      |
+| Rule | Effect |
+| :- | :- |
+| `Bash` | Matches all Bash commands |
 | `WebFetch` | Matches all web fetch requests |
-| `Read`     | Matches all file reads         |
+| `Read` | Matches all file reads |
 
 `Bash(*)` is equivalent to `Bash` and matches all Bash commands. As a deny rule, both forms remove the tool from Claude's context.
 
@@ -108,11 +102,11 @@ To match all uses of a tool, use only the tool name without parentheses:
 
 Add a specifier in parentheses to match specific tool uses:
 
-| Rule                           | Effect                                                   |
-| :----------------------------- | :------------------------------------------------------- |
-| `Bash(npm run build)`          | Matches the exact command `npm run build`                |
-| `Read(./.env)`                 | Matches reading the `.env` file in the current directory |
-| `WebFetch(domain:example.com)` | Matches fetch requests to example.com                    |
+| Rule | Effect |
+| :- | :- |
+| `Bash(npm run build)` | Matches the exact command `npm run build` |
+| `Read(./.env)` | Matches reading the `.env` file in the current directory |
+| `WebFetch(domain:example.com)` | Matches fetch requests to example.com |
 
 ### Match by input parameter
 
@@ -122,11 +116,11 @@ To match a parameter on an MCP tool, pass a deny rule with [`--disallowedTools`]
 
 A parameter rule matches when Claude calls the tool with that parameter set to that exact value. An allow rule for one parameter value wouldn't establish that the call is safe overall, so allow rules continue to use each tool's own specifier syntax. This works for any scalar parameter the tool accepts:
 
-| Rule                           | Matches                                      |
-| :----------------------------- | :------------------------------------------- |
-| `Agent(model:opus)`            | Agent calls that request the Opus model tier |
-| `Agent(isolation:worktree)`    | Agent calls that request a git worktree      |
-| `Bash(run_in_background:true)` | Bash calls that run in the background        |
+| Rule | Matches |
+| :- | :- |
+| `Agent(model:opus)` | Agent calls that request the Opus model tier |
+| `Agent(isolation:worktree)` | Agent calls that request a git worktree |
+| `Bash(run_in_background:true)` | Bash calls that run in the background |
 
 Parameter matching follows these rules:
 
@@ -147,7 +141,7 @@ A `*` in a Bash rule matches any text, including spaces, so one rule covers a fa
   Put the `*` after the subcommand. In `git log --oneline main`, `git` is the program and `log` is the subcommand, the word that determines what the program does. Claude Code matches everything before the first `*` as written, so those words are what limit the rule: `Bash(git log *)` allows only `git log` commands, and `Bash(git *)` allows every git command. Claude Code [warns at startup](/docs/en/errors#has-a-wildcard-before-the-rest-of-the-command) about an allow rule with a `*` before the subcommand, such as `Bash(git * main)`.
 </Warning>
 
-Write the command you want Claude to run without asking, and replace the parts that vary with `*`. With this configuration, Claude Code runs npm scripts and git commits without asking and refuses git push:
+Write the command you want Claude to run without asking, and replace the parts that vary with `*`. With this configuration, Claude Code runs npm scripts and git commits without asking and refuses commands that begin with `git push`. A push written another way, such as `git -C . push`, isn't matched; see [what a Bash rule doesn't match](#bash-rule-limits).
 
 ```json theme={null}
 {
@@ -165,16 +159,16 @@ Write the command you want Claude to run without asking, and replace the parts t
 
 A `*` can go anywhere in the rule: at the start, in the middle, or at the end. Each row shows a rule, commands it matches, and nearby commands it doesn't match:
 
-| You write              | Matches                                                                              | Doesn't match                          |
-| :--------------------- | :----------------------------------------------------------------------------------- | :------------------------------------- |
-| `Bash(npm run build)`  | `npm run build`                                                                      | `npm run build --watch`                |
-| `Bash(npm run *)`      | `npm run build`, `npm run test --watch`, `npm run`                                   | `npm install`                          |
-| `Bash(git log * main)` | `git log --oneline main`, `git log -5 main`, `git log --output=<file> main`          | `git log main`, `git push origin main` |
-| `Bash(git * main)`     | `git merge main`, `git push origin main`, `git -c core.fsmonitor=<script> diff main` | `git log`                              |
-| `Bash(* --version)`    | `node --version`, `bash -c 'echo hi' --version`                                      | `node -v`                              |
-| `Bash(ls *)`           | `ls -la`, `ls`                                                                       | `lsof`                                 |
-| `Bash(ls*)`            | `ls -la`, `lsof`                                                                     |                                        |
-| `Bash(* --help *)`     | `npm --help x`                                                                       | `npm --help`                           |
+| You write | Matches | Doesn't match |
+| :- | :- | :- |
+| `Bash(npm run build)` | `npm run build` | `npm run build --watch` |
+| `Bash(npm run *)` | `npm run build`, `npm run test --watch`, `npm run` | `npm install` |
+| `Bash(git log * main)` | `git log --oneline main`, `git log -5 main`, `git log --output=<file> main` | `git log main`, `git push origin main` |
+| `Bash(git * main)` | `git merge main`, `git push origin main`, `git -c core.fsmonitor=<script> diff main` | `git log` |
+| `Bash(* --version)` | `node --version`, `bash -c 'echo hi' --version` | `node -v` |
+| `Bash(ls *)` | `ls -la`, `ls` | `lsof` |
+| `Bash(ls*)` | `ls -la`, `lsof` | |
+| `Bash(* --help *)` | `npm --help x` | `npm --help` |
 
 Three matching rules produce those rows:
 
@@ -202,15 +196,15 @@ Deny and ask rules also accept glob patterns in the tool-name position. The patt
 
 Allow rules accept tool-name globs only after a literal `mcp__<server>__` prefix. The server segment must be glob-free so the rule names a specific server you configured. `mcp__puppeteer__*` matches every tool from the `puppeteer` server, and `mcp__github__get_*` matches its `get_` tools. An unanchored allow glob such as `"*"`, `"B*"`, or `"mcp__*"` is skipped with a warning and doesn't auto-approve anything.
 
-A deny or ask rule whose tool name matches no known tool produces a startup warning to catch typos. Tool names containing `_` or `*` are exempt from the check.
+A deny or ask rule whose tool name matches no known tool produces a startup warning to catch typos. Tool names containing `_` or `*` are exempt from the check, and so are the names of tools Claude Code has removed, such as `TaskOutput`.
 
-The label shown for a tool in the transcript and permission dialog can differ from its canonical name. For example, the tool labeled `Stop Task` in the transcript has the canonical name `TaskStop`. Permission rules and [hook matchers](/docs/en/hooks) match the canonical name only, so a rule written as `Stop Task` doesn't match. For deny and ask rules, the startup warning above catches the mismatch. Use the canonical names listed in the [tools reference](/docs/en/tools-reference).
+The label shown for a tool in the transcript and permission dialog can differ from its canonical name. For example, the tool labeled `Stop Task` in the transcript has the canonical name `TaskStop`. Permission rules and [hook matchers](/docs/en/hooks) don't match the label, so a rule written as `Stop Task` doesn't match. For deny and ask rules, the startup warning above catches the mismatch. Use the canonical names listed in the [tools reference](/docs/en/tools-reference).
 
 ## Tool-specific permission rules
 
 ### Bash
 
-Bash rules match the whole command text, with `*` standing in for any text. [Wildcard patterns](#wildcard-patterns) shows which commands each rule shape matches and where to put the `*`. The rest of this section covers how Claude Code matches compound commands, wrappers, read-only commands, and redirections.
+Bash rules match the whole command text, with `*` standing in for any text. [Wildcard patterns](#wildcard-patterns) shows which commands each rule shape matches and where to put the `*`. The rest of this section covers how Claude Code matches compound commands and wrappers, what a rule doesn't match, read-only commands, and redirections.
 
 #### Compound commands
 
@@ -218,9 +212,11 @@ Bash rules match the whole command text, with `*` standing in for any text. [Wil
   Claude Code is aware of shell operators, so a rule like `Bash(safe-cmd *)` won't give it permission to run the command `safe-cmd && other-cmd`. The recognized command separators are `&&`, `||`, `;`, `|`, `|&`, `&`, and newlines. A rule must match each subcommand independently.
 </Tip>
 
+Deny and ask rules apply when any subcommand matches them, including a command nested inside a subshell, a command substitution, or a control-flow body such as a `for` loop. An ask rule like `Bash(git clean *)` still prompts you for `cd /tmp && git clean -f` or `echo "$(git clean -f)"`, even in [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode).
+
 When `&&` or `||` has nothing after it, such as in `npm test &&`, Claude Code treats the command as unparseable and doesn't split it into subcommands for allow-rule matching, so a rule such as `Bash(npm *)` doesn't approve it.
 
-When you approve a compound command with "Yes, and don't ask again", Claude Code saves a separate rule for each subcommand that requires approval, rather than a single rule for the full compound string. For example, approving `git status && npm test` saves a rule for `npm test`, so future `npm test` invocations are recognized regardless of what precedes the `&&`. Subcommands like `cd` into a subdirectory generate their own Read rule for that path. Up to 5 rules may be saved for a single compound command.
+When you approve a compound command with "Yes, and don't ask again", Claude Code saves a separate rule for each subcommand that requires approval, rather than a single rule for the full compound string. For example, approving `git status && npm test` saves a rule for `npm test`, so future `npm test` invocations are recognized regardless of what precedes the `&&`. Subcommands like `cd` into a directory outside your working directories generate their own Read rule for that path. Up to 5 rules may be saved for a single compound command.
 
 <h4 id="process-wrappers">
   Wrappers
@@ -236,9 +232,25 @@ This wrapper list is built in and is not configurable. Development environment r
 
 Exec wrappers such as `watch`, `setsid`, `ionice`, and `flock` can't be auto-approved by a prefix rule like `Bash(watch *)`, so in Manual mode they always prompt. The same applies to `find` with `-exec` or `-delete`: a `Bash(find *)` rule doesn't cover these forms. To approve a specific invocation, write an exact-match rule for the full command string.
 
+<h4 id="bash-rule-limits">
+  What a Bash rule doesn't match
+</h4>
+
+A Bash rule matches the command text Claude writes, after Claude Code splits [compound commands](#compound-commands) and strips [wrappers](#process-wrappers). It doesn't match the same program invoked in a different form, so a deny or ask rule covers the invocation Claude usually produces and isn't a security boundary around the program. These rules in `deny` or `ask` stop the first form and not the others:
+
+| Rule | Stops | Doesn't stop |
+| :- | :- | :- |
+| `Bash(curl *)` | `curl https://example.com` | `/usr/bin/curl https://example.com`, `sh -c 'curl https://example.com'` |
+| `Bash(rm *)` | `rm -rf build/` | `/bin/rm -rf build/`, `bash -c 'rm -rf build/'` |
+| `Bash(git push *)` | `git push origin main` | `git -C . push origin main`, `git -c push.default=current push origin main`, `git 'push' origin main` |
+
+Your other rules and the permission mode decide the commands in the last column.
+
+For filesystem and network enforcement that doesn't depend on the command text, use [sandboxing](/docs/en/sandboxing). To inspect the full command text with your own logic before it runs, use a [PreToolUse hook](#extend-permissions-with-hooks).
+
 #### Read-only commands
 
-Claude Code recognizes a built-in set of Bash commands as read-only and runs them without a permission prompt in every mode. These include `ls`, `cat`, `echo`, `pwd`, `head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd`, and read-only forms of `git`. The set is not configurable; to require a prompt for one of these commands, add an `ask` or `deny` rule for it.
+Claude Code recognizes a built-in set of Bash commands as read-only and runs them without a permission prompt in every mode, except as [`permissions.blockReadsOutsideWorkingDirectories`](/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) changes for paths outside your working directories. The set includes `ls`, `cat`, `echo`, `pwd`, `head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd`, and read-only forms of `git`. The set is not configurable; to require a prompt for one of these commands, add an `ask` or `deny` rule for it. In auto mode, these commands can also wait for the classifier's review; see [how the classifier evaluates actions](/docs/en/permission-modes#how-the-classifier-evaluates-actions).
 
 A redirect such as `ls > out.txt` adds a check on the target. See [Redirections](#redirections).
 
@@ -250,12 +262,13 @@ In Manual mode, commands from this set still prompt in these cases:
 * **`docker` pointed at another daemon**: read-only forms of `docker` prompt when the command carries a flag that selects a different daemon, such as `-H`, `--context`, or Podman's `--url` and `--connection`.
 * **`file` with path-opening flags**: `file` prompts when it passes `-m`/`--magic-file` or `-f`/`--files-from`, because those flags make `file` open the paths named in the flag's value.
 * **Network paths on Windows**: a command whose arguments include a network (UNC) path, such as `\\server\share\file`, prompts because accessing a network path can send your Windows credentials to the host it names. The same check applies to [PowerShell tool](/docs/en/tools-reference#powershell-tool) commands.
+* **Writes to special shell variables**: a command that sets, unsets, or loops over certain special shell variables, such as `PATH` or `IFS`, prompts even when the rest of the command is read-only.
 * **Commands the analysis can't parse**: when Claude Code can't fully parse a command, it asks for approval instead of treating the command as read-only. Commands longer than 10,000 characters always prompt because they exceed what the analysis parses.
 
-A `cd` into a path inside your working directory or an [additional directory](#working-directories) is also read-only, and a compound command like `cd packages/api && ls` runs without a prompt when each part qualifies on its own. Two combinations prompt even when each part is read-only:
+A `cd` into a path inside your working directory or an [additional directory](#working-directories) is also read-only, and a compound command like `cd packages/api && ls` runs without a prompt when each part qualifies on its own. These combinations prompt even when each part is read-only:
 
 * **`cd` with `git`**: prompts when the `cd` changes into a different directory, since running `git` in a new directory can execute that directory's hooks. A `cd` whose target resolves to the current working directory is a no-op and doesn't trigger the prompt.
-* **`cd` with an output redirect**: prompts when Claude Code can't determine which directory the redirect target resolves against after the `cd` runs. A command whose only redirect target is `/dev/null`, such as `cd app; grep -r pattern . 2>/dev/null`, doesn't prompt, because `/dev/null` doesn't depend on the working directory.
+* **`cd` with a redirect**: prompts when Claude Code can't determine which directory the redirect target resolves against after the `cd` runs. A command whose only redirect target is `/dev/null`, such as `cd app; grep -r pattern . 2>/dev/null`, doesn't prompt, because `/dev/null` doesn't depend on the working directory.
 
 <Warning>
   Bash permission patterns that try to constrain command arguments are fragile. For example, `Bash(curl http://github.com/ *)` intends to restrict curl to GitHub URLs, but won't match variations like:
@@ -264,11 +277,10 @@ A `cd` into a path inside your working directory or an [additional directory](#w
   * Different protocol: `curl https://github.com/...`
   * Redirects: `curl -L http://short.example.com/xyz`, which redirects to GitHub
   * Variables: `URL=http://github.com && curl $URL`
-  * Extra spaces: `curl  http://github.com`
 
   For more reliable URL filtering, consider:
 
-  * **Restrict Bash network tools**: use deny rules to block `curl`, `wget`, and similar commands, then use the WebFetch tool with `WebFetch(domain:github.com)` permission for allowed domains
+  * **Restrict Bash network tools**: use deny rules to stop `curl`, `wget`, and similar commands, then use the WebFetch tool with `WebFetch(domain:github.com)` permission for allowed domains. A deny rule doesn't match the same program by path or inside `sh -c`, so pair it with the [sandbox network allowlist](/docs/en/sandboxing#network-isolation) when the restriction must hold; see [what a Bash rule doesn't match](#bash-rule-limits)
   * **Use PreToolUse hooks**: implement a hook that validates URLs in Bash commands and blocks disallowed domains
   * **Add CLAUDE.md guidance**: describe your allowed curl patterns in `CLAUDE.md`. This shapes what Claude tries but doesn't enforce a boundary, so pair it with one of the options above
 
@@ -277,7 +289,14 @@ A `cd` into a path inside your working directory or an [additional directory](#w
 
 #### Redirections
 
-Claude Code checks the target of an output redirection, such as `>`, `>>`, or `2>`, as a file write. The check covers your `Edit` allow and deny rules, [protected paths](/docs/en/permission-modes#protected-paths), and the [working directories](#working-directories). A rule such as `Bash(git commit *)` allows the command, not the target. A `/dev/null` target isn't checked. A target that starts with `~` or contains a glob character needs approval.
+When a command redirects output or input, Claude Code checks the redirect target against your file rules as if Claude wrote or read that file directly:
+
+* **Output redirects**: for `> file`, `>> file`, or `2> file`, the check covers your `Edit` allow and deny rules, [protected paths](/docs/en/permission-modes#protected-paths), and the [working directories](#working-directories). A rule such as `Bash(git commit *)` allows the command, not the target. A target that starts with `~` or contains a glob character needs your approval.
+* **Input redirects**: for `< file`, the check covers your `Read` allow and deny rules and the working directories. A target outside the working directories needs your approval unless an allow rule covers it. A target that contains a glob pattern, or a relative path that follows a `cd` in the same command, needs your approval even when an allow rule covers it. Claude Code checks input targets in v2.1.257 and later.
+
+Targets with no file behind them aren't checked: `/dev/null`, file-descriptor forms such as `2>&1` and `<&3`, and here-docs and here-strings.
+
+Claude Code also checks the files a `tee` command writes, including in a pipeline such as `make | tee build.log`. The check covers your `Edit` allow and deny rules, [protected paths](/docs/en/permission-modes#protected-paths), and the [working directories](#working-directories). An allow rule such as `Bash(tee *)` doesn't cover a destination outside the working directories. Claude Code checks `tee` targets in v2.1.269 and later.
 
 ### PowerShell
 
@@ -312,17 +331,17 @@ A `Read` deny rule also blocks the [Edit and Write tools](/docs/en/errors#file-i
 Claude Code checks file permissions against `Edit(path)` and `Read(path)` rules only. If you write a path rule for `Write`, `NotebookEdit`, `Glob`, or the legacy `MultiEdit` tool instead, Claude Code accepts the rule but never consults it, and [warns at startup](/docs/en/errors#is-not-matched-by-file-permission-checks), except for a `Glob` rule passed in `--allowedTools`. Use `Edit(docs/**)` in place of `Write(docs/**)`, `NotebookEdit(docs/**)`, or `MultiEdit(docs/**)`, and `Read(docs/**)` in place of `Glob(docs/**)`. Claude Code doesn't warn about a tool-name rule with no path, such as a deny rule for `Write`; it matches that rule at the tool level everywhere. Requires Claude Code v2.1.210 or later.
 
 <Warning>
-  Read and Edit deny rules apply to Claude's built-in file tools and to file commands Claude Code recognizes in Bash, such as `cat`, `head`, `tail`, and `sed`. They don't apply to arbitrary subprocesses that read or write files indirectly, like a Python or Node script that opens files itself. For OS-level enforcement that blocks all processes from accessing a path, [enable the sandbox](/docs/en/sandboxing).
+  Read and Edit deny rules apply to Claude's built-in file tools, to file commands Claude Code recognizes in Bash, such as `cat`, `head`, `tail`, `sed`, and `tee`, and to the targets of Bash [redirections](#redirections) such as `> file` and `< file`. They don't apply to a command that reads files without naming them, such as `grep -r pattern .` run from the directory that holds the file, or to arbitrary subprocesses that read or write files indirectly, like a Python or Node script that opens files itself. For OS-level enforcement that blocks all processes from accessing a path, [enable the sandbox](/docs/en/sandboxing).
 </Warning>
 
 Read and Edit rules both use [gitignore](https://git-scm.com/docs/gitignore) pattern syntax with four distinct pattern types; for single-segment directory patterns, the matching depth also depends on the rule type, described later in this section:
 
-| Pattern            | Meaning                              | Example                          | Matches                                                       |
-| ------------------ | ------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
-| `//path`           | Absolute path from filesystem root   | `Read(//Users/alice/secrets/**)` | `/Users/alice/secrets/**`                                     |
-| `~/path`           | Path from home directory             | `Read(~/Documents/*.pdf)`        | `/Users/alice/Documents/*.pdf`                                |
-| `/path`            | Path relative to the settings source | `Edit(/src/**/*.ts)`             | `<primary working directory>/src/**/*.ts` in project settings |
-| `path` or `./path` | Path relative to current directory   | `Read(*.env)`                    | `<cwd>/*.env`                                                 |
+| Pattern | Meaning | Example | Matches |
+| - | - | - | - |
+| `//path` | Absolute path from filesystem root | `Read(//Users/alice/secrets/**)` | `/Users/alice/secrets/**` |
+| `~/path` | Path from home directory | `Read(~/Documents/*.pdf)` | `/Users/alice/Documents/*.pdf` |
+| `/path` | Path relative to the settings source | `Edit(/src/**/*.ts)` | `<primary working directory>/src/**/*.ts` in project settings |
+| `path` or `./path` | Path relative to current directory | `Read(*.env)` | `<cwd>/*.env` |
 
 <Warning>
   A pattern like `/Users/alice/file` isn't an absolute path. The single leading slash anchors at the settings source, not the filesystem root. Use `//Users/alice/file` for absolute paths.
@@ -330,13 +349,13 @@ Read and Edit rules both use [gitignore](https://git-scm.com/docs/gitignore) pat
 
 A `/path` pattern anchors at a directory associated with the settings source that defines it, so the same rule matches different locations depending on where you put it:
 
-| Rule defined in                                 | `/path` resolves to                |
-| :---------------------------------------------- | :--------------------------------- |
-| Project settings at `.claude/settings.json`     | `<primary working directory>/path` |
+| Rule defined in | `/path` resolves to |
+| :- | :- |
+| Project settings at `.claude/settings.json` | `<primary working directory>/path` |
 | Local settings at `.claude/settings.local.json` | `<primary working directory>/path` |
-| User settings at `~/.claude/settings.json`      | `~/.claude/path`                   |
-| A file passed with `--settings <file>`          | `<directory of file>/path`         |
-| CLI flags or session rules                      | `<primary working directory>/path` |
+| User settings at `~/.claude/settings.json` | `~/.claude/path` |
+| A file passed with `--settings <file>` | `<directory of file>/path` |
+| CLI flags or session rules | `<primary working directory>/path` |
 
 A rule you add through `/permissions` follows the row for the settings file you save it to.
 
@@ -355,10 +374,10 @@ Examples:
 
 A rule only matches files under its anchor; within that bound, matching depth depends on the pattern shape and, for single-segment directory patterns, the rule type, described below. Bare filenames follow gitignore semantics and match at any depth, so `Read(.env)` and `Read(**/.env)` are equivalent:
 
-| Deny rule                       | Blocks                                       | Does not block                                       |
-| ------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
-| `Read(.env)` or `Read(**/.env)` | any `.env` at or under the current directory | `.env` in a parent directory or another project      |
-| `Read(//**/.env)`               | any `.env` anywhere on the filesystem        | nothing; the rule is anchored at the filesystem root |
+| Deny rule | Blocks | Does not block |
+| - | - | - |
+| `Read(.env)` or `Read(**/.env)` | any `.env` at or under the current directory | `.env` in a parent directory or another project |
+| `Read(//**/.env)` | any `.env` anywhere on the filesystem | nothing; the rule is anchored at the filesystem root |
 
 A relative pattern with a single directory segment, such as `src/**`, matches at different depths depending on the rule type:
 
@@ -379,12 +398,12 @@ The following example shows each pattern shape against a project with a top-leve
             └── lib.js
 ```
 
-| Rule                                 | Matches `src/app.ts` | Matches `vendor/pkg/src/lib.js` |
-| :----------------------------------- | :------------------- | :------------------------------ |
-| `Edit(src/**)` as an allow rule      | Yes                  | No                              |
-| `Edit(src/**)` as a deny or ask rule | Yes                  | Yes                             |
-| `Edit(/src/**)` in any rule type     | Yes                  | No                              |
-| `Edit(**/src/**)` in any rule type   | Yes                  | Yes                             |
+| Rule | Matches `src/app.ts` | Matches `vendor/pkg/src/lib.js` |
+| :- | :- | :- |
+| `Edit(src/**)` as an allow rule | Yes | No |
+| `Edit(src/**)` as a deny or ask rule | Yes | Yes |
+| `Edit(/src/**)` in any rule type | Yes | No |
+| `Edit(**/src/**)` in any rule type | Yes | Yes |
 
 <Note>
   In gitignore patterns, `*` matches within a single path segment and can appear at any position in the pattern, while `**` matches across directories.
@@ -392,16 +411,48 @@ The following example shows each pattern shape against a project with a top-leve
 
 When you approve a file path with "Yes, and don't ask again", Claude Code escapes gitignore pattern characters in that path, such as `[`, `]`, and `*`, so the generated rule matches only the literal path you approved. Rules you write yourself aren't escaped. Before v2.1.202, Claude Code saved the path unescaped, so a generated rule for a directory named `[2024-06] Reports` could fail to match its own path or match unintended sibling directories.
 
-When Claude accesses a symlink, permission rules check two paths: the symlink itself and the file it resolves to. Allow and deny rules treat that pair differently: allow rules fall back to prompting you, while deny rules block outright.
+You don't need to escape parentheses in a path, so `Edit(./Finance (2024)/**)` matches the `Finance (2024)` folder as spelled.
 
-* **Allow rules**: apply only when both the symlink path and its target match. A symlink inside an allowed directory that points outside it still prompts you.
-* **Deny rules**: apply when either the symlink path or its target matches. A symlink that points to a denied file is itself denied.
+A deny or ask rule whose path isn't usable as a gitignore pattern still guards that exact path. An allow rule with an unusable pattern doesn't approve anything.
 
-For example, with `Read(./project/**)` allowed and `Read(~/.ssh/**)` denied, a symlink at `./project/key` pointing to `~/.ssh/id_rsa` is blocked: the target fails the allow rule and matches the deny rule.
+A deny or ask pattern that starts with `!` is a gitignore negation. It carves the paths it matches out of the `path` or `./path` rules listed before it. In one settings file's `deny` list, `Read(*.env)` followed by `Read(!sample.env)` blocks every file whose name ends in `.env` at any depth, except files named `sample.env`. A `!` rule listed first carves nothing out.
 
-When a tool opens an approved file, Claude Code [confirms the path still resolves to the location the permission check approved](/docs/en/errors#refusing-after-a-symlink-changed).
+The carve-out reaches only rules from the same source. A `Read(!.env)` in project settings or in `--disallowedTools` doesn't cancel a `Read(./.env)` deny from managed settings or any other settings file.
+
+Two limits narrow what a `!` pattern can carve out:
+
+* Claude Code reads a `!` pattern relative to the current directory even when `/`, `~/`, or `//` follows the `!`, so the pattern can't reach a rule anchored with one of those prefixes. `Read(!~/notes/public/**)` carves nothing out of `Read(~/notes/**)`.
+* A carve-out can't reopen a file inside a directory that a rule blocks as a whole. With `Read(secrets/**)` and `Read(!secrets/public/**)`, Claude Code still blocks `secrets/public` along with the rest of `secrets`.
+
+#### Symlinks
+
+When a file path Claude requests goes through a symlink, the permission check covers two paths: the one Claude requested and the file it resolves to. This applies to symbolic links on macOS, Linux, and Windows, and to directory junctions on Windows.
+
+##### How rules match a symlinked path
+
+Allow and deny rules treat the requested path and the file it resolves to differently:
+
+* **Allow rules**: apply only when both the requested path and the file it resolves to match. A read through a symlink inside an allowed directory that points outside it doesn't match the rule.
+* **Deny rules**: apply when either the requested path or the file it resolves to matches. A symlink that points to a denied file is itself denied. For example, with `Read(./project/**)` allowed and `Read(~/.ssh/**)` denied, a symlink at `./project/key` pointing to `~/.ssh/id_rsa` is blocked: the target fails the allow rule and matches the deny rule.
+
+On macOS and Linux, a deny or ask rule written through a symlinked directory with a `//`, `~/`, or `/` pattern also applies at the directory's real location. For example, on macOS, where `/etc` resolves to `/private/etc`, `Read(//etc/**)` blocks `/private/etc/hosts` too. Before v2.1.268, a deny or ask rule written through a symlinked directory didn't apply to a path given by its real location.
 
 Grep and Glob search the directory the `path` argument resolves to. Claude Code applies `Read` deny rules to that directory.
+
+##### Writes through a symlink
+
+If the path Claude asks to edit or write is itself a symlink, the Edit and Write tools [refuse the write and direct Claude to the link's target](/docs/en/errors#refusing-after-a-symlink-changed).
+
+A write can still pass through a symlink when a directory on the way to the file is a symlink, or when a Bash or PowerShell command does the writing. For those writes, what happens depends on where the file the write resolves to sits relative to your [working directories](#working-directories) and the [protected paths](/docs/en/permission-modes#protected-paths):
+
+* **Resolves outside the working directories**: when the requested path is inside your working directories and the file it resolves to isn't, the write isn't auto-approved in [`acceptEdits` mode](/docs/en/permission-modes#auto-approve-file-edits-with-acceptedits-mode). In [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode), unless an allow rule approves the write, you're prompted for it instead of the classifier deciding. The prompt names the path the write resolves to.
+* **Resolves to a protected path that the requested path doesn't name**: the [protected paths table](/docs/en/permission-modes#protected-paths) gives the outcome for each permission mode, except that where the table routes the write to the classifier, this write prompts you instead.
+
+##### Paths that can't be resolved or that change
+
+When Claude Code can't determine where a path leads on disk, for example because symlinks on it form a loop, the Read, Edit, and Write tools [refuse the operation](/docs/en/errors#refusing-after-a-symlink-changed).
+
+When a tool then opens the approved file, it [confirms that the path still resolves to the location the permission check approved](/docs/en/errors#refusing-after-a-symlink-changed).
 
 ### WebFetch
 
@@ -421,10 +472,14 @@ A bare `WebFetch` rule is the tool name with no `domain:` part, such as `"deny":
 
 Each row shows what a rule does in the `allow` list and in the `deny` list:
 
-| Rule                 | In `allow`                                                                                     | In `deny`                                                                                                                       |
-| :------------------- | :--------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------ |
-| `WebFetch`           | Claude fetches without prompting you. Doesn't change which hosts sandboxed commands can reach. | Claude Code removes the `WebFetch` tool, so Claude can't fetch at all. Doesn't change which hosts sandboxed commands can reach. |
-| `WebFetch(domain:*)` | Claude fetches without prompting you, and sandboxed commands can reach any host.               | Claude Code keeps the tool and refuses each fetch, and sandboxed commands can't reach any host.                                 |
+| Rule | In `allow` | In `deny` |
+| :- | :- | :- |
+| `WebFetch` | Claude fetches without prompting you. Doesn't change which hosts sandboxed commands can reach. | Claude Code removes the `WebFetch` tool, so Claude can't fetch at all. Doesn't change which hosts sandboxed commands can reach. |
+| `WebFetch(domain:*)` | Claude fetches without prompting you, and sandboxed commands can reach any host. | Claude Code keeps the tool and refuses each fetch, and sandboxed commands can't reach any host. |
+
+The two forms also differ on reads of [artifacts](/docs/en/artifacts), the pages the Artifact tool publishes on claude.ai. A bare `WebFetch` deny or ask rule doesn't apply to those reads. A `domain:` rule covering `claude.ai` or the `*.claudeusercontent.com` content host, such as `WebFetch(domain:claude.ai)` or `WebFetch(domain:*)`, denies each read or prompts before it. An [`Artifact` rule](/docs/en/artifacts#disable-artifacts) does the same.
+
+When a rule blocks a read, the denial names the rule. Before v2.1.268, a bare `WebFetch` deny rule blocked every artifact read, and a bare ask rule prompted before each one.
 
 To let Claude fetch freely while keeping the sandbox allowlist as it is, use the bare form. This `settings.json` does that:
 
@@ -436,7 +491,9 @@ To let Claude fetch freely while keeping the sandbox allowlist as it is, use the
 }
 ```
 
-When you ask Claude to fetch a page, it fetches without a prompt. When you ask it to run a [sandboxed](/docs/en/sandboxing) `curl` against a host outside the sandbox allowlist, Claude Code still prompts you for that host, or in [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode) sends the request to the classifier, because the bare rule didn't add the host to the allowlist.
+When you ask Claude to fetch a page, it fetches without a prompt. When you ask it to run a [sandboxed](/docs/en/sandboxing) `curl` against a host outside the sandbox allowlist, Claude Code still prompts you for that host, because the bare rule didn't add the host to the allowlist.
+
+In [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode), Claude instead names the host in the command's [per-command allowed domains](/docs/en/sandboxing#per-command-allowed-domains-in-auto-mode) for the classifier to review.
 
 ### MCP
 
@@ -478,11 +535,11 @@ Adding any `Cd` allow rule switches `/cd` to allowlist mode: the resolved target
 
 Path patterns share the `//`, `~/`, and `/` anchors from [Read and Edit rules](#read-and-edit), but matching is anchored to the whole directory path rather than gitignore-style. `*` matches exactly one path segment and `**` matches across segments. A trailing `/**` also matches its named root.
 
-| Rule                  | Matches                                   | Does not match               |
-| --------------------- | ----------------------------------------- | ---------------------------- |
-| `Cd(~/code/*)`        | `~/code/app`                              | `~/code/app/src`, `~/code`   |
-| `Cd(~/code/**)`       | `~/code` and any directory under it       | directories outside `~/code` |
-| `Cd(**/node_modules)` | any `node_modules` directory at any depth | `node_modules/pkg`           |
+| Rule | Matches | Does not match |
+| - | - | - |
+| `Cd(~/code/*)` | `~/code/app` | `~/code/app/src`, `~/code` |
+| `Cd(~/code/**)` | `~/code` and any directory under it | directories outside `~/code` |
+| `Cd(**/node_modules)` | any `node_modules` directory at any depth under the current directory | `node_modules/pkg` |
 
 ## Extend permissions with hooks
 
@@ -504,17 +561,21 @@ By default, Claude has access to files in the directory where you launched it. T
 
 Files in additional directories follow the same permission rules as the original working directory: they become readable without prompts, and file editing permissions follow the current permission mode.
 
+You can't add most [network paths](/docs/en/errors#working-directory-is-a-network-path), such as the UNC share `\\server\share`, as working directories, because looking one up can contact the host it names. On Windows, map the share to a drive letter instead and pass the drive with `--add-dir` at launch.
+
+Set [`permissions.blockReadsOutsideWorkingDirectories`](/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) to make the file tools refuse the paths it fences in every permission mode. In auto mode, Claude Code offers to turn it on the first time Claude [reads outside the working directories](/docs/en/permission-modes#first-read-outside-the-working-directories).
+
 In background sessions on macOS, the session host requests access to protected folders such as `~/Desktop`, `~/Documents`, and `~/Downloads` separately from your terminal when Claude needs to read or write files there; if reads there fail with `Operation not permitted`, see [how to grant folder access to background sessions](/docs/en/agent-view#background-sessions-can’t-read-desktop-documents-or-downloads-on-macos).
 
 ### Move the session to another directory
 
-To move the session to a different primary working directory, rather than [adding a directory](#working-directories) alongside the current one, run `/cd <path>`. Claude Code keeps the conversation, loads the new directory's `CLAUDE.md`, and prompts you to [trust the workspace](#project-allow-rules-and-workspace-trust) if you haven't worked in it before. Afterward, Claude Code [finds the moved session](/docs/en/sessions#resume-a-session) when you run `--resume` from the new directory. The `/cd` command requires Claude Code v2.1.169 or later.
+To move the session to a different primary working directory, rather than [adding a directory](#working-directories) alongside the current one, run `/cd <path>`. Claude Code keeps the conversation, loads the new directory's `CLAUDE.md`, and prompts you to [trust the workspace](#project-allow-rules-and-workspace-trust) if you haven't worked in it before. Afterward, Claude Code [finds the moved session](/docs/en/sessions#resume-a-session) when you run `--resume` from the new directory.
 
 As soon as you move, Claude Code applies the new directory's project configuration:
 
 * Its project settings, including their permission rules and [hooks](/docs/en/hooks)
 * Its [`.mcp.json` servers](/docs/en/mcp#project-scope), subject to the same [server approval](/docs/en/mcp#project-server-approvals-and-workspace-trust) as at startup, and the [local-scope](/docs/en/mcp#local-scope) MCP servers you registered in it
-* The [plugins](/docs/en/plugins) its settings enable, its [skills](/docs/en/skills#discovery-from-parent-and-nested-directories), and its [subagents](/docs/en/sub-agents)
+* The [plugins](/docs/en/plugins/overview) its settings enable, its [skills](/docs/en/skills#discovery-from-parent-and-nested-directories), and its [subagents](/docs/en/sub-agents)
 * Its [`env`](/docs/en/settings-reference#env) values, applied on top of the environment variables from the previous directory's settings, which stay in effect
 
 Claude Code also disconnects the previous directory's project and [local-scope](/docs/en/mcp#local-scope) MCP servers, and the servers of [plugins](/docs/en/mcp#plugin-provided-mcp-servers) that are no longer enabled after the move. It takes [additional directories](#working-directories) from the new directory's settings instead of the previous one's, and keeps the directories you added with `--add-dir` or `/add-dir`. Hooks the move activates still receive [`${CLAUDE_PROJECT_DIR}`](/docs/en/hooks#reference-scripts-by-path) set to the project root where the session started.
@@ -533,20 +594,22 @@ The Agent SDK's [`additionalDirectories`](/docs/en/agent-sdk/typescript#options)
 
 The following configuration types are loaded from `--add-dir` directories:
 
-| Configuration                                                                         | Loaded from `--add-dir`                                                                                                                                            |
-| :------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Skills](/docs/en/skills) in `.claude/skills/`                                             | Yes, with live reload                                                                                                                                              |
-| [Command files](/docs/en/skills#where-skills-live) in `.claude/commands/`                  | Yes, without live reload. When the added directory and your project both define a command with the same name, Claude Code runs your project's command              |
-| [Subagents](/docs/en/sub-agents) in `.claude/agents/`                                      | Yes, without live reload                                                                                                                                           |
-| [Settings](/docs/en/settings) in `.claude/settings.json` and `.claude/settings.local.json` | `enabledPlugins` and [`extraKnownMarketplaces`](/docs/en/settings-reference#extraknownmarketplaces) keys only                                                           |
-| [CLAUDE.md](/docs/en/memory) files, `.claude/rules/`, and `CLAUDE.local.md`                | Only when `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is set. `CLAUDE.local.md` additionally requires the `local` setting source, which is enabled by default |
+| Configuration | Loaded from `--add-dir` |
+| :- | :- |
+| [Skills](/docs/en/skills) in `.claude/skills/` | Yes, with live reload |
+| [Command files](/docs/en/skills#where-skills-live) in `.claude/commands/` | Yes, without live reload. When the added directory and your project both define a command with the same name, Claude Code runs your project's command |
+| [Subagents](/docs/en/sub-agents) in `.claude/agents/` | Yes, without live reload |
+| [Settings](/docs/en/settings) in `.claude/settings.json` and `.claude/settings.local.json` | `enabledPlugins` and [`extraKnownMarketplaces`](/docs/en/settings-reference#extraknownmarketplaces) keys only |
+| [CLAUDE.md](/docs/en/memory) files, `.claude/rules/`, and `CLAUDE.local.md` | Only when `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` is set. `CLAUDE.local.md` additionally requires the `local` setting source, which is enabled by default |
+
+To load the skills, commands, and subagents from a subdirectory of your [primary working directory](#working-directories) mid-session, run `/add-dir` with that subdirectory's path. Claude Code loads them for the rest of the session without prompting you or adding a working directory, because the subdirectory is already readable. This requires Claude Code v2.1.257 or later.
 
 Claude Code discovers output styles from the current working directory and its parents, your user directory at `~/.claude/`, and managed settings. Hooks and other `.claude/settings.json` keys load from the current working directory's `.claude/` folder with no parent-directory fallback, alongside your user `~/.claude/settings.json` and managed settings. `.claude/settings.local.json` loads from the git repository root instead, even when you start Claude Code in a subdirectory, except in the cases where Claude Code [doesn't use the repository root](/docs/en/settings#where-claude-code-looks-for-each-file), such as on Windows; before v2.1.211, it too loaded only from the current working directory. [Agent SDK](/docs/en/agent-sdk/claude-code-features#control-filesystem-settings-with-settingsources) sessions load it from the working directory in all versions.
 
 To share that configuration across projects, use one of these approaches:
 
 * **User-level configuration**: place files in `~/.claude/agents/`, `~/.claude/output-styles/`, or `~/.claude/settings.json` to make them available in every project
-* **Plugins**: package and distribute configuration as a [plugin](/docs/en/plugins) that teams can install
+* **Plugins**: package and distribute configuration as a [plugin](/docs/en/plugins/overview) that teams can install
 * **Launch from the config directory**: run Claude Code from the directory containing the `.claude/` configuration you want
 
 ## How permissions interact with sandboxing
@@ -554,18 +617,13 @@ To share that configuration across projects, use one of these approaches:
 Permissions and [sandboxing](/docs/en/sandboxing) are complementary security layers:
 
 * **Permissions** control which tools Claude Code can use and which files or domains it can access. They apply to Bash, Read, Edit, WebFetch, MCP, and every other tool, except that a deny or ask rule can't block [`EndConversation`](/docs/en/tools-reference#endconversation-tool-behavior) while any other tool remains.
-* **Sandboxing** provides OS-level enforcement that restricts the Bash tool's filesystem and network access. It applies only to Bash commands and their child processes.
+* **Sandboxing** provides OS-level enforcement that restricts shell commands' filesystem and network access. It applies only to Bash, PowerShell, and [Monitor](/docs/en/tools-reference#monitor-tool) commands and their child processes.
 
-Use both for defense-in-depth:
-
-* Permission deny rules block Claude from even attempting to access restricted resources
-* Sandbox restrictions prevent Bash commands from reaching resources outside defined boundaries, even if a prompt injection bypasses Claude's decision-making
-* Filesystem restrictions in the sandbox combine the [`sandbox.filesystem`](/docs/en/sandboxing) settings with Read and Edit deny rules; both are merged into the final sandbox boundary
-* Network restrictions combine `WebFetch(domain:...)` permission rules with the sandbox's `allowedDomains` and `deniedDomains` lists
+Use both for defense-in-depth, since sandbox restrictions still apply even if a prompt injection bypasses Claude's decision-making. Paths and domains from both sandbox settings and permission rules are [merged into the final sandbox configuration](/docs/en/sandboxing#permission-rules).
 
 When you enable sandboxing and leave `autoAllowBashIfSandboxed` at its default of `true`, sandboxed Bash commands run without prompting even if your permissions include a bare `Bash` ask rule, or the [equivalent `Bash(*)` form](#match-all-uses-of-a-tool): the sandbox boundary substitutes for that whole-tool prompt.
 
-In [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode), Claude Code skips this substitution. Without an ask rule, the built-in read-only commands still run without prompting, and any other shell command goes through the regular permission flow while you are still planning; see [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode) for how Claude Code gates commands there. With a bare `Bash` ask rule, every Bash command prompts, including sandboxed read-only commands, the same as outside sandboxing. Before v2.1.212, the substitution applied in plan mode as well.
+In [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode), Claude Code skips this substitution. Without an ask rule, the [built-in read-only commands](#read-only-commands) still run without prompting, and any other shell command goes through the regular permission flow while you are still planning; see [plan mode](/docs/en/permission-modes#analyze-before-you-edit-with-plan-mode) for how Claude Code gates commands there. With a bare `Bash` ask rule, every Bash command prompts, including sandboxed read-only commands, the same as outside sandboxing. Before v2.1.212, the substitution applied in plan mode as well.
 
 These checks still apply:
 
@@ -607,6 +665,8 @@ Claude Code keys and stores the trust you accept according to where you start it
 
 Claude Code shows the trust dialog in interactive sessions only. A `claude -p` run or an SDK session never shows it, and trusting a parent folder doesn't count for these rules, so [What runs before you trust a folder](#what-runs-before-you-trust-a-folder) says which repository content Claude Code still uses in each of those two situations.
 
+Before it starts or restarts a [background session](/docs/en/agent-view), Claude Code also checks workspace trust for the directory the session runs in. If you run `claude --bg` from a terminal in a directory you haven't trusted, the trust dialog appears first and the session starts once you accept it. Where no dialog can appear, such as in a script, the command exits with a [`Workspace not trusted`](/docs/en/errors#workspace-not-trusted-when-dispatching-a-background-session) error instead.
+
 ### When your local settings file needs trust
 
 `.claude/settings.local.json` is normally your own file, so Claude Code applies its allow rules and additional directories without the trust step. When the file is tracked in git, or `.claude` is a symlink, Claude Code treats it as repository-supplied instead and holds its rules until you trust the folder.
@@ -626,14 +686,14 @@ On versions 2.1.196 through 2.1.199, Claude Code held the file's rules in your c
 
 Each row is one kind of content a repository can supply. The columns are the two situations in which you haven't trusted the folder itself: you trusted only a parent folder, or you ran `claude -p` or the SDK there, which never shows the trust dialog. The parent-folder column doesn't apply inside a [nested repository](#project-allow-rules-and-workspace-trust): in an interactive session Claude Code shows the trust dialog for it, and a `claude -p` or SDK run there follows the `claude -p` column.
 
-| What the repository supplies                                                                                                                                                                                                                                                                                     | You trusted only a parent folder                                                                                                                                               | `claude -p` or the SDK, folder never trusted                                                                                                                                                    |
-| :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Hooks](/docs/en/hooks) in settings files, the [`env`](/docs/en/settings-reference#env) block and helper commands such as [`apiKeyHelper`](/docs/en/settings-reference#apikeyhelper), and a project skill's [hooks](/docs/en/hooks#hooks-in-skills-and-agents) and [`allowed-tools`](/docs/en/skills#pre-approve-tools-for-a-skill)       | Used                                                                                                                                                                           | Used. Workspace trust never gates a skill's `allowed-tools` in any session                                                                                                                      |
-| `permissions.allow` rules and `additionalDirectories` in `.claude/settings.json`                                                                                                                                                                                                                                 | Not used until you accept the trust dialog, which appears again listing them                                                                                                   | Not used. Claude Code prints a [`this workspace has not been trusted`](/docs/en/errors#workspace-has-not-been-trusted) warning to stderr                                                             |
-| Frontmatter hooks in a project [subagent](/docs/en/sub-agents#hooks-in-subagent-frontmatter), a project [`@skills-dir` plugin](/docs/en/plugins-reference#skills-directory-plugins), and [`extraKnownMarketplaces`](/docs/en/settings-reference#extraknownmarketplaces) entries from the repository or an `--add-dir` directory | Not used, and no dialog is offered                                                                                                                                             | Not used                                                                                                                                                                                        |
-| Inline [`mcpServers`](/docs/en/sub-agents#scope-mcp-servers-to-a-subagent) in the frontmatter of a subagent from the repository or an `--add-dir` directory. Before v2.1.238, Claude Code loaded these servers in both situations                                                                                     | Not used, and no dialog is offered                                                                                                                                             | Not used                                                                                                                                                                                        |
-| Servers in `.mcp.json`, including ones the repository [approves in its own settings](/docs/en/mcp#project-server-approvals-and-workspace-trust)                                                                                                                                                                       | Claude Code asks you before connecting them. The repository's own approvals don't count                                                                                        | Connected without asking, approved or not. The SDK loads them only when `settingSources` includes project settings. `claude mcp list` in the same folder still reports such a server as pending |
-| A [`headersHelper`](/docs/en/mcp#trust-a-folder-before-its-headershelper-runs) on a server in `.mcp.json`. Before v2.1.238, Claude Code ran the helper in both situations                                                                                                                                             | Not run until you accept the trust dialog, which appears again naming where the helper is declared. Claude Code connects the server with its static `headers` alone until then | Not run. Claude Code connects the server with its static `headers` alone and prints a [`headersHelper not run`](/docs/en/errors#headershelper-not-run) line per server to stderr                     |
+| What the repository supplies | You trusted only a parent folder | `claude -p` or the SDK, folder never trusted |
+| :- | :- | :- |
+| [Hooks](/docs/en/hooks) in settings files, the [`env`](/docs/en/settings-reference#env) block and helper commands such as [`apiKeyHelper`](/docs/en/settings-reference#apikeyhelper), and a project skill's [hooks](/docs/en/hooks#hooks-in-skills-and-agents) and [`allowed-tools`](/docs/en/skills#pre-approve-tools-for-a-skill) | Used | Used. Workspace trust never gates a skill's `allowed-tools` in any session |
+| `permissions.allow` rules and `additionalDirectories` in `.claude/settings.json` | Not used until you accept the trust dialog, which appears again listing them | Not used. Claude Code prints a [`this workspace has not been trusted`](/docs/en/errors#workspace-has-not-been-trusted) warning to stderr |
+| Frontmatter hooks in a project [subagent](/docs/en/sub-agents#hooks-in-subagent-frontmatter), a project [`@skills-dir` plugin](/docs/en/plugins/loading#plugins-shared-through-a-repository), and [`extraKnownMarketplaces`](/docs/en/settings-reference#extraknownmarketplaces) entries from the repository or an `--add-dir` directory | Not used, and no dialog is offered | Not used |
+| Inline [`mcpServers`](/docs/en/sub-agents#scope-mcp-servers-to-a-subagent) in the frontmatter of a subagent from the repository or an `--add-dir` directory. Before v2.1.238, Claude Code loaded these servers in both situations | Not used, and no dialog is offered | Not used |
+| Servers in `.mcp.json`, including ones the repository [approves in its own settings](/docs/en/mcp#project-server-approvals-and-workspace-trust) | Claude Code asks you before connecting them. The repository's own approvals don't count | Connected without asking, approved or not. The SDK loads them only when `settingSources` includes project settings. `claude mcp list` in the same folder still reports such a server as pending |
+| A [`headersHelper`](/docs/en/mcp#trust-a-folder-before-its-headershelper-runs) on a server in `.mcp.json`. Before v2.1.238, Claude Code ran the helper in both situations | Not run until you accept the trust dialog, which appears again naming where the helper is declared. Claude Code connects the server with its static `headers` alone until then | Not run. Claude Code connects the server with its static `headers` alone and prints a [`headersHelper not run`](/docs/en/errors#headershelper-not-run) line per server to stderr |
 
 For the rows that need this exact folder trusted, trust it by hand: set `projects["<path>"].hasTrustDialogAccepted` to `true` in `~/.claude.json`, where `<path>` is the repository root, or the folder itself outside a repository. Claude Code prints the exact key in the debug log line for a skipped subagent hook or inline MCP server, in the stderr warning for skipped allow rules, and in the `headersHelper not run` line for a skipped helper.
 
@@ -650,7 +710,7 @@ This [repository](https://github.com/anthropics/claude-code/tree/main/examples/s
 
 ## See also
 
-* [Settings reference](/docs/en/settings-reference#permission-settings): every settings key, including the permission keys
+* [All settings](/docs/en/settings-reference#permission-settings): every settings key, including the permission keys
 * [Configure auto mode](/docs/en/auto-mode-config): tell the auto mode classifier which infrastructure your organization trusts
 * [Sandboxing](/docs/en/sandboxing): OS-level filesystem and network isolation for Bash commands
 * [Authentication](/docs/en/authentication): set up user access to Claude Code

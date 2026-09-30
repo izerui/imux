@@ -10,6 +10,12 @@ This glossary defines Claude Code terminology. Each entry links to the page wher
 
 ## A
 
+### AGENTS.md
+
+A markdown file of project instructions you write for AI coding agents. If your repository has one and no [CLAUDE.md](#claude-md), Claude reads it as your project instructions without you adding a second file. You can change the **Project instructions** setting in `/config` to have Claude read both files or only `CLAUDE.md`. Reading `AGENTS.md` directly requires Claude Code v2.1.277 or later. In some sessions Claude [can't read `AGENTS.md`](/docs/en/memory#when-agents-md-support-is-unavailable), so [import it from a `CLAUDE.md`](/docs/en/memory#share-one-file-with-other-coding-tools) there instead.
+
+Learn more: [AGENTS.md](/docs/en/memory#agents-md)
+
 ### Agent teams
 
 Multiple independent Claude Code sessions coordinated by a team lead, with a shared task list and peer-to-peer messaging. Unlike [subagents](#subagent), which run within a single session and report only to the parent, teammates each have their own context window and you can interact with any of them directly. Agent teams are experimental and disabled by default; see [Enable agent teams](/docs/en/agent-teams#enable-agent-teams).
@@ -36,7 +42,7 @@ Learn more: [How Claude Code works](/docs/en/how-claude-code-works#the-agentic-l
 
 ### Artifact
 
-A live, interactive web page Claude Code publishes from your session to a private URL on claude.ai, so you can see output visually or share it instead of reading terminal text. The page updates in place when the session republishes. Artifacts you create from Claude Code appear in the same gallery as artifacts created in claude.ai conversations. Sharing depends on your plan: on Pro and Max, a public link that anyone can open; on Team and Enterprise, sharing within your organization, plus public links once an Owner enables them.
+A live, interactive web page Claude Code publishes from your session to a private URL on claude.ai, so you can see output visually or share it instead of reading terminal text. The page updates in place when the session republishes. Artifacts you create from Claude Code appear in the same gallery as artifacts created in claude.ai conversations. Sharing options depend on your plan: see [Share an artifact](/docs/en/artifacts#share-an-artifact).
 
 Learn more: [Share session output as artifacts](/docs/en/artifacts)
 
@@ -48,7 +54,7 @@ Learn more: [Auto memory](/docs/en/memory#auto-memory)
 
 ### Auto mode
 
-A [permission mode](#permission-mode) where a separate classifier model reviews actions instead of you, so Claude Code runs most of them without asking you. Claude Code still asks you before actions your explicit ask rules match. On Pro, Max, and Team plans, auto mode is the [built-in starting permission mode](/docs/en/permission-modes#which-mode-a-session-starts-in) for interactive terminal and VS Code sessions. The classifier blocks scope escalation, untrusted infrastructure, and [prompt injection](#prompt-injection). Tool results are stripped from what it sees, so hostile content in a file or web page can't manipulate it directly.
+A [permission mode](#permission-mode) where a separate classifier model reviews actions instead of you, so Claude Code runs most of them without asking you. Claude Code still asks you before actions your explicit ask rules match. With Claude Code v2.1.283 or later, auto mode is the [built-in starting permission mode](/docs/en/permission-modes#which-mode-a-session-starts-in) for interactive terminal and VS Code sessions, and on earlier versions only on Pro, Max, and Team plans. The classifier blocks scope escalation, untrusted infrastructure, and [prompt injection](#prompt-injection). Tool results are stripped from what it sees, so hostile content in a file or web page can't manipulate it directly.
 
 Learn more: [Eliminate prompts with auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode)
 
@@ -56,7 +62,7 @@ Learn more: [Eliminate prompts with auto mode](/docs/en/permission-modes#elimina
 
 ### Bare mode
 
-With `--bare`, Claude Code starts without loading hooks, skills, custom commands, subagents, plugins, MCP servers, auto memory, or CLAUDE.md, apart from skills in a directory you pass with `--add-dir`. Recommended for CI and scripted calls where you need the same result on every machine.
+With `--bare`, Claude Code starts without loading hooks, skills, custom commands, subagents, installed plugins, MCP servers, auto memory, or CLAUDE.md, apart from skills in a directory you pass with `--add-dir`. Recommended for CI and scripted calls where you need the same result on every machine.
 
 Learn more: [Start faster with bare mode](/docs/en/headless#start-faster-with-bare-mode)
 
@@ -76,7 +82,7 @@ Learn more: [Channels](/docs/en/channels)
 
 ### Checkpoint
 
-A restore point created at each prompt you send. Claude Code snapshots files before every edit so a checkpoint can revert them. Press `Esc` twice or run `/rewind` to restore code, conversation, or both to an earlier point, or to summarize part of the conversation from a selected message. Checkpoints are saved with the conversation, so a resumed session can still `/rewind` to them. They're separate from git and don't track changes made through the Bash tool.
+A restore point created at each prompt you send that starts a turn. Claude Code snapshots files before every edit so a checkpoint can revert them. Press `Esc` twice or run `/rewind` to restore code, conversation, or both to an earlier point, or to summarize part of the conversation from a selected message. Checkpoints are saved with the conversation, so a resumed session can still `/rewind` to them. They're separate from git and don't track changes made through the Bash tool.
 
 Learn more: [Checkpointing](/docs/en/checkpointing)
 
@@ -90,9 +96,15 @@ Learn more: [The `.claude` directory](/docs/en/claude-directory)
 
 A markdown file of persistent instructions you write for Claude, loaded at the start of every session as a user message after the system prompt. Put project conventions, architecture notes, and "always do X" rules here. Project-root CLAUDE.md survives [compaction](#compaction) and is re-read fresh from disk afterward.
 
-You can place CLAUDE.md at project scope in `./CLAUDE.md` or `./.claude/CLAUDE.md`, at user scope in `~/.claude/CLAUDE.md`, or as [managed policy](#managed-settings) for your organization. All discovered files are concatenated into context rather than overriding each other, ordered from broadest scope to most specific.
+You can place CLAUDE.md at project scope in `./CLAUDE.md` or `./.claude/CLAUDE.md`, at user scope in `~/.claude/CLAUDE.md`, or as [managed policy](#managed-settings) for your organization. All discovered files are concatenated into context rather than overriding each other, ordered from broadest scope to most specific. Claude Code can also load a project's [AGENTS.md](#agents-md) files, on their own or alongside CLAUDE.md.
 
 Learn more: [CLAUDE.md files](/docs/en/memory#claude-md-files)
+
+### Cloud session
+
+A Claude Code session that keeps running after you close your laptop, because it runs on cloud infrastructure instead of your machine: Anthropic-managed by default, or a [self-hosted environment](/docs/en/self-hosted-environments) your organization operates. You start one from claude.ai/code, the Claude mobile app, the Desktop app with **Cloud** selected, `claude --cloud`, or a [routine](/docs/en/routines). A session in your terminal, IDE, or the Desktop app with **Local** selected is a local session; to reach a local session from another device, use [Remote Control](#remote-control).
+
+Learn more: [Use Claude Code in the cloud](/docs/en/claude-code-on-the-web)
 
 ### Command
 
@@ -132,7 +144,7 @@ Learn more: [Sessions from Dispatch](/docs/en/desktop#sessions-from-dispatch)
 
 ### Effort level
 
-A setting that controls how much of the adaptive-reasoning thinking budget Claude uses on each turn. Higher effort means more thinking tokens and deeper reasoning; lower effort is faster and cheaper. Effort is supported on Fable 5.1 and Fable 5, on Opus 4.6 and later, and on Sonnet 4.6 and later.
+A setting that controls adaptive reasoning, which lets the model decide whether and how much to think on each step. Higher effort means more thinking tokens and deeper reasoning; lower effort is faster and cheaper. Effort is supported on Fable models, on Opus 4.6 and later, and on Sonnet 4.6 and later.
 
 Learn more: [Adjust effort level](/docs/en/model-config#adjust-effort-level)
 
@@ -141,6 +153,14 @@ Learn more: [Adjust effort level](/docs/en/model-config#adjust-effort-level)
 Visible step-by-step reasoning the model performs before responding. You can adjust it with the [effort level](#effort-level), or cap thinking tokens with `MAX_THINKING_TOKENS` on models with a fixed thinking budget. Thinking appears in gray italic text in the terminal.
 
 Learn more: [Use extended thinking](/docs/en/model-config#extended-thinking)
+
+## F
+
+### Frontmatter
+
+A block of YAML settings at the very top of a Markdown file, between an opening `---` line and a closing `---` line. Skills, subagents, output styles, and rules each read their configuration from frontmatter, such as a skill's `description` or a subagent's `tools`, and treat everything after the closing `---` as the instructions. The opening `---` must be the file's first line. Each file type accepts its own set of fields.
+
+Learn more: [Skill frontmatter](/docs/en/skills#frontmatter-reference), [Subagent frontmatter](/docs/en/sub-agents#supported-frontmatter-fields), [Output style frontmatter](/docs/en/output-styles#frontmatter), [Rule frontmatter](/docs/en/memory#rules-frontmatter-reference)
 
 ## H
 
@@ -194,7 +214,7 @@ Learn more: [Run Claude Code programmatically](/docs/en/headless)
 
 ### Output style
 
-A configuration that modifies Claude's system prompt to change response behavior, tone, or format. Unlike [CLAUDE.md](#claude-md), which Claude Code delivers as a user message after the system prompt, an output style changes the system prompt itself.
+A configuration that changes the instructions Claude Code gives Claude, to set response behavior, tone, or format. Unlike [CLAUDE.md](#claude-md), which adds project context alongside Claude Code's default instructions, a custom output style can replace the default software engineering instructions.
 
 Learn more: [Output styles](/docs/en/output-styles)
 
@@ -222,9 +242,9 @@ Learn more: [Analyze before you edit with plan mode](/docs/en/permission-modes#a
 
 ### Plugin
 
-A bundle of skills, hooks, subagents, and MCP servers packaged as a single installable unit. Plugin skills are namespaced as `plugin-name:skill-name` so multiple plugins coexist. Distribute plugins across teams via a [marketplace](/docs/en/plugin-marketplaces).
+A bundle of skills, hooks, subagents, and MCP servers packaged as a single installable unit. Plugin skills are namespaced as `plugin-name:skill-name` so multiple plugins coexist. Distribute plugins across teams via a [marketplace](/docs/en/plugins/overview).
 
-Learn more: [Plugins](/docs/en/plugins)
+Learn more: [Plugins](/docs/en/plugins/overview)
 
 ### Project trust
 
@@ -242,7 +262,7 @@ Learn more: [Protect against prompt injection](/docs/en/security#protect-against
 
 ### Remote Control
 
-A way to continue a local Claude Code session from your phone or browser via claude.ai. Your code execution and files stay on your machine; the interface is remote. Different from Claude Code on the web, which runs in a cloud sandbox.
+A way to continue a local Claude Code session from your phone or browser via claude.ai. Your code execution and files stay on your machine; the interface is remote. Different from a [cloud session](/docs/en/claude-code-on-the-web), which runs in a cloud sandbox.
 
 Learn more: [Remote Control](/docs/en/remote-control)
 
@@ -294,13 +314,36 @@ Any place you access Claude Code: the CLI, VS Code, JetBrains, Desktop, or claud
 
 Learn more: [Platforms and integrations](/docs/en/platforms)
 
+### System prompt
+
+The instructions Claude Code sends ahead of your conversation on every request, covering how Claude uses tools, behaves safely, and formats its responses. You can add to the system prompt with `--append-system-prompt` or replace it with `--system-prompt`. The system prompt is the first layer of the [prompt cache](/docs/en/prompt-caching#how-the-cache-is-organized).
+
+Your [CLAUDE.md](#claude-md) files and the instructions of your [output style](#output-style) aren't part of the system prompt. Claude Code delivers them in the conversation as [system reminders](#system-reminder).
+
+Learn more: [System prompt flags](/docs/en/cli-reference#system-prompt-flags)
+
+### System reminder
+
+A message that Claude Code, as the [harness](#agentic-harness), adds to the conversation to give Claude context. You don't send system reminders yourself. Claude Code inserts them as a session runs, for example when the session starts, when a hook returns text, or when a file changes on disk. Claude reads them alongside your messages. The following all reach Claude as system reminders:
+
+* Your [CLAUDE.md](#claude-md) files
+* The instructions of your [output style](#output-style)
+* Text a [hook](#hook) returns as `additionalContext`
+* The list of available [skills](#skill)
+* A note that a file Claude read earlier has changed on disk
+* The commit and pull request attribution lines
+
+In a logged API request, a system reminder appears wrapped in `<system-reminder>` tags inside a user message, or on some models as a separate message with the `system` role.
+
+Learn more: [Context Claude Code adds outside the system prompt](/docs/en/agent-sdk/modifying-system-prompts#context-claude-code-adds-outside-the-system-prompt)
+
 ## T
 
 ### Teleport
 
-A command, `/teleport`, that pulls a cloud Claude Code session into your local terminal. Claude fetches the branch, loads the conversation history, and resumes from the web session's last state. The reverse direction is `--cloud`, which sends a local task to run on the web.
+A command, `/teleport`, that pulls a cloud Claude Code session into your local terminal. Claude fetches the branch, loads the conversation history, and resumes from the cloud session's last state. The reverse direction is `--cloud`, which sends a local task to run in the cloud.
 
-Learn more: [From web to terminal](/docs/en/claude-code-on-the-web#from-web-to-terminal)
+Learn more: [From cloud to terminal](/docs/en/claude-code-on-the-web#from-cloud-to-terminal)
 
 ### Tool
 
@@ -336,8 +379,9 @@ Learn more: [Run parallel sessions with git worktrees](/docs/en/worktrees)
 
 These terms appear in older docs, blog posts, and community content. Use the current name when searching this site.
 
-| Old term        | Now called                                    | Notes                                |
-| --------------- | --------------------------------------------- | ------------------------------------ |
-| Headless mode   | [Non-interactive mode](#non-interactive-mode) | Same `-p` flag, same behavior        |
-| Custom commands | [Skills](#skill)                              | `.claude/commands/` files still work |
-| Slash commands  | Commands                                      | "Slash" dropped from product copy    |
+| Old term | Now called | Notes |
+| - | - | - |
+| Headless mode | [Non-interactive mode](#non-interactive-mode) | Same `-p` flag, same behavior |
+| Web session; "Claude Code on the web" as the name for any cloud session | [Cloud session](#cloud-session) | "Claude Code on the web" now names only the browser surface at claude.ai/code |
+| Custom commands | [Skills](#skill) | `.claude/commands/` files still work |
+| Slash commands | Commands | "Slash" dropped from product copy |

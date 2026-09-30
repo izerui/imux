@@ -34,11 +34,11 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
   -d '{"scope": {"type": "rbac_group", "rbac_group_id": "contractors"}, "amount": "10000", "period": "daily"}'
 ```
 
-| 字段           | 值                                    | 描述                                                                                                                                                                                                                                                             |
-| ------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 字段 | 值 | 描述 |
+| - | - | - |
 | `scope.type` | `user`, `rbac_group`, `organization` | `user` 通过其 OpenID Connect (OIDC) `sub`（你的身份提供商分配的稳定用户 ID）针对一个开发者；将其作为 `scope.user_id` 传递。`rbac_group` 通过名称针对一个 [IdP 组](/docs/zh-CN/claude-apps-gateway-config#managed)；将其作为 `scope.rbac_group_id` 传递。`organization` 是组织范围的默认值。网关接受所有三个；Anthropic 的公共 `POST` 目前仅限用户。 |
-| `amount`     | USD 美分的整数字符串，或 `null`                | `null` 是无限制的。`"0"` 是零上限，它阻止每个请求。                                                                                                                                                                                                                               |
-| `period`     | `daily`, `weekly`, `monthly`         | 一个作用域可以为每个时期保持一个上限，每个都独立执行：如果开发者超过其中任何一个，他们就会被阻止。                                                                                                                                                                                                              |
+| `amount` | USD 美分的整数字符串，或 `null` | `null` 是无限制的。`"0"` 是零上限，它阻止每个请求。 |
+| `period` | `daily`, `weekly`, `monthly` | 一个作用域可以为每个时期保持一个上限，每个都独立执行：如果开发者超过其中任何一个，他们就会被阻止。 |
 
 组或组织上限是每个成员继承的按座位默认值，而不是共享池。每个时期，开发者的有效上限按以下顺序解决：按用户覆盖，然后是其组上限中最严格的，然后是组织默认值，然后是无限制。[`admin.group_limit_mode: max`](/docs/zh-CN/claude-apps-gateway-config#admin) 将多组平局打破翻转为最不严格的。
 
@@ -55,23 +55,53 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
   执行如何工作
 </h2>
 
-在每个 `/v1/messages` 请求上，网关在一个 Postgres 查询中解决开发者的上限和期间至今的支出。如果他们超过任何上限，请求返回 `429`，`error.type: billing_error` 和标头 `x-should-retry: false`。消息是 `spend limit reached`，后跟你的 [`admin.blocked_message`](/docs/zh-CN/claude-apps-gateway-config#admin)（如果设置）。
+在每个 `/v1/messages` 请求上，网关在一个 Postgres 查询中查找开发者的上限和期间至今的支出。超过任何上限的开发者会获得 `429` 和 `error.type: billing_error` 以及标头 `x-should-retry: false`。
 
-`/v1/messages/count_tokens` 是豁免的。令牌计数是免费的，因此无论上限状态如何都会运行。
+消息命名该期间和重置时间，例如 `spend limit reached (daily; resets 2026-08-08 00:00 UTC)`，后跟你的 [`admin.blocked_message`](/docs/zh-CN/claude-apps-gateway-config#admin)（如果设置）。当开发者同时超过多个上限时，消息命名最后重置的上限。响应还包含一个 `retry-after` 标头，其中包含直到该重置的剩余秒数。在网关服务器上的 v2.1.225 之前，消息是 `spend limit reached`，没有期间、重置时间或 `retry-after` 标头。
 
-在每个响应之后，使用计量器从响应中读取令牌计数，当它流向客户端时，以 USD 列表价格对其进行定价，并为所有三个时期桶增加 Postgres 计数器。计量器是流上的单个读取器，因此客户端的字节不受影响，计量失败不会破坏响应。
+在 v2.1.227 或更高版本上，`<public_url>/protocol` 处的协议参考也列出了确切的使用限制响应标头和 `429` 正文。
 
-支出限制从 USD 列表价格的令牌计数估计支出；它们是断路器，而不是发票。对于权威计费，请根据你的提供商自己的使用报告进行协调，例如 Anthropic 使用和成本 Admin API、Amazon Bedrock 上的调用日志或 Google Cloud 上的 Cloud Monitoring。
+上限在 UTC 日历边界重置：每天在 00:00 UTC、周一和每月的第一天。网关从不阻止 `/v1/messages/count_tokens`，因为令牌计数是免费的。
 
-定价使用与 Claude Code CLI 用于自己的成本显示相同的表，具有跨 Anthropic、Amazon Bedrock (`us.anthropic.…-v1:0`)、Google Cloud 的 Agent Platform (`claude-…@date`) 和 Microsoft Foundry ID 形式的相同模型 ID 规范化。表无法放置的模型 ID（例如 Microsoft Foundry 部署名称或推理配置文件 ARN）以未知模型默认层 \$5/\$25 每百万输入/输出令牌的价格定价，而不是零，因此无法识别的 ID 无法通过不计量来绕过上限。网关在启动时和运行时每个 ID 一次警告模型何时通过回退定价。
+<h3 id="how-requests-are-priced">
+  请求如何定价
+</h3>
 
-客户端中止也被计费。上游仅在流的终端帧中报告输出令牌，因此中止的流不会携带它们。计量器从流式内容大小保持保守的下限估计，大约每令牌四个字符，并在终端使用帧缺失时计费。完整流始终计费上游报告的计数。没有这个，一个受限的开发者可以流式输出并在结束前立即中止每个请求，花费而不被计数。
+在每个响应之后，使用计量器读取令牌计数并将成本添加到每日、每周和每月计数器。它从不接触发送给客户端的字节，因此计量失败无法破坏响应。这些金额是美元估计值，是断路器而不是发票；对于计费，请根据你的提供商的使用报告进行协调。
+
+计量器按以下顺序为每个请求选择费率：
+
+1. 为提供请求的上游匹配的 [`pricing.overrides`](/docs/zh-CN/claude-apps-gateway-config#pricing) 行。需要 v2.1.227 或更高版本。
+2. 上游模型 ID 的列表价格，即网关发送给提供商的字符串，当 Claude Code 成本表识别它时。该表接受 Anthropic、Amazon Bedrock、Google Cloud 的 Agent Platform 和 Microsoft Foundry ID 形式。
+3. 你映射到该上游 ID 的 [`models[].id`](/docs/zh-CN/claude-apps-gateway-config#models) 的列表价格，对于不包含模型名称的上游字符串，例如 Amazon Bedrock 应用推理配置文件 ARN 或 Microsoft Foundry 部署名称。需要 v2.1.218 或更高版本。
+4. 未知模型层级 \$5/\$25 每百万输入/输出令牌，因此计量器无法识别的 ID 永远不会免费。网关在启动时和运行时每个 ID 一次警告何时使用此层级。
+
+无论应用哪种费率，计量器然后将金额乘以 [`pricing.multiplier`](/docs/zh-CN/claude-apps-gateway-config#pricing)，默认为 `1`。
+
+客户端中止也被计费。当流在没有上游最终使用帧的情况下结束时，计量器为已发送给客户端的文本计费约每输出令牌四个字符的下限估计，因此提前中止请求不会规避上限。
 
 <h3 id="postgres-availability">
   Postgres 可用性
 </h3>
 
-预检查使用两秒超时查询 Postgres。如果存储无法访问或超时，执行默认情况下失败打开：请求继续，网关记录警告。设置 [`enforcement.fail_closed_on_error: true`](/docs/zh-CN/claude-apps-gateway-config#enforcement) 改为失败关闭，它返回相同的 `429 billing_error`，消息为 `spend limit unavailable`。失败打开防止存储中断成为推理中断；失败关闭保证没有无计量支出。
+预检查使用两秒超时查询 Postgres。如果存储无法访问或超时，执行默认情况下失败打开：请求继续，网关记录警告，响应不包含 `anthropic-ratelimit-unified-*` 标头。设置 [`enforcement.fail_closed_on_error: true`](/docs/zh-CN/claude-apps-gateway-config#enforcement) 改为失败关闭，它返回相同的 `429 billing_error`，但消息为 `spend limit unavailable`，没有期间、重置时间或 `retry-after` 标头。失败打开防止存储中断成为推理中断；失败关闭保证没有无计量支出。
+
+失败打开仅在你的负载均衡器或编排器仍然将流量路由到网关时有帮助。有关 `store.readiness_grace_seconds` 的信息，请参阅 [Outage behavior](/docs/zh-CN/claude-apps-gateway-deploy#outage-behavior)，它使副本在短暂中断期间通过其就绪检查。
+
+<h3 id="usage-warnings-in-claude-code">
+  Claude Code 中的使用警告
+</h3>
+
+Claude Code 在开发者接近其上限时向其发出警告：一旦利用率超过 75%，再次超过其最消耗上限的 95%。当网关阻止请求时，Claude Code 按原样显示网关的 `429` 消息，包括你的 `admin.blocked_message`。
+
+警告基于响应标头工作：
+
+* 在网关服务器上使用 v2.1.225 或更高版本，具有上限的开发者的每个成功 `/v1/messages` 响应在 `anthropic-ratelimit-unified-*` 标头中包含他们自己的上限利用率和重置时间。
+* 在开发者的机器上也使用 v2.1.225 或更高版本，Claude Code 读取标头并显示警告。
+
+标头始终描述开发者自己的上限：网关剥离上游提供商的速率限制标头（描述你的共享配额），从不转发它们。
+
+在开发者的机器上使用 v2.1.251 或更高版本，Claude Code 也读取相同的标头以在 `/usage` 中显示 **Spend limit** 栏，显示其上限使用的百分比和何时重置，并向 [status line](/docs/zh-CN/statusline#rate-limit-usage) 输入添加 `rate_limits.spend_limit` 对象。Claude Code 将两者显示为百分比而不是美元金额，并且不需要网关服务器上的版本比 v2.1.225 更新。
 
 <h2 id="admin-api-reference">
   Admin API 参考
@@ -79,14 +109,14 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
 
 下面的端点在 `/v1/organizations/spend_limits` 下提供。
 
-| 方法和路径                                          | 描述                                             |
-| ---------------------------------------------- | ---------------------------------------------- |
-| `GET /v1/organizations/spend_limits`           | 列出配置的上限。查询：`?limit=&after_id=&before_id=`。     |
-| `POST /v1/organizations/spend_limits`          | 为 `{scope, period}` 创建或替换上限。                   |
-| `GET /v1/organizations/spend_limits/{id}`      | 通过其 `spl_` 前缀 ID 获取一个上限。                       |
-| `DELETE /v1/organizations/spend_limits/{id}`   | 删除一个上限。返回 `{type: "spend_limit_deleted", id}`。 |
-| `GET /v1/organizations/spend_limits/effective` | 每个主体每个时期的已解决上限和至今支出。                           |
-| `GET /v1/organizations/spend_limits/audit`     | 管理员变更跟踪，最新优先。查询：`?limit=`。                     |
+| 方法和路径 | 描述 |
+| - | - |
+| `GET /v1/organizations/spend_limits` | 列出配置的上限，可选地过滤到 `organization`、`rbac_group` 或 `user` 的一个 `scope_type`。查询：`?limit=&after_id=&before_id=&scope_type=`。 |
+| `POST /v1/organizations/spend_limits` | 为 `{scope, period}` 创建或替换上限。 |
+| `GET /v1/organizations/spend_limits/{id}` | 通过其 `spl_` 前缀 ID 获取一个上限。 |
+| `DELETE /v1/organizations/spend_limits/{id}` | 删除一个上限。返回 `{type: "spend_limit_deleted", id}`。 |
+| `GET /v1/organizations/spend_limits/effective` | 每个主体每个时期的已解决上限和至今支出。 |
+| `GET /v1/organizations/spend_limits/audit` | 管理员变更跟踪，最新优先。查询：`?limit=&after_id=`。 |
 
 约定镜像 Anthropic 的 Admin API：
 
@@ -94,7 +124,7 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
 * `spl_` 前缀 ID
 * 金额为 USD 美分的整数字符串；`POST` 拒绝任何其他 `currency`，返回 `400`
 * `{type: "error", error: {type, message}, request_id}` 错误信封
-* 每个管理员响应上的 `request-id` 响应标头，成功或错误，匹配正文的 `request_id`
+* 每个管理员响应上的 `request-id` 响应标头，成功或错误；错误正文也将其作为 `request_id` 携带
 
 每个变更在同一事务中向 `admin_audit` 写入前/后行，归属于 `admin-key:<id>` 或 `oidc:<sub>`。
 
@@ -113,13 +143,13 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
 
 组源上限根据那些最后看到的组解决，具有与执行使用的相同 `group_limit_mode` 平局打破，因此查看器显示实际应用的上限。
 
-| 查询参数             | 描述                                              |
-| ---------------- | ----------------------------------------------- |
-| `user_ids[]`     | 可重复。按 OIDC `sub` 过滤到特定主体。                       |
-| `period[]`       | 可重复。过滤到 `daily`、`weekly` 或 `monthly` 行。         |
-| `sort`           | `spend_desc` 首先列出最高支出者。需要恰好一个 `period[]`。       |
-| `q`              | 对 OIDC `sub`、最后看到的电子邮件和最后看到的显示名称的不区分大小写的子字符串过滤。 |
-| `limit` / `page` | 页面大小（1–1000，默认 20）和前一个响应的 `next_page` 中的不透明游标。  |
+| 查询参数 | 描述 |
+| - | - |
+| `user_ids[]` | 可重复。按 OIDC `sub` 过滤到特定主体。 |
+| `period[]` | 可重复。过滤到 `daily`、`weekly` 或 `monthly` 行。 |
+| `sort` | `spend_desc` 首先列出最高支出者。需要恰好一个 `period[]`。 |
+| `q` | 对 OIDC `sub`、最后看到的电子邮件和最后看到的显示名称的不区分大小写的子字符串过滤。 |
+| `limit` / `page` | 页面大小（1–1000，默认 20）和前一个响应的 `next_page` 中的不透明游标。 |
 
 <Warning>
   `q=` 和 `user_ids[]=` 乘坐 GET 查询字符串，因此任何前置代理或负载均衡器在其访问日志中捕获它们。如果你的 PII 日志策略很严格，请在那里清理这些参数。
@@ -129,13 +159,13 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
   `/audit`
 </h3>
 
-返回支出限制变更跟踪：谁更改了哪个上限、前/后快照和可选原因，最新优先。`has_more` 是精确的。此端点遵循本地 Admin API 约定，而不是第一方线路形状。
+返回支出限制变更跟踪：谁更改了哪个上限，具有前/后快照，最新优先。`has_more` 是精确的。此端点遵循本地 Admin API 约定，而不是第一方线路形状。
 
 <h3 id="pagination">
   分页
 </h3>
 
-原始列表按 `after_id` 和 `before_id` 分页，它们是互斥的 `spl_…` ID；结果按创建排序，`has_more` 反映遍历方向。`/effective` 按传回的不透明 `next_page` 令牌分页为 `?page=`，主体按升序排序，因此在记录支出时页面保持稳定。`limit` 在两者上都是 1–1000，默认 20。
+原始列表按 `after_id` 和 `before_id` 分页，它们是互斥的 `spl_…` ID；结果按创建排序，`has_more` 反映遍历方向。`/effective` 按传回的不透明 `next_page` 令牌分页为 `?page=`，主体按升序排序，因此在记录支出时页面保持稳定。`limit` 在两者上都是 1–1000，默认 20，在 `/audit` 上按 `after_id`（前一页上最后一个事件的数字 `id`）分页，其 `limit` 默认为 100。
 
 <h2 id="data-lifecycle">
   数据生命周期
@@ -143,14 +173,12 @@ curl -sS https://claude-gateway.internal.example.com/v1/organizations/spend_limi
 
 网关保持四个支出相关的表；每小时扫描执行保留窗口：
 
-| 表                  | 内容                                 | 保留                                                                                       |
-| ------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------- |
-| `spend`            | 按主体期间至今的计数器（美分）                    | [`admin.spend_retention_months`](/docs/zh-CN/claude-apps-gateway-config#admin)，默认 13          |
-| `spend_limits`     | 配置的上限                              | 直到通过 API 删除                                                                              |
-| `admin_audit`      | 变更跟踪                               | [`admin.audit_retention_days`](/docs/zh-CN/claude-apps-gateway-config#admin)，默认 365           |
+| 表 | 内容 | 保留 |
+| - | - | - |
+| `spend` | 按主体期间至今的计数器（美分） | [`admin.spend_retention_months`](/docs/zh-CN/claude-apps-gateway-config#admin)，默认 13 |
+| `spend_limits` | 配置的上限 | 直到通过 API 删除 |
+| `admin_audit` | 变更跟踪 | [`admin.audit_retention_days`](/docs/zh-CN/claude-apps-gateway-config#admin)，默认 365 |
 | `principal_emails` | 每个主体的最后看到的电子邮件、显示名称和 IdP 组。包含 PII。 | [`admin.identity_retention_days`](/docs/zh-CN/claude-apps-gateway-config#admin) 自上次活动以来，默认 90 |
-
-`identity_retention_days` 故意比 `spend_retention_months` 短：一个已取消配置的身份停止刷新并老化，而其匿名支出计数器保持用于年度报告。
 
 当开发者离开时，通过 `DELETE /v1/organizations/spend_limits/{id}` 删除任何按用户上限；他们的支出和身份行按上面的保留窗口老化。要立即擦除一个人，用于离职或数据主体访问请求 (DSAR)，直接针对网关数据库运行 `DELETE FROM principal_emails WHERE principal = '<sub>'`。这删除了唯一保存其电子邮件、名称和组的表。`spend` 和 `admin_audit` 行仅引用伪匿名 OIDC `sub`，并按其自己的窗口老化。
 

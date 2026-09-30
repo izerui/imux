@@ -7,7 +7,7 @@
 > Claude Code Desktop 在 Claude 构建、运行或检查应用时，会在 iOS Simulator 窗格中打开你的应用，每个会话都有一个单独的模拟器。
 
 <Note>
-  iOS Simulator 窗格在 macOS 上的 Claude Code Desktop 中处于公开测试版。它在 Pro、Max 和 Team 计划中可用，在 Enterprise 计划中不可用。
+  iOS Simulator 窗格在 macOS 上的 Claude Code Desktop 中处于公开测试版。它在 Pro、Max、Team 和 Enterprise 计划中可用，但在启用了 HIPAA 配置的 Enterprise 组织中不可用。
 </Note>
 
 iOS Simulator 窗格在 Claude Code Desktop 中的对话旁边显示你的应用在 Apple 的 iOS Simulator 中运行。当 Claude 在模拟器中构建、安装、启动或检查你的应用时，该窗格会自动打开并实时流式传输设备屏幕。使用它来观看 Claude 运行和测试你的应用，或者在 Claude 继续工作时自己点击浏览应用。
@@ -23,13 +23,29 @@ iOS Simulator 窗格在 Claude Code Desktop 中的对话旁边显示你的应用
 * Claude Desktop v1.24012.0 或更高版本
 * 一台 Mac，因为 Apple 的 iOS Simulator 仅在 macOS 上运行
 * [Xcode](https://developer.apple.com/xcode/)，其中安装了 iOS 平台，它提供模拟器设备。如果 Xcode 还没有列出任何模拟器，请参阅[模拟器窗格显示未找到模拟器](#the-simulator-pane-says-no-simulators-were-found)
-  * 使用 Xcode 26.x。该窗格还不能与 Xcode 27 一起使用，Xcode 27 用 Device Hub 替换了 Simulator 应用。如果 `xcode-select` 在你的 Mac 上指向 Xcode 27，请参阅[模拟器窗格在 Xcode 27 中失败](#the-simulator-pane-fails-with-xcode-27)
+  * 推荐使用 Xcode 26.x 或 Xcode 27，该窗格可与两者一起使用。如果你安装了多个 Xcode，请参阅[选择模拟器窗格使用的 Xcode](#choose-which-xcode-the-simulator-pane-uses)
 
 <Note>
   在本页上，"设备"指的是模拟的 iPhone 或 iPad，是你在 Xcode 中的**Window → Devices and Simulators** 下管理的相同模拟器设备之一，而不是物理硬件。
 </Note>
 
-模拟器窗格仅在本地会话中可用。在[云](/docs/zh-CN/desktop#run-long-running-tasks-remotely)和 [SSH](/docs/zh-CN/desktop#ssh-sessions) 会话中，Claude 在无法访问 Mac 上模拟器的机器上运行。
+模拟器窗格仅在本地会话中可用。在[云](/docs/zh-CN/desktop#run-long-running-tasks-in-the-cloud)和 [SSH](/docs/zh-CN/desktop#ssh-sessions) 会话中，Claude 在无法访问 Mac 上模拟器的机器上运行。
+
+<h3 id="choose-which-xcode-the-simulator-pane-uses">
+  选择模拟器窗格使用的 Xcode
+</h3>
+
+如果你安装了多个 Xcode，例如 Xcode 26.x 与 Xcode 27 并行安装，该窗格使用 `xcode-select` 指向的任何一个。要使用不同的安装，请按其路径选择它。
+
+例如，如果你想要的 Xcode 安装为 `/Applications/Xcode-26.4.app`，请在终端中运行以下命令：
+
+```bash theme={null}
+sudo xcode-select -s /Applications/Xcode-26.4.app
+```
+
+然后退出并重新打开 Claude Desktop，以便该窗格使用新选择的 Xcode。
+
+要检查选择了哪个安装，请运行 `xcode-select -p`。它会打印所选安装的 Developer 文件夹，例如 `/Applications/Xcode-26.4.app/Contents/Developer`。
 
 <h2 id="run-your-app-in-the-simulator">
   在模拟器中运行你的应用
@@ -59,7 +75,7 @@ iOS Simulator 窗格在 Claude Code Desktop 中的对话旁边显示你的应用
 
 模拟器窗格显示应用实际启动的任何设备。要在特定设备上测试，在你的请求中命名它，例如"在 iPhone SE 模拟器上运行它"，Claude 在构建和启动时会针对该设备。
 
-Claude 启动的设备也会出现在 Apple 的 Simulator 应用中，Claude 可以在你已经启动的设备上安装应用。
+Claude 启动的设备也会出现在 Apple 的 Simulator 应用中，或在 Xcode 27 的 Device Hub 中。Claude 可以在你已经启动的设备上安装应用。
 
 你也可以自己打开模拟器窗格。一旦会话有模拟器连接或已编辑 Swift 文件，会话工具栏中的**Views** 菜单会显示 **iOS Simulator** 条目。如果窗格还没有显示设备，请单击**Attach simulator**，或从它旁边的设备菜单中选择特定设备；选择关闭的设备会启动它。如果 Xcode 或其模拟器缺失，窗格会显示设置步骤，并在你完成每个步骤时检查它们。
 
@@ -84,9 +100,9 @@ Claude 启动的设备也会出现在 Apple 的 Simulator 应用中，Claude 可
   会话如何管理设备
 </h2>
 
-每个设备属于启动它的会话，因此[并行会话](/docs/zh-CN/desktop#work-in-parallel-with-sessions)不共享设备：你在一个会话的窗格中看到的内容反映该会话的工作，而不是另一个的。在侧栏中切换会话会切换模拟器视图以及对话，切换回来会在它停止的地方恢复同一设备。如果 Claude 使用多个设备，每个都会打开自己的窗格，每个会话最多 4 个。
+每个设备属于启动它的会话，因此[并行会话](/docs/zh-CN/desktop#work-in-parallel-with-sessions)不共享设备：你在一个会话的窗格中看到的内容反映的是该会话的工作，而不是另一个会话的工作。在侧边栏中切换会话会同时切换模拟器视图和对话，切换回来会恢复同一设备停止的地方。如果 Claude 使用多个设备，每个设备都会打开自己的窗格，每个会话最多 4 个。
 
-Claude Code Desktop 在模拟器不再使用时关闭它启动的模拟器：当你退出应用时、当你存档会话时，或在你从其窗格分离设备后 10 分钟。你自己启动的设备，无论是从窗格还是在 Apple 的 Simulator 应用中，永远不会自动关闭。要立即关闭连接的设备，请使用窗格中的关闭按钮。
+Claude Code Desktop 会在模拟器不再使用时关闭它启动的模拟器：当你退出应用时、当你归档会话时，或在你从窗格中分离设备后 10 分钟。你在 Claude Code Desktop 外启动的设备，例如在 Apple 的 Simulator 应用或 Device Hub 中启动的设备，永远不会自动关闭。要立即关闭附加的设备，请使用窗格中的关闭按钮。
 
 <h2 id="grant-claude-access-to-a-device">
   授予 Claude 对设备的访问权限
@@ -143,27 +159,14 @@ Claude 可能没有识别出你想要运行或测试应用，或者模拟器工�
 * 明确说明目标，例如"在 iOS Simulator 中运行应用并点击浏览注册流程"。
 * 确认 Xcode 和 iOS 模拟器已安装，并且你的 Xcode 版本符合[要求](#requirements)。
 * 如果你的组织管理 Claude Code，[模拟器工具可能被策略禁用](#turn-off-simulator-access)。
+* 如果你在启用了 HIPAA 配置的 Enterprise 组织中，模拟器窗格对你不可用。
 * 模拟器窗格需要 Claude Desktop v1.24012.0 或更高版本。打开**Claude → Check for Updates**，然后重启应用。
 
 <h3 id="the-simulator-pane-says-no-simulators-were-found">
   模拟器窗格显示未找到模拟器
 </h3>
 
-如果 `xcode-select` 指向 Xcode 27，窗格可能报告未找到模拟器，即使设备存在；请参阅[模拟器窗格在 Xcode 27 中失败](#the-simulator-pane-fails-with-xcode-27)。否则，Xcode 已安装但没有 iOS 模拟器可列出。模拟器窗格显示要遵循的设置步骤，并在每个步骤完成时检查它们。要手动安装缺失的部分，从 Xcode 的设置中下载 iOS 模拟器运行时，或运行 `xcodebuild -downloadPlatform iOS`。
-
-<h3 id="the-simulator-pane-fails-with-xcode-27">
-  模拟器窗格在 Xcode 27 中失败
-</h3>
-
-窗格还不能与 Xcode 27 一起使用，Xcode 27 用 Device Hub 替换了 Simulator 应用。选择 Xcode 27 后，连接设备失败，或窗格报告未找到模拟器，即使设备存在。
-
-窗格使用 `xcode-select` 指向的任何 Xcode。如果 Xcode 27 是你唯一的安装，首先在其旁边安装 Xcode 26.x。然后通过其路径选择 26.x 安装。例如，如果它安装为 `/Applications/Xcode-26.4.app`：
-
-```bash theme={null}
-sudo xcode-select -s /Applications/Xcode-26.4.app
-```
-
-运行 `xcode-select -p` 以检查选择了哪个安装。
+Xcode 已安装但没有 iOS 模拟器可列出。模拟器窗格显示要遵循的设置步骤，并在每个步骤完成时检查它们。要手动安装缺失的部分，从 Xcode 的设置中下载 iOS 模拟器运行时，或运行 `xcodebuild -downloadPlatform iOS`。
 
 <h2 id="see-also">
   另请参阅

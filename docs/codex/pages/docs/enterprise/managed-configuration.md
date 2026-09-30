@@ -2,16 +2,60 @@
 
 > For the complete documentation index, see [llms.txt](https://learn.chatgpt.com/llms.txt). Markdown versions of documentation pages are available by appending `.md` to the page URL.
 
-Managed configuration controls supported local runtime behavior for covered capabilities in the ChatGPT desktop app, Codex CLI, and IDE extension. Supported requirements can differ by client and version. Managed configuration doesn't grant ChatGPT workspace access, assign seats, or replace workspace role-based access control (RBAC). Use [Roles and workspace permissions](https://learn.chatgpt.com/docs/enterprise/roles-and-workspace-permissions) for workspace feature access and this page for local runtime policy.
+Managed configuration lets enterprise admins set supported requirements and defaults for ChatGPT Work and Codex. Requirements constrain what users and tasks can do. Defaults provide starting values. Support depends on the product, client version, and execution environment.
 
-Enterprise admins can control supported local client behavior in two ways:
+For Work with local access and dots, supported Global policy governs the shared cloud orchestrator when managed policy is enabled; applicable local execution requirements govern the connected computer. Work cloud containers retain existing Work Cloud policies, and supported device controls still apply to local execution. Codex keeps its existing configuration behavior. Managed configuration does not grant a workspace seat or feature access. Use [Roles and workspace permissions](https://learn.chatgpt.com/docs/enterprise/roles-and-workspace-permissions) for those controls.
+
+Enterprise admins can control supported local client behavior with:
 
 - **Requirements**: admin-enforced constraints that users can't override.
-- **Managed defaults**: starting values applied when a supported client launches. Users can still change settings during a run; the client reapplies managed defaults the next time it starts.
+
+- **Configuration defaults**: system or cloud-managed `config.toml` settings that users can override.
+
+- **Legacy managed defaults**: `managed_config.toml` starting values applied when a supported client launches. Users can still change settings during a run. The client reapplies these defaults the next time it starts.
+
+See [Agent Security](https://learn.chatgpt.com/docs/enterprise/agent-security) for the Global baseline, environment overrides, and orchestrator and executor field lists.
+
+<a id="agent-security-and-work-sync"></a>
+
+<span
+  id="agent-security-and-local-computer-access"
+  data-localization-body-anchor
+/>
+
+## Agent Security and Local computer access with Work Cloud
+
+Use Agent Security in the Admin Console to manage policies and configuration. It replaces Policies & Configuration. Agent Security will be available to everyone, independently of Local computer access with Work Cloud. Existing policies, assignments, and ordering are preserved. Review your existing policies in Agent Security. Local computer access with Work Cloud is a separate opt-in. See [Agent Security](https://learn.chatgpt.com/docs/enterprise/agent-security) for migration guidance.
+
+Before moving policy automation to **Agent Security**:
+
+1. Identify affected integrations. Inventory Terraform configurations and scripts that update policies, and record which policies they manage.
+
+1. Use the policy API to manage Global settings. To manage Local or Codex Cloud settings, use the Agent Security UI. Existing Global API workflows remain available after migration. Test your scripts and Terraform integrations, and confirm that policy assignments and ordering are unchanged.
+
+1. Make any required changes and test the automation. Verify that an intended update reaches the correct Agent Security policy and that the resulting controls are enforced.
+
+Policy migration does not grant local computer access for Work or dots. Reviewing or creating policies is recommended before rollout, but the confirmation flow does not require policy creation to enable access. Before enabling **Allow local computer access**, review the migrated baseline or create a cloud baseline if your policies are currently delivered only through MDM. If `enforce_residency` is enabled in any cloud policy, **Allow local computer access** is disabled for both Work and dots. This safeguard does not configure workspace residency or, by itself, disable Work Cloud or dots.
+
+Environment overrides vary supported settings within a policy. Within a given policy, the order from highest to lowest is OS-specific environment override → all-OS environment override → Global. A higher-priority policy still wins over a lower-priority policy, even when the lower-priority policy is more specific. Some requirements have field-specific merge rules. Confirm which override editors and fields are available for your workspace.
+
+When managed policy and remote hooks are enabled, Work Cloud with local access and dots use admin-managed remote MCP hooks on the cloud orchestrator. Configure `mcp_tool` handlers in Global `requirements.toml`. Work Cloud without local access and personal accounts do not use these enterprise hooks. Command/shell, prompt, and agent handlers; hooks from local configuration, plugins, or local directories; environment-scoped hooks; and `SessionEnd` MCP hooks are not supported with cloud orchestration, even when tools execute locally. When both orchestration and execution are local, existing supported hooks continue to work in local-only Work and Codex threads. Admins can still configure supported managed hooks in Agent Security for those workflows. Before relying on these hooks, test callback connectivity, required events, and failure behavior. An explicit supported denial can block an action, but a `PreToolUse` callback error, timeout, or malformed response can fail the hook without blocking the tool. MCP hooks do not provide a complete Compliance API audit trail. See the [Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+## Configure plugin marketplaces and defaults
+
+Define local or Git marketplaces and plugin defaults in system `config.toml`
+or the supported configuration defaults in **Agent Security**.
+These settings are defaults, not enforced policy.
+
+See [Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference) for configuration keys,
+[Configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic#configuration-precedence)
+for overrides, and [repo plugin settings](https://developers.openai.com/plugins/build/plugins#enable-or-disable-a-plugin-for-a-repo)
+for project-level configuration. [Workspace GitHub import and
+sync](https://learn.chatgpt.com/docs/enterprise/plugin-management) is separate.
 
 ## Admin-enforced requirements (requirements.toml)
 
-Requirements constrain security-sensitive settings (approval policy, approvals reviewer, automatic review policy, sandbox mode, permission profiles, web search mode, managed hooks, which MCP servers users can enable, and which user-configured plugin marketplace sources they can add, install from, or refresh). When resolving configuration (for example from `config.toml`, [profile files](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles), or CLI config overrides), if a value conflicts with an enforced rule, the local client falls back to a compatible value and notifies the user. If you configure an `mcp_servers` allowlist, the client enables an MCP server only when both its name and identity match an approved entry; otherwise, the client disables it.
+Requirements constrain security-sensitive settings (approval policy, approvals reviewer, automatic review policy, sandbox mode, permission profiles, web search mode, managed hooks, which MCP servers users can enable, and which plugin marketplace sources they can use). When resolving configuration (for example from `config.toml`, [profile files](https://learn.chatgpt.com/docs/config-file/config-advanced#profiles), or CLI config overrides), if a value conflicts with an enforced rule, the local client falls back to a compatible value and notifies the user. If you configure an `mcp_servers` allowlist, the client enables an MCP server only when both its name and identity match an approved entry; otherwise, the client disables it.
 
 Requirements can also constrain [feature flags](https://learn.chatgpt.com/docs/config-file/config-basic#feature-flags) via the `[features]` table in `requirements.toml`. Note that features aren't always security-sensitive, but enterprises can pin values if desired. Omitted keys remain unconstrained.
 
@@ -22,14 +66,32 @@ with `allowed_permission_profiles` and managed `default_permissions`. Use
 
 For the exact key list, see the [`requirements.toml` section in Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference#requirementstoml).
 
+### Migrate the retired `untrusted` approval policy
+
+Codex and ChatGPT Work no longer support `approval_policy = "untrusted"`.
+Remove it from managed defaults, legacy `managed_config.toml`, and any user,
+project, profile, or startup configuration that sets it.
+
+For interactive, read-only use, select `approval_policy = "on-request"` with a
+read-only sandbox or permission profile allowed by your managed requirements.
+Commands allowed by that sandbox can run without approval.
+
+To keep stricter command approvals, omit an explicit `approval_policy`, set
+`trust_level = "untrusted"` in the project's entry in user-level
+`~/.codex/config.toml`, and keep `untrusted` in `allowed_approval_policies`.
+This also disables project-local configuration. Setting `on-request` explicitly
+overrides that policy. See
+[Migrate from the retired `untrusted` approval policy](https://learn.chatgpt.com/docs/agent-approvals-security#migrate-from-the-retired-untrusted-approval-policy)
+for examples and security tradeoffs.
+
 ### Locations and precedence
 
-Each supported local client composes requirements from lower to higher precedence:
+For local execution, requirements are applied from lower to higher priority as follows. This ordering also applies to local steps in Local computer access with Work Cloud:
 
 1. System `requirements.toml` (`/etc/codex/requirements.toml` on Unix systems,
    including Linux and macOS, or `%ProgramData%\OpenAI\Codex\requirements.toml`
    on Windows).
-2. Enterprise-managed requirements delivered in the cloud config bundle.
+2. Agent Security requirements delivered in the cloud config bundle.
 3. Legacy `managed_config.toml` fields that the local client reinterprets as requirements.
 4. macOS managed preferences (MDM) delivered through
    `com.openai.codex:requirements_toml_base64`.
@@ -46,15 +108,80 @@ For backward compatibility, supported local clients reinterpret the legacy
 requirements. This conversion adds compatibility choices where necessary; use
 `requirements.toml` for explicit allowlists.
 
+
+
+
+### Precedence for Local computer access with Work Cloud
+
+For Work with local access and dots, distinguish Global orchestrator policy from execution policy. Applicable local requirements govern the connected computer. Work cloud containers and dots cloud computers use their own execution configuration and requirements, rather than the managed environment bundle used by other executors.
+
+For local execution, MDM and legacy managed-device requirements rank above Agent Security. The device's system requirements file ranks below Agent Security. Within each policy, resolve OS-specific environment overrides before all-OS environment overrides, then Global. Policy priority wins over specificity across policies.
+
+| Control                       | Local Work without sync and local Codex               | Local computer access with Work Cloud                                                                                                                       |
+| ----------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enterprise requirements       | Follow the local requirements order above.            | Apply to local executors. Work cloud containers retain existing Work Cloud policies.                                                                        |
+| Device execution restrictions | Enforced by supported local controls.                 | Follow the local requirements order above, including MDM and legacy requirements above Agent Security.                                                      |
+| Environment overrides         | Use the configuration model for the relevant product. | Within one policy: OS-specific environment override, then all-OS environment override, then Global. A lower-priority policy cannot win through specificity. |
+
+Requirements impose constraints, while configuration defaults supply starting values. For Work with local access and dots, supported Global policy applies through the shared cloud orchestrator when managed policy is enabled. Applicable local `requirements.toml` requirements govern execution on a connected computer. Work cloud containers and dots cloud computers use their own execution configuration and requirements, rather than the managed environment bundle used by other executor types. Local execution restrictions do not automatically apply to these cloud computers. Review cloud capability permissions and test local and cloud execution separately.
+
+Keep orchestrator controls, including approvals and web search, in Global. Use the dedicated Allowed approval policies and Allowed web search modes controls where available, and TOML for other supported fields. See the [Configuration Reference](https://learn.chatgpt.com/docs/config-file/config-reference) for the field list and execution scope.
+
+### Network policy precedence and runtime limits
+
+Within a given policy, the order from highest to lowest is OS-specific environment override → all-OS environment override → Global. A higher-priority policy still wins over a lower-priority policy, even when the lower-priority policy is more specific. Some requirements have field-specific merge rules. The runtime then enforces the resolved requirements. Consider the field-specific network cases below separately from policy priority.
+
+These examples compare environment and Global settings within the same policy, with managed networking already configured and no higher-priority policy changing the values. They describe field-specific merge and runtime behavior.
+
+#### Set different domain access by environment
+
+For the same domain rule within a policy, an admin environment override can allow a domain denied in Global or deny a domain allowed in Global. Without an environment override, the Global rule is inherited. Other effective Deny rules or access controls can still block a request.
+
+**How domain rules combine**
+
+| Global rule   | Environment rule | Domain-policy result                                                  |
+| ------------- | ---------------- | --------------------------------------------------------------------- |
+| Deny          | Allow            | Allowed by the environment override, subject to the conditions below. |
+| Allow         | Deny             | Blocked in that environment.                                          |
+| Allow         | Allow            | Allowed by these domain rules.                                        |
+| Deny          | Deny             | Blocked by these domain rules.                                        |
+| Allow or Deny | No override      | Inherits the Global rule.                                             |
+
+These outcomes compare the same domain key within one policy, with no higher-priority policy changing the result. A higher-priority value replaces the same key. Other inherited keys remain. An Allow does not bypass a different matching Deny, such as an inherited wildcard. An empty environment map does not clear inherited rules.
+
+**Example:** Deny `packages.example.com` in Global and allow it in Development. Development can permit it under the conditions above. Production inherits the Global Deny unless overridden.
+
+Confirm the deployed executor supports these merge rules. Coverage for regular managed executors still needs validation.
+
+Orchestrator limits. Managed HTTP/SOCKS listener ports and non-loopback proxy listeners are unsupported by the cloud runtime; socket-rule support depends on the execution path. A local-execution setting in the table below is not a supported Orchestrator configuration.
+
+#### Other network runtime limits
+
+All field names below are under `experimental_network` in `requirements.toml`. The arrows show a Global value followed by an environment value within the same policy. These local-execution cases do not establish Orchestrator support for the same settings.
+
+| **Setting and attempted override**           | **Runtime behavior**                                                                                                                                                                      | **Admin action**                                                                                                   |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| domains: deny → allow                        | The environment Allow replaces the same Global domain key on supported paths. Other matching Deny rules still apply.                                                                      | Test both allowed and blocked requests on the deployed executor.                                                   |
+| `managed_allowed_domains_only`: true → false | Do not infer exclusivity behavior from domain-key composition. With effective `enabled = true` and `managed_allowed_domains_only = true`, ordinary commands need effective Allow entries. | Review effective settings and inherited Allow entries. A deny-only policy does not allow the rest of the internet. |
+| `allow_local_binding`: false → true          | On the supported Codex Cloud proxy path, an explicit false can prevent upstream-proxy access. A supported higher-priority Cloud override can change it.                                   | Check the source of the effective value and executor support. Do not apply the Cloud default to Local.             |
+
+Proxy activation, exclusivity, upstream-proxy behavior, and Unix-socket rules have executor-specific behavior. Do not generalize domain-key composition to these settings. Verify the effective values and test the deployed runtime. For Codex Cloud local/private connectivity, see [Configure network access requirements](#configure-network-access-requirements).
+
+#### Verify behavior before rollout
+
+Test the actual destinations, local listeners, proxy behavior, and socket paths your workflows use. Check an action that should succeed and one that should be blocked in each affected environment. Check that the deployed runtime version supports each setting you use.
+
 ### Cloud-managed requirements
 
 When a user signs in with ChatGPT on a supported plan, supported local clients
 can receive admin-enforced requirements associated with the workspace. This is
 a delivery channel for `requirements.toml`-compatible policy. It doesn't grant
-workspace access or replace workspace RBAC.
+workspace access or replace workspace RBAC. Authentication requirements must be
+[managed locally](#manage-authentication-locally).
 
-Open [Managed configuration](https://chatgpt.com/codex/settings/managed-configs)
-to create and assign cloud-managed requirements. For example, this policy limits
+Open **Agent Security** in the Admin Console to review and manage cloud
+requirements. Use the migrated global baseline for existing policies. For
+example, this policy limits
 approval and sandbox choices and prompts before a supported shell entry point
 runs:
 
@@ -68,8 +195,7 @@ prefix_rules = [
 ]
 ```
 
-Confirm that every managed client version supports the keys you select, and
-test the policy with a small group before an organization-wide assignment. Use
+Check that every managed client version supports the keys you select. Assign the policy to the intended users or groups and verify that it takes effect on their supported clients. Use
 the configuration reference for the current schema and the administration
 surface for current assignment behavior.
 
@@ -86,6 +212,8 @@ For supported keys and examples, see
 [`requirements.toml` reference](https://learn.chatgpt.com/docs/config-file/config-reference#requirementstoml).
 
 #### How local clients apply cloud-managed requirements
+
+The local loading and cache behavior below describes supported local clients. It does not establish when a changed cloud policy takes effect in an already-running task using Local computer access with Work Cloud. Verify the effective policy before relying on a changed restriction.
 
 When a user starts a supported local client and signs in with ChatGPT on a
 supported plan, the client first checks for a valid, identity-matched cache
@@ -106,10 +234,39 @@ Assign a person to own each managed policy, record which users or groups should
 receive it, and document the business reason for any filesystem, network,
 approval, or permission-profile restriction.
 
-Before expanding the rollout, test an approved workflow and an intentionally
-disallowed workflow with a representative user. Verify the effective settings
-in the supported client rather than assuming a workspace role or group alone
-enforces the local restriction.
+Test an allowed workflow and a blocked workflow with a user who has the intended permissions. Check the effective settings in the supported client. A workspace role or group alone does not enforce a local runtime restriction.
+
+### Manage authentication locally
+
+Set `allowed_login_methods`, `allowed_chatgpt_workspaces`,
+`cli_auth_credentials_store`, and `chatgpt_base_url` in the local system
+`requirements.toml` or macOS MDM requirements. Codex ignores these four fields
+in cloud-managed requirements. Local authentication requirements apply before
+credentials load and before Codex retrieves cloud policy.
+
+To require ChatGPT login to an approved workspace and store credentials in the
+OS credential store, use:
+
+```toml
+allowed_login_methods = ["chatgpt"]
+allowed_chatgpt_workspaces = ["00000000-0000-0000-0000-000000000000"]
+cli_auth_credentials_store = "keyring"
+```
+
+`allowed_login_methods` accepts `chatgpt`, `api`, or both. If omitted, this setting
+doesn't restrict login methods. If set, the list must contain at least one method.
+`api` permits API authentication, including Amazon Bedrock.
+The workspace restriction also applies to
+[Codex access tokens](https://learn.chatgpt.com/docs/enterprise/access-tokens).
+
+User-configured `forced_login_method` and `forced_chatgpt_workspace_id` must
+follow the requirements. When a user selects a workspace, it must also appear
+in the managed workspace allowlist. If no workspaces match, ChatGPT login is
+unavailable. API authentication remains available when permitted. If no login method
+is available, Codex refuses to start.
+
+See the [requirements reference](https://learn.chatgpt.com/docs/config-file/config-reference#requirementstoml)
+for credential storage modes and service URL configuration.
 
 ### Example requirements.toml
 
@@ -119,6 +276,10 @@ This example blocks `--ask-for-approval never` and `--sandbox danger-full-access
 allowed_approval_policies = ["untrusted", "on-request"]
 allowed_sandbox_modes = ["read-only", "workspace-write"]
 ```
+
+Here, `untrusted` preserves the stricter approval behavior derived from
+`trust_level = "untrusted"`; it does not make `approval_policy = "untrusted"` a
+supported explicit setting.
 
 ### Disable Appshots
 
@@ -313,34 +474,41 @@ define network access requirements centrally. These requirements are separate
 from the user `features.network_proxy` toggle: they can configure sandbox
 networking without that feature flag, but they don't grant command network
 access when the active sandbox keeps networking off. Set
-`experimental_network.enabled = true` to activate the managed proxy; an
-allowlist alone does not make the proxy active.
+`experimental_network.enabled = true` to activate the managed proxy; domain
+rules alone do not make the proxy active.
 
 ```toml
-experimental_network.enabled = true
-experimental_network.allowed_domains = [
-  "api.openai.com",
-  "*.example.com",
-]
-experimental_network.denied_domains = [
-  "blocked.example.com",
-  "*.exfil.example.com",
-]
+[experimental_network]
+enabled = true
+managed_allowed_domains_only = true
+
+[experimental_network.domains]
+"api.openai.com" = "allow"
+"**.example.com" = "allow"
+"blocked.example.com" = "deny"
+"**.exfil.example.com" = "deny"
 ```
 
 Use `experimental_network.managed_allowed_domains_only = true` only when you
-also define administrator-owned `allowed_domains` and want that allowlist to be
-exclusive. If it's `true` without managed allow rules, user-added domain allow
-rules don't remain effective.
+also define administrator-owned `"allow"` entries in
+`[experimental_network.domains]` and want those rules to be exclusive. If it's
+`true` without managed allow rules, user-added domain allow rules don't remain
+effective. Do not combine the canonical `domains` map with the legacy
+`allowed_domains` or `denied_domains` lists.
+
+`*.example.com` matches subdomains only. `**.example.com` matches the apex
+domain and its subdomains. A matching deny rule wins over an allow rule.
 
 The domain syntax, local/private destination rules, deny-over-allow behavior,
 and DNS rebinding limitations are the same as the sandbox networking behavior
 described in [Agent approvals & security](https://learn.chatgpt.com/docs/agent-approvals-security#network-isolation).
 
-These requirements apply only to local commands that run inside the sandbox.
-They do not route or filter web search, apps and connectors, MCP servers,
-browser or Computer Use activity, Codex service requests, or Codex cloud
-traffic. Use the controls for each surface:
+The proxy routes local commands that run inside the sandbox. Browser tools
+also check managed network denies and exclusive allowlists before accessing
+an origin. This is a separate policy check, not routing browser traffic through
+the command proxy. It doesn't filter web search, apps and connectors, MCP
+servers, native-app traffic, Codex service requests, or other capability-specific traffic.
+Use the controls for each surface:
 
 - Use `allowed_web_search_modes` to restrict web search.
 - Use `features.apps = false` to disable app and connector integrations, and
@@ -348,10 +516,86 @@ traffic. Use the controls for each surface:
 - Use the managed `mcp_servers` approved list to restrict MCP servers.
 - Use feature requirements such as `browser_use`, `in_app_browser`, and
   `computer_use` to restrict browser and computer-use capabilities.
-- Configure Codex cloud network access in its cloud environment settings.
+- For supported managed Codex Cloud commands, configure Agent Security requirements and the Cloud environment internet settings separately.
 
 A command domain allowlist does not replace these capability-specific
 controls.
+
+On supported managed Codex Cloud execution paths, Agent Security requirements constrain command networking. Codex Cloud environment internet settings apply separately. An allowed domain in Agent Security does not override a restriction in the Cloud environment's internet settings. These command-network controls do not, by themselves, disable hosted web search, apps, or MCP. ChatGPT Work Cloud has separate capability permissions and does not inherit these Agent Security requirements.
+
+A managed command allowlist applies to commands using the managed proxy. Where policy permits full sandbox escalation and it is approved, that execution can bypass the command proxy. A narrow network grant is different from full sandbox escalation. Configure enforced approval and sandbox requirements for the intended boundary, and test both ordinary and escalated commands.
+
+> **No effective allowed destinations:** When **Manage Networking** and **Only allow domains added by admins** are On, ordinary managed commands need effective allowed destinations. If no Allow entries are configured or inherited, those commands have no allowed destinations. A deny-only policy does not implicitly allow the rest of the internet. Add required Allow entries and check inherited rules before saving. This restriction applies to the managed command proxy, not every tool or approved full sandbox escalation.
+
+> **Codex Cloud local/private connectivity:** An explicit Off value for local/private connectivity can prevent Codex Cloud from reaching its upstream proxy, even when the destination domain is allowed. Check the final `allow_local_binding` value and identify which policy or setting supplies it. On the supported Cloud proxy path, this defaults to true only when no applicable requirement, selected network profile, or proxy feature setting supplies a value. An inherited false still counts as an explicit setting. Where supported, set a higher-priority Cloud override to change this value for Codex Cloud without changing the Global value used by Local. This does not add domain Allow entries. Verify executor support before relying on the override. Do not apply this Cloud default to Local.
+
+Empty environment requirements inherit Global. Manage Networking Off is not the Cloud environment Internet access Off switch. See [Configure networking in the UI](https://learn.chatgpt.com/docs/enterprise/agent-security#configure-networking-in-the-ui).
+
+### Control browser and Computer Use
+
+Use the `[browser_use]` and `[computer_use]` tables in `requirements.toml` to
+restrict supported desktop clients. Validate the policy on the client versions
+and operating systems in your deployment. A configured allow rule doesn't
+install a plugin, grant an operating-system permission, or approve an action
+that still requires review.
+
+For browser access, configure an origin policy. An origin includes the scheme,
+host, and optional port, such as `https://example.com` or
+`https://*.example.com:8443`. Don't include a path, query, or fragment. Unlike
+command-network domain rules, browser origin rules distinguish HTTP from HTTPS
+and match the port.
+
+This example restricts browser access to an approved site and prevents uploads
+and full Chrome DevTools Protocol (CDP) access there:
+
+```toml
+[browser_use]
+allow_history_access = false
+allow_global_persistent_approval = false
+
+[browser_use.default_origin_policy]
+access = "deny"
+
+[browser_use.origins."https://example.com"]
+access = "allow"
+uploads = "deny"
+downloads = "allow"
+full_cdp_access = "deny"
+persistent_approval = false
+access_approval_lifetime = "turn"
+```
+
+Matching origin rules are resolved per field. A matching deny wins. Otherwise,
+the default origin policy supplies fields that matching rules don't specify.
+Local configuration can add restrictions but can't relax a managed deny.
+Network denies and exclusive managed network allowlists still apply.
+
+Set `browser_use.disable_auto_review = true` to disable automatic approval
+review for browser actions, or set `auto_review = "deny"` on an origin policy
+to restrict it for that origin. This controls approval handling; it doesn't
+disable model safety monitoring.
+
+For native apps, set a default access policy and identify permitted apps. For
+example, this macOS policy allows Calculator and prevents saved approvals:
+
+```toml
+[computer_use]
+default_app_access = "deny"
+allow_persistent_approval = false
+
+[computer_use.macos.bundle_ids]
+"com.apple.calculator" = "allow"
+```
+
+Windows policies can identify packaged apps with
+`computer_use.windows.aumids` or executables with
+`computer_use.windows.exes`. Executable rules require `publisher_name`,
+`product_name`, and `access`; `binary_name` is optional. Use the app's verified
+identity rather than its display name alone.
+
+See the [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference#requirementstoml)
+for the complete fields and [locked-use restrictions](#restrict-locked-computer-use)
+for managed macOS devices.
 
 ### Pin feature flags
 
@@ -397,16 +641,16 @@ platform, and rollout availability.
 
 ### Restrict locked computer use
 
-To prevent [Computer Use](https://learn.chatgpt.com/docs/computer-use#locked-use) from operating
-after a managed Mac locks, add this requirement:
+To prevent users from enabling [Locked Use](https://learn.chatgpt.com/docs/computer-use#locked-use)
+on a managed Mac, add this requirement:
 
 ```toml
 [computer_use]
 allow_locked_computer_use = false
 ```
 
-This requirement doesn't enable Computer Use. It only prevents locked use on
-macOS. If you omit it, requirements don't constrain locked use; normal product
+This requirement removes the controls for enabling Locked Use. It doesn't
+turn off Locked Use if it's already enabled. If you omit it, normal product
 availability and the user's local setting still apply.
 
 ### Configure automatic review policy
@@ -459,6 +703,10 @@ can enforce them. On native Windows, managed `deny_read` applies to direct file
 tools; shell subprocess reads don't use this sandbox rule.
 
 ### Enforce managed hooks from requirements
+
+When managed policy and remote hooks are enabled, Work Cloud with local access and dots use admin-managed remote MCP hooks on the cloud orchestrator. Configure `mcp_tool` handlers in Global `requirements.toml`. Work Cloud without local access and personal accounts do not use these enterprise hooks. Command/shell, prompt, and agent handlers; hooks from local configuration, plugins, or local directories; environment-scoped hooks; and `SessionEnd` MCP hooks are not supported with cloud orchestration, even when tools execute locally. When both orchestration and execution are local, existing supported hooks continue to work in local-only Work and Codex threads. Admins can still configure supported managed hooks in Agent Security for those workflows.
+
+Before relying on these hooks, test callback connectivity, required events, and failure behavior. An explicit supported denial can block an action, but a `PreToolUse` callback error, timeout, or malformed response can fail the hook without blocking the tool. MCP hooks do not provide a complete Compliance API audit trail. The following script and directory examples retain their Codex scope.
 
 Admins can also define managed lifecycle hooks directly in `requirements.toml`.
 Use `[hooks]` for the hook configuration itself, and point `managed_dir` at the
@@ -569,7 +817,7 @@ supported configuration.
 
 ### Restrict plugin marketplace sources
 
-To restrict operations on user-configured marketplace sources, set
+To restrict plugin marketplace sources, set
 `restrict_to_allowed_sources = true` and define one or more source rules:
 
 ```toml
@@ -597,10 +845,22 @@ normalized path. See the [`requirements.toml` reference](https://learn.chatgpt.c
 for the full schema and merge behavior.
 
 These requirements reject unmatched marketplace add, plugin install, and
-configured Git marketplace refresh operations for user-configured sources.
-Codex-managed OpenAI marketplaces remain available when their source and
-reserved name match. The requirements don't filter already configured user
-marketplaces or their plugins at runtime.
+configured Git marketplace refresh operations. They also filter configured
+marketplaces and their plugins at runtime.
+
+The OpenAI-curated Git marketplaces, including the API-key catalog, must also
+match the source allowlist. To allow them, include the following Git source
+without a `ref` constraint:
+
+```toml
+[marketplaces.allowed_sources.openai_curated]
+source = "git"
+url = "https://github.com/openai/plugins.git"
+```
+
+To exclude the curated catalogs, omit that source and ensure no broader host
+rule allows it. Bundled plugins and remotely installed workspace plugins are
+separate from this curated Git source policy.
 
 These source restrictions apply only where a local client supports plugin
 marketplace operations: ChatGPT and Codex in the desktop app, and Codex CLI.
@@ -614,11 +874,15 @@ startup, they override the user's local `config.toml` and any CLI `--config`
 overrides. Users can still change those settings during the current run, and the
 defaults apply again the next time the client starts.
 
-If a managed default, macOS MDM profile, or saved configuration pins `gpt-5.4`
-or `gpt-5.4-mini` for users signed in with ChatGPT, update it before August 31, 2026. Replace `gpt-5.4` with `gpt-5.6-terra` and `gpt-5.4-mini` with
-`gpt-5.6-luna`. The OpenAI API and Codex authenticated with your own API key
-aren't affected. See [workspace model
-availability](https://learn.chatgpt.com/docs/enterprise/workspace-model-availability#prepare-for-the-gpt-54-retirement).
+If a managed default, macOS MDM profile, or saved configuration pins
+`gpt-5.5` for Codex users signed in with ChatGPT, replace it with an available
+model before October 14, 2026. Choose `gpt-6-sol` once an administrator has
+enabled it for the affected users. GPT-5.5 retires from ChatGPT,
+ChatGPT Work, and Codex on all plans on that date. The OpenAI API isn't
+affected. See [workspace model availability](https://learn.chatgpt.com/docs/enterprise/workspace-model-availability#prepare-for-the-gpt-55-retirement).
+
+For configurations that still pin `gpt-5.4` or `gpt-5.4-mini`, follow the
+[GPT-5.4 migration guidance](https://learn.chatgpt.com/docs/enterprise/workspace-model-availability#prepare-for-the-gpt-54-retirement).
 
 Make sure your managed defaults meet your requirements; the local runtime
 rejects disallowed values.
@@ -634,7 +898,9 @@ overrides bottom):
 
 CLI `--config key=value` overrides apply to the base, but managed layers override them. This means each run starts from the managed defaults even if you provide local flags.
 
-Cloud-managed requirements affect the requirements layer (not managed defaults). See the Admin-enforced requirements section above for precedence.
+Cloud `config.toml` uses [normal configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic#configuration-precedence),
+not the legacy ordering above. Cloud `requirements.toml` uses
+[requirements precedence](#locations-and-precedence).
 
 ### Locations
 

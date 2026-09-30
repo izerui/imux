@@ -14,7 +14,7 @@ The desktop app on Linux gives you the same Chat, Cowork, and Claude Code experi
 
 ## Requirements
 
-* Ubuntu 22.04 or later, or Debian 12 or later
+* A Debian-based distribution: Ubuntu 22.04 or later, or Debian 12 or later
 * x86\_64 or arm64
 
 Other Debian-based distributions that meet these requirements may work but aren't officially tested. On distributions that aren't Debian-based, such as Fedora or Arch, run the [CLI](/docs/en/setup#system-requirements) instead. If you work on Windows with WSL 2, install the Windows desktop app and run sessions inside your distribution; see [Claude Code Desktop in WSL](/docs/en/desktop-wsl).
@@ -139,7 +139,9 @@ If `apt` stops with `The following packages have unmet dependencies` or `Unsatis
 * `libc6 (>= 2.34)`: your distribution is older than the package supports. Ubuntu 20.04 ships `libc6` 2.31. Upgrade to Ubuntu 22.04 or later, or Debian 12 or later.
 * All missing dependencies show `not installable` with an `:amd64` or `:arm64` suffix: you downloaded the `.deb` for a different architecture than your machine's. Run `dpkg --print-architecture` and download the matching `.deb`, or [install from the apt repository](#install), which selects the package for your architecture.
 
-### Running as root without --no-sandbox is not supported
+<h3 id="running-as-root-without-no-sandbox-is-not-supported">
+  Running as root without `--no-sandbox` is not supported
+</h3>
 
 If `claude-desktop` exits with this message, you launched it as root. Log in as a regular user and launch it from there.
 

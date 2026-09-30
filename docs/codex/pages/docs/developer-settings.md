@@ -96,13 +96,18 @@ interactive command reference.
 
 Use a dedicated flag when one exists. Common examples include `--model`,
 `--sandbox`, `--ask-for-approval`, `--profile`, and `--search`. Use `-c` or
-`--config` to override any supported configuration key for one run:
+`--config` to override any supported configuration key for one run.
 
-```shell
-codex --model gpt-5.5
+The model override below requires GPT-6.1 Sol access. If it isn't available to
+your account or workspace, omit `--model` or choose a model listed by `/model`.
+See [GPT-6.1 Sol availability by plan](https://learn.chatgpt.com/docs/models#gpt-6.1-sol).
+
+```bash
+codex --model gpt-6.1-sol
 codex --profile deep-review
-codex --config model_reasoning_effort='"high"'
+codex --config model_reasoning_effort='"medium"'
 ```
+
 
 Command-line flags and `--config` values have the highest precedence. For the
 complete flag list, see [Developer commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli).

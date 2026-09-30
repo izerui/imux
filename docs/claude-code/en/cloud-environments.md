@@ -7,12 +7,12 @@
 > Configure cloud environments for Claude Code cloud sessions: network access levels, environment variables, setup scripts, and environment caching.
 
 <Note>
-  Cloud environments require [Claude Code on the web](/docs/en/claude-code-on-the-web), which is in research preview for Pro, Max, and Team users, and for Enterprise users with [premium seats or Chat + Claude Code seats](https://support.claude.com/en/articles/11845131-use-claude-code-with-your-team-or-enterprise-plan).
+  Cloud environments apply to [cloud sessions](/docs/en/claude-code-on-the-web), which are available on Pro, Max, and Team plans, and for Enterprise users with [premium seats or Chat + Claude Code seats](https://support.claude.com/en/articles/11845131-use-claude-code-with-your-team-or-enterprise-plan).
 </Note>
 
-Each [cloud session](/docs/en/claude-code-on-the-web) runs in a cloud environment. You can configure an environment to allow or deny [network access](#access-levels), [set environment variables](#set-environment-variables) for the session, store [API credentials](#add-api-credentials) that sessions use without seeing them, and run a [setup script](#setup-scripts) before Claude starts working.
+Each [cloud session](/docs/en/claude-code-on-the-web) runs in a cloud environment. You can configure an environment to allow or deny [network access](#access-levels), [set environment variables](#set-environment-variables) for the session, on Pro and Max plans store [API credentials](#add-api-credentials) that sessions use without seeing them, and run a [setup script](#setup-scripts) before Claude starts working.
 
-The same environments apply wherever you start a cloud session: [Claude Code on the web](/docs/en/claude-code-on-the-web), the terminal with [`claude --cloud`](/docs/en/claude-code-on-the-web#from-terminal-to-web), [Claude Tag](https://claude.com/docs/claude-tag/overview), [routines](/docs/en/routines), the [Claude mobile app](/docs/en/mobile), and the [Desktop app](/docs/en/desktop). Each of these surfaces can also route to a [self-hosted environment](/docs/en/self-hosted-environments). [Availability and limitations](/docs/en/self-hosted-environments#availability-and-limitations) covers what Claude can't use yet when a Claude Tag session runs in one.
+The same environments apply wherever you start a cloud session: the [Desktop app](/docs/en/desktop), the [Claude mobile app](/docs/en/mobile), your browser at [claude.ai/code](https://claude.ai/code), the terminal with [`claude --cloud`](/docs/en/claude-code-on-the-web#from-terminal-to-cloud), [routines](/docs/en/routines), and [Claude Tag](https://claude.com/docs/claude-tag/overview). Each of these surfaces can also route to a [self-hosted environment](/docs/en/self-hosted-environments). [Availability and limitations](/docs/en/self-hosted-environments#availability-and-limitations) covers what Claude can't use yet when a Claude Tag session runs in one.
 
 <Info>
   [Remote Control](/docs/en/remote-control) sessions connect the web and mobile interfaces to a session on your own machine, which uses your machine's network and files, not a cloud environment. Claude Tag channel sessions use organization-level environments only, either [shared environments](#organization-shared-environments) or [self-hosted environments](/docs/en/self-hosted-environments).
@@ -33,14 +33,14 @@ If you don't have an environment yet, onboarding sets up the **Default** environ
 
 With only **Default** available, every session runs in it. When you have more than one environment, sessions choose one per surface:
 
-* On the web, the Desktop app, and the mobile app, sessions use the environment shown in the [selector](#configure-your-environment). An [organization default](#organization-shared-environments) set by an Owner fills the selection when you haven't picked one.
+* In the Desktop app, the mobile app, and at claude.ai/code, sessions you start yourself use the environment shown in the [selector](#configure-your-environment). An [organization default](#organization-shared-environments) set by an Owner fills the selection when you haven't picked one. Threads in a [project](/docs/en/claude-projects#project-settings-reference) use the environment set in the project's settings instead.
 * From the CLI, Claude Code uses your [`/remote-env` pick](#select-an-environment-from-the-cli), or falls back to the Anthropic-hosted environment when your list has one, and otherwise to the first environment in your list that isn't a bridge environment, an entry [Remote Control](/docs/en/remote-control) registers to represent your own machine rather than a cloud environment. For a [self-hosted environment](/docs/en/self-hosted-environments), passing `--environment <environment-id>` with its `ccpool_` ID [when you dispatch a session](/docs/en/self-hosted-environments-testing#run-the-test-loop) overrides the `/remote-env` pick and the fallback for that invocation. Claude Code rejects Anthropic-hosted `env_` IDs passed to the flag, so use `/remote-env` to target those. The flag requires Claude Code v2.1.224 or later.
 
 Configure an environment when the default isn't enough: when Claude needs to reach domains outside the [default allowlist](#default-allowed-domains), needs environment variables set for its sessions, or needs dependencies installed before it starts working.
 
 ## Configure your environment
 
-Create, edit, and archive environments from the environment selector at [claude.ai/code](https://claude.ai/code), which you reach after [web onboarding](/docs/en/web-quickstart). Environments you create are personal to your account; [shared environments](#organization-shared-environments) created by an Owner appear in the same selector. See [Installed tools](#installed-tools) for what's available without any configuration.
+Create, edit, and archive environments from the environment selector, which you reach at [claude.ai/code](https://claude.ai/code) after [web onboarding](/docs/en/web-quickstart), or from the prompt box in the [Desktop app](/docs/en/desktop#cloud-sessions). Environments you create are personal to your account; [shared environments](#organization-shared-environments) created by an Owner appear in the same selector. See [Installed tools](#installed-tools) for what's available without any configuration.
 
 <Steps>
   <Step title="Open the environment selector">
@@ -52,7 +52,7 @@ Create, edit, and archive environments from the environment selector at [claude.
   </Step>
 
   <Step title="Add or edit an environment">
-    Select **Add cloud environment**, or hover over an existing environment and select the settings icon that appears on the right. The dialog includes the name, network access level, environment variables, and setup script. When you edit an existing cloud environment, the dialog also includes [API credentials](#add-api-credentials).
+    Select **Add cloud environment**, or hover over an existing environment and select the settings icon that appears on the right. The dialog includes the name, network access level, environment variables, and setup script. When you edit an existing cloud environment on a Pro or Max plan, the dialog also includes [API credentials](#add-api-credentials).
 
     <Frame>
       <img src="https://mintcdn.com/claude-code/ZFId6l95856c5LSw/images/cloud-environment-dialog.png?fit=max&auto=format&n=ZFId6l95856c5LSw&q=85&s=30d4478b31d1f879f7ee287ddab32505" alt="The New cloud environment dialog. A Name field with the placeholder Default, a Network access selector set to Trusted with links to the network policy and access levels, an Environment variables box showing .env-format placeholder text with a note that values are visible to anyone using the environment, a Setup script box described as a Bash script that runs when a new session starts before Claude Code launches, and Cancel and Create environment buttons." width="874" height="1372" data-path="images/cloud-environment-dialog.png" />
@@ -72,15 +72,17 @@ LOG_LEVEL=debug
 DATABASE_URL=postgres://localhost:5432/myapp
 ```
 
-Each session copies the environment's values once, at startup, into ordinary environment variables that any command Claude runs can read. Because running sessions don't re-read the configuration, editing or adding variables affects sessions you start afterward; sessions already running keep the values they started with.
+Each session copies the environment's values once, at startup, into ordinary environment variables that any command Claude runs can read, except `OTEL_*` variables. Claude Code uses those for its own [telemetry export](/docs/en/monitoring-usage#telemetry-from-cloud-sessions-and-claude-tag) and doesn't pass them to the commands it runs. Because running sessions don't re-read the configuration, editing or adding variables affects sessions you start afterward; sessions already running keep the values they started with.
 
-Claude Code on the web also sets some variables itself when it starts a session. For [`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`](/docs/en/claude-code-on-the-web#manage-context), the value Claude Code on the web sets overrides one you add here, so adding that key here has no effect.
+A cloud session also sets some variables itself when it starts. For [`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`](/docs/en/claude-code-on-the-web#manage-context), the value the session sets overrides one you add here, so adding that key here has no effect.
 
-Anyone who uses the environment can read the values. For a key the agent proxy can attach to a request, use an [API credential](#add-api-credentials) instead. The [requests that never get a credential](#requests-that-never-get-the-credential) are listed there.
+Anyone who uses the environment can read the values. On Pro and Max plans, use an [API credential](#add-api-credentials) instead for a key the agent proxy can attach to a request. The [requests that never get a credential](#requests-that-never-get-the-credential) are listed there.
 
 ### Add API credentials
 
 An API credential is an API key or token you store on a cloud environment so Claude can call that API from any session in the environment without seeing the key. Anthropic's agent proxy adds the key to requests for the hosts you list, after each request leaves the session's VM. The key never reaches Claude, the commands it runs, or the session's environment variables.
+
+API credentials are available on Pro and Max plans. They aren't available on Team or Enterprise plans yet, so the **API credentials** section doesn't appear in the environment dialog on those plans.
 
 #### Requirements
 
@@ -122,27 +124,28 @@ To confirm the credential works, start a session in the environment and ask Clau
 
 #### Which requests get the credential
 
-The agent proxy attaches a credential to a request when the request's host matches one you listed on that credential. Sessions can reach those hosts even when the environment's [network access level](#access-levels) wouldn't otherwise allow them, except the [hosts the agent proxy skips](#requests-that-never-get-the-credential). The credential applies in every session that runs in the environment, whoever started it, until you delete it.
+The agent proxy attaches a credential to a request when the request's host matches one you listed on that credential. Sessions can reach those hosts even when the environment's [network access level](#access-levels) wouldn't otherwise allow them, except the [hosts that never get the credential](#requests-that-never-get-the-credential). The credential applies in every session that runs in the environment, whoever started it, until you delete it.
 
 #### Requests that never get the credential
 
 The agent proxy never attaches a credential you add to these requests:
 
 * **GitHub**: the [GitHub proxy](#github-proxy) authenticates requests to GitHub instead, so you don't need an API credential for it
-* **The Anthropic API and public package registries**: requests to `api.anthropic.com`, `registry.npmjs.org`, `jsr.io`, `npm.jsr.io`, `pypi.org`, `files.pythonhosted.org`, `index.crates.io`, and `proxy.golang.org` don't go through the agent proxy
+* **The Anthropic API and public package registries**: `api.anthropic.com`, `registry.npmjs.org`, `jsr.io`, `npm.jsr.io`, `pypi.org`, `files.pythonhosted.org`, `index.crates.io`, and `proxy.golang.org`
 * **Setup script requests**: Claude Code connects to the agent proxy when it launches, after the [setup script](#setup-scripts) has run
+* **Claude Code's telemetry export**: Claude Code sends its [telemetry export](/docs/en/monitoring-usage#telemetry-from-cloud-sessions-and-claude-tag) itself rather than through a command it runs, and that request doesn't go through the agent proxy
 
 ### Select an environment from the CLI
 
-Run `/remote-env` in your terminal to choose the default environment for cloud sessions you create from the CLI, such as [`claude --cloud`](/docs/en/claude-code-on-the-web#from-terminal-to-web). The command opens a picker of your existing environments and saves your choice to the `remote.defaultEnvironmentId` key in your [user settings](/docs/en/settings#where-settings-live), so it applies in every project on your machine until you change it, unless the same key is set at a higher-precedence [settings layer](/docs/en/settings#settings-precedence), such as a repo's project settings.
+Run `/remote-env` in your terminal to choose the default environment for cloud sessions you create from the CLI, such as [`claude --cloud`](/docs/en/claude-code-on-the-web#from-terminal-to-cloud). The command opens a picker of your existing environments and saves your choice to the `remote.defaultEnvironmentId` key in your [user settings](/docs/en/settings#where-settings-live), so it applies in every project on your machine until you change it, unless the same key is set at a higher-precedence [settings layer](/docs/en/settings#settings-precedence), such as a repo's project settings.
 
 A [self-hosted environment](/docs/en/self-hosted-environments) ID, which has the form `ccpool_...`, follows a stricter source rule. See [`remote.defaultEnvironmentId`](/docs/en/settings-reference#remote-defaultenvironmentid) for the settings layers Claude Code honors it from.
 
-`/remote-env` only sets the default: it doesn't start a session, and it can't add or edit environments. Manage them at [claude.ai/code](https://claude.ai/code).
+`/remote-env` only sets the default: it doesn't start a session, and it can't add or edit environments. Manage them from the [environment selector](#configure-your-environment).
 
 ### Archive an environment
 
-To archive an environment, open it for editing and select **Archive**. You can't delete an environment, only archive it.
+To archive one of your own environments, open it for editing and select **Archive**. An Owner archives a [shared environment](#organization-shared-environments) from the **Cloud environments** page in admin settings. You can't delete an environment, only archive it.
 
 Archiving affects new sessions, not running ones:
 
@@ -153,11 +156,18 @@ Archiving affects new sessions, not running ones:
 
 ### Organization-shared environments
 
-On Team and Enterprise plans, an Owner can create cloud environments that are shared with every member of the organization. The same role manages everything else on the **Cloud environments** admin page, including [self-hosted environments](/docs/en/self-hosted-environments); the Admin role can't open the page. The full list of roles that can open it is the one for [managing server-managed settings](/docs/en/server-managed-settings#access-control). Shared environments appear in each member's environment selector alongside their personal ones, so a team can standardize on one configuration instead of each member recreating it.
+On Team and Enterprise plans, an Owner can create cloud environments that are shared with every member of the organization. The same role manages everything else on the **Cloud environments** admin page, including [self-hosted environments](/docs/en/self-hosted-environments); the Admin role can't open the page. The full list of roles that can open it is the one for [managing server-managed settings](/docs/en/server-managed-settings#access-control).
 
-Create, edit, and archive shared environments from the **Cloud environments** page in [admin settings](https://claude.ai/admin-settings). A shared environment also opens from the [environment selector](#configure-your-environment) at [claude.ai/code](https://claude.ai/code): an Owner can edit it there, and that dialog is where [API credentials](#add-api-credentials) are added. Other members see it read-only. Each shared environment has a name, a [network access level](#access-levels), [environment variables](#set-environment-variables) in `.env` format, and a [setup script](#setup-scripts). Owners choose the organization's [default environment](#the-default-environment) separately, at [claude.ai/admin-settings/claude-code](https://claude.ai/admin-settings/claude-code).
+Shared environments appear in each member's [environment selector](#configure-your-environment) under an **Organization** heading, after the member's own environments under **Personal**, so a team can standardize on one configuration instead of each member recreating it. Selecting a shared environment's settings icon there opens a read-only summary of its configuration for every member, Owners included.
 
-Every member's sessions in a shared environment read its variables, so don't include secrets in them. To give those sessions a key they can't read, [add an API credential](#add-api-credentials) from that dialog.
+An Owner makes an environment available to the organization in one of two ways:
+
+* **Create a shared environment**: use the **Cloud environments** page in [admin settings](https://claude.ai/admin-settings), which is also where Owners edit and archive shared environments. Each one has a name, a [network access level](#access-levels), [environment variables](#set-environment-variables) in `.env` format, and a [setup script](#setup-scripts).
+* **Share a personal environment**: open one of your own environments for editing in the environment selector, then share it from the **Who can use it** row. The environment keeps its ID, so sessions and routines that already use it aren't affected, and every member can then see it and start sessions in it.
+
+Owners choose the organization's [default environment](#the-default-environment) separately, at [claude.ai/admin-settings/claude-code](https://claude.ai/admin-settings/claude-code).
+
+Every member's sessions in a shared environment read its variables, so don't include secrets in them. [API credentials](#add-api-credentials), which give sessions a key they can't read, aren't available on Team or Enterprise plans yet.
 
 ### Set the environment a Claude Tag channel uses
 
@@ -170,28 +180,28 @@ In [Claude Tag](https://claude.com/docs/claude-tag/overview) channels, Claude wo
 
 Each environment sets one network access level, which controls the outbound connections its sessions can make. The default level, **Trusted**, allows package registries and other [allowlisted domains](#default-allowed-domains); **Custom** takes your own domain list.
 
-To change an environment's network access, [open it for editing](#configure-your-environment) and use the **Network access** selector in the dialog. The cloud icon that opens the selector appears on the app surfaces listed under [The Default environment](#the-default-environment) and in the [routine editor](/docs/en/routines#environments-and-network-access); personal environments don't have a separate page in your claude.ai account settings.
+To change an environment's network access, [open it for editing](#configure-your-environment) and use the **Network access** selector in the dialog. A [shared environment](#organization-shared-environments) opens read-only there, so an Owner changes its network access from the **Cloud environments** page in [admin settings](https://claude.ai/admin-settings) instead. The cloud icon that opens the selector appears on the app surfaces listed under [The Default environment](#the-default-environment) and in the [routine editor](/docs/en/routines#environments-and-network-access); personal environments don't have a separate page in your claude.ai account settings.
 
 <Note>
-  MCP connectors you enable on a session or routine work without adding their hosts to **Allowed domains**, because connector traffic travels through Anthropic's servers rather than the session's network. You configure connectors per session or per routine; remove any you don't need to limit which tools Claude can reach. This relies on the same Anthropic-bound channel noted under [Security and isolation](/docs/en/claude-code-on-the-web#security-and-isolation).
+  MCP connectors you enable on a session or routine work without adding their hosts to **Allowed domains**, because connector traffic travels through Anthropic's servers rather than the session's network. This relies on the same Anthropic-bound channel noted under [Security and isolation](/docs/en/claude-code-on-the-web#security-and-isolation). Turn off any connector you don't need to limit which tools Claude can reach.
 </Note>
 
 ### Access levels
 
 The **Network access** field in the [environment dialog](#configure-your-environment) takes one of four levels:
 
-| Level       | Outbound connections                                                                         |
-| :---------- | :------------------------------------------------------------------------------------------- |
-| **None**    | No outbound network access through the session's network                                     |
+| Level | Outbound connections |
+| :- | :- |
+| **None** | No outbound network access through the session's network |
 | **Trusted** | [Allowlisted domains](#default-allowed-domains) only: package registries, GitHub, cloud SDKs |
-| **Full**    | Any domain                                                                                   |
-| **Custom**  | Your own allowlist, optionally including the defaults                                        |
+| **Full** | Any domain |
+| **Custom** | Your own allowlist, optionally including the defaults |
 
 Whichever level you pick, sessions can still reach these, because each one takes a path that doesn't go through the session's network allowlist:
 
 * GitHub, through its [separate proxy](#github-proxy)
 * [MCP connectors](#network-access) you enable, whose traffic travels through Anthropic's servers
-* The hosts you listed on the environment's [API credentials](#add-api-credentials), except the [hosts the agent proxy skips](#requests-that-never-get-the-credential)
+* The hosts you listed on the environment's [API credentials](#add-api-credentials), except the [hosts that never get the credential](#requests-that-never-get-the-credential)
 * The Anthropic API, for Claude Code's own requests, even at **None**, as noted under [Security and isolation](/docs/en/claude-code-on-the-web#security-and-isolation)
 
 ### Allow specific domains
@@ -204,11 +214,14 @@ api.example.com
 registry.example.com
 ```
 
-Sessions in this environment can now reach `api.example.com`, any subdomain of `internal.example.com`, and `registry.example.com`, and no other domains through the session's network. [GitHub traffic](#github-proxy), [MCP connector traffic](#network-access), and requests to the hosts of the environment's [API credentials](#add-api-credentials), other than the [hosts the agent proxy skips](#requests-that-never-get-the-credential), don't go through this allowlist. A leading `*.` matches every subdomain. To keep the [Trusted domains](#default-allowed-domains) too, check **Also include default list of common package managers**; leave it unchecked to allow only what you list.
+Sessions in this environment can now reach `api.example.com`, any subdomain of `internal.example.com`, and `registry.example.com`, and no other domains through the session's network. [GitHub traffic](#github-proxy), [MCP connector traffic](#network-access), and requests to the hosts of the environment's [API credentials](#add-api-credentials), other than the [hosts that never get the credential](#requests-that-never-get-the-credential), don't go through this allowlist. A leading `*.` matches every subdomain. To keep the [Trusted domains](#default-allowed-domains) too, check **Also include default list of common package managers**; leave it unchecked to allow only what you list.
 
-If sessions in the environment work with [artifacts](/docs/en/artifacts), include `*.frame.claudeusercontent.com` in your list. Claude Code fetches artifact content from that host. If you leave it out, Claude can't read artifacts in sessions that run in the environment.
+If your organization uses [artifacts](/docs/en/artifacts#availability), you don't need `*.frame.claudeusercontent.com` in the list for sessions to read them. When the list leaves that host out, Claude Code reads artifact content through the session's connection to Anthropic instead. Keep the host in an allowlist in two situations:
 
-Each environment has its own allowed-domains list; there's no organization-level allowlist that admins can push to every member's environments. [Server-managed settings](/docs/en/server-managed-settings) still apply inside cloud sessions, but none of them adds domains to the environment's network allowlist.
+* **Sessions in this environment open another organization's public artifacts**: Claude Code fetches those from the host directly, so add it to this list.
+* **You're configuring the local CLI or a self-hosted runner**: keep the host in that allowlist. See [network access requirements](/docs/en/network-config#network-access-requirements) and the self-hosted [network requirements](/docs/en/self-hosted-environments-deploy#network-requirements).
+
+Each environment has its own allowed-domains list; there's no organization-level allowlist that admins can push to every member's environments. No [server-managed setting](/docs/en/server-managed-settings) adds domains to an environment's network allowlist either. To give a team one standard list, an Owner can create an [organization-shared environment](#organization-shared-environments) with **Custom** network access and that list.
 
 ### GitHub proxy
 
@@ -233,7 +246,7 @@ Cloud sessions in Anthropic-hosted environments run behind an HTTP/HTTPS network
 
 ## What's available in cloud sessions
 
-In Anthropic-hosted environments, each session gets a fresh virtual machine (VM) running Ubuntu 24.04 on x86\_64, regardless of your own operating system and CPU architecture, with your repository cloned and common toolchains pre-installed. When a dependency provides precompiled binaries, such as Ruby gems with native extensions or prebuilt Python wheels, use its x86\_64 Linux build to match the VM. This section covers the Anthropic-hosted defaults, the built-in GitHub tools, how to [run tests and services](#run-tests-start-services-and-add-packages), and the [resource limits](#resource-limits) each VM gets.
+In Anthropic-hosted environments, each session gets a fresh virtual machine (VM) running Ubuntu 24.04 on x86\_64, regardless of your own operating system and CPU architecture, with your repository cloned and common toolchains pre-installed. When a dependency provides precompiled binaries, such as Ruby gems with native extensions or prebuilt Python wheels, use its x86\_64 Linux build to match the VM. This section covers the Anthropic-hosted defaults, the built-in GitHub tools, how to [run tests and services](#run-tests-start-services-and-add-packages), the [resource limits](#resource-limits) each VM gets, and the [time limits](#time-limits) on long-running work.
 
 <Note>
   Sessions your organization routes to a [self-hosted environment](/docs/en/self-hosted-environments) run on your own runners instead, with the tools your runner image provides.
@@ -243,48 +256,48 @@ In Anthropic-hosted environments, each session gets a fresh virtual machine (VM)
 
 Cloud sessions start from a fresh clone of your repository. Anything you commit to the repo is available. Anything you've installed or configured only on your own machine isn't available in the session. Your organization's policy arrives separately through [server-managed settings](/docs/en/server-managed-settings).
 
-|                                                                                                                                                                                           | Available in cloud sessions                     | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Your repo's `CLAUDE.md`                                                                                                                                                                   | Yes                                             | Part of the clone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Your repo's `.claude/settings.json` hooks                                                                                                                                                 | Yes                                             | Part of the clone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Your repo's `.mcp.json` MCP servers                                                                                                                                                       | Yes                                             | Part of the clone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Your repo's `.claude/rules/`                                                                                                                                                              | Yes                                             | Part of the clone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Your repo's `.claude/skills/`, `.claude/agents/`, `.claude/commands/`                                                                                                                     | Yes                                             | Part of the clone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Plugins declared in `.claude/settings.json`                                                                                                                                               | Yes                                             | Installed at session start from the [marketplace](/docs/en/plugin-marketplaces) you declared. Requires network access to reach the marketplace source                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Your organization's [server-managed settings](/docs/en/server-managed-settings)                                                                                                                | Yes                                             | Fetched from Anthropic's servers when the session starts. See [Surface coverage](/docs/en/model-config#surface-coverage) for how `availableModels` is enforced in cloud sessions. Settings deployed to your device through MDM or managed settings files don't apply, because the session runs on an Anthropic-managed VM; in a [self-hosted environment](/docs/en/self-hosted-environments), sessions also read the managed settings file in the runner image, per [how Claude Code combines managed sources](/docs/en/managed-settings#how-claude-code-combines-managed-sources) |
-| Your user `~/.claude/CLAUDE.md`                                                                                                                                                           | No                                              | Lives on your machine, not in the repo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Your user `~/.claude/skills/`, `~/.claude/agents/`, `~/.claude/commands/`                                                                                                                 | No                                              | Live on your machine, not in the repo. Commit them to the repo's `.claude/` directory instead. Cloud sessions automatically load skills you enable on claude.ai                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Plugins enabled only in your user settings                                                                                                                                                | No                                              | User-scoped `enabledPlugins` lives in `~/.claude/settings.json`. Declare them in the repo's `.claude/settings.json` instead, or enable them for your claude.ai account so Claude Code loads them as [synced plugins](/docs/en/plugins-reference#synced-plugins)                                                                                                                                                                                                                                                                                                          |
-| MCP servers you added with `claude mcp add` at the default local scope or the user scope                                                                                                  | No                                              | Those write to `~/.claude.json` on your machine, not the repo. Add the server with `claude mcp add --scope project`, which writes the repo's [`.mcp.json`](/docs/en/mcp#project-scope), and commit that file                                                                                                                                                                                                                                                                                                                                                             |
-| Transport variables in your repo's `.claude/settings.json` `env` block, such as `NODE_EXTRA_CA_CERTS` and the [mTLS client certificate variables](/docs/en/network-config#mtls-authentication) | No                                              | The hosting environment manages the session's API connection, so Claude Code ignores these keys and notes each ignored key in the session's debug log                                                                                                                                                                                                                                                                                                                                                                                                               |
-| API keys and tokens for services Claude calls                                                                                                                                             | Yes, as [API credentials](#add-api-credentials) | You add the key once on the environment and the agent proxy attaches it to requests for the hosts you list. A key the agent proxy [can't attach](#requests-that-never-get-the-credential) stays in an environment variable                                                                                                                                                                                                                                                                                                                                          |
-| Interactive auth like AWS SSO                                                                                                                                                             | No                                              | Not supported. SSO requires browser-based login that can't run in a cloud session                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| | Available in cloud sessions | Why |
+| :- | :- | :- |
+| Your repo's `CLAUDE.md` | Yes | Part of the clone |
+| Your repo's `.claude/settings.json` hooks and permission rules | Yes, in a session with one repository | Part of the clone. A session with several repositories, including a [project](/docs/en/claude-projects#what-threads-pick-up-from-your-repositories) thread, starts above the clones and doesn't read them |
+| Your repo's `.mcp.json` MCP servers | Yes, in a session with one repository | Part of the clone, found from the session's working directory |
+| Your repo's `.claude/rules/` | Yes | Part of the clone |
+| Your repo's `.claude/skills/`, `.claude/agents/`, `.claude/commands/` | Yes | Part of the clone |
+| Plugins and marketplaces declared in your repo's `.claude/settings.json` | No | A cloud session doesn't install the plugins a repository turns on under [`enabledPlugins`](/docs/en/settings-reference#enabledplugins), including ones from the marketplaces it lists under [`extraKnownMarketplaces`](/docs/en/settings-reference#extraknownmarketplaces) |
+| Your organization's [server-managed settings](/docs/en/server-managed-settings) | Yes, except in [Claude Tag](https://claude.com/docs/claude-tag/overview) sessions | Fetched from Anthropic's servers when the session starts. See [Surface coverage](/docs/en/model-config#surface-coverage) for how `availableModels` is enforced in cloud sessions. Settings deployed to your device through MDM or managed settings files don't apply, because the session runs on an Anthropic-managed VM; in a [self-hosted environment](/docs/en/self-hosted-environments), sessions also read the managed settings file in the runner image, per [how Claude Code combines managed sources](/docs/en/managed-settings#how-claude-code-combines-managed-sources) |
+| Your user `~/.claude/CLAUDE.md` | No | Lives on your machine, not in the repo |
+| Your user `~/.claude/skills/`, `~/.claude/agents/`, `~/.claude/commands/` | No | Live on your machine, not in the repo. Commit them to the repo's `.claude/` directory instead. Cloud sessions automatically load skills you enable on claude.ai |
+| Plugins enabled only in your user settings | No | User-scoped `enabledPlugins` lives in `~/.claude/settings.json` on your machine |
+| MCP servers you added with `claude mcp add` at the default local scope or the user scope | No | Those write to `~/.claude.json` on your machine, not the repo. Add the server with `claude mcp add --scope project`, which writes the repo's [`.mcp.json`](/docs/en/mcp#project-scope), and commit that file. A session with one repository loads it |
+| Transport variables in your repo's `.claude/settings.json` `env` block, such as `NODE_EXTRA_CA_CERTS` and the [mTLS client certificate variables](/docs/en/network-config#mtls-authentication) | No | The hosting environment manages the session's API connection, so Claude Code ignores these keys and notes each ignored key in the session's debug log |
+| API keys and tokens for services Claude calls | On Pro and Max plans, as [API credentials](#add-api-credentials) | You add the key once on the environment and the agent proxy attaches it to requests for the hosts you list. A key the agent proxy [can't attach](#requests-that-never-get-the-credential), or any key on a Team or Enterprise plan, stays in an environment variable |
+| Interactive auth like AWS SSO | No | Not supported. SSO requires browser-based login that can't run in a cloud session |
 
 To make your own configuration available in cloud sessions, commit it to the repo.
 
-Anyone who uses the environment can read its environment variables and setup script. The dialog's note under **Environment variables** says so and warns against putting secrets there. Store a key the agent proxy can attach as an [API credential](#add-api-credentials) instead.
+Anyone who uses the environment can read its environment variables and setup script. The dialog's note under **Environment variables** says so and warns against putting secrets there. On Pro and Max plans, store a key the agent proxy can attach as an [API credential](#add-api-credentials) instead.
 
 ### Installed tools
 
 Cloud sessions come with common language runtimes, build tools, and databases pre-installed. The table below summarizes what's included by category.
 
-| Category      | Included                                                                   |
-| :------------ | :------------------------------------------------------------------------- |
-| **Python**    | Python 3.x with pip, poetry, uv, black, mypy, pytest, ruff                 |
-| **Node.js**   | 20, 21, and 22, with npm, yarn, pnpm, bun¹, eslint, prettier, chromedriver |
-| **Ruby**      | 3.1, 3.2, 3.3 with gem, bundler, rbenv                                     |
-| **PHP**       | 8.3 with Composer                                                          |
-| **Java**      | OpenJDK 21 with Maven and Gradle                                           |
-| **Go**        | Go with module support                                                     |
-| **Rust**      | rustc and cargo                                                            |
-| **C/C++**     | GCC, Clang, cmake, ninja, conan                                            |
-| **Docker**    | docker, dockerd, docker compose                                            |
-| **Databases** | PostgreSQL 16, Redis 7.0                                                   |
-| **Utilities** | git, gh, jq, yq, ripgrep, tmux, vim, nano                                  |
+| Category | Included |
+| :- | :- |
+| **Python** | Python 3.x with pip, poetry, uv, black, mypy, pytest, ruff |
+| **Node.js** | 20, 21, and 22, with npm, yarn, pnpm, bun¹, eslint, prettier, chromedriver |
+| **Ruby** | 3.1, 3.2, 3.3 with gem, bundler, rbenv |
+| **PHP** | 8.3 with Composer |
+| **Java** | OpenJDK 21 with Maven and Gradle |
+| **Go** | Go with module support |
+| **Rust** | rustc and cargo |
+| **C/C++** | GCC, Clang, cmake, ninja, conan |
+| **Docker** | docker, dockerd, docker compose |
+| **Databases** | PostgreSQL 16, Redis 7.0 |
+| **Utilities** | git, gh, jq, yq, ripgrep, tmux, vim, nano |
 
 ¹ Bun is installed but has known [proxy compatibility issues](#install-dependencies-with-a-sessionstart-hook) for package fetching.
 
-To get the versions of most of the tools in this table, ask Claude to run `check-tools` in a cloud session. It's a shell command installed on the session VM, not a slash command; you ask Claude because [Claude runs all VM commands for you](#run-tests-start-services-and-add-packages). For a tool it doesn't report, such as Ruby, PHP, bun, PostgreSQL, or Redis, ask Claude to run the tool's own version command, for example `psql --version`.
+To get the versions of most of the tools in this table, ask Claude to run `check-tools` in a cloud session. It's a shell command installed on the session VM, not a command you type with `/`; you ask Claude because [Claude runs all VM commands for you](#run-tests-start-services-and-add-packages). For a tool it doesn't report, such as Ruby, PHP, bun, PostgreSQL, or Redis, ask Claude to run the tool's own version command, for example `psql --version`.
 
 Node.js versions are installed at `/opt/node20`, `/opt/node21`, and `/opt/node22`, with 22 on `PATH` by default. To work with a different version, ask Claude to prepend that version's `bin` directory, such as `/opt/node20/bin`, to `PATH`.
 
@@ -309,7 +322,7 @@ GitHub's [`gh` CLI](https://cli.github.com) is pre-installed. If you need a `gh`
 
 Each cloud session has a transcript URL on claude.ai, and the session can read its own ID from the `CLAUDE_CODE_REMOTE_SESSION_ID` environment variable. Use this to put a traceable link in PR bodies, commit messages, Slack posts, or generated reports so a reviewer can open the run that produced them.
 
-Commits that Claude creates in a cloud session include a `Claude-Session: <url>` git trailer, and PR bodies include the session URL on its own line. This requires v2.1.179 or later. To omit the trailer and the PR-body link, set [`attribution.sessionUrl`](/docs/en/settings-reference#attribution-sessionurl) to `false`. The setting requires v2.1.182 or later.
+Commits that Claude creates in a cloud session include a `Claude-Session: <url>` git trailer, and PR bodies include the session URL on its own line. To omit the trailer and the PR-body link, set [`attribution.sessionUrl`](/docs/en/settings-reference#attribution-sessionurl) to `false`.
 
 To include the session link in something other than a commit or PR, such as a Slack message Claude posts or a report file it writes, have Claude run the following command and use its output. The command converts the `cse_` prefix in the environment variable's value to the `session_` prefix that the transcript URL expects:
 
@@ -355,6 +368,17 @@ Cloud sessions in Anthropic-hosted environments run with approximate resource ce
 
 The VM may stop tasks that need significantly more memory, such as large build jobs or memory-intensive tests. For workloads beyond these limits, use [Remote Control](/docs/en/remote-control) to run Claude Code on your own hardware, or run cloud sessions in a [self-hosted environment](/docs/en/self-hosted-environments) on compute your organization operates.
 
+### Time limits
+
+In Anthropic-hosted environments, these time limits apply to long-running work in a cloud session, such as a build, an install, or a test run. Each entry links to the section that defines the limit.
+
+* **Commands Claude runs**: a cloud environment doesn't set its own command timeout, so the Bash tool's defaults apply. Claude waits 2 minutes for a command by default and can ask for up to 10 minutes. When a command reaches its [timeout](/docs/en/tools-reference#timeout-and-output-limits), Claude Code [moves it to the background](/docs/en/tools-reference#background-commands) instead of stopping it, unless the command starts with `sleep`.
+* **SessionStart hooks**: Claude Code cancels a `command` hook after 600 seconds unless you set [`timeout`](/docs/en/hooks#common-fields), in seconds, on the hook entry. Claude Code doesn't enforce the timeout on a hook you run with [`async: true`](/docs/en/hooks#run-hooks-in-the-background).
+* **Setup script**: a script that takes longer than roughly five minutes isn't cached. [Script requirements](#script-requirements) covers how to stay under that.
+* **Idle sessions**: a session stops after a period of inactivity and its VM is reclaimed. [Environment expired](/docs/en/claude-code-on-the-web#environment-expired) covers what counts as inactive and how to reopen the session.
+
+To raise the command timeouts for an environment's sessions, add [`BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS`](/docs/en/env-vars#variables) to its [environment variables](#set-environment-variables). Both take milliseconds. For example, `BASH_DEFAULT_TIMEOUT_MS=600000` makes 10 minutes the default.
+
 ## Setup scripts
 
 A setup script is a Bash script that runs when a new cloud session starts, before Claude Code launches. Use setup scripts to install dependencies, configure tools, or fetch anything the session needs that isn't pre-installed.
@@ -375,12 +399,12 @@ apt update && apt install -y shellcheck
 A setup script has three constraints to write around:
 
 * **Exit zero**: if the script exits non-zero, the session fails to start. Append `|| true` to non-critical commands so an intermittent install failure doesn't block the session.
-* **Finish within five minutes**: keep the script's total runtime under roughly five minutes so the [environment cache](#environment-caching) can build. Run independent installs in parallel with `&` and `wait`, and move any single download that won't fit into a [SessionStart hook](#setup-scripts-vs-sessionstart-hooks) that launches it in the background.
+* **Finish within five minutes**: keep the script's total runtime under roughly five minutes so the [environment cache](#environment-caching) can build. When setup takes longer than that, the environment isn't cached. Run independent installs in parallel with `&` and `wait`, and move any single download that won't fit into a [SessionStart hook](#setup-scripts-vs-sessionstart-hooks) that launches it in the background. If new sessions stall or fail during setup, see [New sessions hang or time out during setup](/docs/en/web-quickstart#new-sessions-hang-or-time-out-during-setup).
 * **Network access for installs**: package installs need to reach registries. The default **Trusted** level covers [common package registries](#default-allowed-domains) including npm, PyPI, RubyGems, and crates.io; with **None** network access, installs fail.
 
 ### Environment caching
 
-The setup script runs the first time you start a session in an environment. After it completes, Anthropic snapshots the filesystem and reuses that snapshot as the starting point for later sessions. New sessions start with your dependencies, tools, and Docker images already on disk, and skip the setup script step. This keeps startup fast even when the script installs large toolchains or pulls container images.
+The setup script runs the first time you start a session in an environment. When setup completes within [roughly five minutes](#script-requirements), Anthropic snapshots the filesystem and reuses that snapshot as the starting point for later sessions. New sessions start with your dependencies, tools, and Docker images already on disk, and skip the setup script step. This keeps startup fast even when the script installs large toolchains or pulls container images. If setup takes longer than roughly five minutes, the environment isn't cached.
 
 The cache is a filesystem snapshot, so it keeps what the setup script writes to disk and loses anything that was only running. Packages you install, Docker images you pull, and files you write all carry over. A database the script started, a `docker compose up` stack, or any other background process doesn't; start those per session by asking Claude or with a [SessionStart hook](#setup-scripts-vs-sessionstart-hooks).
 
@@ -392,20 +416,17 @@ You don't need to enable caching or manage snapshots yourself.
 
 Use a setup script to provision the VM itself: toolchains and CLI tools that aren't [pre-installed](#installed-tools). Use a [SessionStart hook](/docs/en/hooks#sessionstart) for project setup that should run everywhere, cloud and local, like `npm install`.
 
-Setup scripts and SessionStart hooks run in a fixed order when a cloud session starts:
+Setup scripts and SessionStart hooks run in a fixed order when a cloud session starts. The table compares where you configure them, when they run, and where they run.
 
-1. The setup script runs first, before Claude Code launches, and only when no [cached environment](#environment-caching) exists.
-2. Claude Code launches and runs your SessionStart hooks, as it does at the start of every session, local or cloud.
-
-|                              | Setup scripts                                                                                                                                                               | SessionStart hooks                                                                                                                                                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| | Setup scripts | SessionStart hooks |
+| - | - | - |
 | **Where you configure them** | The environment dialog at [claude.ai/code](https://claude.ai/code), plus the **Cloud environments** admin page for [shared environments](#organization-shared-environments) | A [settings file](/docs/en/settings#where-settings-live) such as your repo's `.claude/settings.json`; see [What carries over from your setup](#what-carries-over-from-your-setup) for which files reach a cloud session |
-| **When they run**            | Before Claude Code launches, skipped when a [cached environment](#environment-caching) exists                                                                               | After Claude Code launches, on every session including resumed                                                                                                                                                     |
-| **Where they run**           | Cloud sessions only                                                                                                                                                         | Local and cloud sessions                                                                                                                                                                                           |
+| **When they run** | Before Claude Code launches, skipped when a [cached environment](#environment-caching) exists | After Claude Code launches, on every session including resumed |
+| **Where they run** | Cloud sessions only | Local and cloud sessions |
 
 If you have SessionStart hooks in your user-level `~/.claude/settings.json`, don't expect them in the cloud. User-level settings stay on your machine. Which other hooks run depends on where the session runs:
 
-* **Anthropic-hosted environment**: Claude Code runs hooks from the repository and from your organization's [server-managed settings](/docs/en/server-managed-settings).
+* **Anthropic-hosted environment**: Claude Code runs hooks from the repository and from your organization's [server-managed settings](/docs/en/server-managed-settings). [Claude Tag](https://claude.com/docs/claude-tag/overview) sessions don't receive server-managed settings, so hooks from server-managed settings don't run there.
 * **[Self-hosted environment](/docs/en/self-hosted-environments-configuration#permissions-and-tool-approval)**: Claude Code also runs the hooks the operator seeded from the runner host's `~/.claude/`, and the hooks in the runner image's managed settings file when that file is one of the [managed sources Claude Code applies](/docs/en/managed-settings#how-claude-code-combines-managed-sources).
 
 ### Install dependencies with a SessionStart hook
@@ -456,7 +477,8 @@ Together, the two files give every cloud session a fresh `npm install` and `pip 
 
 SessionStart hooks behave the same in the cloud as locally, with these caveats:
 
-* **No cloud-only scoping**: hooks run in both local and cloud sessions. To skip local execution, check the `CLAUDE_CODE_REMOTE` environment variable as shown above.
+* **One repository per session**: a session with several repositories doesn't load hooks from any repository's `.claude/settings.json`, so a SessionStart hook you define there doesn't run. Install dependencies for those sessions with a [setup script](#setup-scripts) instead.
+* **No cloud-only scoping**: hooks run in both local and cloud sessions. To skip local execution, exit early unless the `CLAUDE_CODE_REMOTE` environment variable is `true`, the way the [dependency install script](#install-dependencies-with-a-sessionstart-hook) does.
 * **Requires network access**: install commands need to reach package registries. If your environment uses **None** network access, these hooks fail. The [default allowlist](#default-allowed-domains) under **Trusted** covers npm, PyPI, RubyGems, and crates.io.
 * **Proxy compatibility**: in Anthropic-hosted environments, all outbound traffic passes through a [security proxy](#security-proxy), and some package managers don't work correctly with it; Bun is a known example. In a [self-hosted environment](/docs/en/self-hosted-environments-deploy#default-deny-egress), outbound traffic goes through your own network boundary instead.
 * **Adds startup latency**: hooks run each time a session starts or resumes, unlike setup scripts which benefit from [environment caching](#environment-caching). Keep install scripts fast by checking whether dependencies are already present before reinstalling.
@@ -470,11 +492,14 @@ With **Trusted** network access, sessions can reach the following domains by def
 <AccordionGroup>
   <Accordion title="Anthropic services">
     * api.anthropic.com
-    * statsig.anthropic.com
     * docs.claude.com
     * platform.claude.com
     * code.claude.com
     * claude.ai
+    * claude.com
+    * support.claude.com
+    * anthropic.com
+    * [www.anthropic.com](http://www.anthropic.com)
   </Accordion>
 
   <Accordion title="Version control">
@@ -505,6 +530,7 @@ With **Trusted** network access, sessions can reach the following domains by def
     * hub.docker.com
     * [www.docker.com](http://www.docker.com)
     * production.cloudflare.docker.com
+    * production.cloudfront.docker.com
     * download.docker.com
     * gcr.io
     * \*.gcr.io
@@ -542,6 +568,7 @@ With **Trusted** network access, sessions can reach the following domains by def
     * [www.java.net](http://www.java.net)
     * download.oracle.com
     * yum.oracle.com
+    * \*.r2.cloudflarestorage.com
   </Accordion>
 
   <Accordion title="JavaScript and Node package managers">
@@ -552,6 +579,8 @@ With **Trusted** network access, sessions can reach the following domains by def
     * npmjs.org
     * yarnpkg.com
     * registry.yarnpkg.com
+    * jsr.io
+    * npm.jsr.io
   </Accordion>
 
   <Accordion title="Python package managers">
@@ -606,11 +635,13 @@ With **Trusted** network access, sessions can reach the following domains by def
     * central.maven.org
     * repo1.maven.org
     * repo.maven.apache.org
+    * maven.google.com
     * jcenter.bintray.com
     * gradle.org
     * [www.gradle.org](http://www.gradle.org)
     * services.gradle.org
     * plugins.gradle.org
+    * plugins-artifacts.gradle.org
     * kotlinlang.org
     * [www.kotlinlang.org](http://www.kotlinlang.org)
     * spring.io
@@ -688,14 +719,7 @@ With **Trusted** network access, sessions can reach the following domains by def
   </Accordion>
 
   <Accordion title="Cloud services and monitoring">
-    * statsig.com
-    * [www.statsig.com](http://www.statsig.com)
-    * api.statsig.com
-    * sentry.io
-    * \*.sentry.io
-    * downloads.sentry-cdn.com
     * http-intake.logs.datadoghq.com
-    * browser-intake-us5-datadoghq.com
     * \*.datadoghq.com
     * \*.datadoghq.eu
     * api.honeycomb.io
@@ -724,11 +748,11 @@ With **Trusted** network access, sessions can reach the following domains by def
 
 ## Related resources
 
-* [Claude Code on the web](/docs/en/claude-code-on-the-web): start, manage, and share cloud sessions
-* [Web quickstart](/docs/en/web-quickstart): connect GitHub and start your first cloud session
+* [Cloud sessions reference](/docs/en/claude-code-on-the-web): start, manage, and share cloud sessions
+* [Cloud sessions quickstart](/docs/en/web-quickstart): connect GitHub and start your first cloud session
 * [Claude Tag](https://claude.com/docs/claude-tag/overview): sessions Claude starts from Slack run in the same environments
 * [Routines](/docs/en/routines): scheduled runs use the same environments and network access levels
 * [Remote Control](/docs/en/remote-control): run sessions on your own machine's network and files instead
 * [Self-hosted environments](/docs/en/self-hosted-environments): run cloud sessions on your organization's own infrastructure
 * [SessionStart hooks](/docs/en/hooks#sessionstart): repo-committed setup that runs in local and cloud sessions
-* [Server-managed settings](/docs/en/server-managed-settings): organization policy that reaches cloud sessions
+* [Server-managed settings](/docs/en/server-managed-settings): organization policy delivered from the admin console
