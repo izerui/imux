@@ -5,6 +5,7 @@ import com.github.izerui.imux.model.AgentType
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
@@ -197,12 +198,14 @@ class PiSessionReader(
  * - `getSessionDir` 用 `normalizePath` 展开 `~`、`~/`（Windows 上还有 `~\`）与
  *   `file://`，相对路径原样交给 Node，按 pi 进程的 cwd 解析。imux 总在项目目录里启动
  *   pi，所以按 [projectPath] 解析
+ * - Windows 上先将 Git Bash / MSYS、WSL、Cygwin 的盘符路径转为原生路径
  */
 internal fun piSettingsSessionDir(
     globalJson: String?,
     projectJson: String?,
     projectPath: String,
     userHome: Path,
+    isWindows: Boolean = SystemInfo.isWindows,
 ): Path? {
     val project = parseSettings(projectJson)
     val value =
@@ -222,13 +225,25 @@ internal fun piSettingsSessionDir(
                 raw == "~" -> userHome
                 raw.startsWith("~/") || raw.startsWith("~\\") -> userHome.resolve(raw.substring(2))
                 raw.startsWith("file://") -> Path.of(URI(raw))
-                else -> Path.of(raw)
+                else -> Path.of(normalizePiWindowsShellPath(raw, isWindows))
             }
         (if (path.isAbsolute) path else Path.of(projectPath).resolve(path)).normalize()
     }.getOrNull()
 }
 
 private const val SESSION_DIR_KEY = "sessionDir"
+
+private val PI_WINDOWS_SHELL_PATH = Regex("""^/(?:mnt/|cygdrive/)?([a-z])(?:/(.*))?$""", RegexOption.IGNORE_CASE)
+
+/** 对齐 pi 的 normalizeWindowsShellPath；UNC 与含反斜杠的输入不属于 shell 盘符路径。 */
+internal fun normalizePiWindowsShellPath(
+    path: String,
+    isWindows: Boolean,
+): String {
+    if (!isWindows || !path.startsWith("/") || path.startsWith("//") || '\\' in path) return path
+    val match = PI_WINDOWS_SHELL_PATH.matchEntire(path) ?: return path
+    return "${match.groupValues[1].uppercase()}:\\${match.groupValues[2].replace('/', '\\')}"
+}
 
 private fun parseSettings(json: String?): JsonObject? =
     json?.let {

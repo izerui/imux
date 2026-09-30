@@ -104,6 +104,55 @@ class PiSettingsSessionDirTest {
     }
 
     @Test
+    fun `Windows shell 三种盘符路径转为原生目录`() {
+        assertEquals("C:\\pi-sessions", normalizePiWindowsShellPath("/c/pi-sessions", true))
+        assertEquals("C:\\pi-sessions", normalizePiWindowsShellPath("/mnt/c/pi-sessions", true))
+        assertEquals("C:\\pi-sessions", normalizePiWindowsShellPath("/cygdrive/c/pi-sessions", true))
+    }
+
+    @Test
+    fun `Windows shell 盘符根目录与嵌套目录按 Pi 规则转换`() {
+        assertEquals("C:\\", normalizePiWindowsShellPath("/c", true))
+        assertEquals("D:\\", normalizePiWindowsShellPath("/mnt/d/", true))
+        assertEquals("E:\\", normalizePiWindowsShellPath("/cygdrive/e", true))
+        assertEquals("D:\\one\\two", normalizePiWindowsShellPath("/MNT/D/one/two", true))
+    }
+
+    @Test
+    fun `Windows 非 shell 盘符路径保持原样`() {
+        for (path in listOf("//server/share", "\\\\server\\share", "/c/one\\two", "/home/demo", "/mnt/data", "C:/pi-sessions", "C:\\pi-sessions", "relative/sessions")) {
+            assertEquals(path, path, normalizePiWindowsShellPath(path, true))
+        }
+    }
+
+    @Test
+    fun `非 Windows 不转换 shell 盘符路径`() {
+        assertEquals("/c/pi-sessions", normalizePiWindowsShellPath("/c/pi-sessions", false))
+        assertEquals("/mnt/c/pi-sessions", normalizePiWindowsShellPath("/mnt/c/pi-sessions", false))
+        assertEquals("/cygdrive/c/pi-sessions", normalizePiWindowsShellPath("/cygdrive/c/pi-sessions", false))
+    }
+
+    @Test
+    fun `Windows 设置解析将三种 shell 路径转换后交给文件系统`() {
+        // POSIX 主机上的 C:\ 不是绝对路径；仍可验证进入 Path.of 的是已转换字符串。
+        // Windows 主机上 resolve 会直接返回 C:\pi-sessions，与项目所在盘符无关。
+        val expected = project.resolve("C:\\pi-sessions").normalize()
+        assertEquals(expected, piSettingsSessionDir("""{"sessionDir":"/c/pi-sessions"}""", null, project.toString(), home, true))
+        assertEquals(expected, piSettingsSessionDir(null, """{"sessionDir":"/mnt/c/pi-sessions"}""", project.toString(), home, true))
+        assertEquals(expected, piSettingsSessionDir(null, """{"sessionDir":"/cygdrive/c/pi-sessions"}""", project.toString(), home, true))
+    }
+
+    @Test
+    fun `非 Windows 设置解析保留 shell 风格目录`() {
+        for (path in listOf("/c/pi-sessions", "/mnt/c/pi-sessions", "/cygdrive/c/pi-sessions")) {
+            assertEquals(
+                project.resolve(path).normalize(),
+                piSettingsSessionDir("""{"sessionDir":"$path"}""", null, project.toString(), home, false),
+            )
+        }
+    }
+
+    @Test
     fun `开头带 BOM 的设置文件也能读`() {
         val dir = elsewhere.resolve("bom")
         assertEquals(dir, settingsDir(global = "\uFEFF" + """{"sessionDir":"${json(dir)}"}"""))
