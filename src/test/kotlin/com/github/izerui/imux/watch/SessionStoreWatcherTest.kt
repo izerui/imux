@@ -1,11 +1,14 @@
 package com.github.izerui.imux.watch
 
+import com.github.izerui.imux.session.ClaudeSessionReader
+import com.github.izerui.imux.session.PiSessionReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.nio.file.Files
 import java.time.LocalDate
 
 /**
@@ -40,9 +43,8 @@ class SessionStoreWatcherTest {
         return SessionStoreWatcher(
             claudeHome = claudeHome.toPath(),
             codexHome = codexHome.toPath(),
-            piHome = piHome.toPath(),
-            claudeProjectDirName = "-Users-demo-proj",
-            piProjectDirName = "--Users-demo-proj--",
+            claudeProjectDirName = { "-Users-demo-proj" },
+            piSessionDir = { piHome.toPath().resolve("agent/sessions/--Users-demo-proj--") },
             onChange = { changes++ },
             onTick = onTick,
             fastTickWanted = fastTickWanted,
@@ -65,14 +67,18 @@ class SessionStoreWatcherTest {
     fun `只盯本项目的 claude 与 pi 目录，以及 codex 最近两天`() {
         val w = watcher()
 
-        val dirs = w.watchedDirs().map { it.toString() }
-
-        assertEquals(4, dirs.size)
-        assertTrue(dirs[0].endsWith("projects/-Users-demo-proj"))
-        assertTrue(dirs[1].endsWith("sessions/2026/08/06"))
-        assertTrue(dirs[2].endsWith("sessions/2026/08/05"))
-        // pi 与 claude 一样是一个项目一个目录，不必按日期回看
-        assertTrue(dirs[3].endsWith("agent/sessions/--Users-demo-proj--"))
+        // 比 Path 而不是 toString()：Windows 上分隔符是反斜杠，字符串断言在那里必然失败
+        val codexSessions = codexHome.toPath().resolve("sessions")
+        assertEquals(
+            listOf(
+                claudeHome.toPath().resolve("projects").resolve("-Users-demo-proj"),
+                codexSessions.resolve("2026").resolve("08").resolve("06"),
+                codexSessions.resolve("2026").resolve("08").resolve("05"),
+                // pi 与 claude 一样是一个项目一个目录，不必按日期回看
+                piHome.toPath().resolve("agent").resolve("sessions").resolve("--Users-demo-proj--"),
+            ),
+            w.watchedDirs(),
+        )
     }
 
     @Test
@@ -86,6 +92,94 @@ class SessionStoreWatcherTest {
         assertEquals(1, changes)
     }
 
+    /**
+     * 超长路径的目录名带 Bun.hash，Claude 建出目录之前只能猜。
+     * 同一个 reader 与 watcher 联动：目录在监听启动后才出现，也必须被后续 tick 发现。
+     * 这钉住两件事——watcher 每轮重新解析目录名，reader 不缓存未命中。
+     */
+    @Test
+    fun `长路径的 claude 目录在监听启动后才创建也能被发现`() {
+        val projectPath = "/Users/demo/" + "very_long_directory_name/".repeat(9) + "proj"
+        claudeHome = File(tmp.root, "claude").apply { mkdirs() }
+        val reader = ClaudeSessionReader(claudeHome.toPath(), isWindows = false)
+        val w =
+            SessionStoreWatcher(
+                claudeHome = claudeHome.toPath(),
+                codexHome = File(tmp.root, "codex").apply { mkdirs() }.toPath(),
+                claudeProjectDirName = { reader.projectDirName(projectPath) },
+                piSessionDir = { File(tmp.root, "pi/agent/sessions/--p--").toPath() },
+                onChange = { changes++ },
+                today = { today },
+            )
+
+        // 目录还不存在：第一个慢周期只建立基线
+        repeat(3) { w.tick() }
+        val baseline = changes
+        assertTrue(reader.read(projectPath).isEmpty())
+
+        // 原生安装包的哈希与 djb2 兜底值不同，只能靠 cwd 在磁盘上认出来
+        val guessed = reader.projectDirName(projectPath)
+        val actual = guessed.substringBeforeLast('-') + "-bunhash9"
+        File(claudeHome, "projects/$actual").apply { mkdirs() }
+            .resolve("late.jsonl")
+            .writeText("""{"type":"user","cwd":"$projectPath","message":{"content":"迟到的会话"}}""")
+
+        repeat(3) { w.tick() }
+
+        assertEquals(baseline + 1, changes)
+        assertTrue(w.watchedDirs()[0].endsWith(actual))
+        assertEquals(listOf("late"), reader.read(projectPath).map { it.id })
+    }
+
+    /**
+     * 用户把 pi 会话整体挪到新目录（保留文件名、大小、修改时间）后改设置里的 sessionDir。
+     * 指纹若只看文件名，前后完全一样，列表就一直指向旧位置的文件，恢复和写标题都会落空。
+     */
+    @Test
+    fun `pi 会话目录经设置切换后即使文件属性相同也会刷新`() {
+        val project = tmp.newFolder("proj").toPath()
+        val agentDir = tmp.newFolder("pi-agent").toPath()
+        val oldDir = tmp.newFolder("old-sessions").toPath()
+        val newDir = tmp.newFolder("new-sessions").toPath()
+        val settings = agentDir.resolve("settings.json")
+        fun pointTo(dir: java.nio.file.Path) =
+            Files.writeString(settings, """{"sessionDir":"${dir.toString().replace("\\", "\\\\")}"}""")
+
+        val cwd = project.toString().replace("\\", "\\\\")
+        val content =
+            """{"type":"session","version":3,"id":"pi-1","timestamp":"2026-08-13T08:03:09.173Z","cwd":"$cwd"}""" + "\n" +
+                    """{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-13T08:03:20.000Z","message":{"role":"user","content":"消息"}}"""
+        val name = "2026-08-13T08-03-09-173Z_pi-1.jsonl"
+        val mtime = java.nio.file.attribute.FileTime.fromMillis(1_786_000_000_000)
+        listOf(oldDir, newDir).forEach { dir ->
+            Files.setLastModifiedTime(Files.writeString(dir.resolve(name), content), mtime)
+        }
+
+        pointTo(oldDir)
+        val reader = PiSessionReader(agentDir, userHome = tmp.root.toPath())
+        val w =
+            SessionStoreWatcher(
+                claudeHome = File(tmp.root, "claude").toPath(),
+                codexHome = File(tmp.root, "codex").toPath(),
+                claudeProjectDirName = { "p" },
+                piSessionDir = { reader.sessionDir(project.toString()) },
+                onChange = { changes++ },
+                today = { today },
+            )
+        w.start()
+        try {
+            assertEquals(oldDir.resolve(name), reader.read(project.toString()).single().filePath)
+
+            pointTo(newDir)
+            repeat(3) { w.tick() }
+
+            assertEquals(1, changes)
+            assertEquals(newDir.resolve(name), reader.read(project.toString()).single().filePath)
+        } finally {
+            w.dispose()
+        }
+    }
+
     /** 跨月要借位到上个月的最后一天，不能变成 08/00。 */
     @Test
     fun `月初回看上个月最后一天`() {
@@ -95,14 +189,16 @@ class SessionStoreWatcherTest {
             SessionStoreWatcher(
                 claudeHome = claudeHome.toPath(),
                 codexHome = codexHome.toPath(),
-                piHome = File(tmp.root, "pi").apply { mkdirs() }.toPath(),
-                claudeProjectDirName = "p",
-                piProjectDirName = "--p--",
+                claudeProjectDirName = { "p" },
+                piSessionDir = { File(tmp.root, "pi/agent/sessions/--p--").toPath() },
                 onChange = {},
                 today = { LocalDate.of(2026, 8, 1) },
             )
 
-        assertTrue(w.watchedDirs()[2].toString().endsWith("sessions/2026/07/31"))
+        assertEquals(
+            codexHome.toPath().resolve("sessions").resolve("2026").resolve("07").resolve("31"),
+            w.watchedDirs()[2],
+        )
     }
 
     // ---- 指纹 ----

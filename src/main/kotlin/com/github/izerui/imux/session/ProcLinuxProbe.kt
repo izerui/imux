@@ -11,7 +11,7 @@ import java.nio.file.Path
 // - **不依赖 lsof**——很多发行版默认不装，现在的实现在那些机器上静默返回空
 // - 没有输出格式解析，少一类最容易出错的东西
 //
-// procRoot 参数化是为了测试能指向临时目录，与 SessionRepository.forUserHome() 的
+// procRoot 参数化是为了测试能指向临时目录，与 SessionRepository.of(AgentHomes) 的
 // 做法一致。生产入口传 /proc。
 
 private val LOG = logger<ProcLinuxProbeLocation>()

@@ -2,8 +2,6 @@ package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentSession
 import com.intellij.openapi.util.SystemInfo
-import java.nio.file.Path
-import java.nio.file.Paths
 
 /**
  * 把各个 CLI 的会话库合并成一份列表。
@@ -22,13 +20,11 @@ class SessionRepository(
             .sortedByDescending { it.lastActiveAt }
 
     companion object {
-        fun forUserHome(): SessionRepository {
-            val home: Path = Paths.get(System.getProperty("user.home"))
-            return SessionRepository(
-                ClaudeSessionReader(home.resolve(".claude")),
-                CodexSessionReader(home.resolve(".codex"), isWindows = SystemInfo.isWindows),
-                PiSessionReader(home.resolve(".pi")),
+        fun of(homes: AgentHomes): SessionRepository =
+            SessionRepository(
+                ClaudeSessionReader(homes.claude),
+                CodexSessionReader(homes.codex, isWindows = SystemInfo.isWindows, sqliteHome = homes.codexSqlite),
+                PiSessionReader(homes.piAgent, homes.piSessions),
             )
-        }
     }
 }

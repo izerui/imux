@@ -12,9 +12,80 @@ class ClaudeSessionReaderTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
-    private fun reader() = ClaudeSessionReader(tmp.root.toPath())
+    // isWindows 显式传：默认值取 SystemInfo，那样用例行为会随主机平台变。
+    private fun reader(isWindows: Boolean = false) = ClaudeSessionReader(tmp.root.toPath(), isWindows)
 
     private fun projectDir() = File(tmp.root, "projects/-Users-demo-proj").apply { mkdirs() }
+
+    private val longPath = "/Users/demo/" + "very_long_directory_name/".repeat(9) + "proj"
+
+    @Test
+    fun `目录名编码把所有非字母数字字符换成连字符`() {
+        assertEquals("-Users-demo-my-app-v2-", reader().projectDirName("/Users/demo/my_app v2/"))
+        assertEquals("-Users-demo------proj", reader().projectDirName("/Users/demo/中文目录/proj"))
+        assertEquals("C--Users-demo-proj", reader().projectDirName("C:\\Users\\demo\\proj"))
+    }
+
+    /** 期望值由 Node 版 Claude Code 的 sanitizePath（djb2）实算得出。 */
+    @Test
+    fun `超长目录名截断到 200 字符并追加 djb2 哈希`() {
+        assertEquals(
+            "-Users-demo-" + "very-long-directory-name-".repeat(7) + "very-long-dir-mtnprz",
+            reader().projectDirName(longPath),
+        )
+    }
+
+    @Test
+    fun `超长目录名优先采用磁盘上 cwd 吻合的现有目录`() {
+        val prefix = reader().projectDirName(longPath).substringBeforeLast('-')
+        // 同前缀但属于别的项目的目录不能被认领
+        File(tmp.root, "projects/$prefix-other").apply { mkdirs() }
+            .resolve("s0.jsonl").writeText("""{"type":"user","cwd":"${longPath}x"}""")
+        File(tmp.root, "projects/$prefix-bunhash1").apply { mkdirs() }
+            .resolve("s1.jsonl").writeText("""{"type":"user","cwd":"$longPath","message":{"content":"你好"}}""")
+
+        val reader = reader()
+        assertEquals("$prefix-bunhash1", reader.projectDirName(longPath))
+        assertEquals(listOf("s1"), reader.read(longPath).map { it.id })
+    }
+
+    private val longWindowsPath = "C:/Users/demo/" + "very_long_directory_name/".repeat(9) + "proj"
+
+    /**
+     * IDE 给的是正斜杠，Claude 记录与求哈希用的是原生反斜杠。
+     * 期望值由 Node 对 `C:\Users\demo\...` 实算得出。
+     */
+    @Test
+    fun `Windows 上兜底哈希按原生反斜杠路径计算`() {
+        assertEquals(
+            "C--Users-demo-" + "very-long-directory-name-".repeat(7) + "very-long-d-2ewf7i",
+            reader(isWindows = true).projectDirName(longWindowsPath),
+        )
+    }
+
+    @Test
+    fun `Windows 上正斜杠项目路径能认出记录反斜杠 cwd 的长路径目录`() {
+        val prefix = reader(isWindows = true).projectDirName(longWindowsPath).substringBeforeLast('-')
+        // 会话里的 cwd 是 JSON 转义后的反斜杠写法
+        val nativeCwd = longWindowsPath.replace("/", "\\\\")
+        File(tmp.root, "projects/$prefix-bunhash2").apply { mkdirs() }
+            .resolve("w1.jsonl").writeText("""{"type":"user","cwd":"$nativeCwd","message":{"content":"你好"}}""")
+
+        val reader = reader(isWindows = true)
+        assertEquals("$prefix-bunhash2", reader.projectDirName(longWindowsPath))
+        assertEquals(listOf("w1"), reader.read(longWindowsPath).map { it.id })
+    }
+
+    /** 分隔符归一化只在 Windows 上做，POSIX 上 `\` 是合法的目录名字符。 */
+    @Test
+    fun `非 Windows 上不把反斜杠 cwd 当成同一目录`() {
+        val prefix = reader().projectDirName(longWindowsPath).substringBeforeLast('-')
+        val nativeCwd = longWindowsPath.replace("/", "\\\\")
+        File(tmp.root, "projects/$prefix-bunhash2").apply { mkdirs() }
+            .resolve("w1.jsonl").writeText("""{"type":"user","cwd":"$nativeCwd"}""")
+
+        assertTrue(reader().read(longWindowsPath).isEmpty())
+    }
 
     /**
      * 目录名编码：'/' 与 '.' 都要变成 '-'。

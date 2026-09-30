@@ -22,7 +22,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 internal class SessionTitleRegenerator(
-    private val userHome: Path,
+    private val homes: AgentHomes,
     private val shell: String,
     private val runCli: (List<String>, Path, Long) -> String = ::runTitleCli,
     private val timeoutSeconds: Long = TITLE_TIMEOUT_SECONDS,
@@ -35,7 +35,7 @@ internal class SessionTitleRegenerator(
         val command = titleGenerationCommand(shell, session.agentType, projectPath, prompt)
         val output = runCli(command, Path.of(projectPath), timeoutSeconds)
         val title = normalizeGeneratedTitle(output) ?: error("CLI 没有返回可用标题")
-        writeGeneratedTitle(session, title, userHome)
+        writeGeneratedTitle(session, title, homes)
         return title
     }
 }
@@ -106,7 +106,7 @@ internal fun normalizeGeneratedTitle(output: String): String? {
 internal fun writeGeneratedTitle(
     session: AgentSession,
     title: String,
-    userHome: Path,
+    homes: AgentHomes,
 ) {
     when (session.agentType) {
         AgentType.CLAUDE -> {
@@ -121,8 +121,7 @@ internal fun writeGeneratedTitle(
         }
 
         AgentType.CODEX -> {
-            val codexHome = userHome.resolve(".codex")
-            val catalog = CodexThreadIndex(codexHome).currentCatalog()
+            val catalog = CodexThreadIndex(homes.codex, homes.codexSqlite).currentCatalog()
                 ?: error("Codex 会话数据库不存在")
             check(session.id in catalog.titles) { "Codex 会话不存在" }
             val config = SQLiteConfig().apply { setBusyTimeout(SQLITE_BUSY_TIMEOUT_MS) }

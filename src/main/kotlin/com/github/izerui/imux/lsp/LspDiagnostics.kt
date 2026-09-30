@@ -1,6 +1,7 @@
 package com.github.izerui.imux.lsp
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.AgentHomes
 import com.intellij.openapi.diagnostic.logger
 import java.nio.file.Files
 import java.nio.file.Path
@@ -8,8 +9,9 @@ import java.nio.file.Path
 /**
  * 编排三个探针，产出一次完整体检。
  *
- * [userHome] 参数化是为了测试能指向临时目录，与 `SessionRepository.forUserHome()`
- * 的做法一致。[binaryProbe] 同理注入，单测不碰真实 shell。
+ * [userHome] 与 [homes] 参数化是为了测试能指向临时目录。[binaryProbe] 同理注入，
+ * 单测不碰真实 shell。三个 CLI 的配置文件从 [homes] 读，跟随 `CLAUDE_CONFIG_DIR`
+ * 等环境变量；[userHome] 只用于展开 `~/` 与定位 imux 自己装的 pi-lens。
  *
  * 全程只读：只 `Files.readString`，不创建、不写入、不执行安装。
  */
@@ -17,6 +19,7 @@ internal class LspDiagnostics(
     private val userHome: Path,
     private val binaryProbe: BinaryProbe,
     private val handshake: (List<String>) -> Boolean = ::spawnMcpHandshake,
+    private val homes: AgentHomes = AgentHomes.defaults(userHome),
 ) {
     fun run(): LspReport {
         // 一次问完：语言服务器 + 它们的安装命令依赖的工具链（brew/go/npm/node/gem/
@@ -31,8 +34,8 @@ internal class LspDiagnostics(
             claudeReport(
                 configuredCommands =
                     parseConfiguredCommands(
-                        read(".claude/settings.json"),
-                        read(".claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"),
+                        read(homes.claude, "settings.json"),
+                        read(homes.claude, "plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json"),
                     ),
                 binaries = located,
                 cliInstalled = isInstalled(located, AgentType.CLAUDE),
@@ -40,14 +43,14 @@ internal class LspDiagnostics(
 
         val pi =
             piReport(
-                piLensInstalled = hasPiLens(read(".pi/agent/settings.json")),
+                piLensInstalled = hasPiLens(read(homes.piAgent, "settings.json")),
                 binaries = located,
                 cliInstalled = isInstalled(located, AgentType.PI),
             )
 
         val codex =
             codexReport(
-                mounted = mountsPiLensMcp(read(".codex/config.toml"), userHome, located, handshake),
+                mounted = mountsPiLensMcp(read(homes.codex, "config.toml"), userHome, located, handshake),
                 // 与 pi 共用同一张 pi-lens 能力矩阵，但各自算各自的：两份安装彼此独立
                 binaries = located,
                 cliInstalled = isInstalled(located, AgentType.CODEX),
@@ -76,9 +79,12 @@ internal class LspDiagnostics(
      * 用户没有任何线索能区分。日志只写相对路径，**不写文件内容**——这几份 settings
      * 里有用户主目录路径乃至令牌。
      */
-    private fun read(relative: String): String? =
+    private fun read(
+        root: Path,
+        relative: String,
+    ): String? =
         runCatching {
-            val file = userHome.resolve(relative)
+            val file = root.resolve(relative)
             if (Files.isRegularFile(file)) Files.readString(file) else null
         }.onFailure { LOG.warn("读取 $relative 失败，按未配置处理", it) }
             .getOrNull()

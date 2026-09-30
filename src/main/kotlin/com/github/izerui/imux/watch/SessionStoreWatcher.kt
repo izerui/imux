@@ -23,9 +23,19 @@ import java.util.concurrent.atomic.AtomicReference
 class SessionStoreWatcher(
     private val claudeHome: Path,
     private val codexHome: Path,
-    private val piHome: Path,
-    private val claudeProjectDirName: String,
-    private val piProjectDirName: String,
+    /**
+     * 每轮重新求值：超长路径的目录名带哈希，Claude 建出目录之前只能猜，
+     * 建出之后才能在磁盘上认出来，见 ClaudeSessionReader.projectDirName。
+     */
+    private val claudeProjectDirName: () -> String,
+    /**
+     * 本项目的 pi 会话目录，见 PiSessionReader.sessionDir。
+     *
+     * 每轮重新求值：目录可能来自 pi 设置里的 `sessionDir`，用户改了设置要能跟上。
+     * 指定了会话目录时这是所有项目共用的平铺目录，别的项目写会话也会触发 [onChange]。
+     * 多一次重扫而已，结果由 reader 按 cwd 过滤。
+     */
+    private val piSessionDir: () -> Path,
     private val onChange: () -> Unit,
     /**
      * 刷新运行状态，与会话文件是否变化无关。
@@ -88,7 +98,12 @@ class SessionStoreWatcher(
         onChange()
     }
 
-    /** 被监听目录的廉价指纹：文件名 + 大小 + 修改时间。任一变化即视为会话库有更新。 */
+    /**
+     * 被监听目录的廉价指纹：文件完整路径 + 大小 + 修改时间。任一变化即视为会话库有更新。
+     *
+     * 用完整路径而不只是文件名：pi 的会话目录可由设置切换，用户把会话整体挪到新目录
+     * （保留文件属性）再改设置时，只看文件名的指纹一模一样，列表会一直指向旧位置的文件。
+     */
     fun signature(): String =
         watchedDirs()
             .filter { Files.isDirectory(it) }
@@ -99,7 +114,7 @@ class SessionStoreWatcher(
                         .filter { it.fileName.toString().endsWith(".jsonl") }
                         .map { file ->
                             val attrs = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes::class.java)
-                            "${file.fileName}:${attrs.size()}:${attrs.lastModifiedTime().toMillis()}"
+                            "$file:${attrs.size()}:${attrs.lastModifiedTime().toMillis()}"
                         }
                 }
             }.sorted()
@@ -109,11 +124,11 @@ class SessionStoreWatcher(
         val day = today()
         val codexSessions = codexHome.resolve("sessions")
         return listOf(
-            claudeHome.resolve("projects").resolve(claudeProjectDirName),
+            claudeHome.resolve("projects").resolve(claudeProjectDirName()),
             codexSessions.resolve(datePath(day)),
             codexSessions.resolve(datePath(day.minusDays(1))),
             // pi 与 claude 一样按 cwd 分目录，一个项目一个目录，不必按日期回看
-            piHome.resolve("agent").resolve("sessions").resolve(piProjectDirName),
+            piSessionDir(),
         )
     }
 

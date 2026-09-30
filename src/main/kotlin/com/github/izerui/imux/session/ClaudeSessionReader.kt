@@ -4,27 +4,101 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.path.useLines
+import kotlin.math.abs
 
 /**
  * 读取 Claude Code 的会话库。
  *
  * 布局：<claudeHome>/projects/<cwd 编码>/<session-uuid>.jsonl
- * 编码规则：cwd 中的 '/' 与 '.' 均替换为 '-'。
+ * 编码规则见 [projectDirName]。
  *
  * 构造器接收 claudeHome 而非硬编码 ~/.claude，是为了测试能指向临时目录。
  */
 class ClaudeSessionReader(
     private val claudeHome: Path,
+    /**
+     * 长路径核实 cwd 与计算兜底哈希时用哪个平台的规则。
+     *
+     * IDE 给的项目路径是 `C:/a/b`，Claude 在 Windows 上记录、并拿去求哈希的是原生的 `C:\a\b`。
+     * 短路径两种写法替换后目录名相同，长路径的哈希与 cwd 比较却会因此对不上。
+     * 注入而不是就地读 `SystemInfo`，理由同 [CodexSessionReader]：Windows 分支要能在 macOS 上被测到。
+     */
+    private val isWindows: Boolean = SystemInfo.isWindows,
 ) {
     private val historyIndex = ClaudeHistoryIndex(claudeHome)
 
-    fun projectDirName(projectPath: String): String =
-        buildString(projectPath.length) {
-            for (ch in projectPath) append(if (ch == '/' || ch == '.') '-' else ch)
+    /** 已在磁盘上核实过的长路径目录名。只缓存命中，未命中下一次还要重新找。 */
+    private val longDirCache = ConcurrentHashMap<String, String>()
+
+    /**
+     * cwd -> 会话目录名，与 Claude Code 的 sanitizePath 对齐（docs sessions.md）：
+     *
+     * 1. 所有非 `[a-zA-Z0-9]` 字符都换成 `-`——不只是 `/` 与 `.`，`_`、空格、中文、
+     *    Windows 的 `\` 与 `:` 都算。按 UTF-16 码元逐个替换，与 JS 正则的行为一致。
+     * 2. 结果超过 200 个字符时截到 200，再追加 `-<全路径哈希>`。
+     *
+     * 哈希有两种实现：Node 下是 djb2（即 Java 的 `String.hashCode`）取绝对值转 36 进制，
+     * Bun 编译的原生安装包则用 `Bun.hash`（wyhash）。后者这里算不出来，所以长路径
+     * 优先在磁盘上按前缀找现有目录、用会话记录里的 cwd 核实；找不到才退回 djb2 的算法值。
+     */
+    fun projectDirName(projectPath: String): String {
+        val sanitized =
+            buildString(projectPath.length) {
+                for (ch in projectPath) append(if (ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9') ch else '-')
+            }
+        if (sanitized.length <= MAX_SANITIZED_LENGTH) return sanitized
+
+        longDirCache[projectPath]?.let { return it }
+        val prefix = sanitized.take(MAX_SANITIZED_LENGTH) + "-"
+        findLongDir(prefix, projectPath)?.let {
+            longDirCache[projectPath] = it
+            return it
         }
+        val nativePath = if (isWindows) projectPath.replace('/', '\\') else projectPath
+        return prefix + abs(nativePath.hashCode().toLong()).toString(36)
+    }
+
+    /** 在 projects 下找 `前缀-哈希` 形态、且会话记录里 cwd 正是本项目的目录。 */
+    private fun findLongDir(
+        prefix: String,
+        projectPath: String,
+    ): String? {
+        val projects = claudeHome.resolve("projects")
+        if (!Files.isDirectory(projects)) return null
+        val candidates =
+            Files.list(projects).use { stream ->
+                stream.toList().filter {
+                    val name = it.fileName.toString()
+                    name.startsWith(prefix) && Files.isDirectory(it) &&
+                        name.substring(prefix.length).let { h -> h.isNotEmpty() && h.all { c -> c in '0'..'9' || c in 'a'..'z' } }
+                }
+            }
+        return candidates.firstOrNull { recordsCwd(it, projectPath) }?.fileName?.toString()
+    }
+
+    /**
+     * 目录里任一会话文件的前若干行中出现的 cwd 是否指向 [projectPath]。
+     * 分隔符的归一化与 codex 侧共用 [sameCodexCwd]：只在 Windows 上做，POSIX 上逐字节比较。
+     */
+    private fun recordsCwd(
+        dir: Path,
+        projectPath: String,
+    ): Boolean =
+        runCatching {
+            Files.list(dir).use { stream ->
+                stream.toList().filter { it.fileName.toString().endsWith(".jsonl") }
+            }.any { file ->
+                file.useLines { lines ->
+                    lines.take(CWD_PROBE_LINES)
+                        .firstNotNullOfOrNull { if (it.contains(CWD_MARKER)) JsonLineScanner.stringValue(it, "cwd") else null }
+                }?.let { sameCodexCwd(it, projectPath, isWindows) } == true
+            }
+        }.getOrDefault(false)
 
     fun read(projectPath: String): List<AgentSession> {
         val dir = claudeHome.resolve("projects").resolve(projectDirName(projectPath))
@@ -133,5 +207,8 @@ class ClaudeSessionReader(
         const val TOOL_RESULT = "tool_result"
         const val INTERRUPTED = "[Request interrupted by user]"
         const val TITLE_MAX = 60
+        const val MAX_SANITIZED_LENGTH = 200
+        const val CWD_MARKER = "\"cwd\""
+        const val CWD_PROBE_LINES = 50
     }
 }

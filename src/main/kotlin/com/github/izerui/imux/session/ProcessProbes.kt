@@ -156,7 +156,8 @@ internal fun readHeldRollouts(
  * 参数化（而不是在 [readHeldRollouts] 里直接 new）只为让分派本身可测——
  * 「分派选错分支」是这一层最难发现的错，症状与「没有漂移」不可区分。
  */
-private fun codexRolloutOfPid(pid: Long): String? = CodexRuntimeIndex(Path.of(System.getProperty("user.home"), ".codex")).rolloutPathOf(pid)
+private fun codexRolloutOfPid(pid: Long): String? =
+    AgentHomes.current().let { homes -> CodexRuntimeIndex(homes.codex, sqliteHome = homes.codexSqlite) }.rolloutPathOf(pid)
 
 /** 生产入口。参数化只为让分派本身可测——分派选错分支是这一层最难发现的错。 */
 internal val PROC_ROOT: Path = Path.of("/proc")
