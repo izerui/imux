@@ -65,14 +65,18 @@ class SessionStoreWatcherTest {
     fun `只盯本项目的 claude 与 pi 目录，以及 codex 最近两天`() {
         val w = watcher()
 
-        val dirs = w.watchedDirs().map { it.toString() }
-
-        assertEquals(4, dirs.size)
-        assertTrue(dirs[0].endsWith("projects/-Users-demo-proj"))
-        assertTrue(dirs[1].endsWith("sessions/2026/08/06"))
-        assertTrue(dirs[2].endsWith("sessions/2026/08/05"))
-        // pi 与 claude 一样是一个项目一个目录，不必按日期回看
-        assertTrue(dirs[3].endsWith("agent/sessions/--Users-demo-proj--"))
+        // 比 Path 而不是 toString()：Windows 上分隔符是反斜杠，字符串断言在那里必然失败
+        val codexSessions = codexHome.toPath().resolve("sessions")
+        assertEquals(
+            listOf(
+                claudeHome.toPath().resolve("projects").resolve("-Users-demo-proj"),
+                codexSessions.resolve("2026").resolve("08").resolve("06"),
+                codexSessions.resolve("2026").resolve("08").resolve("05"),
+                // pi 与 claude 一样是一个项目一个目录，不必按日期回看
+                piHome.toPath().resolve("agent").resolve("sessions").resolve("--Users-demo-proj--"),
+            ),
+            w.watchedDirs(),
+        )
     }
 
     @Test
@@ -140,7 +144,10 @@ class SessionStoreWatcherTest {
                 today = { LocalDate.of(2026, 8, 1) },
             )
 
-        assertTrue(w.watchedDirs()[2].toString().endsWith("sessions/2026/07/31"))
+        assertEquals(
+            codexHome.toPath().resolve("sessions").resolve("2026").resolve("07").resolve("31"),
+            w.watchedDirs()[2],
+        )
     }
 
     // ---- 指纹 ----
