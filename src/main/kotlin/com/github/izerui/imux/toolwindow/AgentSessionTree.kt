@@ -11,7 +11,6 @@ import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.handoffActionGroup
 import com.github.izerui.imux.terminal.promptRenameSessionTitle
-import com.github.izerui.imux.terminal.regenerateSessionTitleAction
 import com.github.izerui.imux.terminal.renameSessionTitleAction
 import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.terminal.sessionClipboardText
@@ -371,7 +370,6 @@ class AgentSessionTree(
                             )
                             model.sessionOf(data.id)?.let { source ->
                                 actions.add(renameSessionTitleAction(project, source))
-                                actions.add(regenerateSessionTitleAction(project, source))
                                 actions.addSeparator()
                                 actions.add(handoffActionGroup(project, source))
                                 actions.addSeparator()
@@ -405,7 +403,7 @@ class AgentSessionTree(
             override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
             override fun update(event: AnActionEvent) {
-                event.presentation.isEnabled = selectedSession()?.let { !monitor.isRegeneratingTitle(it.id) } == true
+                event.presentation.isEnabled = selectedSession()?.let { !monitor.isRenamingTitle(it.id) } == true
             }
 
             override fun actionPerformed(event: AnActionEvent) {

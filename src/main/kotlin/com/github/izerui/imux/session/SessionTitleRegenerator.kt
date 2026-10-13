@@ -22,21 +22,19 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 internal class SessionTitleRegenerator(
-    private val homes: AgentHomes,
     private val shell: String,
     private val runCli: (List<String>, Path, Long) -> String = ::runTitleCli,
     private val timeoutSeconds: Long = TITLE_TIMEOUT_SECONDS,
 ) {
-    fun regenerate(
+    /** 只产出候选标题，不写回；写回由用户在重命名框里确认后走 [writeSessionTitle]。 */
+    fun generate(
         session: AgentSession,
         projectPath: String,
     ): String {
         val prompt = titleGenerationPrompt(session)
         val command = titleGenerationCommand(shell, session.agentType, projectPath, prompt)
         val output = runCli(command, Path.of(projectPath), timeoutSeconds)
-        val title = normalizeGeneratedTitle(output) ?: error("CLI 没有返回可用标题")
-        writeGeneratedTitle(session, title, homes)
-        return title
+        return normalizeGeneratedTitle(output) ?: error("CLI 没有返回可用标题")
     }
 }
 
@@ -144,7 +142,7 @@ internal fun storedTitle(
         }
     }
 
-internal fun writeGeneratedTitle(
+internal fun writeSessionTitle(
     session: AgentSession,
     title: String,
     homes: AgentHomes,

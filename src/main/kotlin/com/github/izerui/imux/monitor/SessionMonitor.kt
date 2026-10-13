@@ -19,7 +19,7 @@ import com.github.izerui.imux.session.SessionTitleRegenerator
 import com.github.izerui.imux.session.driftOf
 import com.github.izerui.imux.session.normalizeManualTitle
 import com.github.izerui.imux.session.storedTitle
-import com.github.izerui.imux.session.writeGeneratedTitle
+import com.github.izerui.imux.session.writeSessionTitle
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
@@ -48,10 +48,13 @@ import com.intellij.openapi.wm.WindowManager
 import com.intellij.openapi.wm.impl.FrameTitleBuilder
 import com.intellij.openapi.wm.impl.ProjectFrameHelper
 import com.intellij.util.EventDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.time.Instant
@@ -229,12 +232,11 @@ class SessionMonitor(
     private val refreshRequested = AtomicBoolean(false)
     private val checkingCompletedTurns = AtomicBoolean(false)
     private val probing = AtomicBoolean(false)
-    private val regeneratingTitles = ConcurrentHashMap.newKeySet<String>()
+    private val renamingTitles = ConcurrentHashMap.newKeySet<String>()
     private val transcriptGenerations = ConcurrentHashMap<String, AtomicLong>()
 
     private val titleRegenerator by lazy {
         SessionTitleRegenerator(
-            homes = agentHomes,
             shell =
                 resolveShell(
                     System.getenv("SHELL"),
@@ -371,42 +373,37 @@ class SessionMonitor(
 
     fun clearUnread(sessionId: String) = unreadTracker.clearUnread(sessionId)
 
-    fun isRegeneratingTitle(sessionId: String): Boolean = sessionId in regeneratingTitles
+    fun isRenamingTitle(sessionId: String): Boolean = sessionId in renamingTitles
 
     /**
-     * 用对应 CLI 的一次性模型请求重新生成标题，再写回它自己的会话标题字段。
+     * 用对应 CLI 的一次性模型请求生成一个候选标题，交给 [onResult]，**不写回**。
      *
-     * 不复用正在运行的终端：向原会话输入 `/rename` 或提示词会污染对话，还可能撞上
-     * 正在执行的一轮。独立的非持久化调用只负责产出一行标题，源会话正文一个字不动。
+     * 只供重命名框的「自动生成」按钮用：生成结果先填进输入框，用户可以改，点确定才由
+     * [renameTitle] 写回。不复用正在运行的终端：向原会话输入 `/rename` 或提示词会污染对话，
+     * 还可能撞上正在执行的一轮。独立的非持久化调用只负责产出一行标题，源会话正文一个字不动。
+     *
+     * CLI 调用是阻塞的，放在 [runInterruptible] 里：对话框关闭时取消返回的 [Job]，
+     * 等待中的线程被中断，[SessionTitleRegenerator] 随即杀掉 CLI 进程，不留后台空转。
+     * [modality] 传对话框自己的模态状态，否则结果回不到正打开着的对话框。
      */
-    fun regenerateTitle(session: AgentSession) {
-        if (!regeneratingTitles.add(session.id)) return
-        notifyListeners()
-
-        coroutineScope.launch(Dispatchers.IO) {
-            val result = runCatching { titleRegenerator.regenerate(session, projectPath) }
-            withContext(Dispatchers.EDT) {
-                regeneratingTitles.remove(session.id)
-                if (project.isDisposed) return@withContext
-                if (result.isSuccess) {
-                    refresh()
-                    titleNotification(
-                        ImuxBundle.message("notification.title.regenerated", result.getOrThrow()),
-                        NotificationType.INFORMATION,
-                    )
-                } else {
-                    titleNotification(
-                        ImuxBundle.message(
-                            "notification.title.failed",
-                            result.exceptionOrNull()?.message ?: ImuxBundle.message("notification.title.unknown.error"),
-                        ),
-                        NotificationType.WARNING,
-                    )
+    fun generateTitle(
+        session: AgentSession,
+        modality: ModalityState,
+        onResult: (Result<String>) -> Unit,
+    ): Job =
+        coroutineScope.launch {
+            val result =
+                try {
+                    Result.success(runInterruptible(Dispatchers.IO) { titleRegenerator.generate(session, projectPath) })
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Result.failure(error)
                 }
-                notifyListeners()
+            withContext(Dispatchers.EDT + modality.asContextElement()) {
+                if (!project.isDisposed) onResult(result)
             }
         }
-    }
 
     /**
      * 在后台读出 CLI 存着的完整标题，再回到 EDT 交给 [onReady]（用于弹重命名框）。
@@ -430,10 +427,10 @@ class SessionMonitor(
     }
 
     /**
-     * 把用户手动输入的标题写回 CLI 自己的会话标题字段，与 [regenerateTitle] 写同一处，
+     * 把重命名框确认的标题写回 CLI 自己的会话标题字段（与 CLI 内 `/rename`、`/name` 写同一处），
      * 因此 CLI 内 `/resume` 列表、imux 会话树和标签页看到的是同一个名字。
      *
-     * 与重新生成共用进行中标记：两者同时写，后落盘的会覆盖先落盘的，用户看到的结果取决于谁慢。
+     * 同一会话的写入进行中时不再受理第二次：两次同时写，后落盘的会覆盖先落盘的。
      */
     fun renameTitle(
         session: AgentSession,
@@ -442,13 +439,13 @@ class SessionMonitor(
     ) {
         val title = normalizeManualTitle(input) ?: return
         if (title == original) return
-        if (!regeneratingTitles.add(session.id)) return
+        if (!renamingTitles.add(session.id)) return
         notifyListeners()
 
         coroutineScope.launch(Dispatchers.IO) {
-            val result = runCatching { writeGeneratedTitle(session, title, agentHomes) }
+            val result = runCatching { writeSessionTitle(session, title, agentHomes) }
             withContext(Dispatchers.EDT) {
-                regeneratingTitles.remove(session.id)
+                renamingTitles.remove(session.id)
                 if (project.isDisposed) return@withContext
                 if (result.isSuccess) {
                     refresh()
@@ -459,7 +456,6 @@ class SessionMonitor(
                             result.exceptionOrNull()?.message ?: ImuxBundle.message("notification.title.unknown.error"),
                         ),
                         NotificationType.WARNING,
-                        ImuxBundle.message("action.rename.title.text"),
                     )
                 }
                 notifyListeners()
@@ -470,12 +466,11 @@ class SessionMonitor(
     private fun titleNotification(
         content: String,
         type: NotificationType,
-        title: String = ImuxBundle.message("action.regenerate.title.text"),
     ) {
         NotificationGroupManager
             .getInstance()
             .getNotificationGroup(TITLE_NOTIFICATION_GROUP)
-            .createNotification(title, content, type)
+            .createNotification(ImuxBundle.message("action.rename.title.text"), content, type)
             .notify(project)
     }
 

@@ -1,5 +1,6 @@
 package com.github.izerui.imux
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -164,15 +165,10 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
-    fun `标题重新生成动作注册到终端正文右键菜单`() {
-        assertTrue(
-            "终端正文右键菜单必须能调用对应 CLI 的模型重新生成会话标题",
-            pluginXml.contains(
-                """class="com.github.izerui.imux.terminal.RegenerateSessionTitleAction"""",
-            ) &&
-                pluginXml.contains(
-                    """group-id="Terminal.ReworkedTerminalContextMenu"""",
-                ),
+    fun `独立的标题重新生成动作已并入重命名框`() {
+        assertFalse(
+            "自动生成只是重命名框里的按钮，不再单独注册一个右键菜单项",
+            pluginXml.contains("RegenerateSessionTitle"),
         )
     }
 

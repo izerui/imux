@@ -108,7 +108,7 @@ class PiSessionReader(
             agentType = AgentType.PI,
             // 与另外两个 reader 同一口径：优先用记录自带的时刻而非 mtime，
             // 理由见 lastTimestampOf 的注释。
-            // `/name` 与 imux 的标题重新生成都会追加 session_info；那只是显示元数据，
+            // `/name` 与 imux 的重命名都会追加 session_info；那只是显示元数据，
             // 不能把一个几周没说话的会话顶到“刚刚”。活动时间只认非命名记录。
             lastActiveAt =
                 lastTimestampOf(file) { line ->

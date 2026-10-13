@@ -152,17 +152,9 @@
         <action
                 id="imux.RenameSessionTitle"
                 class="com.github.izerui.imux.terminal.RenameSessionTitleAction"
-                text="Rename Session"
-                description="Enter a new title for this session"
+                text="Rename Session Title"
+                description="Enter a new session title or generate one with this CLI's model"
                 icon="AllIcons.Actions.Edit">
-            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
-        </action>
-        <action
-                id="imux.RegenerateSessionTitle"
-                class="com.github.izerui.imux.terminal.RegenerateSessionTitleAction"
-                text="Regenerate Session Title"
-                description="Use the current CLI model to regenerate this session title"
-                icon="AllIcons.Actions.Refresh">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </action>
         <group

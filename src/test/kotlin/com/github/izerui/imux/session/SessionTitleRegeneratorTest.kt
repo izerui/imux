@@ -316,26 +316,23 @@ class SessionTitleRegeneratorTest {
             """.trimIndent(),
         )
 
-        writeGeneratedTitle(session(AgentType.CLAUDE, file, "claude-1"), "新标题", AgentHomes.defaults(temp.root.toPath()))
+        writeSessionTitle(session(AgentType.CLAUDE, file, "claude-1"), "新标题", AgentHomes.defaults(temp.root.toPath()))
 
         assertEquals("新标题", reader.read("/tmp/project").single().title)
     }
 
     @Test
-    fun `完整流程使用注入的 CLI 输出并写回标题`() {
+    fun `自动生成只返回候选标题而不写回会话文件`() {
         val home = temp.newFolder("flow-home").toPath()
         val reader = ClaudeSessionReader(home)
         val dir = home.resolve("projects").resolve(reader.projectDirName("/tmp/project"))
         Files.createDirectories(dir)
         val file = dir.resolve("flow.jsonl")
-        Files.writeString(
-            file,
-            """{"type":"user","message":{"role":"user","content":"修复订单状态"}}""",
-        )
+        val original = """{"type":"user","message":{"role":"user","content":"修复订单状态"}}"""
+        Files.writeString(file, original)
         var receivedCommand: List<String>? = null
         val regenerator =
             SessionTitleRegenerator(
-                homes = AgentHomes.defaults(home),
                 shell = "/bin/zsh",
                 runCli = { command, _, _ ->
                     receivedCommand = command
@@ -343,11 +340,11 @@ class SessionTitleRegeneratorTest {
                 },
             )
 
-        val title = regenerator.regenerate(session(AgentType.CLAUDE, file, "flow"), "/tmp/project")
+        val title = regenerator.generate(session(AgentType.CLAUDE, file, "flow"), "/tmp/project")
 
         assertEquals("订单状态修复", title)
         assertTrue(receivedCommand!!.last().contains("claude -p"))
-        assertEquals("订单状态修复", reader.read("/tmp/project").single().title)
+        assertEquals("生成阶段不能改动会话文件，写回要等用户在重命名框里确认", original, Files.readString(file))
     }
 
     @Test
@@ -367,7 +364,7 @@ class SessionTitleRegeneratorTest {
         }
         val rollout = temp.newFile("rollout.jsonl").toPath()
 
-        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", AgentHomes.defaults(home))
+        writeSessionTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["codex-1"])
         DriverManager.getConnection("jdbc:sqlite:$oldDb").use { connection ->
@@ -396,7 +393,7 @@ class SessionTitleRegeneratorTest {
         }
         val rollout = temp.newFile("rollout.jsonl").toPath()
 
-        writeGeneratedTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", AgentHomes.defaults(home))
+        writeSessionTitle(session(AgentType.CODEX, rollout, "codex-1"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["codex-1"])
     }
@@ -423,7 +420,7 @@ class SessionTitleRegeneratorTest {
             }
         }
 
-        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("mixed-rollout.jsonl").toPath(), "state-new"), "新标题", AgentHomes.defaults(home))
+        writeSessionTitle(session(AgentType.CODEX, temp.newFile("mixed-rollout.jsonl").toPath(), "state-new"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["state-new"])
         DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
@@ -458,7 +455,7 @@ class SessionTitleRegeneratorTest {
             }
         }
 
-        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("dev-rollout.jsonl").toPath(), "dev-new"), "新标题", AgentHomes.defaults(home))
+        writeSessionTitle(session(AgentType.CODEX, temp.newFile("dev-rollout.jsonl").toPath(), "dev-new"), "新标题", AgentHomes.defaults(home))
 
         assertEquals("新标题", CodexThreadIndex(codexHome).load()!!["dev-new"])
         DriverManager.getConnection("jdbc:sqlite:$stateDb").use { connection ->
@@ -488,7 +485,7 @@ class SessionTitleRegeneratorTest {
             }
         }
 
-        writeGeneratedTitle(session(AgentType.CODEX, temp.newFile("multi-host-rollout.jsonl").toPath(), "codex-1"), "新标题", AgentHomes.defaults(home))
+        writeSessionTitle(session(AgentType.CODEX, temp.newFile("multi-host-rollout.jsonl").toPath(), "codex-1"), "新标题", AgentHomes.defaults(home))
 
         DriverManager.getConnection("jdbc:sqlite:$devDb").use { connection ->
             connection.createStatement().use { statement ->
@@ -521,7 +518,7 @@ class SessionTitleRegeneratorTest {
         )
 
         val before = reader.read("/tmp/project").single().lastActiveAt
-        writeGeneratedTitle(session(AgentType.PI, file, "pi-1"), "新标题", AgentHomes.defaults(home))
+        writeSessionTitle(session(AgentType.PI, file, "pi-1"), "新标题", AgentHomes.defaults(home))
         val renamed = reader.read("/tmp/project").single()
 
         assertEquals("新标题", renamed.title)
