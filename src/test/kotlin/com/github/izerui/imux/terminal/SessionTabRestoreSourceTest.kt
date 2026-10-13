@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -9,6 +10,7 @@ class SessionTabRestoreSourceTest {
     private val hostSource: String by lazy {
         File("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt").readText()
     }
+    private val host = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt")
     private val stateSource: String by lazy {
         File("src/main/kotlin/com/github/izerui/imux/terminal/RestorableSessionTabs.kt").readText()
     }
@@ -80,9 +82,18 @@ class SessionTabRestoreSourceTest {
     @Test
     fun `restored tabs do not replace the selected editor`() {
         assertTrue(hostSource.contains("selectAsCurrent = false"))
-        assertTrue(hostSource.contains("FileEditorOpenRequest()"))
-        assertTrue(hostSource.contains(".withSelectAsCurrent(false)"))
-        assertTrue(hostSource.contains(".withRequestFocus(false)"))
+        assertTrue(host.normalized.contains("openWithoutSelecting(file)"))
+        assertTrue(host.normalized.contains("val previous = manager.currentWindow?.selectedFile"))
+        assertTrue(host.normalized.contains("manager.openFile(file, false)"))
+        assertTrue(host.normalized.contains("manager.openFile(previous, false)"))
+    }
+
+    @Test
+    fun `后台打开标签不引用 262 与 263 间二进制不兼容的 FileEditorOpenRequest`() {
+        assertFalse(
+            "FileEditorOpenRequest 在 263 换了包与入口，引用它会让插件在 263 上 NoSuchClassError",
+            host.normalized.contains("FileEditorOpenRequest"),
+        )
     }
 
     @Test

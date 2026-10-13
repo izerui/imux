@@ -1,3 +1,4 @@
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 
 plugins {
@@ -76,6 +77,39 @@ intellijPlatform {
     // 而该仓库在本机网络下不可达。本插件不使用 GUI Designer 的 .form，
     // 也不依赖平台的 @NotNull 运行时断言插桩，关掉无影响。
     instrumentCode = false
+
+    // 本机插件兼容性验证：`./gradlew verifyPlugin`。
+    //
+    // 验证器拿插件字节码对照**目标 IDE 自己的 jar**，验哪个版本就必须有哪个版本的 IDE——
+    // 装了 263 验不了 262。插件商店的 Critical 判定就来自这一步，本地先跑一遍才能在上传前发现。
+    // 实例：1.2.16 引用了 262 才有的 Experimental `FileEditorOpenRequest`，263 换了包，
+    // 商店报 Class/Method not found，而 263 的 API 变更清单里并没有这一条（Experimental 不记录）。
+    //
+    // 验证用的 IDE 与验证器都放在 Git 忽略的 `.verify/` 下，不进版本库：
+    // - `.verify/ides/<任意名>/`：每个子目录一份 IDE（macOS 取 `.app/Contents`），全部参与验证。
+    //   可以是解压出的目录，也可以是指向已安装 IDE 的软链接；版本以目录里的 build.txt 为准。
+    //   建议至少覆盖：262 最早小版本、262 最新、最新 EAP（262 内部也出过 detachTab 的二进制变更）。
+    // - `.verify/verifier-cli-<版本>-all.jar`：验证器。本机下载 JetBrains Maven 不稳定，
+    //   有本地 jar 就用本地的；没有时由 Gradle 插件自行下载。
+    // 没有 `.verify/` 时（如 CI）不影响 build 与 test，只是 verifyPlugin 无 IDE 可验。
+    pluginVerification {
+        val verifyDir = layout.projectDirectory.dir(".verify").asFile
+        verifyDir
+            .listFiles { file -> file.name.matches(Regex("""verifier-cli-.+-all\.jar""")) }
+            ?.maxByOrNull { it.name }
+            ?.let { cliPath = it }
+        // 与插件商店的 Critical 判定对齐：只有兼容问题与插件结构无效才算失败。
+        // Gradle 插件默认还会因 Internal API 用法失败（IdeaMcpPort 读 MCP 插件 classloader
+        // 用的 PluginManagerCore.getPlugin），商店把它列为告警而非拒收，报告里仍会列出。
+        failureLevel = listOf(FailureLevel.COMPATIBILITY_PROBLEMS, FailureLevel.INVALID_PLUGIN)
+        ides {
+            verifyDir
+                .resolve("ides")
+                .listFiles { file -> file.isDirectory }
+                ?.sortedBy { it.name }
+                ?.forEach { local(it) }
+        }
+    }
 
     pluginConfiguration {
         ideaVersion {

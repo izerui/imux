@@ -12,3 +12,4 @@ out/
 .pi/
 .superpowers/
 __pycache__/
+.verify/

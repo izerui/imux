@@ -19,7 +19,6 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
-import com.intellij.openapi.fileEditor.ex.FileEditorOpenRequest
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.util.SystemInfo
@@ -498,16 +497,31 @@ class TerminalHost(
         if (selectAsCurrent) {
             FileEditorManager.getInstance(project).openFile(file, true)
         } else {
-            FileEditorManagerEx.getInstanceEx(project).openFile(
-                file,
-                FileEditorOpenRequest()
-                    .withSelectAsCurrent(false)
-                    .withRequestFocus(false),
-            )
+            openWithoutSelecting(file)
         }
         persistRestorableTabs()
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedDispatcher.multicaster.sessionsChanged()
+    }
+
+    /**
+     * 在后台打开标签：不抢焦点，也不替换当前选中的编辑器。
+     *
+     * 不用平台的 `FileEditorOpenRequest().withSelectAsCurrent(false)`：它是 Experimental API，
+     * 262 → 263 之间换了包（`fileEditor.ex` → `fileEditor`）、构造函数改为私有、
+     * 入口改成 `FileEditorManager.requestOpenFile`，同一份字节码不可能两边都解析得到，
+     * 插件验证器在 263 上报 Class/Method not found，运行时则是 NoSuchClassError。
+     *
+     * 改为只用 262 起到 263 都存在的 `openFile(file, focusEditor = false)`：它会选中新标签，
+     * 随即把原先选中的文件再选回来。两步在 EDT 上同步完成，中间没有重绘，用户看不到切换。
+     * 新标签照旧插在原选中标签之后，[restorationOpenOrder] 的排序前提不变；
+     * 窗口里原本没有选中标签时，新标签成为选中标签，也与原先的平台行为一致。
+     */
+    private fun openWithoutSelecting(file: AgentTerminalVirtualFile) {
+        val manager = FileEditorManagerEx.getInstanceEx(project)
+        val previous = manager.currentWindow?.selectedFile
+        manager.openFile(file, false)
+        if (previous != null && previous != file) manager.openFile(previous, false)
     }
 
     internal fun scrollToBottom(view: TerminalView) {

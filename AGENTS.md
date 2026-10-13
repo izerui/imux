@@ -38,6 +38,15 @@
 - 本项目支持 IntelliJ Platform build `262` 及以上版本（对应 IntelliJ IDEA 2026.2+）。
 - 不为旧版 IntelliJ Platform 增加兼容分支、反射回退或旧 API 适配，除非用户明确要求。
 
+### 兼容性验证
+
+- 改动涉及平台 API（尤其 `@ApiStatus.Experimental`）或发版前，运行 `./gradlew verifyPlugin`，
+  对 `.verify/ides/` 下的每个 IDE 跑插件验证器，判定标准与插件商店的 Critical 一致。
+- `.verify/` 已被 Git 忽略：`ides/<名称>/` 每个子目录一份 IDE（macOS 取 `.app/Contents`，可用软链接），
+  `verifier-cli-<版本>-all.jar` 为本地验证器。配置与约定见 `build.gradle.kts` 的 `pluginVerification`。
+- 验哪个版本就必须有哪个版本的 IDE；新 EAP 发布后把它放进 `ides/` 再验一次。
+  Experimental API 的变更不会出现在 `api_changes_list_*.md` 里，只能靠验证器发现。
+
 ## IntelliJ Platform 原生 UI 优先
 
 实现界面、交互和视觉效果时，优先复用 IntelliJ Platform 262 自带能力，不要在已有官方实现的情况下自行绘制图标、仿造控件或重复实现事件机制。
