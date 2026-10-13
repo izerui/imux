@@ -38,12 +38,12 @@ import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.panel
-import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,8 +56,6 @@ import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.awt.BorderLayout
 import java.awt.Component
-import java.awt.Dimension
-import java.awt.Rectangle
 import java.awt.event.ActionEvent
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -67,8 +65,6 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JViewport
-import javax.swing.Scrollable
 
 /**
  * Tools | Imux | LSP —— 三个 CLI 的 LSP 覆盖体检。
@@ -118,6 +114,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 更新了：为了让一行改个字而重建 54 行组件树，正是用户抱怨的那次闪烁。
      */
     private var lastReport: LspReport? = null
+
+    /**
+     * 用户当前停在哪个 CLI 的标签页上。
+     *
+     * [showReport] 每次都整棵重建，不记的话「重新检测」或一条安装命令跑完之后，
+     * 标签页会自己跳回第一个——用户刚在 pi 页点了「启用」，结果回来看到的是 Claude Code。
+     * 按 [AgentType] 记而不是按下标记：哪天某个 CLI 没进报告，下标就会错位到别的 CLI 上。
+     */
+    private var selectedAgent: AgentType? = null
 
     /**
      * 正在跑的行：[runRowKey] 给的行标识 &#8594; 那一行状态列此刻该显示的 bundle 键。
@@ -300,17 +305,44 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         replaceContent { JBLabel(ImuxBundle.message("settings.lsp.failed")) }
     }
 
-    /** 整页重画——**只在真结果到手那一刻走这里**，见 [refresh]。 */
+    /**
+     * 整页重画——**只在真结果到手那一刻走这里**，见 [refresh]。
+     *
+     * 每个 CLI 一个标签页，而不是三个分组上下堆叠。堆叠时三组共 54 行，只能给每组再套
+     * 一个封顶高度的内层滚动区，于是设置页外层滚动条里又套着三个滚动区——用户原话：
+     * 「滚动的时候就不知道滚动的是哪个区域」。分页之后一页只有一组 18 行，**整页只剩
+     * 设置对话框自己那一个滚动条**；标签上的图标把另外两组「有没有事要做」留在眼前。
+     */
     private fun showReport(report: LspReport) {
         lastReport = report
         replaceContent {
-            panel {
-                report.cliReports.forEach { cliReport ->
-                    group(cliReport.agentType.displayName) { renderCli(cliReport) }
-                }
+            val tabs = JBTabbedPane()
+            report.cliReports.forEach { cliReport ->
+                tabs.addTab(cliReport.agentType.displayName, tabIcon(cliReport), panel { renderCli(cliReport) })
             }
+            val selected = report.cliReports.indexOfFirst { it.agentType == selectedAgent }
+            if (selected >= 0) {
+                tabs.selectedIndex = selected
+            }
+            tabs.addChangeListener {
+                selectedAgent = report.cliReports.getOrNull(tabs.selectedIndex)?.agentType
+            }
+            tabs
         }
     }
+
+    /**
+     * 标签页上的状态图标，与 [renderCli] 里各分支给出的图标一一对应：
+     * 页面内容说什么，标签就挂什么牌子，切过去之前就知道哪一页有事要办。
+     */
+    private fun tabIcon(cliReport: CliReport): Icon =
+        when {
+            !cliReport.installed -> AllIcons.General.Information
+            cliReport.groupRemedy != null -> AllIcons.General.Warning
+            cliReport.findings.isEmpty() -> AllIcons.General.Information
+            cliReport.gaps.isEmpty() -> AllIcons.General.InspectionsOK
+            else -> AllIcons.General.Warning
+        }
 
     /**
      * 换掉内容区——本页**唯一**的重建原语，[rowCells] 的清空因此只能住在这里。
@@ -377,13 +409,13 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             return
         }
 
-        // 汇总放在滚动区**外面**：18 行列表滚到哪儿，「有没有事要做」这个结论都还在眼前。
+        // 汇总放在列表上面：一眼先看到「有没有事要做」，再往下逐行看。
         row {
             icon(if (cliReport.gaps.isEmpty()) AllIcons.General.InspectionsOK else AllIcons.General.Warning)
             label(summaryText(cliReport))
         }
         row {
-            scrollCell(findingsPanel(cliReport.findings, cliReport.agentType)).align(AlignX.FILL)
+            cell(findingsPanel(cliReport.findings, cliReport.agentType)).align(AlignX.FILL)
         }
     }
 
@@ -392,7 +424,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      *
      * 曾经这行是「已就绪（13） C · C++ · C# · Go · …」，任何语种下都约 116 字符
      * ——语言显示名不随语言包变化——不折行的 `label` 会直接把设置对话框撑宽。
-     * 现在语言名各自成行、进了滚动区，汇总退回到纯计数，最长也就
+     * 现在语言名各自成行，汇总退回到纯计数，最长也就
      * 「Ready (13)  ·  Missing (5)」这个量级，用 `label` 是安全的。
      *
      * 分母刻意不写：`gaps` 已收紧为「用户真能采取行动」的两种状态，
@@ -432,20 +464,18 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         findings: List<LanguageFinding>,
         agentType: AgentType,
     ): JComponent =
-        CappedHeightView(
-            panel {
-                findings.forEach { finding ->
-                    row {
-                        val iconLabel = icon(rowIcon(finding, agentType)).component
-                        label(finding.language.displayName)
-                        val statusLabel = label(statusText(finding, agentType)).component
-                        rowAction(finding, agentType)
-                        rowCells[runRowKey(agentType, finding.language)] =
-                            RowCells(finding, agentType, iconLabel, statusLabel)
-                    }.layout(RowLayout.PARENT_GRID)
-                }
-            },
-        )
+        panel {
+            findings.forEach { finding ->
+                row {
+                    val iconLabel = icon(rowIcon(finding, agentType)).component
+                    label(finding.language.displayName)
+                    val statusLabel = label(statusText(finding, agentType)).component
+                    rowAction(finding, agentType)
+                    rowCells[runRowKey(agentType, finding.language)] =
+                        RowCells(finding, agentType, iconLabel, statusLabel)
+                }.layout(RowLayout.PARENT_GRID)
+            }
+        }
 
     /**
      * 一行末尾那一格：能跑的给按钮，跑不了的走 [fallbackCell]。
@@ -976,62 +1006,6 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
         val icon: JLabel,
         val status: JLabel,
     )
-
-    /**
-     * 滚动区的视图：把可视高度封顶，超出部分交给滚动条。
-     *
-     * 三个分组各 18 门语言，光语言行就 54 行——不封顶的话设置页会被撑到上千像素，
-     * 「重新检测」按钮以外的一切都得靠滚，而 `Row.scrollCell` 包出来的 `JBScrollPane`
-     * 会原样跟着视图的 preferred height 长，等于白包一层。
-     *
-     * 封顶必须走 [Scrollable]：`JViewport` 的布局器（`ViewportLayout`）在视图实现
-     * 该接口时取 [getPreferredScrollableViewportSize] 决定滚动面板的 preferred size，
-     * 而直接改视图的 `preferredSize` 只会把内容压扁、连滚都滚不动。
-     */
-    private class CappedHeightView(
-        view: JComponent,
-    ) : JPanel(BorderLayout()),
-        Scrollable {
-        init {
-            add(view, BorderLayout.CENTER)
-            isOpaque = false
-        }
-
-        override fun getPreferredScrollableViewportSize(): Dimension =
-            Dimension(preferredSize.width, minOf(preferredSize.height, JBUI.scale(MAX_VISIBLE_HEIGHT)))
-
-        override fun getScrollableUnitIncrement(
-            visibleRect: Rectangle,
-            orientation: Int,
-            direction: Int,
-        ): Int = JBUI.scale(UNIT_SCROLL)
-
-        override fun getScrollableBlockIncrement(
-            visibleRect: Rectangle,
-            orientation: Int,
-            direction: Int,
-        ): Int = visibleRect.height
-
-        /**
-         * 视口够宽就把内容拉满宽度，不够宽时交还横向滚动条。
-         *
-         * 恒返回 true 会让「宽度不足」直接表现为**截断**：本页最长的行是
-         * `TypeScript/JavaScript` 加上俄语那句状态说明再加一个按钮，用户会看到一行
-         * 读不全的状态。宁可出横向滚动条。
-         */
-        override fun getScrollableTracksViewportWidth(): Boolean {
-            val viewport = parent as? JViewport ?: return true
-            return viewport.width >= minimumSize.width
-        }
-
-        override fun getScrollableTracksViewportHeight(): Boolean = false
-
-        private companion object {
-            /** 未缩放像素，约 12 行——一屏能看到大半张表，又不至于把三个分组顶出可视区。 */
-            const val MAX_VISIBLE_HEIGHT = 300
-            const val UNIT_SCROLL = 24
-        }
-    }
 
     private companion object {
         val LOG = logger<ImuxLspConfigurable>()

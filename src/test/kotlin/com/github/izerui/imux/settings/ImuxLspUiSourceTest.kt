@@ -532,17 +532,20 @@ class ImuxLspUiSourceTest {
     }
 
     /**
-     * 每个 CLI 都必须**原样**得到一个分组，标题是它的显示名。
+     * 每个 CLI 都必须**原样**得到一个标签页，标题是它的显示名。
      *
      * 反向引用把循环变量名一起捕获，所以 IDE 改名不会误报；它挡的是在分派途中
      * 换掉数据的写法——`renderCli(it.copy(findings = it.gaps))` 会让三个分组同时
      * 退回「只列缺口」，而下面那条调用点断言一字未改仍然全绿。
      */
     @Test
-    fun `每个 CLI 各成一组且原样传递`() {
+    fun `每个 CLI 各成一页且原样传递`() {
         assertTrue(
-            "分组必须逐个 cliReport 渲染、标题用 agentType.displayName，且中途不得换掉数据",
-            Regex("""cliReports\.forEach\{(\w+)->group\(\1\.agentType\.displayName\)\{renderCli\(\1\)\}\}""")
+            "标签页必须逐个 cliReport 渲染、标题用 agentType.displayName，且中途不得换掉数据",
+            Regex(
+                """cliReports\.forEach\{(\w+)->tabs\.addTab\(\1\.agentType\.displayName,tabIcon\(\1\),""" +
+                    """panel\{renderCli\(\1\)\}\)\}""",
+            )
                 .containsMatchIn(compactArgs(normalized)),
         )
     }
@@ -733,14 +736,11 @@ class ImuxLspUiSourceTest {
         val allowed = setOf(
             "createPanel", "isModified", "apply", "disposeUIResources", "refresh", "diagnostics",
             "showChecking", "showFailed", "showReport", "replaceContent",
-            "Panel.renderCli", "summaryText", "findingsPanel",
+            "tabIcon", "Panel.renderCli", "summaryText", "findingsPanel",
             "Row.rowAction", "Row.groupAction", "Row.fallbackCell",
             "Row.runRemedyButton", "hasProjectWindow", "remedyShell",
             "runInTerminal", "refreshRow", "refreshWhenFinished",
             "targetProject", "groupMessage", "statusText", "rowIcon", "statusIcon",
-            "getPreferredScrollableViewportSize", "getScrollableUnitIncrement",
-            "getScrollableBlockIncrement", "getScrollableTracksViewportWidth",
-            "getScrollableTracksViewportHeight",
         )
 
         // 两个方向分开断言：JUnit 的集合比对会把两份名单整个打印出来，
@@ -785,7 +785,7 @@ class ImuxLspUiSourceTest {
     fun `逐语言列表必须无条件渲染每一条 finding`() {
         assertTrue(
             "列表必须拿到完整的 findings，不能退回 gaps 或 ready",
-            normalized.contains("scrollCell(findingsPanel(cliReport.findings, cliReport.agentType))"),
+            normalized.contains("cell(findingsPanel(cliReport.findings, cliReport.agentType))"),
         )
 
         val body = findingsPanelBody()
@@ -805,7 +805,7 @@ class ImuxLspUiSourceTest {
                 assertFalse("逐语言渲染里不得出现跳过逻辑：$escape", dense.contains(escape))
             }
 
-        val item = Regex("""^CappedHeightView\(\s*panel\s*\{\s*findings\s*\.\s*forEach\s*\{\s*(\w+)\s*->""")
+        val item = Regex("""^\{\s*findings\s*\.\s*forEach\s*\{\s*(\w+)\s*->""")
             .find(body)
             ?.groupValues
             ?.get(1)
@@ -850,8 +850,8 @@ class ImuxLspUiSourceTest {
     }
 
     private fun findingsPanelBody(): String = bodyAfter(
-        "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent =",
-        '(',
+        "private fun findingsPanel(findings: List<LanguageFinding>, agentType: AgentType): JComponent = panel",
+        '{',
     )
 
     /**
@@ -1548,11 +1548,18 @@ class ImuxLspUiSourceTest {
             {
                 lastReport = report
                 replaceContent {
-                    panel {
-                        report.cliReports.forEach { cliReport ->
-                            group(cliReport.agentType.displayName) { renderCli(cliReport) }
-                        }
+                    val tabs = JBTabbedPane()
+                    report.cliReports.forEach { cliReport ->
+                        tabs.addTab(cliReport.agentType.displayName, tabIcon(cliReport), panel { renderCli(cliReport) })
                     }
+                    val selected = report.cliReports.indexOfFirst { it.agentType == selectedAgent }
+                    if (selected >= 0) {
+                        tabs.selectedIndex = selected
+                    }
+                    tabs.addChangeListener {
+                        selectedAgent = report.cliReports.getOrNull(tabs.selectedIndex)?.agentType
+                    }
+                    tabs
                 }
             }
             """,
@@ -1856,33 +1863,19 @@ class ImuxLspUiSourceTest {
     }
 
     /**
-     * 18 门语言 × 3 个分组，光语言行就 54 行，再加上缺口下面的命令行——
-     * 不放进滚动区的话设置页会被撑到上千像素，「重新检测」以外的一切都得靠滚。
+     * 整页只许有设置对话框自己那一个滚动条。
      *
-     * 只钉 `scrollCell` 是不够的：`Row.scrollCell` 包出来的 JBScrollPane 会原样跟着
-     * 视图的 preferred height 长，视图不封顶等于白包一层，而封顶必须走 Scrollable
-     *（JViewport 的布局器只在视图实现该接口时才取 getPreferredScrollableViewportSize，
-     * 直接改 preferredSize 只会把内容压扁、连滚都滚不动）。所以两条一起钉。
+     * 从前三个分组各套一个封顶 300px 的内层滚动区（`scrollCell` + `Scrollable` 视图），
+     * 设置页外层本身也能滚，一页上四个滚动区域——用户原话：「滚动条套滚动条……滚动的
+     * 时候就不知道滚动的是哪个区域」。现在按 CLI 分标签页，一页 18 行不需要内层滚动；
+     * 把 `scrollCell` 或 `Scrollable` 加回来，就是把那个毛病原样请回来。
      */
     @Test
-    fun `列表放进能真正滚动的滚动区`() {
-        assertTrue("列表必须放进滚动区", normalized.contains("scrollCell("))
-        assertTrue(
-            "视图必须实现 Scrollable，否则滚动面板会跟着内容一起长，等于没滚动区",
-            normalized.contains("Scrollable") &&
-                normalized.contains("override fun getPreferredScrollableViewportSize()"),
-        )
-        assertTrue(
-            "可视高度必须封顶，否则 Scrollable 也拦不住",
-            normalized.contains("minOf(preferredSize.height, JBUI.scale(MAX_VISIBLE_HEIGHT))"),
-        )
-        // 封顶只是一半。tracksViewportHeight 为 true 时 JViewport 会把视图高度直接压成
-        // 视口高度：内容被挤扁、纵向再也滚不动——与「去掉封顶」是同一个终局，
-        // 而上面三条断言一条都拦不住它。
-        assertTrue(
-            "视图高度不得跟随视口，否则 18 行被压扁且滚不动",
-            normalized.contains("override fun getScrollableTracksViewportHeight(): Boolean = false"),
-        )
+    fun `不得再出现滚动区套滚动区`() {
+        assertFalse("列表不得再包进内层滚动区", normalized.contains("scrollCell("))
+        assertFalse("不得再自造 Scrollable 视图", normalized.contains("Scrollable"))
+        assertFalse("不得再手搭 JBScrollPane", normalized.contains("JBScrollPane"))
+        assertTrue("三个 CLI 必须分标签页而不是上下堆叠", normalized.contains("JBTabbedPane()"))
     }
 
     /**
