@@ -150,6 +150,14 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </action>
         <action
+                id="imux.RenameSessionTitle"
+                class="com.github.izerui.imux.terminal.RenameSessionTitleAction"
+                text="Rename Session"
+                description="Enter a new title for this session"
+                icon="AllIcons.Actions.Edit">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </action>
+        <action
                 id="imux.RegenerateSessionTitle"
                 class="com.github.izerui.imux.terminal.RegenerateSessionTitleAction"
                 text="Regenerate Session Title"

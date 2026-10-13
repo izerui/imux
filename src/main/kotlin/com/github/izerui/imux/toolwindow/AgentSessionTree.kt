@@ -10,7 +10,9 @@ import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.handoffActionGroup
+import com.github.izerui.imux.terminal.promptRenameSessionTitle
 import com.github.izerui.imux.terminal.regenerateSessionTitleAction
+import com.github.izerui.imux.terminal.renameSessionTitleAction
 import com.github.izerui.imux.terminal.selectionAfterMigration
 import com.github.izerui.imux.terminal.sessionClipboardText
 import com.github.izerui.imux.turn.TurnNotifier
@@ -368,6 +370,7 @@ class AgentSessionTree(
                                 },
                             )
                             model.sessionOf(data.id)?.let { source ->
+                                actions.add(renameSessionTitleAction(project, source))
                                 actions.add(regenerateSessionTitleAction(project, source))
                                 actions.addSeparator()
                                 actions.add(handoffActionGroup(project, source))
@@ -396,6 +399,23 @@ class AgentSessionTree(
                 tree.selectionPath?.let { handleActivate(it) }
             }
         }.registerCustomShortcutSet(CommonShortcuts.ENTER, tree, parentDisposable)
+
+        // 平台通用的重命名快捷键（Shift+F6），只对已落盘的会话生效
+        object : DumbAwareAction() {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun update(event: AnActionEvent) {
+                event.presentation.isEnabled = selectedSession()?.let { !monitor.isRegeneratingTitle(it.id) } == true
+            }
+
+            override fun actionPerformed(event: AnActionEvent) {
+                selectedSession()?.let { promptRenameSessionTitle(project, it) }
+            }
+
+            private fun selectedSession() =
+                ((tree.selectionPath?.lastPathComponent as? DefaultMutableTreeNode)?.userObject as? NodeData.Session)
+                    ?.let { model.sessionOf(it.id) }
+        }.registerCustomShortcutSet(CommonShortcuts.getRename(), tree, parentDisposable)
 
         // 记下用户自己的折叠意图，重建树时照办
         tree.addTreeExpansionListener(

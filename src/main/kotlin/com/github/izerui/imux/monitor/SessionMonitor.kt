@@ -17,6 +17,9 @@ import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionRepository
 import com.github.izerui.imux.session.SessionTitleRegenerator
 import com.github.izerui.imux.session.driftOf
+import com.github.izerui.imux.session.normalizeManualTitle
+import com.github.izerui.imux.session.storedTitle
+import com.github.izerui.imux.session.writeGeneratedTitle
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
@@ -31,6 +34,8 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.serviceOrNull
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -403,14 +408,74 @@ class SessionMonitor(
         }
     }
 
+    /**
+     * 在后台读出 CLI 存着的完整标题，再回到 EDT 交给 [onReady]（用于弹重命名框）。
+     *
+     * 读 Pi 会话文件是整文件扫描、读 Codex 是查 SQLite，都不能放在 EDT 上；
+     * 回 EDT 用 nonModal，避免在其它模态框里冒出重命名框。
+     */
+    fun loadEditableTitle(
+        session: AgentSession,
+        onReady: (String) -> Unit,
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val title =
+                runCatching { storedTitle(session, agentHomes) }
+                    .onFailure { LOG.warn("读取会话 ${session.id} 的完整标题失败，退回显示标题", it) }
+                    .getOrNull() ?: session.title
+            withContext(Dispatchers.EDT + ModalityState.nonModal().asContextElement()) {
+                if (!project.isDisposed) onReady(title)
+            }
+        }
+    }
+
+    /**
+     * 把用户手动输入的标题写回 CLI 自己的会话标题字段，与 [regenerateTitle] 写同一处，
+     * 因此 CLI 内 `/resume` 列表、imux 会话树和标签页看到的是同一个名字。
+     *
+     * 与重新生成共用进行中标记：两者同时写，后落盘的会覆盖先落盘的，用户看到的结果取决于谁慢。
+     */
+    fun renameTitle(
+        session: AgentSession,
+        input: String,
+        original: String = session.title,
+    ) {
+        val title = normalizeManualTitle(input) ?: return
+        if (title == original) return
+        if (!regeneratingTitles.add(session.id)) return
+        notifyListeners()
+
+        coroutineScope.launch(Dispatchers.IO) {
+            val result = runCatching { writeGeneratedTitle(session, title, agentHomes) }
+            withContext(Dispatchers.EDT) {
+                regeneratingTitles.remove(session.id)
+                if (project.isDisposed) return@withContext
+                if (result.isSuccess) {
+                    refresh()
+                } else {
+                    titleNotification(
+                        ImuxBundle.message(
+                            "notification.title.rename.failed",
+                            result.exceptionOrNull()?.message ?: ImuxBundle.message("notification.title.unknown.error"),
+                        ),
+                        NotificationType.WARNING,
+                        ImuxBundle.message("action.rename.title.text"),
+                    )
+                }
+                notifyListeners()
+            }
+        }
+    }
+
     private fun titleNotification(
         content: String,
         type: NotificationType,
+        title: String = ImuxBundle.message("action.regenerate.title.text"),
     ) {
         NotificationGroupManager
             .getInstance()
             .getNotificationGroup(TITLE_NOTIFICATION_GROUP)
-            .createNotification(ImuxBundle.message("action.regenerate.title.text"), content, type)
+            .createNotification(title, content, type)
             .notify(project)
     }
 

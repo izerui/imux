@@ -153,6 +153,17 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `会话重命名动作注册到终端正文右键菜单`() {
+        val action =
+            pluginXml.substringAfter("""id="imux.RenameSessionTitle"""", "").substringBefore("</action>")
+        assertTrue(
+            "终端正文右键菜单必须能手动重命名会话标题",
+            action.contains("""class="com.github.izerui.imux.terminal.RenameSessionTitleAction"""") &&
+                action.contains("""group-id="Terminal.ReworkedTerminalContextMenu""""),
+        )
+    }
+
+    @Test
     fun `标题重新生成动作注册到终端正文右键菜单`() {
         assertTrue(
             "终端正文右键菜单必须能调用对应 CLI 的模型重新生成会话标题",

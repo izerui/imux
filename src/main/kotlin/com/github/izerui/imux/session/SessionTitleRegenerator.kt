@@ -103,6 +103,47 @@ internal fun normalizeGeneratedTitle(output: String): String? {
     return if (line.length <= MAX_TITLE_CHARS) line else line.take(MAX_TITLE_CHARS - 1).trimEnd() + "…"
 }
 
+/**
+ * 人工输入的标题只做最小清理：换行和连续空白折成单个空格，首尾去空。
+ *
+ * 不套 [normalizeGeneratedTitle] 的剥引号、去前缀、截断——那些是为了收拾模型的多余输出，
+ * 用户亲手敲的每个字都是本意。
+ */
+internal fun normalizeManualTitle(input: String): String? =
+    input
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .takeIf(String::isNotEmpty)
+
+/**
+ * CLI 自己存着的完整标题，供重命名框做初值；没有存过标题时返回 null。
+ *
+ * [AgentSession.title] 不能直接用：Codex 与 Pi 的 reader 为了列表排得下会截到 60 字加省略号，
+ * 拿它做初值，用户只改一个字就会把截断后的文本连同「…」写回去，后半截从此丢失。
+ * Claude 的 custom-title / ai-title 读出时不截断，[AgentSession.title] 即原文，这里不再重读。
+ */
+internal fun storedTitle(
+    session: AgentSession,
+    homes: AgentHomes,
+): String? =
+    when (session.agentType) {
+        AgentType.CLAUDE -> {
+            null
+        }
+
+        AgentType.CODEX -> {
+            CodexThreadIndex(homes.codex, homes.codexSqlite)
+                .currentCatalog()
+                ?.titles
+                ?.get(session.id)
+                ?.takeIf(String::isNotEmpty)
+        }
+
+        AgentType.PI -> {
+            piSessionName(session.filePath)
+        }
+    }
+
 internal fun writeGeneratedTitle(
     session: AgentSession,
     title: String,

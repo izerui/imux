@@ -62,6 +62,62 @@ class SessionTitleRegeneratorTest {
     }
 
     @Test
+    fun `人工标题只折叠空白而保留引号句号与超长文本`() {
+        assertEquals("修复 登录 流程", normalizeManualTitle("  修复\n登录\t\t流程  "))
+        assertEquals("“v2” 发布。", normalizeManualTitle("“v2” 发布。"))
+        assertEquals("一".repeat(80), normalizeManualTitle("一".repeat(80)))
+    }
+
+    @Test
+    fun `空白人工标题视为无效`() {
+        assertNull(normalizeManualTitle(""))
+        assertNull(normalizeManualTitle(" \n\t "))
+    }
+
+    @Test
+    fun `Codex 重命名初值取数据库里未截断的完整标题`() {
+        val home = temp.newFolder("codex-full-title").toPath()
+        val codexHome = home.resolve(".codex")
+        Files.createDirectories(codexHome)
+        val longTitle = "长".repeat(80)
+        DriverManager.getConnection("jdbc:sqlite:${codexHome.resolve("state_5.sqlite")}").use { connection ->
+            connection.createStatement().use {
+                it.executeUpdate("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, title TEXT)")
+                it.executeUpdate("INSERT INTO threads VALUES ('codex-1', '$longTitle', '旧标题')")
+            }
+        }
+        val truncated = session(AgentType.CODEX, temp.newFile("codex-full.jsonl").toPath(), "codex-1")
+            .copy(title = "长".repeat(60) + "…")
+
+        assertEquals(longTitle, storedTitle(truncated, AgentHomes.defaults(home)))
+    }
+
+    @Test
+    fun `Pi 重命名初值取最后一条 session_info 的完整名称`() {
+        val file = temp.newFile("pi-full.jsonl").toPath()
+        val longTitle = "长".repeat(80)
+        Files.writeString(
+            file,
+            """
+            {"type":"session","version":3,"id":"pi-1","timestamp":"2026-08-31T03:00:00Z","cwd":"/tmp/project"}
+            {"type":"session_info","id":"a1","parentId":null,"timestamp":"2026-08-31T03:01:00Z","name":"旧名"}
+            {"type":"session_info","id":"a2","parentId":"a1","timestamp":"2026-08-31T03:02:00Z","name":"$longTitle"}
+            """.trimIndent(),
+        )
+        val truncated = session(AgentType.PI, file, "pi-1").copy(title = "长".repeat(60) + "…")
+
+        assertEquals(longTitle, storedTitle(truncated, AgentHomes.defaults(temp.root.toPath())))
+    }
+
+    @Test
+    fun `Claude 不重读存储而沿用显示标题做重命名初值`() {
+        val file = temp.newFile("claude-full.jsonl").toPath()
+        Files.writeString(file, """{"type":"custom-title","customTitle":"别的标题","sessionId":"claude-1"}""")
+
+        assertNull(storedTitle(session(AgentType.CLAUDE, file, "claude-1"), AgentHomes.defaults(temp.root.toPath())))
+    }
+
+    @Test
     fun `标题提示读取真实用户与助手消息`() {
         val file = temp.newFile("claude.jsonl").toPath()
         Files.writeString(

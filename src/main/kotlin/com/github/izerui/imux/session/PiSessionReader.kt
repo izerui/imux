@@ -102,7 +102,7 @@ class PiSessionReader(
         AgentSession(
             id = id,
             // 标题优先取会话显示名，否则取最后一条用户消息
-            title = sessionName(file)?.let(::truncate)
+            title = piSessionName(file)?.let(::truncate)
                 ?: lastUserMessage(file)
                 ?: truncate(id),
             agentType = AgentType.PI,
@@ -120,27 +120,6 @@ class PiSessionReader(
     }.onFailure { LOG.warn("跳过无法解析的 pi 会话文件 $file", it) }.getOrNull()
 
     private fun firstLine(file: Path): String? = file.useLines { it.firstOrNull() }
-
-    /**
-     * 取最后一条 session_info 的 name。
-     *
-     * 必须是最后一条：`/name` 可以改多次，每次都往文件里追加一条新的 session_info，
-     * 取首条就会一直显示改名前的旧标题。
-     *
-     * 逐行扫描而非 JSON 反序列化，理由同 [ClaudeSessionReader.extractTitle]：
-     * 会话文件单行可达数 MB，为一个标题解析整行不划算。
-     */
-    private fun sessionName(file: Path): String? {
-        var name: String? = null
-        file.useLines { lines ->
-            for (line in lines) {
-                if (!line.contains(SESSION_INFO_MARKER)) continue
-                val reported = JsonLineScanner.stringValue(line, "name") ?: continue
-                name = reported.trim().takeIf { it.isNotEmpty() }
-            }
-        }
-        return name
-    }
 
     /**
      * 会话是否有过用户消息。
@@ -178,13 +157,35 @@ class PiSessionReader(
         const val TITLE_MAX = 60
 
         const val SESSION_HEAD_MARKER = "\"type\":\"session\""
-        const val SESSION_INFO_MARKER = "\"type\":\"session_info\""
         const val SESSION_INFO_TYPE = "session_info"
         const val USER_ROLE_MARKER = "\"role\":\"user\""
         const val MESSAGE_TYPE = "message"
         const val USER_ROLE = "user"
     }
 }
+
+/**
+ * 取最后一条 session_info 的 name，未截断。
+ *
+ * 必须是最后一条：`/name` 可以改多次，每次都往文件里追加一条新的 session_info，
+ * 取首条就会一直显示改名前的旧标题。
+ *
+ * 逐行扫描而非 JSON 反序列化，理由同 [ClaudeSessionReader.extractTitle]：
+ * 会话文件单行可达数 MB，为一个标题解析整行不划算。
+ */
+internal fun piSessionName(file: Path): String? {
+    var name: String? = null
+    file.useLines { lines ->
+        for (line in lines) {
+            if (!line.contains(PI_SESSION_INFO_MARKER)) continue
+            val reported = JsonLineScanner.stringValue(line, "name") ?: continue
+            name = reported.trim().takeIf { it.isNotEmpty() }
+        }
+    }
+    return name
+}
+
+private const val PI_SESSION_INFO_MARKER = "\"type\":\"session_info\""
 
 /**
  * pi 设置里的 `sessionDir`，没有配置时返回 null。
