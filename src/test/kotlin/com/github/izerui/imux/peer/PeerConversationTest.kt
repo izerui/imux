@@ -10,6 +10,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 
@@ -44,6 +45,33 @@ class PeerConversationTest {
 
         assertFalse(conversation.contains("内部元数据"))
         assertTrue(conversation.contains("可见回复"))
+    }
+
+    @Test
+    fun `对话记录里发出过的反馈标为 Peer 而不是 User`() {
+        val sent = listOf(collapseWhitespace("这里空列表\n会不会炸？"))
+        val conversation =
+            latestConversation(
+                listOf(
+                    SessionTranscriptMessage("user", "改一下扣费逻辑"),
+                    SessionTranscriptMessage("assistant", "改完了"),
+                    SessionTranscriptMessage("user", "这里空列表 会不会炸？"),
+                    SessionTranscriptMessage("assistant", "已修复"),
+                ).map { markSentFeedback(it, sent) },
+                maxChars = 1_000,
+            )
+
+        assertTrue(conversation.contains("User: 改一下扣费逻辑"))
+        assertTrue(conversation.contains("Peer (your earlier feedback, not the user): 这里空列表 会不会炸？"))
+        assertFalse(conversation.contains("User: 这里空列表"))
+        assertTrue(conversation.contains("Assistant: 已修复"))
+    }
+
+    @Test
+    fun `助手消息与反馈文本相同时不改标签`() {
+        val message = SessionTranscriptMessage("assistant", "这里空列表 会不会炸？")
+
+        assertEquals(message, markSentFeedback(message, listOf("这里空列表 会不会炸？")))
     }
 
     @Test
@@ -86,7 +114,263 @@ class PeerConversationTest {
                 filePath = Path.of("build", "missing-peer-session.jsonl"),
             )
 
-        assertEquals("", peerTask(session))
+        assertEquals(PeerTask(""), peerTask(session))
+        assertEquals("", formatPeerTask(peerTask(session), chinese = true))
+    }
+
+    private fun claudeSession(vararg lines: String): AgentSession {
+        val file = Files.createTempFile("peer-task", ".jsonl")
+        file.toFile().deleteOnExit()
+        Files.writeString(file, lines.joinToString("\n"))
+        return AgentSession("s", "s", AgentType.CLAUDE, Instant.EPOCH, Instant.EPOCH, file)
+    }
+
+    private fun user(text: String, extra: String = "") =
+        """{"type":"user"$extra,"message":{"role":"user","content":${com.google.gson.JsonPrimitive(text)}}}"""
+
+    private fun assistant(text: String) =
+        """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"$text"}]}}"""
+
+    @Test
+    fun `当前任务取最后一条用户消息并附上之前的请求`() {
+        val session =
+            claudeSession(
+                user("修复登录流程"),
+                assistant("好的"),
+                user("把扣费改成预扣加退款"),
+                assistant("改完了"),
+                user("有副作用么"),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("有副作用么", task.current)
+        assertEquals("改完了", task.repliedTo)
+        assertEquals(listOf("把扣费改成预扣加退款", "修复登录流程"), task.earlier)
+        val text = formatPeerTask(task, chinese = true)
+        assertTrue(text.contains("## 当前任务\n\n用户最新消息：\n有副作用么\n\n发这条消息前，用户看到的助手最后一段回复（摘录）：\n改完了"))
+        assertTrue(text.indexOf("## 当前任务") < text.indexOf("## 之前的用户请求"))
+        assertTrue(text.contains("- 把扣费改成预扣加退款\n- 修复登录流程"))
+    }
+
+    @Test
+    fun `发进主会话的反馈不算用户任务`() {
+        val feedback = "这里  空列表\n会不会炸？"
+        val session =
+            claudeSession(
+                user("改一下扣费逻辑"),
+                assistant("改完了"),
+                user("这里 空列表\r会不会炸？"),
+                assistant("已修复"),
+            )
+        val sent = listOf(collapseWhitespace(feedback))
+
+        val task = peerTask(session) { text -> sent.any { isSentFeedback(text, it) } }
+
+        assertEquals("改一下扣费逻辑", task.current)
+        assertNull("首条消息之前没有助手回复", task.repliedTo)
+        assertTrue(task.earlier.isEmpty())
+    }
+
+    @Test
+    fun `压缩摘要与中断标记不算用户任务`() {
+        val session =
+            claudeSession(
+                user("真实请求"),
+                user("This session is being continued from a previous conversation", ""","isCompactSummary":true"""),
+                user("[Request interrupted by user for tool use]"),
+                user("内部提示", ""","isMeta":true"""),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("真实请求", task.current)
+        assertTrue(task.earlier.isEmpty())
+    }
+
+    @Test
+    fun `之前的请求超出预算时保留较新的`() {
+        val session =
+            claudeSession(
+                user("最旧" + "a".repeat(5_000)),
+                user("较新" + "b".repeat(5_000)),
+                user("当前"),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("当前", task.current)
+        assertTrue(task.earlier.first().startsWith("较新"))
+        assertTrue(task.earlier.sumOf { it.length } <= 8_000)
+    }
+
+    @Test
+    fun `用户回应的是注入反馈之后的那条助手回复`() {
+        val session =
+            claudeSession(
+                user("改一下扣费逻辑"),
+                assistant("改完了"),
+                user("这里会丢 delta"),
+                assistant("已修复。要不要顺便补测试？"),
+                user("好"),
+            )
+
+        val task = peerTask(session) { it == "这里会丢 delta" }
+
+        assertEquals("好", task.current)
+        assertEquals("已修复。要不要顺便补测试？", task.repliedTo)
+        assertEquals(listOf("改一下扣费逻辑"), task.earlier)
+    }
+
+    private fun session(type: AgentType, vararg lines: String): AgentSession =
+        claudeSession(*lines).copy(agentType = type)
+
+    private fun claudeToolUse() =
+        """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"""
+
+    private fun claudeToolResult() =
+        """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"""
+
+    @Test
+    fun `配对的是最后一次工具调用之后连续的助手文字`() {
+        val session =
+            claudeSession(
+                user("改一下扣费逻辑"),
+                assistant("我先看看代码"),
+                claudeToolUse(),
+                claudeToolResult(),
+                assistant("改好了。"),
+                assistant("要提交吗？"),
+                user("好"),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("好", task.current)
+        assertEquals("改好了。\n要提交吗？", task.repliedTo)
+    }
+
+    @Test
+    fun `连发或中断后再说时配对的仍是屏幕上那段回复`() {
+        val session =
+            claudeSession(
+                assistant("你好"),
+                user("做 X"),
+                user("还有 Y"),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("还有 Y", task.current)
+        assertEquals("你好", task.repliedTo)
+        assertEquals(listOf("做 X"), task.earlier)
+    }
+
+    @Test
+    fun `中断后配对的是中断前看到的文字`() {
+        val session =
+            claudeSession(
+                user("跑一下测试"),
+                assistant("我来跑全量测试"),
+                claudeToolUse(),
+                user("[Request interrupted by user for tool use]"),
+                user("只跑 Peer 的"),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("只跑 Peer 的", task.current)
+        assertEquals("我来跑全量测试", task.repliedTo)
+    }
+
+    @Test
+    fun `Codex 只配对工具调用之后的最终回答`() {
+        fun item(payload: String) = """{"timestamp":"t","type":"response_item","payload":$payload}"""
+        val session =
+            session(
+                AgentType.CODEX,
+                item("""{"type":"message","role":"user","content":[{"type":"input_text","text":"查一下磁盘"}]}"""),
+                item("""{"type":"message","role":"assistant","content":[{"type":"output_text","text":"我先列一下目录"}],"phase":"commentary"}"""),
+                item("""{"type":"function_call","name":"shell","arguments":"{}"}"""),
+                item("""{"type":"function_call_output","output":"..."}"""),
+                item("""{"type":"message","role":"assistant","content":[{"type":"output_text","text":"缓存占了 20G，要删吗？"}],"phase":"final_answer"}"""),
+                item("""{"type":"message","role":"user","content":[{"type":"input_text","text":"删"}]}"""),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("删", task.current)
+        assertEquals("缓存占了 20G，要删吗？", task.repliedTo)
+    }
+
+    @Test
+    fun `Pi 同一条记录里工具调用前的说明不算`() {
+        val session =
+            session(
+                AgentType.PI,
+                """{"type":"message","message":{"role":"user","content":[{"type":"text","text":"整理文档"}]}}""",
+                """{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"我先读一下"},{"type":"toolCall","id":"c1","name":"read","arguments":{}}]}}""",
+                """{"type":"message","message":{"role":"toolResult","content":[{"type":"text","text":"内容"}]}}""",
+                """{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"整理好了，要拆成两篇吗？"}]}}""",
+                """{"type":"message","message":{"role":"user","content":[{"type":"text","text":"拆"}]}}""",
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("拆", task.current)
+        assertEquals("整理好了，要拆成两篇吗？", task.repliedTo)
+    }
+
+    @Test
+    fun `超长助手回复保留开头和结尾的问题`() {
+        val reply = "方案说明" + "a".repeat(5_000) + "要我这样改吗？"
+
+        val condensed = condenseReply(reply)
+
+        assertTrue(condensed.startsWith("方案说明"))
+        assertTrue(condensed.endsWith("要我这样改吗？"))
+        assertTrue(condensed.length < reply.length)
+        assertEquals("短回复", condenseReply("短回复"))
+    }
+
+    @Test
+    fun `超过两万字的助手回复从会话文件读出后结尾的问题仍在`() {
+        val session =
+            claudeSession(
+                user("出个方案"),
+                assistant("方案概要" + "a".repeat(30_000) + "选 A 还是 B？"),
+                user("B"),
+            )
+
+        val task = peerTask(session)
+
+        assertEquals("B", task.current)
+        assertTrue(task.repliedTo!!.startsWith("方案概要"))
+        assertTrue(task.repliedTo!!.endsWith("选 A 还是 B？"))
+        assertTrue(task.repliedTo!!.length < 4_000)
+    }
+
+    @Test
+    fun `边读边裁与读完再裁结果相同`() {
+        val texts = (1..300).map { "请求$it-" + "x".repeat(it % 97) }
+        val session = claudeSession(*texts.map { user(it) }.toTypedArray(), user("当前"))
+
+        val expected = mutableListOf<String>()
+        var budget = 8_000
+        for (text in texts.asReversed()) {
+            if (budget <= 0) break
+            expected += text.take(budget)
+            budget -= text.length
+        }
+
+        assertEquals(expected, peerTask(session).earlier)
+    }
+
+    @Test
+    fun `截断后的长反馈仍能认出`() {
+        val feedback = "x".repeat(20_000) + "尾巴"
+        assertTrue(isSentFeedback("x".repeat(20_000), feedback))
+        assertFalse(isSentFeedback("x".repeat(10), feedback))
     }
 
     @Test

@@ -5,7 +5,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionTranscriptMessage
 import com.github.izerui.imux.session.scanTail
-import com.github.izerui.imux.session.sessionTranscriptMessages
+import com.github.izerui.imux.session.isUserInput
 import com.github.izerui.imux.session.transcriptMessage
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.settings.PluginLanguage
@@ -32,6 +32,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.EventListener
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.atomic.AtomicInteger
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
@@ -97,6 +98,12 @@ class PeerCoordinator internal constructor(
     private val guards = ConcurrentHashMap<String, PeerSessionGuard>()
     private val peerInjectedSessions = ConcurrentHashMap.newKeySet<String>()
     private val feedbackHints = mutableMapOf<String, ArrayDeque<PeerFeedbackHint>>()
+    /**
+     * 发进主会话的反馈原文（已折叠空白）。反馈在会话文件里是 user 消息，取任务时靠它认出来跳过，
+     * 否则第二轮审查的"当前任务"就成了副驾驶自己上一轮的话。
+     * 解绑不清：旧反馈仍留在会话文件里，重新绑定后照样要跳过。
+     */
+    private val sentFeedback = ConcurrentHashMap<String, ConcurrentLinkedDeque<String>>()
     private val passedSessions = ConcurrentHashMap.newKeySet<String>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
 
@@ -245,12 +252,14 @@ class PeerCoordinator internal constructor(
         roundCounts.remove(from)
         peerInjectedSessions.remove(from)
         feedbackHints.remove(from)
+        sentFeedback.remove(from)
         passedSessions.remove(from)
         val r1 = guards.remove(from)?.cancelAndDetach()
         bindings.remove(to)
         roundCounts.remove(to)
         peerInjectedSessions.remove(to)
         feedbackHints.remove(to)
+        sentFeedback.remove(to)
         passedSessions.remove(to)
         val r2 = guards.remove(to)?.cancelAndDetach()
         if (binding != null) {
@@ -271,6 +280,7 @@ class PeerCoordinator internal constructor(
         roundCounts.clear()
         peerInjectedSessions.clear()
         feedbackHints.clear()
+        sentFeedback.clear()
         passedSessions.clear()
         guardsToCancel.forEach { it.cancel() }
     }
@@ -423,10 +433,7 @@ class PeerCoordinator internal constructor(
                 val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
                 val appendix = buildString {
                     append("\n\n")
-                    if (missingTask) {
-                        append(if (isChinese) "## 任务目标\n\n" else "## Task Goal\n\n")
-                        append(task).append("\n\n")
-                    }
+                    if (missingTask) append(task)
                     if (missingConversation) {
                         append(if (isChinese) "## 对话记录\n\n" else "## Conversation\n\n")
                         append(conversation).append("\n\n")
@@ -439,14 +446,6 @@ class PeerCoordinator internal constructor(
 
         val currentLanguage = ImuxBundle.currentLanguage()
         val isChinese = currentLanguage in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-        val taskSection =
-            if (task.isBlank()) {
-                ""
-            } else if (isChinese) {
-                "## 任务目标\n\n$task\n\n"
-            } else {
-                "## Task Goal\n\n$task\n\n"
-            }
         val conversationSection =
             if (conversation.isBlank()) {
                 ""
@@ -464,18 +463,30 @@ class PeerCoordinator internal constructor(
             }
         return defaultPeerPromptForLanguage(currentLanguage)
             .replace("\${mode}", modeSection)
-            .replace("\${task}", taskSection)
+            .replace("\${task}", task)
             .replace("\${conversation}", conversationSection)
     }
 
     private fun extractTask(sessionKey: String): String {
         val session = model.sessionOf(sessionKey) ?: return ""
-        return peerTask(session)
+        val sent = sentFeedback[sessionKey]?.toList().orEmpty()
+        val task = peerTask(session) { text -> sent.any { isSentFeedback(text, it) } }
+        return formatPeerTask(task, ImuxBundle.currentLanguage().isChinese())
+    }
+
+    private fun rememberSentFeedback(
+        sessionKey: String,
+        feedback: String,
+    ) {
+        val texts = sentFeedback.computeIfAbsent(sessionKey) { ConcurrentLinkedDeque() }
+        texts.addLast(collapseWhitespace(feedback))
+        while (texts.size > MAX_REMEMBERED_FEEDBACK) texts.pollFirst()
     }
 
     private fun collectLatestConversation(sessionKey: String, maxConversationChars: Int = MAX_CONVERSATION_LENGTH): String {
         val session = model.sessionOf(sessionKey) ?: return ""
         if (!Files.isRegularFile(session.filePath)) return ""
+        val sent = sentFeedback[sessionKey]?.toList().orEmpty()
         return scanTail(
             session.filePath,
             initialTailBytes = CONVERSATION_TAIL_BYTES,
@@ -484,6 +495,7 @@ class PeerCoordinator internal constructor(
             latestConversation(
                 lines.mapNotNull {
                     transcriptMessage(it, session.agentType, MAX_MESSAGE_LENGTH, includeToolContent = true)
+                        ?.let { message -> markSentFeedback(message, sent) }
                 },
                 maxConversationChars,
             )
@@ -533,6 +545,7 @@ class PeerCoordinator internal constructor(
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符，outputModel=${hint?.let { System.identityHashCode(it.outputModel).toString(16) } ?: "none"}，offset=${hint?.absoluteOffset ?: -1}）")
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
+        rememberSentFeedback(mainSessionKey, prompt)
         hint?.let {
             val history = feedbackHints.getOrPut(mainSessionKey) { ArrayDeque() }
             history.addLast(it)
@@ -566,6 +579,8 @@ class PeerCoordinator internal constructor(
         view.createSendTextBuilder()
             .useBracketedPasteMode()
             .send(prompt)
+        // 用户可能原样发出，也可能改过再发；改过的就是用户自己的话，匹配不上正合适
+        rememberSentFeedback(mainSessionKey, prompt)
     }
 
     /**
@@ -611,6 +626,7 @@ class PeerCoordinator internal constructor(
         private const val CONVERSATION_TAIL_BYTES = 32L * 1024 * 1024
         private const val CLI_TIMEOUT_SECONDS = 300L
         private const val MAX_FEEDBACK_HINTS = 200
+        private const val MAX_REMEMBERED_FEEDBACK = 200
         /** 等待终端进入括号粘贴的轮询间隔。没有重试次数上限，理由见 injectFeedback。 */
         private const val SEND_READY_RETRY_MILLIS = 100L
 
@@ -719,7 +735,7 @@ internal fun latestConversation(
     var length = 0
     for (message in messages.asReversed()) {
         if (message.hiddenFromTerminal) continue
-        val entry = "${message.role.replaceFirstChar(Char::uppercase)}: ${message.text}"
+        val entry = "${conversationLabel(message.role)}: ${message.text}"
         val remaining = maxChars - length
         if (remaining <= 0) break
         if (entry.length > remaining && selected.isNotEmpty()) break
@@ -732,6 +748,26 @@ internal fun latestConversation(
 }
 
 
+/**
+ * 发进主会话的反馈在会话文件里是 user 消息，原样标成 User 的话，副驾驶会把自己上一轮的话
+ * 当成用户的要求。标签自带说明，自定义提示词不提这件事也看得懂。
+ */
+internal fun markSentFeedback(
+    message: SessionTranscriptMessage,
+    sentFeedback: List<String>,
+): SessionTranscriptMessage =
+    if (message.role == "user" && sentFeedback.any { isSentFeedback(message.text, it) }) {
+        message.copy(role = PEER_ROLE)
+    } else {
+        message
+    }
+
+private fun conversationLabel(role: String): String =
+    if (role == PEER_ROLE) PEER_LABEL else role.replaceFirstChar(Char::uppercase)
+
+private const val PEER_ROLE = "peer"
+private const val PEER_LABEL = "Peer (your earlier feedback, not the user)"
+
 private val PASS_PATTERN = Regex("""^\s*pass\s*[.。!！]?\s*$""", RegexOption.IGNORE_CASE)
 
 internal fun actionablePeerFeedback(output: String?): String? {
@@ -740,14 +776,158 @@ internal fun actionablePeerFeedback(output: String?): String? {
     return feedback.take(4_000)
 }
 
-internal fun peerTask(session: com.github.izerui.imux.model.AgentSession): String =
+/**
+ * 副驾驶要盯的是用户**当前**的请求：最后一条用户亲手输入的消息。
+ *
+ * 这条消息往往是在回应用户刚读到的助手回复——"好""选第二个""继续"，单看不知所指，
+ * 所以连同那段回复一起给出。其余用户消息作背景，早先定下的约束也可能仍然有效。
+ * 发进主会话的反馈由 [isSentFeedback] 认出并跳过。
+ */
+internal data class PeerTask(
+    val current: String,
+    /** 用户发出 [current] 前最后读到的那段助手文字，已按 [condenseReply] 压缩。 */
+    val repliedTo: String? = null,
+    /** 从新到旧。 */
+    val earlier: List<String> = emptyList(),
+)
+
+/**
+ * "用户最后读到的那段"＝最后一次工具调用之后连续的助手文字。
+ *
+ * 一次回复可能拆成好几条文本记录，要拼起来；工具调用之前的文字是过程说明，
+ * 被后面的输出顶上去了，不算。用户自己的消息（连发、中断后的"继续"）不清空它：
+ * 那段文字一直在屏幕上，直到助手说出新的话。
+ */
+internal fun peerTask(
+    session: com.github.izerui.imux.model.AgentSession,
+    isSentFeedback: (String) -> Boolean = { false },
+): PeerTask =
     runCatching {
-        sessionTranscriptMessages(
-            session,
-            maxLines = 400,
-            maxMessages = 20,
-            maxMessageChars = 2_000,
-        ).firstOrNull { it.role == "user" && !it.hiddenFromTerminal }
-            ?.text
-            .orEmpty()
-    }.getOrDefault("")
+        // 边读边裁：只有最后一条请求要配回复；更早的请求只留下最终会用到的那些（见 earlierChars）
+        var latest: Pair<String, String?>? = null
+        val earlier = ArrayDeque<String>()
+        var earlierChars = 0
+        val reply = mutableListOf<String>()
+        // 工具调用或任何 user 记录之后，助手再开口就是新的一段；在那之前旧的一段仍在屏幕上
+        var replyEnded = false
+        Files.newBufferedReader(session.filePath).useLines { lines ->
+            for (line in lines) {
+                if (!line.contains("\"user\"") && !line.contains("\"assistant\"") && !line.contains("_call\"")) continue
+                // 不在解析时截断：用户回应的问题多在回复结尾，先截掉就没了，留头留尾交给 condenseReply。
+                // 单行本身有 JSON 行长上限兜底，不会无限大。
+                val message = transcriptMessage(line, session.agentType, Int.MAX_VALUE)
+                when {
+                    message == null -> Unit
+                    message.role == "assistant" -> {
+                        if (replyEnded) reply.clear()
+                        replyEnded = false
+                        reply += message.text
+                    }
+                    else -> {
+                        val text = message.text.take(PEER_TASK_PARSE_CHARS)
+                        if (message.isUserInput() && !isSentFeedback(text)) {
+                            latest?.let { (previous, _) ->
+                                earlier.addLast(previous)
+                                earlierChars += previous.length
+                                // 从新往旧排，排到一条时前面已占满预算，它就注定用不上
+                                while (earlier.size > 1 && earlierChars - earlier.first().length >= PEER_TASK_HISTORY_CHARS) {
+                                    earlierChars -= earlier.removeFirst().length
+                                }
+                            }
+                            latest = text to reply.joinToString("\n").ifEmpty { null }?.let(::condenseReply)
+                        }
+                        replyEnded = true
+                    }
+                }
+                if (isToolCallRecord(line, session.agentType)) replyEnded = true
+            }
+        }
+        val (current, repliedTo) = latest ?: return@runCatching PeerTask("")
+        val history = mutableListOf<String>()
+        var budget = PEER_TASK_HISTORY_CHARS
+        for (text in earlier.asReversed()) {
+            if (budget <= 0) break
+            history += text.take(budget)
+            budget -= text.length
+        }
+        PeerTask(current, repliedTo, history)
+    }.getOrDefault(PeerTask(""))
+
+/**
+ * Claude 与 Pi 把工具调用放在助手记录的内容块里（同一条记录前面可能还有一段说明文字），
+ * Codex 则是独立的 `*_call` 记录（function_call、custom_tool_call、web_search_call……）。
+ */
+private fun isToolCallRecord(
+    line: String,
+    agentType: AgentType,
+): Boolean =
+    when (agentType) {
+        AgentType.CLAUDE -> line.contains("\"type\":\"tool_use\"")
+        AgentType.PI -> line.contains("\"type\":\"toolCall\"")
+        AgentType.CODEX -> CODEX_TOOL_CALL.containsMatchIn(line.take(CODEX_RECORD_HEAD_CHARS))
+    }
+
+private val CODEX_TOOL_CALL = Regex(""""payload":\{"type":"[a-z_]+_call"""")
+
+/** 助手回复常常很长，而用户回应的问题或选项多在结尾，超长时留头留尾。 */
+internal fun condenseReply(reply: String): String =
+    if (reply.length <= PEER_REPLY_HEAD_CHARS + PEER_REPLY_TAIL_CHARS) {
+        reply
+    } else {
+        reply.take(PEER_REPLY_HEAD_CHARS) + " … " + reply.takeLast(PEER_REPLY_TAIL_CHARS)
+    }
+
+/** 用户消息被折叠过空白、截到 [PEER_TASK_PARSE_CHARS]，比较前反馈也按同样方式处理。 */
+internal fun isSentFeedback(
+    transcriptText: String,
+    sentFeedback: String,
+): Boolean =
+    transcriptText == sentFeedback ||
+        (transcriptText.length >= PEER_TASK_PARSE_CHARS && sentFeedback.startsWith(transcriptText))
+
+internal fun collapseWhitespace(text: String): String = text.replace(Regex("\\s+"), " ").trim()
+
+internal fun formatPeerTask(
+    task: PeerTask,
+    chinese: Boolean,
+): String {
+    if (task.current.isBlank()) return ""
+    return buildString {
+        append(if (chinese) "## 当前任务\n\n" else "## Current Task\n\n")
+        if (task.repliedTo == null) {
+            append(task.current).append("\n\n")
+        } else {
+            append(if (chinese) "用户最新消息：\n" else "Latest user message:\n")
+            append(task.current).append("\n\n")
+            append(
+                if (chinese) {
+                    "发这条消息前，用户看到的助手最后一段回复（摘录）：\n"
+                } else {
+                    "The assistant's last reply the user saw before sending it (excerpt):\n"
+                },
+            )
+            append(task.repliedTo).append("\n\n")
+        }
+        if (task.earlier.isNotEmpty()) {
+            append(
+                if (chinese) {
+                    "## 之前的用户请求（从新到旧；可能已完成或已换题，只作背景，其中仍然有效的约束要遵守）\n\n"
+                } else {
+                    "## Earlier User Requests (newest first; may be done or superseded — background only, " +
+                        "but constraints that still apply must be respected)\n\n"
+                },
+            )
+            task.earlier.forEach { append("- ").append(it).append("\n") }
+            append("\n")
+        }
+    }
+}
+
+private fun PluginLanguage.isChinese(): Boolean =
+    this == PluginLanguage.SIMPLIFIED_CHINESE || this == PluginLanguage.TRADITIONAL_CHINESE
+
+private const val PEER_TASK_PARSE_CHARS = 20_000
+private const val CODEX_RECORD_HEAD_CHARS = 200
+private const val PEER_REPLY_HEAD_CHARS = 1_000
+private const val PEER_REPLY_TAIL_CHARS = 2_000
+private const val PEER_TASK_HISTORY_CHARS = 8_000

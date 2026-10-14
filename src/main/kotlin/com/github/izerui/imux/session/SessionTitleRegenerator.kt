@@ -249,12 +249,12 @@ private fun titleExcerpt(session: AgentSession): TitleExcerpt {
             lines
                 .mapNotNull { transcriptMessage(it, session.agentType, TITLE_MESSAGE_CHARS) }
                 .filterNot(SessionTranscriptMessage::hiddenFromTerminal)
-        tailMessages.takeIf { messages -> messages.count { it.role == "user" } >= TITLE_RECENT_USER_MESSAGES }
+        tailMessages.takeIf { messages -> messages.count { it.isUserInput() } >= TITLE_RECENT_USER_MESSAGES }
     }
-    val recent = tailMessages.filter { it.role == "user" }.map { it.text }.takeLast(TITLE_RECENT_USER_MESSAGES)
+    val recent = tailMessages.filter { it.isUserInput() }.map { it.text }.takeLast(TITLE_RECENT_USER_MESSAGES)
     val first =
         sessionTranscriptMessages(session, MAX_TRANSCRIPT_LINES, MAX_MESSAGES, TITLE_MESSAGE_CHARS)
-            .firstOrNull { it.role == "user" && !it.hiddenFromTerminal }
+            .firstOrNull { it.isUserInput() }
             ?.text
             // 会话短到首条已在最近几条里时不重复给出
             ?.takeUnless { it in recent }
@@ -270,7 +270,16 @@ internal data class SessionTranscriptMessage(
     val role: String,
     val text: String,
     val hiddenFromTerminal: Boolean = false,
+    /** Claude 压缩上下文后生成的摘要，以 user 身份写入，但不是用户说的话。 */
+    val compactSummary: Boolean = false,
 )
+
+/**
+ * 用户亲手输入的消息。排除隐藏的元数据、压缩摘要与 Claude 的中断标记——
+ * 它们在会话文件里都是 user 角色，拿去当任务或起标题会张冠李戴。
+ */
+internal fun SessionTranscriptMessage.isUserInput(): Boolean =
+    role == "user" && !hiddenFromTerminal && !compactSummary && !text.startsWith(CLAUDE_INTERRUPTED_PREFIX)
 
 internal fun sessionTranscriptMessages(
     session: AgentSession,
@@ -417,6 +426,10 @@ internal fun transcriptMessage(
             agentType == AgentType.CLAUDE &&
                 role == "user" &&
                 root.get("isMeta")?.takeIf { it.isJsonPrimitive }?.asBoolean == true,
+        compactSummary =
+            agentType == AgentType.CLAUDE &&
+                role == "user" &&
+                root.get("isCompactSummary")?.takeIf { it.isJsonPrimitive }?.asBoolean == true,
     )
 }
 
@@ -726,6 +739,7 @@ private const val REDACTED_IMAGE_PAYLOAD = "<image-payload>"
 private const val IMAGE_OPEN_TAG_PREFIX = "<image "
 private const val IMAGE_CLOSE_TAG = "</image>"
 private const val CODEX_AGENTS_INSTRUCTIONS_PREFIX = "# AGENTS.md instructions"
+private const val CLAUDE_INTERRUPTED_PREFIX = "[Request interrupted by user"
 private const val MAX_CLI_OUTPUT_CHARS = 16_000
 private const val TITLE_TIMEOUT_SECONDS = 60L
 private const val READ_DRAIN_TIMEOUT_SECONDS = 2L
