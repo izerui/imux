@@ -64,23 +64,37 @@ internal fun titleGenerationCommand(
     return listOf(shell) + shellArgs(dialect) + script
 }
 
+/**
+ * 标题以最近的用户消息为准：长会话常常中途换题，只看开头几轮会让标题永远停在最早的任务上。
+ * 首条用户消息只作背景。
+ */
 internal fun titleGenerationPrompt(session: AgentSession): String {
-    val conversation = conversationExcerpt(session)
+    val excerpt = titleExcerpt(session)
+    val sections =
+        buildList {
+            excerpt.firstUserMessage?.let { add("<first_user_message>\n$it\n</first_user_message>") }
+            if (excerpt.recentUserMessages.isNotEmpty()) {
+                add(
+                    excerpt.recentUserMessages
+                        .mapIndexed { index, text -> "${index + 1}. $text" }
+                        .joinToString("\n", "<recent_user_messages oldest_to_newest>\n", "\n</recent_user_messages>"),
+                )
+            }
+            excerpt.latestAssistantReply?.let { add("<latest_assistant_reply>\n$it\n</latest_assistant_reply>") }
+        }.ifEmpty { listOf("<current_title>${session.title}</current_title>") }
     return """
-        Generate a concise title for this coding-agent session.
-
-        Rules:
-        - Use the same language as the conversation.
-        - Describe the concrete task or topic.
-        - Prefer 4-10 words and never exceed $MAX_TITLE_CHARS characters.
-        - Return only the title, with no quotes, prefix, markdown, or explanation.
-
-        Current title: ${session.title}
-
-        <conversation>
-        $conversation
-        </conversation>
-        """.trimIndent()
+        |Generate a concise title for this coding-agent session.
+        |
+        |Rules:
+        |- Name what the session is CURRENTLY about, judged mainly by the most recent user messages.
+        |- The first user message is background only; if the topic has shifted since then, name the new topic.
+        |- The current title may be outdated; do not just rephrase it.
+        |- Use the same language as the user messages.
+        |- Prefer 4-10 words and never exceed $MAX_TITLE_CHARS characters.
+        |- Return only the title, with no quotes, prefix, markdown, or explanation.
+        |
+        |Current title (may be outdated): ${session.title}
+        """.trimMargin() + "\n\n" + sections.joinToString("\n\n")
 }
 
 internal fun normalizeGeneratedTitle(output: String): String? {
@@ -218,15 +232,39 @@ internal fun writeSessionTitle(
     }
 }
 
-private fun conversationExcerpt(session: AgentSession): String =
-    sessionTranscriptMessages(
-        session,
-        maxLines = MAX_TRANSCRIPT_LINES,
-        maxMessages = MAX_MESSAGES,
-        maxMessageChars = MAX_MESSAGE_CHARS,
-    ).joinToString("\n\n") { "${it.role.uppercase()}: ${it.text}" }
-        .take(MAX_CONVERSATION_CHARS)
-        .ifBlank { "TITLE: ${session.title}" }
+private data class TitleExcerpt(
+    val firstUserMessage: String?,
+    val recentUserMessages: List<String>,
+    val latestAssistantReply: String?,
+)
+
+/**
+ * 最近的用户消息从尾部读：会话再长，换题后的内容也一定在文件末尾，
+ * 窗口逐步放大直到凑够 [TITLE_RECENT_USER_MESSAGES] 条或读到上限。
+ */
+private fun titleExcerpt(session: AgentSession): TitleExcerpt {
+    var tailMessages = emptyList<SessionTranscriptMessage>()
+    scanTail(session.filePath, TITLE_TAIL_BYTES, MAX_TITLE_TAIL_BYTES) { lines ->
+        tailMessages =
+            lines
+                .mapNotNull { transcriptMessage(it, session.agentType, TITLE_MESSAGE_CHARS) }
+                .filterNot(SessionTranscriptMessage::hiddenFromTerminal)
+        tailMessages.takeIf { messages -> messages.count { it.role == "user" } >= TITLE_RECENT_USER_MESSAGES }
+    }
+    val recent = tailMessages.filter { it.role == "user" }.map { it.text }.takeLast(TITLE_RECENT_USER_MESSAGES)
+    val first =
+        sessionTranscriptMessages(session, MAX_TRANSCRIPT_LINES, MAX_MESSAGES, TITLE_MESSAGE_CHARS)
+            .firstOrNull { it.role == "user" && !it.hiddenFromTerminal }
+            ?.text
+            // 会话短到首条已在最近几条里时不重复给出
+            ?.takeUnless { it in recent }
+    return TitleExcerpt(
+        firstUserMessage = first,
+        recentUserMessages = recent,
+        latestAssistantReply =
+            tailMessages.lastOrNull { it.role == "assistant" }?.text?.take(TITLE_ASSISTANT_REPLY_CHARS),
+    )
+}
 
 internal data class SessionTranscriptMessage(
     val role: String,
@@ -364,6 +402,8 @@ internal fun transcriptMessage(
             }
         )?.trim()?.takeIf(String::isNotEmpty) ?: return null
     if (role == "user" && text.startsWith("<") && text.endsWith(">")) return null
+    // Codex 把 AGENTS.md 作为一条 user 消息注入会话开头，它不是用户说的话
+    if (agentType == AgentType.CODEX && role == "user" && text.startsWith(CODEX_AGENTS_INSTRUCTIONS_PREFIX)) return null
     val normalized =
         (if (firstTextSegmentOnly) stripMarkdownForMatching(text) else text)
             .replace('\n', ' ')
@@ -672,8 +712,11 @@ private const val MAX_TITLE_CHARS = 60
 private const val MAX_TRANSCRIPT_LINES = 400
 private const val MAX_JSON_LINE_CHARS = 128_000
 private const val MAX_MESSAGES = 6
-private const val MAX_MESSAGE_CHARS = 1_000
-private const val MAX_CONVERSATION_CHARS = 6_000
+private const val TITLE_RECENT_USER_MESSAGES = 8
+private const val TITLE_MESSAGE_CHARS = 500
+private const val TITLE_ASSISTANT_REPLY_CHARS = 400
+private const val TITLE_TAIL_BYTES = 256L * 1024
+private const val MAX_TITLE_TAIL_BYTES = 4L * 1024 * 1024
 private const val MAX_NAVIGATOR_MESSAGES = 200
 private const val MAX_NAVIGATOR_MESSAGE_CHARS = 1_000
 private const val NAVIGATOR_TAIL_BYTES = 4L * 1024 * 1024
@@ -682,6 +725,7 @@ private const val IMAGE_URL_KEY = "\"image_url\""
 private const val REDACTED_IMAGE_PAYLOAD = "<image-payload>"
 private const val IMAGE_OPEN_TAG_PREFIX = "<image "
 private const val IMAGE_CLOSE_TAG = "</image>"
+private const val CODEX_AGENTS_INSTRUCTIONS_PREFIX = "# AGENTS.md instructions"
 private const val MAX_CLI_OUTPUT_CHARS = 16_000
 private const val TITLE_TIMEOUT_SECONDS = 60L
 private const val READ_DRAIN_TIMEOUT_SECONDS = 2L

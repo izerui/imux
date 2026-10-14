@@ -130,8 +130,49 @@ class SessionTitleRegeneratorTest {
 
         val prompt = titleGenerationPrompt(session(AgentType.CLAUDE, file))
 
-        assertTrue(prompt.contains("USER: 修复登录流程"))
-        assertTrue(prompt.contains("ASSISTANT: 我会检查认证代码"))
+        assertTrue(prompt.contains("1. 修复登录流程"))
+        assertTrue(prompt.contains("<latest_assistant_reply>\n我会检查认证代码"))
+        // 会话只有一条用户消息时不再单独列出首条
+        assertFalse(prompt.contains("<first_user_message>"))
+    }
+
+    @Test
+    fun `标题提示带上首条与最近多条用户消息而不止开头几轮`() {
+        val file = temp.newFile("claude-shifted.jsonl").toPath()
+        val lines =
+            buildList {
+                add("""{"type":"user","message":{"role":"user","content":"最早的任务：修复登录"}}""")
+                repeat(500) { add("""{"type":"assistant","message":{"role":"assistant","content":"中间输出 $it"}}""") }
+                repeat(10) { add("""{"type":"user","message":{"role":"user","content":"新主题消息 $it"}}""") }
+                add("""{"type":"assistant","message":{"role":"assistant","content":"最新回复"}}""")
+            }
+        Files.writeString(file, lines.joinToString("\n"))
+
+        val prompt = titleGenerationPrompt(session(AgentType.CLAUDE, file))
+
+        assertTrue(prompt.contains("<first_user_message>\n最早的任务：修复登录"))
+        assertTrue(prompt.contains("1. 新主题消息 2"))
+        assertTrue(prompt.contains("8. 新主题消息 9"))
+        assertFalse(prompt.contains("新主题消息 1\n"))
+        assertTrue(prompt.contains("<latest_assistant_reply>\n最新回复"))
+    }
+
+    @Test
+    fun `Codex 注入的 AGENTS 指令不算作首条用户消息`() {
+        val file = temp.newFile("codex-agents.jsonl").toPath()
+        Files.writeString(
+            file,
+            """
+            {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\n\n<INSTRUCTIONS>\n项目约定\n</INSTRUCTIONS>"}]}}
+            {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd</environment_context>"}]}}
+            {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"解释十字相乘法"}]}}
+            """.trimIndent(),
+        )
+
+        val prompt = titleGenerationPrompt(session(AgentType.CODEX, file))
+
+        assertFalse(prompt.contains("AGENTS.md"))
+        assertTrue(prompt.contains("1. 解释十字相乘法"))
     }
 
     @Test
