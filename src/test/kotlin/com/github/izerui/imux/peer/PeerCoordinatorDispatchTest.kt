@@ -135,6 +135,54 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
+    fun `tryStagePeerFeedback 成功时不调用 shouldExecute`() {
+        val calls = mutableListOf<String>()
+        val builder = Proxy.newProxyInstance(
+            TerminalSendTextBuilder::class.java.classLoader,
+            arrayOf(TerminalSendTextBuilder::class.java),
+        ) { proxy, method, args ->
+            calls += method.name
+            when (method.name) {
+                "requireBracketedPasteMode" -> proxy
+                "shouldExecute" -> error("暂存不应调用 shouldExecute")
+                "trySend" -> {
+                    assertEquals("staged content", args?.single())
+                    true
+                }
+                else -> error("不应调用 ${method.name}")
+            }
+        } as TerminalSendTextBuilder
+
+        assertTrue(tryStagePeerFeedback(builder, "staged content"))
+        assertEquals(
+            listOf("requireBracketedPasteMode", "trySend"),
+            calls,
+        )
+    }
+
+    @Test
+    fun `tryStagePeerFeedback 未就绪时返回 false`() {
+        val calls = mutableListOf<String>()
+        val builder = Proxy.newProxyInstance(
+            TerminalSendTextBuilder::class.java.classLoader,
+            arrayOf(TerminalSendTextBuilder::class.java),
+        ) { proxy, method, _ ->
+            calls += method.name
+            when (method.name) {
+                "requireBracketedPasteMode" -> proxy
+                "trySend" -> false
+                else -> error("不应调用 ${method.name}")
+            }
+        } as TerminalSendTextBuilder
+
+        assertFalse(tryStagePeerFeedback(builder, "content"))
+        assertEquals(
+            listOf("requireBracketedPasteMode", "trySend"),
+            calls,
+        )
+    }
+
+    @Test
     fun `终端稍后就绪时只发送一次反馈并登记轮次`() {
         val attempts = AtomicInteger()
         val firstAttempt = CountDownLatch(1)
@@ -383,6 +431,8 @@ class PeerCoordinatorDispatchTest {
     fun `达到自动注入上限后不再启动副驾驶`() {
         val mcpConfig = PeerMcpConfig(null, null, null)
         val callCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val cliStarted = CountDownLatch(1)
+        val cliBlocked = CountDownLatch(1)
         val feedbackSent = CountDownLatch(1)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -398,6 +448,8 @@ class PeerCoordinatorDispatchTest {
             peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 callCount.incrementAndGet()
+                cliStarted.countDown()
+                cliBlocked.await(5, TimeUnit.SECONDS)
                 "feedback"
             },
             resolveMcpConfig = { mcpConfig },
@@ -411,8 +463,10 @@ class PeerCoordinatorDispatchTest {
         try {
             coordinator.bind("s-limit", AgentType.CLAUDE)
             coordinator.onTurnCompleted("s-limit")
-            assertTrue("第一轮反馈应自动发送", feedbackSent.await(5, TimeUnit.SECONDS))
+            assertTrue("CLI 应启动", cliStarted.await(5, TimeUnit.SECONDS))
             val firstReview = scope.coroutineContext[Job]!!.children.single()
+            cliBlocked.countDown()
+            assertTrue("第一轮反馈应自动发送", feedbackSent.await(5, TimeUnit.SECONDS))
             runBlocking { withTimeout(5_000) { firstReview.join() } }
 
             coordinator.onTurnCompleted("s-limit")
@@ -1575,6 +1629,519 @@ class PeerCoordinatorDispatchTest {
             assertTrue(coordinator.status("s1")!!.lastReviewPassed)
             coordinator.onTurnStarted("s1")
             assertFalse(coordinator.status("s1")!!.lastReviewPassed)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 立即启动审查并调用 runCli`() {
+        val cliCalled = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliCalled.countDown()
+                "PASS"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
+            assertTrue("CLI 应被调用", cliCalled.await(5, TimeUnit.SECONDS))
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 完成后自动解绑`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val unbound = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key ->
+                if (key == "s1" && coordinator.status("s1") == null) unbound.countDown()
+            }
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            assertTrue("单次审查完成后应自动解绑", unbound.await(5, TimeUnit.SECONDS))
+            assertTrue("boundTarget 应为 null", coordinator.boundTarget("s1") == null)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 返回 PASS 时通知恰好一次并解绑`() {
+        val passNotified = AtomicInteger(0)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val unbound = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = { passNotified.incrementAndGet() },
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key ->
+                if (key == "s1" && coordinator.status("s1") == null) unbound.countDown()
+            }
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
+            assertEquals("PASS 通知应恰好一次", 1, passNotified.get())
+            assertTrue("最终不应有绑定", coordinator.boundTarget("s1") == null)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 强制走 stageFeedback 而非 autoInject`() {
+        val autoInjected = ConcurrentLinkedQueue<String>()
+        val stagedFeedback = ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val unbound = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "some actionable feedback" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                autoInjected.add(feedback)
+                true
+            },
+            onFeedbackUndelivered = { _, feedback ->
+                stagedFeedback.add(feedback)
+            },
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key ->
+                if (key == "s1" && coordinator.status("s1") == null) unbound.countDown()
+            }
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
+            assertTrue("sendAutoFeedback 不应被调用", autoInjected.isEmpty())
+            assertEquals("反馈应到达暂存路径", "some actionable feedback", stagedFeedback.single())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 将用户审查要求追加到 prompt`() {
+        val capturedPrompts = ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val done = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, prompt, _, _, _, _ ->
+                capturedPrompts.add(prompt)
+                done.countDown()
+                "PASS"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "base prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, "重点看并发安全")
+            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
+            assertTrue("CLI 应被调用", done.await(5, TimeUnit.SECONDS))
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
+            val prompt = capturedPrompts.single()
+            assertTrue("prompt 应包含用户指令", "重点看并发安全" in prompt)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `onTurnStarted 清除 reviewOnce 的临时绑定`() {
+        val cliStarted = CountDownLatch(1)
+        val cliBlocked = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliStarted.countDown()
+                cliBlocked.await(5, TimeUnit.SECONDS)
+                "PASS"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+        )
+        try {
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            assertTrue("CLI 应启动", cliStarted.await(5, TimeUnit.SECONDS))
+            assertNotNull("应有绑定", coordinator.boundTarget("s1"))
+            coordinator.onTurnStarted("s1")
+            cliBlocked.countDown()
+            assertTrue("onTurnStarted 应清除 oneshot 绑定", coordinator.boundTarget("s1") == null)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `migrateSessionKey 不迁移单次绑定`() {
+        val cliStarted = CountDownLatch(1)
+        val cliBlocked = CountDownLatch(1)
+        val cliCount = AtomicInteger(0)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliCount.incrementAndGet()
+                cliStarted.countDown()
+                cliBlocked.await(5, TimeUnit.SECONDS)
+                "PASS"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+        )
+        try {
+            coordinator.reviewOnce("old-key", AgentType.CLAUDE, null)
+            assertTrue("CLI 应启动", cliStarted.await(5, TimeUnit.SECONDS))
+            assertNotNull("迁移前应有绑定", coordinator.boundTarget("old-key"))
+            coordinator.migrateSessionKey("old-key", "new-key")
+            cliBlocked.countDown()
+            val oldReview = scope.coroutineContext[Job]!!.children.firstOrNull()
+            if (oldReview != null) runBlocking { withTimeout(5_000) { oldReview.join() } }
+            assertTrue("迁移后旧 key 不应有绑定", coordinator.boundTarget("old-key") == null)
+            assertTrue("迁移后新 key 不应有绑定", coordinator.boundTarget("new-key") == null)
+            val countAfterMigrate = cliCount.get()
+            coordinator.onTurnCompleted("new-key")
+            Thread.sleep(200)
+            assertEquals("迁移后 onTurnCompleted 不应再调用 CLI", countAfterMigrate, cliCount.get())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 上下文溢出重试后仍保留审查要求`() {
+        val sessionFile = java.io.File.createTempFile("imux-oneshot-", ".jsonl").also { it.deleteOnExit() }
+        val longMessage = "x".repeat(10_000)
+        sessionFile.writeText(buildString {
+            appendLine("""{"message":{"role":"user","content":[{"type":"text","text":"$longMessage"}]}}""")
+            appendLine("""{"message":{"role":"assistant","content":[{"type":"text","text":"$longMessage"}]}}""")
+        })
+        val session = com.github.izerui.imux.model.AgentSession(
+            id = "s1", title = "oneshot-overflow", agentType = AgentType.CLAUDE,
+            lastActiveAt = Instant.now(), createdAt = Instant.now(),
+            filePath = sessionFile.toPath(),
+        )
+        val capturedPrompts = ConcurrentLinkedQueue<String>()
+        val callCount = AtomicInteger(0)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val done = CountDownLatch(1)
+        val model = SessionListModel(scan = { listOf(session) }, clock = Instant::now)
+        model.refresh()
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = System.getProperty("java.io.tmpdir"),
+            model = model,
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, prompt, _, _, _, _ ->
+                capturedPrompts.add(prompt)
+                if (callCount.getAndIncrement() == 0) {
+                    throw RuntimeException("prompt too long: context window exceeded")
+                }
+                done.countDown()
+                "PASS"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { task, conv -> "task=$task\nconv=$conv" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, "检查并发安全")
+            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
+            assertTrue("第二次调用应成功", done.await(5, TimeUnit.SECONDS))
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
+            assertEquals("应调用两次", 2, capturedPrompts.size)
+            val prompts = capturedPrompts.toList()
+            assertTrue("第一次 prompt 应包含审查要求", "检查并发安全" in prompts[0])
+            assertTrue("重试 prompt 也应包含审查要求", "检查并发安全" in prompts[1])
+            assertTrue(
+                "重试 prompt (${prompts[1].length}) 应比第一次 (${prompts[0].length}) 短",
+                prompts[1].length < prompts[0].length,
+            )
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+            sessionFile.delete()
+        }
+    }
+
+    @Test
+    fun `cancelCurrentRun 清除单次绑定并恢复未绑定状态`() {
+        val cliStarted = CountDownLatch(1)
+        val cliBlocked = CountDownLatch(1)
+        val feedbackSent = ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliStarted.countDown()
+                cliBlocked.await(5, TimeUnit.SECONDS)
+                "some feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                feedbackSent.add(feedback)
+                true
+            },
+        )
+        try {
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            assertTrue("CLI 应启动", cliStarted.await(5, TimeUnit.SECONDS))
+            coordinator.cancelCurrentRun("s1")
+            cliBlocked.countDown()
+            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
+            assertTrue("取消后应恢复未绑定", coordinator.status("s1") == null)
+            assertTrue("不应有反馈送出", feedbackSent.isEmpty())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 在已有持续绑定时不启动`() {
+        val cliCount = AtomicInteger(0)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val latch = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliCount.incrementAndGet()
+                latch.countDown()
+                "feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+        )
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.reviewOnce("s1", AgentType.CODEX, "看看")
+            Thread.sleep(300)
+            assertEquals("持续绑定存在时 reviewOnce 不应调用 CLI", 0, cliCount.get())
+            assertEquals("原绑定应保留", AgentType.CLAUDE, coordinator.boundTarget("s1"))
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `持续模式审查途中关闭自动发送后反馈走暂存`() {
+        val cliStarted = CountDownLatch(1)
+        val cliBlocked = CountDownLatch(1)
+        val autoInjectFlag = AtomicReference(true)
+        val autoInjected = ConcurrentLinkedQueue<String>()
+        val stagedFeedback = ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { autoInjectFlag.get() },
+            runCli = { _, _, _, _, _, _, _, _ ->
+                cliStarted.countDown()
+                cliBlocked.await(5, TimeUnit.SECONDS)
+                "actionable feedback"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                autoInjected.add(feedback)
+                true
+            },
+            onFeedbackUndelivered = { _, feedback ->
+                stagedFeedback.add(feedback)
+            },
+        )
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s1")
+            assertTrue("CLI 应启动", cliStarted.await(5, TimeUnit.SECONDS))
+            autoInjectFlag.set(false)
+            cliBlocked.countDown()
+            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
+            assertTrue("关闭自动发送后不应调用 sendAutoFeedback", autoInjected.isEmpty())
+            assertEquals("反馈应到达暂存路径", "actionable feedback", stagedFeedback.single())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `stageFeedback 在终端未就绪时不发送多行文本`() {
+        val undelivered = ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val done = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { key ->
+                Proxy.newProxyInstance(
+                    com.intellij.terminal.frontend.view.TerminalView::class.java.classLoader,
+                    arrayOf(com.intellij.terminal.frontend.view.TerminalView::class.java),
+                ) { proxy, method, _ ->
+                    when (method.name) {
+                        "createSendTextBuilder" -> {
+                            Proxy.newProxyInstance(
+                                TerminalSendTextBuilder::class.java.classLoader,
+                                arrayOf(TerminalSendTextBuilder::class.java),
+                            ) { builderProxy, builderMethod, _ ->
+                                when (builderMethod.name) {
+                                    "requireBracketedPasteMode", "shouldExecute" -> builderProxy
+                                    "trySend" -> false
+                                    else -> builderProxy
+                                }
+                            } as TerminalSendTextBuilder
+                        }
+                        "hashCode" -> System.identityHashCode(proxy)
+                        "equals" -> proxy === null
+                        "toString" -> "MockTerminalView"
+                        else -> null
+                    }
+                } as com.intellij.terminal.frontend.view.TerminalView
+            },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { false },
+            runCli = { _, _, _, _, _, _, _, _ -> "multi\nline\nfeedback" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            onFeedbackUndelivered = { _, feedback ->
+                undelivered.add(feedback)
+                done.countDown()
+            },
+        )
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s1")
+            assertTrue("应触发未送达回调", done.await(5, TimeUnit.SECONDS))
+            val feedback = undelivered.single()
+            assertEquals("兜底应收到完整反馈原文", "multi\nline\nfeedback", feedback)
         } finally {
             coordinator.dispose()
             scope.cancel()

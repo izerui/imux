@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.peer.PeerProgressEvent
 import com.github.izerui.imux.peer.PeerProgressKind
@@ -31,6 +32,9 @@ import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
@@ -40,6 +44,7 @@ import com.intellij.openapi.wm.IdeFrame
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLayeredPane
+import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -161,6 +166,19 @@ class AgentTerminalFileEditor(
         }.apply {
             isFocusable = false
         }
+    private val peerReviewOnceLink: ActionLink =
+        ActionLink(ImuxBundle.message("action.peer.once.hint")) {
+            val targets = ImuxSettings.getInstance().enabledAgentTypes
+            if (targets.isEmpty()) return@ActionLink
+            val dialog = ReviewOnceDialog(project, targets)
+            if (!dialog.showAndGet()) return@ActionLink
+            val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+            val instruction = dialog.instruction.takeIf { it.isNotBlank() }
+            coordinator.reviewOnce(virtualFile.sessionKey, dialog.selectedAgent, instruction)
+        }.apply {
+            isFocusable = false
+            border = JBUI.Borders.emptyLeft(12)
+        }
     private val peerDismissLink =
         ActionLink(ImuxBundle.message("action.peer.enable.dismiss")) {
             virtualFile.peerBannerDismissed = true
@@ -179,6 +197,7 @@ class AgentTerminalFileEditor(
             add(Box.createHorizontalStrut(JBUI.scale(6)))
             add(peerLabel)
             add(peerEnableLink)
+            add(peerReviewOnceLink)
             add(peerDismissLink)
             add(peerCancelButton)
             add(peerCloseButton)
@@ -232,6 +251,7 @@ class AgentTerminalFileEditor(
             peerCancelButton.text = ImuxBundle.message("action.peer.cancel")
             peerCloseButton.text = ImuxBundle.message("action.peer.close")
             peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
+            peerReviewOnceLink.text = ImuxBundle.message("action.peer.once.hint")
             peerDismissLink.text = ImuxBundle.message("action.peer.enable.dismiss")
             refreshPeerBanner()
         }
@@ -354,11 +374,13 @@ class AgentTerminalFileEditor(
             peerCloseButton.isVisible = false
             peerBanner.isVisible = !virtualFile.peerBannerDismissed
             peerEnableLink.isVisible = true
+            peerReviewOnceLink.isVisible = true
             peerDismissLink.isVisible = true
             peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
         } else {
             peerBanner.isVisible = true
             peerEnableLink.isVisible = false
+            peerReviewOnceLink.isVisible = false
             peerDismissLink.isVisible = false
             peerLabel.isVisible = true
             peerCancelButton.isVisible = status.running
@@ -558,4 +580,50 @@ class AgentTerminalFileEditor(
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30
     }
+}
+
+private class ReviewOnceDialog(
+    project: Project,
+    private val targets: List<AgentType>,
+) : DialogWrapper(project, false) {
+    private val instructionField = JBTextField().apply { columns = 30 }
+    private val agentCombo = ComboBox(targets.toTypedArray()).apply {
+        renderer = javax.swing.DefaultListCellRenderer().let { base ->
+            javax.swing.ListCellRenderer<Any?> { list, value, index, isSelected, cellHasFocus ->
+                base.getListCellRendererComponent(list, (value as? AgentType)?.displayName ?: value, index, isSelected, cellHasFocus)
+            }
+        }
+    }
+
+    val instruction: String get() = instructionField.text.orEmpty()
+    val selectedAgent: AgentType get() = agentCombo.selectedItem as AgentType
+
+    init {
+        title = ImuxBundle.message("action.peer.once.input.title")
+        init()
+    }
+
+    override fun createCenterPanel(): JComponent {
+        val panel = JPanel(java.awt.GridBagLayout())
+        val gbc = java.awt.GridBagConstraints().apply {
+            fill = java.awt.GridBagConstraints.HORIZONTAL
+            insets = java.awt.Insets(4, 4, 4, 4)
+        }
+
+        if (targets.size > 1) {
+            gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0.0
+            panel.add(JLabel(ImuxBundle.message("action.peer.once.input.agent")), gbc)
+            gbc.gridx = 1; gbc.weightx = 1.0
+            panel.add(agentCombo, gbc)
+        }
+
+        gbc.gridx = 0; gbc.gridy = if (targets.size > 1) 1 else 0; gbc.weightx = 0.0
+        panel.add(JLabel(ImuxBundle.message("action.peer.once.input.message")), gbc)
+        gbc.gridx = 1; gbc.weightx = 1.0
+        panel.add(instructionField, gbc)
+
+        return panel
+    }
+
+    override fun getPreferredFocusedComponent(): JComponent = instructionField
 }

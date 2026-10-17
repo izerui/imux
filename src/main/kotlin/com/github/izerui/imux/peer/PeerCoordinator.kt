@@ -14,6 +14,7 @@ import com.github.izerui.imux.terminal.IdeaMcpEndpoint
 import com.github.izerui.imux.terminal.configuredIdeaMcpEndpoint
 import com.github.izerui.imux.terminal.configuredIdeaMcpGuidance
 import com.github.izerui.imux.terminal.piIdeaMcpScript
+import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
@@ -90,6 +91,8 @@ class PeerCoordinator internal constructor(
     private val sendAutoFeedback: ((sessionKey: String, feedback: String) -> Boolean)? = null,
     /** 终端已消失、反馈无处可放时的兜底。为 null 时用 [notifyFeedbackUndelivered]：弹通知告知。 */
     private val onFeedbackUndelivered: ((sessionKey: String, feedback: String) -> Unit)? = null,
+    /** 单次审查返回 PASS 时的通知。为 null 时用 [notifyOneShotPassed]：弹 IDE 通知。 */
+    private val onOneShotPassed: (() -> Unit)? = null,
 ) : Disposable {
     private val edt: kotlin.coroutines.CoroutineContext by lazy { edtDispatcher ?: Dispatchers.EDT }
     @Volatile private var disposed = false
@@ -105,6 +108,8 @@ class PeerCoordinator internal constructor(
      */
     private val sentFeedback = ConcurrentHashMap<String, ConcurrentLinkedDeque<String>>()
     private val passedSessions = ConcurrentHashMap.newKeySet<String>()
+    private data class OneShotInfo(val generation: Long, val instruction: String?)
+    private val oneShotSessions = ConcurrentHashMap<String, OneShotInfo>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
 
     fun addStateListener(
@@ -152,11 +157,30 @@ class PeerCoordinator internal constructor(
         notifyStateChanged(sessionKey)
     }
 
+    fun reviewOnce(
+        sessionKey: String,
+        targetAgentType: AgentType,
+        userInstruction: String?,
+    ) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        if (disposed) return
+        if (bindings.containsKey(sessionKey)) return
+        bind(sessionKey, targetAgentType)
+        val generation = bindings[sessionKey]?.generation ?: return
+        oneShotSessions[sessionKey] = OneShotInfo(generation, userInstruction)
+        val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
+        val result = guard.tryStart(generation, { bindings[sessionKey]?.generation }) ?: return
+        result.cancelled?.killProcess()
+        LOG.info("结对编程：单次审查 sessionKey=$sessionKey agent=${targetAgentType.displayName}")
+        launchReview(sessionKey, result.run, guard)
+    }
+
     private fun unbindInner(sessionKey: String): PeerRun? {
         bindings.remove(sessionKey)
         roundCounts.remove(sessionKey)
         peerInjectedSessions.remove(sessionKey)
         passedSessions.remove(sessionKey)
+        oneShotSessions.remove(sessionKey)
         return guards.remove(sessionKey)?.cancelAndDetach()
     }
 
@@ -170,6 +194,7 @@ class PeerCoordinator internal constructor(
     fun onTurnCompleted(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
+        if (oneShotSessions.containsKey(sessionKey)) return
         val generation = bindings[sessionKey]?.generation ?: return
         val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
         if (!bindings.containsKey(sessionKey)) {
@@ -206,6 +231,13 @@ class PeerCoordinator internal constructor(
                         if (runToKill != null && run.passed) {
                             passedSessions.add(sessionKey)
                         }
+                        if (runToKill != null && oneShotSessions.remove(sessionKey) != null) {
+                            if (run.passed) {
+                                try { (onOneShotPassed ?: ::notifyOneShotPassed).invoke() }
+                                catch (e: Exception) { LOG.warn("结对编程：单次 PASS 通知失败", e) }
+                            }
+                            unbindInner(sessionKey)?.killProcess()
+                        }
                         notifyStateChanged(sessionKey)
                     }
                     runToKill?.killProcess()
@@ -219,9 +251,13 @@ class PeerCoordinator internal constructor(
     fun cancelCurrentRun(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
+        val wasOneShot = oneShotSessions.remove(sessionKey) != null
         roundCounts[sessionKey]?.set(0)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()
+        if (wasOneShot) {
+            unbindInner(sessionKey)?.killProcess()
+        }
         LOG.info("结对编程：手动取消 $sessionKey")
         notifyStateChanged(sessionKey)
     }
@@ -229,6 +265,12 @@ class PeerCoordinator internal constructor(
     fun onTurnStarted(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed || !bindings.containsKey(sessionKey)) return
+        if (oneShotSessions.remove(sessionKey) != null) {
+            val cancelledRun = unbindInner(sessionKey)
+            cancelledRun?.killProcess()
+            notifyStateChanged(sessionKey)
+            return
+        }
         // 自动注入也会使主会话进入运行态，只有非注入轮次才开启新的计数周期。
         if (sessionKey !in peerInjectedSessions) roundCounts[sessionKey]?.set(0)
         passedSessions.remove(sessionKey)
@@ -248,6 +290,7 @@ class PeerCoordinator internal constructor(
         if (from == to) return
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
+        val wasOneShot = oneShotSessions.remove(from) != null
         val binding = bindings.remove(from)
         roundCounts.remove(from)
         peerInjectedSessions.remove(from)
@@ -261,8 +304,9 @@ class PeerCoordinator internal constructor(
         feedbackHints.remove(to)
         sentFeedback.remove(to)
         passedSessions.remove(to)
+        oneShotSessions.remove(to)
         val r2 = guards.remove(to)?.cancelAndDetach()
-        if (binding != null) {
+        if (binding != null && !wasOneShot) {
             bindings[to] = binding.copy(task = "")
         }
         listOfNotNull(r1, r2).forEach { it.killProcess() }
@@ -282,6 +326,7 @@ class PeerCoordinator internal constructor(
         feedbackHints.clear()
         sentFeedback.clear()
         passedSessions.clear()
+        oneShotSessions.clear()
         guardsToCancel.forEach { it.cancel() }
     }
 
@@ -304,10 +349,20 @@ class PeerCoordinator internal constructor(
         if (currentBinding.generation != run.bindingGeneration) return
         val freshTask = extractTask(mainSessionKey)
         if (!runIsCurrent(mainSessionKey, run, guard)) return
-        val buildFn = buildPrompt ?: ::buildReviewPrompt
+        val isOneShot = oneShotSessions.containsKey(mainSessionKey)
+        val effectiveAutoInject = peerAutoInject() && !isOneShot
+        val buildFn: (String, String) -> String = buildPrompt ?: { task, conv -> buildReviewPrompt(task, conv, effectiveAutoInject) }
         var conversation = collectLatestConversation(mainSessionKey)
         var maxConvChars = conversation.length
-        var prompt = buildFn(freshTask, conversation)
+        val oneShotInstruction = oneShotSessions[mainSessionKey]?.instruction
+        val instructionSuffix = if (!oneShotInstruction.isNullOrBlank()) {
+            val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
+            val header = if (isChinese) "## 本次审查要求" else "## Review Instructions"
+            "\n\n$header\n\n$oneShotInstruction"
+        } else {
+            ""
+        }
+        var prompt = buildFn(freshTask, conversation) + instructionSuffix
         val mcpConfig = resolveMcpConfig(currentBinding.targetAgentType)
         val invocation = buildPeerCliInvocation(shell, currentBinding.targetAgentType, projectPath, mcpConfig)
         val command = invocation.command
@@ -351,7 +406,7 @@ class PeerCoordinator internal constructor(
             if (error != null && isContextOverflowError(error)) {
                 maxConvChars = maxOf(maxConvChars / 2, 0)
                 conversation = collectLatestConversation(mainSessionKey, maxConvChars)
-                val shrunk = buildFn(freshTask, conversation)
+                val shrunk = buildFn(freshTask, conversation) + instructionSuffix
                 if (shrunk.length >= prompt.length) {
                     LOG.warn("结对编程：上下文溢出但对话已无法进一步缩减")
                     withContext(edt) {
@@ -387,7 +442,7 @@ class PeerCoordinator internal constructor(
 
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
-            if (peerAutoInject()) {
+            if (!isOneShot && peerAutoInject()) {
                 injectFeedback(mainSessionKey, feedback, run, guard)
             } else {
                 stageFeedback(mainSessionKey, feedback)
@@ -412,15 +467,15 @@ class PeerCoordinator internal constructor(
     private fun buildReviewPrompt(
         task: String,
         conversation: String,
+        effectiveAutoInject: Boolean,
     ): String {
         val customPrompt = ImuxSettings.getInstance().state.peerPromptOverride
         if (customPrompt != null) {
             val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-            val autoInject = peerAutoInject()
             val modeText = if (isChinese) {
-                if (autoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
+                if (effectiveAutoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
             } else {
-                if (autoInject) MODE_AUTO_EN else MODE_STAGE_EN
+                if (effectiveAutoInject) MODE_AUTO_EN else MODE_STAGE_EN
             }
             var result = customPrompt
                 .replace("\${task}", task)
@@ -454,12 +509,11 @@ class PeerCoordinator internal constructor(
             } else {
                 "## Conversation\n\n$conversation\n\n"
             }
-        val autoInject = peerAutoInject()
         val modeSection =
             if (isChinese) {
-                if (autoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
+                if (effectiveAutoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
             } else {
-                if (autoInject) MODE_AUTO_EN else MODE_STAGE_EN
+                if (effectiveAutoInject) MODE_AUTO_EN else MODE_STAGE_EN
             }
         return defaultPeerPromptForLanguage(currentLanguage)
             .replace("\${mode}", modeSection)
@@ -554,18 +608,6 @@ class PeerCoordinator internal constructor(
         }
     }
 
-    /**
-     * **已知缺陷，本次未修**：这里仍用 `useBracketedPasteMode()`，而它只是尽力而为——
-     * 终端没开 `?2004h` 时会静默退化成裸发，且平台会把正文里的 `\n` 一律转成 `\r`
-     * （与 [trySendPeerFeedback] 同一次抓包确认）。裸发出去的 `正文\r正文\r正文` 一旦没被
-     * TUI 当成一次粘贴，那些 `\r` 就是回车键，多行反馈会被**提前提交**——恰好违反
-     * 暂存路径"只放进输入框、发不发由用户决定"的契约。
-     *
-     * 没有顺手照抄 [injectFeedback] 的 require + 重试：自动注入失败可以重试满 10 秒再记
-     * WARN 丢弃，暂存路径不能这么干——用户正等着这段文字出现在输入框里，静默丢弃比迟到更糟。
-     * 它需要自己的降级设计（放弃发送并提示？落到剪贴板？先等待再退化？），那是一次独立的
-     * 产品决策，不该塞进这次修复里。
-     */
     private fun stageFeedback(
         mainSessionKey: String,
         prompt: String,
@@ -573,14 +615,17 @@ class PeerCoordinator internal constructor(
         val view = viewOf(mainSessionKey)
         if (view == null) {
             LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
+            (onFeedbackUndelivered ?: ::notifyFeedbackUndelivered).invoke(mainSessionKey, prompt)
             return
         }
-        LOG.info("结对编程：暂存反馈到主会话输入框 $mainSessionKey（${prompt.length} 字符）")
-        view.createSendTextBuilder()
-            .useBracketedPasteMode()
-            .send(prompt)
-        // 用户可能原样发出，也可能改过再发；改过的就是用户自己的话，匹配不上正合适
-        rememberSentFeedback(mainSessionKey, prompt)
+        val sent = tryStagePeerFeedback(view.createSendTextBuilder(), prompt)
+        if (sent) {
+            LOG.info("结对编程：暂存反馈到主会话输入框 $mainSessionKey（${prompt.length} 字符）")
+            rememberSentFeedback(mainSessionKey, prompt)
+        } else {
+            LOG.warn("结对编程：终端未就绪（括号粘贴模式未开启），反馈未暂存 $mainSessionKey")
+            (onFeedbackUndelivered ?: { _, text -> notifyFeedbackNotReady(text) }).invoke(mainSessionKey, prompt)
+        }
     }
 
     /**
@@ -595,13 +640,49 @@ class PeerCoordinator internal constructor(
         prompt: String,
     ) {
         LOG.warn("结对编程：反馈未能送达 $sessionKey（${prompt.length} 字符）")
-        NotificationGroupManager
+        val notification = NotificationGroupManager
             .getInstance()
             .getNotificationGroup(NOTIFICATION_GROUP)
             .createNotification(
                 ImuxBundle.message("action.peer.notification.title"),
                 ImuxBundle.message("action.peer.notification.undelivered"),
                 NotificationType.WARNING,
+            )
+        notification.addAction(NotificationAction.createSimpleExpiring(
+            ImuxBundle.message("action.peer.notification.copy"),
+        ) {
+            val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+            clipboard.setContents(java.awt.datatransfer.StringSelection(prompt), null)
+        })
+        notification.notify(project)
+    }
+
+    private fun notifyFeedbackNotReady(prompt: String) {
+        val notification = NotificationGroupManager
+            .getInstance()
+            .getNotificationGroup(NOTIFICATION_GROUP)
+            .createNotification(
+                ImuxBundle.message("action.peer.notification.title"),
+                ImuxBundle.message("action.peer.notification.not.ready"),
+                NotificationType.WARNING,
+            )
+        notification.addAction(NotificationAction.createSimpleExpiring(
+            ImuxBundle.message("action.peer.notification.copy"),
+        ) {
+            val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+            clipboard.setContents(java.awt.datatransfer.StringSelection(prompt), null)
+        })
+        notification.notify(project)
+    }
+
+    private fun notifyOneShotPassed() {
+        NotificationGroupManager
+            .getInstance()
+            .getNotificationGroup(NOTIFICATION_GROUP)
+            .createNotification(
+                ImuxBundle.message("action.peer.notification.title"),
+                ImuxBundle.message("action.peer.notification.once.passed"),
+                NotificationType.INFORMATION,
             )
             .notify(project)
     }
@@ -711,6 +792,10 @@ Nothing new to add this round — no observation, question, idea, or suggestion?
 internal fun trySendPeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
     builder.requireBracketedPasteMode()
         .shouldExecute()
+        .trySend(prompt)
+
+internal fun tryStagePeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
+    builder.requireBracketedPasteMode()
         .trySend(prompt)
 
 private val CONTEXT_OVERFLOW_PATTERNS = listOf(
