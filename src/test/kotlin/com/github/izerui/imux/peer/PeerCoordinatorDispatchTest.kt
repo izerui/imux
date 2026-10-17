@@ -1738,9 +1738,8 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
-    fun `reviewOnce 强制走 stageFeedback 而非 autoInject`() {
+    fun `reviewOnce 遵循自动发送设置`() {
         val autoInjected = ConcurrentLinkedQueue<String>()
-        val stagedFeedback = ConcurrentLinkedQueue<String>()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val unbound = CountDownLatch(1)
         val coordinator = PeerCoordinator(
@@ -1760,6 +1759,44 @@ class PeerCoordinatorDispatchTest {
                 autoInjected.add(feedback)
                 true
             },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key ->
+                if (key == "s1" && coordinator.status("s1") == null) unbound.countDown()
+            }
+            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
+            assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
+            assertEquals("自动发送开启时反馈应走 sendAutoFeedback", "some actionable feedback", autoInjected.single())
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `reviewOnce 关闭自动发送时反馈走暂存`() {
+        val autoInjected = ConcurrentLinkedQueue<String>()
+        val stagedFeedback = ConcurrentLinkedQueue<String>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val unbound = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { false },
+            runCli = { _, _, _, _, _, _, _, _ -> "some actionable feedback" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, feedback ->
+                autoInjected.add(feedback)
+                true
+            },
             onFeedbackUndelivered = { _, feedback ->
                 stagedFeedback.add(feedback)
             },
@@ -1770,8 +1807,9 @@ class PeerCoordinatorDispatchTest {
             }
             coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
             assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
-            assertTrue("sendAutoFeedback 不应被调用", autoInjected.isEmpty())
+            assertTrue("关闭自动发送时不应调用 sendAutoFeedback", autoInjected.isEmpty())
             assertEquals("反馈应到达暂存路径", "some actionable feedback", stagedFeedback.single())
+            assertTrue("最终不应有绑定", coordinator.boundTarget("s1") == null)
         } finally {
             coordinator.dispose()
             scope.cancel()
@@ -2146,6 +2184,29 @@ class PeerCoordinatorDispatchTest {
             coordinator.dispose()
             scope.cancel()
         }
+    }
+
+    @Test
+    fun `preferredReviewAgent 从当前项顺排选下一个`() {
+        val all = listOf(AgentType.CLAUDE, AgentType.CODEX, AgentType.PI)
+        assertEquals("Claude 会话应默认 Codex", AgentType.CODEX,
+            com.github.izerui.imux.terminal.preferredReviewAgent(all, AgentType.CLAUDE))
+        assertEquals("Codex 会话应默认 Pi", AgentType.PI,
+            com.github.izerui.imux.terminal.preferredReviewAgent(all, AgentType.CODEX))
+        assertEquals("Pi 会话应回绕到 Claude", AgentType.CLAUDE,
+            com.github.izerui.imux.terminal.preferredReviewAgent(all, AgentType.PI))
+    }
+
+    @Test
+    fun `preferredReviewAgent 仅一个可选项时选自己`() {
+        assertEquals("仅 Claude 时选 Claude", AgentType.CLAUDE,
+            com.github.izerui.imux.terminal.preferredReviewAgent(listOf(AgentType.CLAUDE), AgentType.CLAUDE))
+    }
+
+    @Test
+    fun `preferredReviewAgent 当前不在列表中时选第一个`() {
+        assertEquals("当前 Pi 不在列表中，选第一个 Claude", AgentType.CLAUDE,
+            com.github.izerui.imux.terminal.preferredReviewAgent(listOf(AgentType.CLAUDE, AgentType.CODEX), AgentType.PI))
     }
 
     private fun testProject(): Project =

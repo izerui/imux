@@ -349,8 +349,7 @@ class PeerCoordinator internal constructor(
         if (currentBinding.generation != run.bindingGeneration) return
         val freshTask = extractTask(mainSessionKey)
         if (!runIsCurrent(mainSessionKey, run, guard)) return
-        val isOneShot = oneShotSessions.containsKey(mainSessionKey)
-        val effectiveAutoInject = peerAutoInject() && !isOneShot
+        val effectiveAutoInject = peerAutoInject()
         val buildFn: (String, String) -> String = buildPrompt ?: { task, conv -> buildReviewPrompt(task, conv, effectiveAutoInject) }
         var conversation = collectLatestConversation(mainSessionKey)
         var maxConvChars = conversation.length
@@ -442,7 +441,7 @@ class PeerCoordinator internal constructor(
 
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
-            if (!isOneShot && peerAutoInject()) {
+            if (peerAutoInject()) {
                 injectFeedback(mainSessionKey, feedback, run, guard)
             } else {
                 stageFeedback(mainSessionKey, feedback)

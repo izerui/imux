@@ -170,7 +170,7 @@ class AgentTerminalFileEditor(
         ActionLink(ImuxBundle.message("action.peer.once.hint")) {
             val targets = ImuxSettings.getInstance().enabledAgentTypes
             if (targets.isEmpty()) return@ActionLink
-            val dialog = ReviewOnceDialog(project, targets)
+            val dialog = ReviewOnceDialog(project, targets, virtualFile.agentType)
             if (!dialog.showAndGet()) return@ActionLink
             val coordinator = SessionMonitor.getInstance(project).peerCoordinator
             val instruction = dialog.instruction.takeIf { it.isNotBlank() }
@@ -585,6 +585,7 @@ class AgentTerminalFileEditor(
 private class ReviewOnceDialog(
     project: Project,
     private val targets: List<AgentType>,
+    currentAgentType: AgentType,
 ) : DialogWrapper(project, false) {
     private val instructionField = JBTextField().apply { columns = 30 }
     private val agentCombo = ComboBox(targets.toTypedArray()).apply {
@@ -593,6 +594,8 @@ private class ReviewOnceDialog(
                 base.getListCellRendererComponent(list, (value as? AgentType)?.displayName ?: value, index, isSelected, cellHasFocus)
             }
         }
+        val preferred = preferredReviewAgent(targets, currentAgentType)
+        selectedItem = preferred
     }
 
     val instruction: String get() = instructionField.text.orEmpty()
@@ -626,4 +629,13 @@ private class ReviewOnceDialog(
     }
 
     override fun getPreferredFocusedComponent(): JComponent = instructionField
+}
+
+internal fun preferredReviewAgent(targets: List<AgentType>, current: AgentType): AgentType {
+    val currentIndex = targets.indexOf(current)
+    return if (currentIndex >= 0 && targets.size > 1) {
+        targets[(currentIndex + 1) % targets.size]
+    } else {
+        targets.first()
+    }
 }
