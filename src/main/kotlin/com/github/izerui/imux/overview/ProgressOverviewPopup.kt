@@ -1,9 +1,14 @@
 package com.github.izerui.imux.overview
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.agent.AgentProgressEvent
+import com.github.izerui.imux.agent.AgentProgressKind
+import com.github.izerui.imux.agent.OneShotAgentTimeoutException
 import com.github.izerui.imux.settings.PluginLanguage
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -54,6 +59,11 @@ private class ProgressOverviewDialog(
         preferredSize = JBUI.size(500, 400)
     }
     private val popupScope: CoroutineScope
+    private var loadingRow: LoadingRow? = null
+    /** 加载态的进度：最近一条智能体动作 + 已用时间，每秒刷新。 */
+    private var latestProgress: String? = null
+    private var loadingStartedAt = 0L
+    private val elapsedTimer = javax.swing.Timer(1_000) { refreshLoadingRow() }
 
     init {
         title = overviewDialogTitle(
@@ -65,7 +75,10 @@ private class ProgressOverviewDialog(
 
         val service = ProgressOverviewService.getInstance(project)
         popupScope = service.createChildScope()
-        Disposer.register(disposable) { popupScope.cancel("dialog disposed") }
+        Disposer.register(disposable) {
+            elapsedTimer.stop()
+            popupScope.cancel("dialog disposed")
+        }
 
         init()
 
@@ -86,33 +99,36 @@ private class ProgressOverviewDialog(
 
     private fun showLoading() {
         contentPanel.removeAll()
-        val center = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(60, 40)
-            isOpaque = false
-        }
-        val iconRow = JPanel(FlowLayout(FlowLayout.CENTER, JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            add(JLabel(AnimatedIcon.Default()))
-            add(JBLabel(ImuxBundle.message("action.overview.loading")))
-        }
-        center.add(iconRow)
-        center.add(Box.createVerticalStrut(JBUI.scale(8)))
-        val hint = JBLabel(ImuxBundle.message("action.overview.loading.hint")).apply {
-            foreground = JBColor.GRAY
-            alignmentX = Component.CENTER_ALIGNMENT
-        }
-        val hintRow = JPanel(FlowLayout(FlowLayout.CENTER)).apply {
-            isOpaque = false
-            add(hint)
-        }
-        center.add(hintRow)
-        contentPanel.add(center, BorderLayout.CENTER)
+        val row = LoadingRow()
+        loadingRow = row
+        latestProgress = null
+        loadingStartedAt = System.currentTimeMillis()
+        refreshLoadingRow()
+        elapsedTimer.restart()
+        contentPanel.add(row.component, BorderLayout.CENTER)
         contentPanel.revalidate()
         contentPanel.repaint()
     }
 
+    private fun showProgress(event: AgentProgressEvent) {
+        // 工具完成、整体完成这类事件不换文字，保留上一条“正在做什么”
+        overviewProgressText(event)?.let { latestProgress = it }
+        refreshLoadingRow()
+    }
+
+    private fun refreshLoadingRow() {
+        val row = loadingRow ?: return
+        val seconds = ((System.currentTimeMillis() - loadingStartedAt) / 1_000).coerceAtLeast(0)
+        row.update(latestProgress ?: ImuxBundle.message("action.overview.loading"), seconds)
+    }
+
+    private fun stopLoading() {
+        elapsedTimer.stop()
+        loadingRow = null
+    }
+
     private fun showResult(result: OverviewResult, stale: Boolean) {
+        stopLoading()
         contentPanel.removeAll()
         contentPanel.add(buildResultPanel(result, stale) {
             showLoading()
@@ -123,6 +139,7 @@ private class ProgressOverviewDialog(
     }
 
     private fun showError(errorMessage: String) {
+        stopLoading()
         contentPanel.removeAll()
         val center = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -148,7 +165,8 @@ private class ProgressOverviewDialog(
 
         val hintRow = JPanel(FlowLayout(FlowLayout.CENTER)).apply {
             isOpaque = false
-            add(JBLabel(errorMessage).apply {
+            // CLI 的报错可能很长，按弹窗宽度换行显示
+            add(JBLabel(wrappedLabelHtml(errorMessage, JBUI.scale(380))).apply {
                 foreground = JBColor.GRAY
                 font = JBUI.Fonts.smallFont()
             })
@@ -175,7 +193,11 @@ private class ProgressOverviewDialog(
         popupScope.launch(Dispatchers.IO) {
             try {
                 val result = runInterruptible {
-                    ProgressOverviewService.getInstance(project).generateOverview(sessionKey)
+                    ProgressOverviewService.getInstance(project).generateOverview(sessionKey) { progress ->
+                        ApplicationManager.getApplication().invokeLater({
+                            if (!isDisposed) showProgress(progress)
+                        }, ModalityState.any())
+                    }
                 }
                 withContext(Dispatchers.EDT) {
                     if (!isDisposed) {
@@ -186,7 +208,7 @@ private class ProgressOverviewDialog(
                 // scope cancelled — nothing to show
             } catch (e: Exception) {
                 if (project.isDisposed) return@launch
-                val message = e.message ?: ImuxBundle.message("action.overview.failed.hint")
+                val message = overviewErrorText(e)
                 LOG.warn("Progress overview generation failed", e)
                 withContext(Dispatchers.EDT) {
                     if (!isDisposed) {
@@ -196,6 +218,116 @@ private class ProgressOverviewDialog(
             }
         }
     }
+}
+
+/** 智能体当前在做什么；不需要换文字的事件返回 null。 */
+internal fun overviewProgressText(event: AgentProgressEvent): String? = when (event.kind) {
+    AgentProgressKind.STARTING -> ImuxBundle.message("action.overview.progress.starting")
+    AgentProgressKind.THINKING -> ImuxBundle.message("action.overview.progress.thinking")
+    AgentProgressKind.TOOL_STARTED -> toolActionText(event.subject)
+    AgentProgressKind.RETRYING -> ImuxBundle.message("action.overview.progress.retrying")
+    AgentProgressKind.RESPONDING -> ImuxBundle.message("action.overview.progress.responding")
+    AgentProgressKind.TOOL_FINISHED, AgentProgressKind.COMPLETED, AgentProgressKind.FAILED -> null
+}
+
+/**
+ * 工具动作的显示文字。进度里的 subject 形如 `Read: /a/b/session.jsonl`、`Bash: rg -n ...`，
+ * 换成“读取 session.jsonl”“执行命令 rg -n ...”；路径只留文件名，太长的由界面用省略号截断。
+ */
+internal fun toolActionText(subject: String): String {
+    val name = subject.substringBefore(':').trim().ifBlank { "tool" }
+    val detail = subject.substringAfter(':', "").trim().let(::shortenPathDetail)
+    val key = when (name.lowercase()) {
+        "read" -> "action.overview.progress.read"
+        "grep", "search", "web search" -> "action.overview.progress.search"
+        "glob", "find", "ls" -> "action.overview.progress.find"
+        "bash", "shell" -> "action.overview.progress.command"
+        else -> return ImuxBundle.message("action.overview.progress.tool", if (detail.isEmpty()) name else "$name $detail")
+    }
+    return ImuxBundle.message(key, detail).trim()
+}
+
+/** 不含空白的单个路径只显示文件名；命令、搜索词等原样保留。 */
+private fun shortenPathDetail(detail: String): String {
+    if (detail.isEmpty() || detail.any(Char::isWhitespace)) return detail
+    val name = detail.trimEnd('/', '\\').substringAfterLast('/').substringAfterLast('\\')
+    return name.ifEmpty { detail }
+}
+
+internal fun elapsedText(seconds: Long): String = ImuxBundle.message("action.overview.progress.elapsed", seconds)
+
+/**
+ * 加载中的单行提示：转圈 + 当前动作 + 耗时，作为一组紧凑地居中显示。
+ *
+ * 动作文字放不下时只截断它本身（JLabel 自带省略号，悬停看全文），耗时始终紧跟在后面完整显示。
+ * 整组的最小/首选宽度不随文字变长，避免长命令把弹窗撑宽、宽度随动作忽大忽小。
+ */
+internal class LoadingRow {
+    val spinner = JLabel(AnimatedIcon.Default())
+    val action = JBLabel()
+    val elapsed = JBLabel().apply { foreground = JBColor.GRAY }
+    val component: JComponent = JPanel(CenteredRowLayout(JBUI.scale(8), JBUI.scale(32))).apply {
+        isOpaque = false
+        add(spinner)
+        add(action)
+        add(elapsed)
+    }
+
+    fun update(actionText: String, elapsedSeconds: Long) {
+        action.text = actionText
+        action.toolTipText = actionText
+        elapsed.text = elapsedText(elapsedSeconds)
+    }
+}
+
+/**
+ * 把三个子组件（图标、可截断的文字、固定文字）排成一行，整组水平垂直居中。
+ * 空间不够时只压缩中间那个；首选/最小宽度不计中间文字，所以不会撑宽容器。
+ */
+private class CenteredRowLayout(private val gap: Int, private val margin: Int) : java.awt.LayoutManager {
+    override fun addLayoutComponent(name: String?, comp: java.awt.Component) = Unit
+    override fun removeLayoutComponent(comp: java.awt.Component) = Unit
+
+    override fun preferredLayoutSize(parent: java.awt.Container): java.awt.Dimension = fixedSize(parent)
+    override fun minimumLayoutSize(parent: java.awt.Container): java.awt.Dimension = fixedSize(parent)
+
+    /** 只算图标和耗时：中间文字多长都不影响容器尺寸。 */
+    private fun fixedSize(parent: java.awt.Container): java.awt.Dimension {
+        val (lead, text, tail) = parent.components
+        val height = maxOf(lead.preferredSize.height, text.preferredSize.height, tail.preferredSize.height)
+        val insets = parent.insets
+        return java.awt.Dimension(
+            lead.preferredSize.width + tail.preferredSize.width + gap * 2 + margin * 2 + insets.left + insets.right,
+            height + insets.top + insets.bottom,
+        )
+    }
+
+    override fun layoutContainer(parent: java.awt.Container) {
+        val (lead, text, tail) = parent.components
+        val insets = parent.insets
+        val available = parent.width - insets.left - insets.right - margin * 2
+        val fixed = lead.preferredSize.width + tail.preferredSize.width + gap * 2
+        val textWidth = text.preferredSize.width.coerceAtMost((available - fixed).coerceAtLeast(0))
+        val total = fixed + textWidth
+        var x = insets.left + margin + ((available - total) / 2).coerceAtLeast(0)
+        val centerY = insets.top + (parent.height - insets.top - insets.bottom) / 2
+        for ((comp, width) in listOf(lead to lead.preferredSize.width, text to textWidth, tail to tail.preferredSize.width)) {
+            val height = comp.preferredSize.height
+            comp.setBounds(x, centerY - height / 2, width, height)
+            x += width + gap
+        }
+    }
+}
+
+private fun wrappedLabelHtml(text: String, width: Int): String =
+    "<html><div style='text-align:center;width:${width}px'>" +
+        com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(text) + "</div></html>"
+
+/** 超时、无法解析给出可读提示；其他错误保留原始信息便于排查。 */
+internal fun overviewErrorText(error: Throwable): String = when (error) {
+    is OneShotAgentTimeoutException -> ImuxBundle.message("action.overview.failed.timeout")
+    is OverviewParseException -> ImuxBundle.message("action.overview.failed.parse")
+    else -> error.message ?: ImuxBundle.message("action.overview.failed.hint")
 }
 
 /**
