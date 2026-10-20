@@ -382,8 +382,9 @@ internal fun transcriptMessage(
     navigatorVisibleTextOnly: Boolean = false,
     includeToolContent: Boolean = false,
     firstTextSegmentOnly: Boolean = false,
+    maxLineChars: Int = MAX_JSON_LINE_CHARS,
 ): SessionTranscriptMessage? {
-    if (line.length > MAX_JSON_LINE_CHARS) return null
+    if (line.length > maxLineChars) return null
     val root = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() ?: return null
     val message =
         when (agentType) {
@@ -582,7 +583,7 @@ internal fun stripMarkdownForMatching(text: String): String =
         .replace(Regex("!\\[([^]]*)]\\([^)]*\\)"), "$1")
         .replace(Regex("\\[([^]]*)]\\([^)]*\\)"), "$1")
 
-private fun redactNavigatorImagePayloads(line: String): String {
+internal fun redactNavigatorImagePayloads(line: String): String {
     val result = StringBuilder(minOf(line.length, MAX_JSON_LINE_CHARS))
     var copiedUntil = 0
     var cursor = 0
@@ -723,7 +724,7 @@ private fun runTitleCli(
 
 private const val MAX_TITLE_CHARS = 60
 private const val MAX_TRANSCRIPT_LINES = 400
-private const val MAX_JSON_LINE_CHARS = 128_000
+internal const val MAX_JSON_LINE_CHARS = 128_000
 private const val MAX_MESSAGES = 6
 private const val TITLE_RECENT_USER_MESSAGES = 8
 private const val TITLE_MESSAGE_CHARS = 500

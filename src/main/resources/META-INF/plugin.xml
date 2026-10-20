@@ -170,6 +170,15 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
         <action
+                id="imux.ProgressOverview"
+                class="com.github.izerui.imux.terminal.ProgressOverviewAction"
+                text="Session Trail"
+                description="See how this session has progressed from the start to now"
+                icon="AllIcons.Actions.Preview">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="before"
+                          relative-to-action="imux.HandoffSession"/>
+        </action>
+        <action
                 id="imux.CloseNonSessionEditors"
                 class="com.github.izerui.imux.terminal.CloseNonSessionEditorsAction"
                 text="Close Non-Session Tabs"
