@@ -13,43 +13,49 @@
     <description><![CDATA[
       imux turns your JetBrains IDE into a full AI coding cockpit — run Claude Code, Codex, and pi sessions in editor tabs, and give them the power of your IDE through IDEA MCP.
 
-      <p><b>Why imux instead of running AI agents in a separate terminal?</b></p>
+      <p><b>把 JetBrains IDE 变成 AI 编程驾驶舱</b>——在编辑器标签页里运行 Claude Code、Codex 和 pi 会话，并通过 IDEA MCP 让 AI 智能体用上 IDE 的能力。</p>
 
-      <p>AI coding agents are powerful, but on their own they work like a programmer with only a text
-      editor and a terminal — they can read files, write files, and run commands, but they cannot use
-      your IDE's refactoring, debugging, inspections, or run configurations. <b>imux bridges this
-      gap.</b></p>
+      <p><b>为什么用 imux，而不是在终端里直接跑 AI？</b></p>
 
-      <p><b>IDEA MCP: give AI agents access to IDE tools</b></p>
-      <p>When enabled (on by default), imux injects the JetBrains MCP server config into AI sessions it launches.
-      With a reachable MCP server, your AI agents can (Pi also requires the bundled extension script):</p>
+      <p>AI 编程智能体很强，但它们原生的工作方式更像一个只有文本编辑器和终端的程序员——能读文件、写文件、跑命令，
+      却用不了 IDE 的重构、调试、代码检查和运行配置。<b>imux 补上了这块。</b></p>
+
+      <p><b>IDEA MCP：让 AI 智能体用上 IDE 工具</b></p>
+      <p>开启后（默认开启），imux 会给它启动的 AI 会话注入 JetBrains MCP 服务器配置。
+      MCP 服务器可访问时，AI 智能体可以（Pi 还需要插件自带的扩展脚本）：</p>
       <ul>
-        <li><b>Safe refactoring</b> — rename symbols across the entire project by semantic identity, not risky text replace</li>
-        <li><b>Interactive debugging</b> — set breakpoints, step through code, inspect variables, evaluate expressions — instead of print-debugging</li>
-        <li><b>IDE-level inspections</b> — catch framework-specific issues (Spring, Django, ESLint, Android…) that compilers and linters miss</li>
-        <li><b>Run configurations</b> — run tests and apps with the exact IDE settings (env vars, runtime args, working directory)</li>
-        <li><b>Database access</b> — query databases using your IDE's saved connections and credentials</li>
-        <li><b>Code formatting</b> — apply your project's configured Code Style, not an external formatter</li>
-        <li><b>Semantic navigation</b> — trace call hierarchies, find symbol definitions, and understand type relationships across modules</li>
+        <li><b>安全重构</b>——按语义在整个项目里重命名符号，而不是有风险的文本替换</li>
+        <li><b>交互式调试</b>——设置断点、单步执行、查看变量、计算表达式，不用再加 print 语句</li>
+        <li><b>IDE 级代码检查</b>——发现编译器和 linter 抓不到的框架问题（Spring、Django、ESLint、Android 等）</li>
+        <li><b>运行配置</b>——用 IDE 里完全相同的设置（环境变量、运行参数、工作目录）跑测试和应用</li>
+        <li><b>数据库访问</b>——用 IDE 已保存的连接和凭据查询数据库</li>
+        <li><b>代码格式化</b>——按项目配置的代码风格格式化，而不是外部格式化工具</li>
+        <li><b>语义导航</b>——跨模块追踪调用层级、查找符号定义、理解类型关系</li>
       </ul>
-      <p>Works with JetBrains IDEs that support Platform build 262+ (IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion…).
-      Available tools depend on the IDE product, installed plugins, and MCP server version.
-      The injection is session-scoped — it does not modify your CLI's global config.</p>
+      <p>适用于 Platform build 262 及以上的 JetBrains IDE（IntelliJ IDEA、PyCharm、WebStorm、GoLand、Rider、CLion 等）。
+      可用的工具取决于 IDE 产品、已安装的插件和 MCP 服务器版本。
+      注入只对本次会话生效，不会修改 CLI 的全局配置。</p>
 
-      <p><b>Session management in editor tabs</b></p>
+      <p><b>在编辑器标签页里管理会话</b></p>
       <ul>
-        <li>Run AI sessions in <b>editor tabs</b> alongside your code — split, rearrange, or move to another window</li>
-        <li>The <b>AI Agents</b> panel lists sessions for the current project, sorted by recent activity</li>
-        <li>Resume any session with one click — no need to look up session IDs</li>
-        <li><b>Notifications</b> when an agent finishes a turn or needs input, with elapsed time and session title</li>
-        <li><b>Handoff</b> between agents — continue work from Claude Code in Codex or Pi with context carried over</li>
+        <li>AI 会话以<b>编辑器标签页</b>的形式和代码并排——可以分屏、调整顺序，或拖到另一个窗口</li>
+        <li><b>AI Agents</b> 面板列出当前项目的会话，按最近活动排序</li>
+        <li>一键恢复任意会话，不用去查会话 ID</li>
+        <li>智能体完成一轮或需要输入时发出<b>通知</b>，附带耗时和会话标题</li>
+        <li>在智能体之间<b>交接</b>——把 Claude Code 里的工作带着上下文交给 Codex 或 Pi 继续</li>
       </ul>
 
-      <p><b>imux does not host your conversations.</b> Session history stays in each CLI's own store.
-      Uninstalling the plugin leaves all session history intact.</p>
+      <p><b>结对编程与会话洞察</b></p>
+      <ul>
+        <li><b>结对编程</b>——绑定另一个智能体当副驾驶，主会话每完成一轮，它就审查一次并把反馈发回主会话</li>
+        <li><b>审查一次</b>——不用绑定副驾驶，选任意智能体按你的要求做一次性审查</li>
+        <li><b>会话轨迹</b>——把长会话浓缩成一条按时间排列的进展时间线，标出主线、旁支、需求变更、报错和放弃的方案；由智能体自己读取会话记录，并实时显示进度</li>
+      </ul>
 
-      <p><b>Requirements</b>: JetBrains IDE 2026.2+ (Platform build 262+) and at least one supported CLI:
-      <code>claude</code>, <code>codex</code>, or <code>pi</code>.</p>
+      <p><b>imux 不托管你的对话。</b>会话历史保存在各个 CLI 自己的存储里，卸载插件后会话历史完整保留。</p>
+
+      <p><b>运行要求</b>：JetBrains IDE 2026.2 及以上（Platform build 262+），并至少安装一个支持的 CLI：
+      <code>claude</code>、<code>codex</code> 或 <code>pi</code>。</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
