@@ -460,7 +460,7 @@ internal fun createNodePanel(
     timeColumnWidth: Int = node.time?.let { timeColumnWidthFor(listOf(node)) } ?: 0,
 ): JPanel {
     val symbol = when (node.symbol) {
-        NodeSymbol.MAIN -> if (inRollback) "╳" else "●"
+        NodeSymbol.MAIN -> if (inRollback) "×" else "●"
         NodeSymbol.SIDE -> "○"
         NodeSymbol.ROLLBACK_START -> "┌"
         NodeSymbol.ROLLBACK_END -> "└"
@@ -628,7 +628,7 @@ private class TextWithTrailingTagLayout(private val gap: Int, private val minTex
 }
 
 /** 轨迹线上出现的全部符号；列宽按其中最宽的一个算。 */
-private val TRAIL_GLYPHS = listOf("●", "○", "╳", "┌", "└", "↻", "⚠", "◐", "│")
+private val TRAIL_GLYPHS = listOf("●", "○", "×", "┌", "└", "↻", "⚠", "◐", "│")
 
 /**
  * 符号列宽：所有符号里最宽的那个再加左右留白。符号是比例字体里的文字，宽窄不一

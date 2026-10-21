@@ -77,4 +77,16 @@ class TrailGlyphRenderTest {
             }
         }
     }
+
+    @Test
+    fun `回滚中的主线节点用小叉号，画出来和圆点大小相当`() = SwingUtilities.invokeAndWait {
+        val inks = renderInks(withTime = false)
+        val dot = inks.first { it.glyph == "●" }
+        val cross = inks.singleOrNull { it.glyph == "×" }
+        assertTrue("回滚中的主线节点应为 ×：${inks.map { it.glyph }}", cross != null && inks.none { it.glyph == "╳" })
+        val dotWidth = dot.maxX - dot.minX
+        val crossWidth = cross!!.maxX - cross.minX
+        // × 的笔画斜着展开，比 ● 略宽约 2px，视觉重量相当；原来撑满整格的 ╳ 宽约 12px，会被拦住
+        assertTrue("× 宽 $crossWidth 不应比 ● 宽 $dotWidth 多出 2px 以上", crossWidth <= dotWidth + 2 * scale)
+    }
 }
