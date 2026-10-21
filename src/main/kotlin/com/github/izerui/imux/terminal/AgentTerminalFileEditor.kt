@@ -104,6 +104,9 @@ class AgentTerminalFileEditor(
     private var imeCompositionSupport: AgentImeCompositionSupport? = null
     private val messageNavigator = SessionMessageNavigator(project, virtualFile, this)
     private var terminalLayer: JComponent? = null
+
+    /** 点到轨迹卡片之外（终端正文、滚动条、叠加控件、提示条）就收起面板。 */
+    private val trailOutsideClicks by lazy { TrailOutsideClicks { trailOverlay.collapse() } }
     private val trailOverlay =
         SessionTrailOverlay(
             project,
@@ -329,6 +332,10 @@ class AgentTerminalFileEditor(
             }
         this.scrollButton = scrollButton
         val navigatorComponent = messageNavigator.component
+        // 标签页里固定不变、不属于轨迹卡片的组件；终端正文与滚动条随编辑器切换另行绑定
+        trailOutsideClicks.attach(navigatorComponent)
+        trailOutsideClicks.attach(scrollButton)
+        trailOutsideClicks.attach(peerBanner)
         startScrollTracking()
         startInputTracking()
 
@@ -518,6 +525,7 @@ class AgentTerminalFileEditor(
             imeCompositionSupport?.dispose()
             imeCompositionSupport = null
             observedEditor = editor
+            trailOutsideClicks.bindEditor(editor?.let(::terminalClickTargets).orEmpty())
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
             editor?.addEditorMouseListener(editorMouseListener)
             messageNavigator.bind(editor)
@@ -585,6 +593,8 @@ class AgentTerminalFileEditor(
         // 早退时不摘就会把已死实例的转发器留在面板上，拖几次叠一串。
         focusHost?.removeFocusListener(focusForwarder)
         focusHost = null
+        // 同理：终端编辑器会被新实例沿用，收起监听要摘干净，免得点一下去调已销毁的面板
+        trailOutsideClicks.dispose()
 
         // 拖动标签页、分屏等操作会先销毁再重建编辑器，平台用这个标记区分。
         // 漏判会导致拖一下标签页就把会话杀了。

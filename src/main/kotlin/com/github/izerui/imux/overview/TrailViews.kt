@@ -88,6 +88,38 @@ internal fun buildFailedWithPrevious(message: String, previous: OverviewResult, 
         add(buildResultPanel(previous, stale = false, onRetry), BorderLayout.CENTER)
     }
 
+/**
+ * 更新中、已有旧结果：顶部一条进度横幅（[progress] 与「取消」），下面照常显示旧时间线，
+ * 完成后由调用方整体换成新结果。旧时间线上不再放过期横幅和「更新轨迹」，免得与进行中的更新冲突。
+ */
+internal fun buildUpdatingPanel(previous: OverviewResult, onCancel: () -> Unit): UpdatingView {
+    val progress = LoadingRow(margin = 0)
+    val component = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(
+            JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+                isOpaque = true
+                background = JBColor(0xE3F2FD.toInt(), 0x1E3A5F)
+                border = JBUI.Borders.empty(4, 8)
+                add(progress.component, BorderLayout.CENTER)
+                add(
+                    ActionLink(ImuxBundle.message("action.overview.cancel")).apply {
+                        isFocusable = false
+                        addActionListener { onCancel() }
+                    },
+                    BorderLayout.EAST,
+                )
+            },
+            BorderLayout.NORTH,
+        )
+        add(buildResultPanel(previous.copy(saveFailed = false), stale = false, onRegenerate = {}), BorderLayout.CENTER)
+    }
+    return UpdatingView(component, progress)
+}
+
+/** 更新中视图：[progress] 由调用方按进度事件刷新。 */
+internal class UpdatingView(val component: JComponent, val progress: LoadingRow)
+
 /** 未落盘、未生成时的说明文字，可带一个操作链接。 */
 internal fun buildHintPanel(text: String, action: Pair<String, () -> Unit>?): JComponent {
     val center = JPanel().apply {
@@ -154,11 +186,14 @@ internal fun elapsedText(seconds: Long): String = ImuxBundle.message("action.ove
  * 动作文字放不下时只截断它本身（JLabel 自带省略号，悬停看全文），耗时始终紧跟在后面完整显示。
  * 整组的最小/首选宽度不随文字变长，避免长命令把弹窗撑宽、宽度随动作忽大忽小。
  */
-internal class LoadingRow {
+internal class LoadingRow(
+    /** 两侧留白（未缩放）：居中的加载页留 32，放进顶部横幅时为 0，把宽度都留给动作文字。 */
+    margin: Int = 32,
+) {
     val spinner = JLabel(AnimatedIcon.Default())
     val action = JBLabel()
     val elapsed = JBLabel().apply { foreground = JBColor.GRAY }
-    val component: JComponent = JPanel(CenteredRowLayout(JBUI.scale(8), JBUI.scale(32))).apply {
+    val component: JComponent = JPanel(CenteredRowLayout(JBUI.scale(8), JBUI.scale(margin))).apply {
         isOpaque = false
         add(spinner)
         add(action)

@@ -333,19 +333,40 @@ class IncrementalTrailTest {
     }
 
     @Test
-    fun `增量提示词限制每次新增数量，只记里程碑，并允许超限时合并较早的同类节点`() {
+    fun `增量时旧时间线与新内容一起整体调整，不要求保留旧节点`() {
         val zh = trailPrompt(true, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
-        assertTrue(zh.contains("通常新增 0-3 个节点"))
-        assertTrue(zh.contains("只记里程碑级的进展"))
-        assertTrue(zh.contains("零碎的追问和小修小补"))
-        assertTrue(zh.contains("超过约 20 个节点时，把较早的、相邻的同类节点合并成一个概括节点"))
-        assertTrue("关键转折不合并", zh.contains("CHANGE、ERROR 节点和回滚区间不合并"))
+        assertTrue(zh.contains("把上次的时间线和新增内容合在一起，整体重新整理"))
+        assertTrue(zh.contains("旧节点可以改写、合并或删减"))
+        assertTrue("关键转折仍要体现", zh.contains("需求变更、报错和被放弃的方案仍要在时间线里体现"))
+        assertFalse("不能再要求原样保留", zh.contains("原样保留"))
+        assertFalse(zh.contains("先是之前的节点，再接上新增内容的节点"))
 
         val en = trailPrompt(false, AgentType.PI, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
-        assertTrue(en.contains("usually add 0-3 nodes"))
-        assertTrue(en.contains("milestone-level progress"))
-        assertTrue(en.contains("more than about 20 nodes, merge earlier adjacent nodes of the same type"))
-        assertTrue(en.contains("never merge CHANGE or ERROR nodes or rollback sections"))
+        assertTrue(en.contains("Combine the previous timeline with the new content and reorganize it as a whole"))
+        assertTrue(en.contains("Earlier nodes may be reworded, merged or dropped"))
+        assertTrue(en.contains("requirement changes, errors and abandoned approaches must still be reflected"))
+        assertFalse(en.contains("Keep earlier nodes as they are"))
+    }
+
+    @Test
+    fun `每个节点限制字数、只写一件事、不逐项列举`() {
+        val file = Path.of("/tmp/s.jsonl")
+        for (prompt in listOf(
+            overviewPrompt(true, AgentType.CLAUDE, file, 55),
+            trailPrompt(true, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500)),
+        )) {
+            assertTrue(prompt.contains("每个节点不超过 30 个字"))
+            assertTrue(prompt.contains("不用分号或逗号把多件事串在一起"))
+            assertTrue(prompt.contains("不逐项列举具体子项"))
+        }
+        for (prompt in listOf(
+            overviewPrompt(false, AgentType.CODEX, file, 55),
+            trailPrompt(false, AgentType.CODEX, file, cached(1_000, 40), TrailCursor(55, 1_500)),
+        )) {
+            assertTrue(prompt.contains("at most about 20 words per node"))
+            assertTrue(prompt.contains("do not chain several things with semicolons or commas"))
+            assertTrue(prompt.contains("do not enumerate specific items"))
+        }
     }
 
     @Test

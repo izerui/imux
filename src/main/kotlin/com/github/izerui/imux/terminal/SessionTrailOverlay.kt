@@ -9,6 +9,7 @@ import com.github.izerui.imux.overview.buildErrorPanel
 import com.github.izerui.imux.overview.buildFailedWithPrevious
 import com.github.izerui.imux.overview.buildHintPanel
 import com.github.izerui.imux.overview.buildResultPanel
+import com.github.izerui.imux.overview.buildUpdatingPanel
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -104,7 +105,7 @@ internal class SessionTrailOverlay(
 
     val chip: JComponent = TrailSurface().apply {
         layout = BorderLayout()
-        add(chipButton, BorderLayout.CENTER)
+        add(trailCornerSlot(chipButton), BorderLayout.CENTER)
     }
 
     private val titleLabel = JBLabel().apply { font = JBUI.Fonts.label().asBold() }
@@ -138,22 +139,8 @@ internal class SessionTrailOverlay(
     val card: JComponent = TrailSurface(showGrip = true).apply {
         layout = BorderLayout()
         // 左侧、底部的留白就是拖拽热区：落在卡片自身而不是子组件上，鼠标事件才会交给卡片
-        border = JBUI.Borders.empty(4, RESIZE_ZONE, RESIZE_ZONE, 4)
-        add(
-            JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.empty(2, 6, 4, 2)
-                add(titleLabel, BorderLayout.WEST)
-                add(
-                    JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
-                        isOpaque = false
-                        add(collapseButton)
-                    },
-                    BorderLayout.EAST,
-                )
-            },
-            BorderLayout.NORTH,
-        )
+        border = trailCardBorder()
+        add(trailCardHeader(titleLabel, collapseButton), BorderLayout.NORTH)
         add(body, BorderLayout.CENTER)
         isVisible = false
         val escape = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)
@@ -206,11 +193,15 @@ internal class SessionTrailOverlay(
         val hasTimeline = when (val state = renderedState) {
             is TrailState.Ready -> state.result.nodes.isNotEmpty()
             is TrailState.Failed -> state.previous?.nodes?.isNotEmpty() == true
+            is TrailState.Loading -> state.previous?.nodes?.isNotEmpty() == true
             else -> false
         }
         if (hasTimeline) return setting
         return card.preferredSize.height.coerceAtLeast(JBUI.scale(TrailSizeSetting.COMPACT_HEIGHT)).coerceAtMost(setting)
     }
+
+    /** 在卡片之外点击时由编辑器调用；已收起时什么都不做。 */
+    fun collapse() = setExpanded(false)
 
     private fun setExpanded(expanded: Boolean) {
         if (virtualFile.trailExpanded == expanded) return
@@ -267,7 +258,7 @@ internal class SessionTrailOverlay(
                 ImuxBundle.message("action.overview.empty"),
                 ImuxBundle.message("action.overview.generate") to regenerate,
             )
-            is TrailState.Loading -> loadingPanel()
+            is TrailState.Loading -> loadingPanel(state.previous)
             is TrailState.Ready -> buildResultPanel(state.result, state.stale, regenerate)
             is TrailState.Failed -> {
                 val previous = state.previous
@@ -277,7 +268,13 @@ internal class SessionTrailOverlay(
         }
     }
 
-    private fun loadingPanel(): JComponent {
+    private fun loadingPanel(previous: com.github.izerui.imux.overview.OverviewResult?): JComponent {
+        // 更新时旧时间线照看，进度放顶部；第一次生成没有旧内容，进度居中
+        if (previous != null && previous.nodes.isNotEmpty()) {
+            val view = buildUpdatingPanel(previous) { store.cancel(key) }
+            loadingRow = view.progress
+            return view.component
+        }
         val row = LoadingRow()
         loadingRow = row
         return JPanel(BorderLayout()).apply {
@@ -329,7 +326,7 @@ internal class SessionTrailOverlay(
         private var resizeHeight = false
 
         private fun zone(event: MouseEvent): Pair<Boolean, Boolean> {
-            val edge = JBUI.scale(RESIZE_ZONE)
+            val edge = JBUI.scale(TRAIL_RESIZE_ZONE)
             return (event.x < edge) to (event.y > card.height - edge)
         }
 
@@ -396,8 +393,7 @@ internal class SessionTrailOverlay(
     private companion object {
         const val CHIP_ACTION_PLACE = "imuxSessionTrail"
         const val MONITOR_REFRESH_MS = 1_000
-        const val RESIZE_ZONE = 6
-        val BADGE_COLOR = JBColor.namedColor("Imux.SessionTrail.staleBadge", JBColor(0xE08E0B, 0xD9A343))
+                val BADGE_COLOR = JBColor.namedColor("Imux.SessionTrail.staleBadge", JBColor(0xE08E0B, 0xD9A343))
     }
 }
 
@@ -434,3 +430,32 @@ private class TrailSurface(private val showGrip: Boolean = false) : JPanel() {
         val BORDER = JBColor.namedColor("Imux.SessionMessageNavigator.previewBorder", JBColor(0xD1D5DB, 0x393B40))
     }
 }
+
+/**
+ * 右上角 chip×chip 的按钮位：折叠图标和卡片里的「收起」都放在这里。
+ * 卡片与折叠图标锚定同一个右上角，所以展开、收起时按钮位置完全不变，鼠标不用挪。
+ */
+internal fun trailCornerSlot(button: JComponent): JComponent =
+    JPanel(BorderLayout()).apply {
+        isOpaque = false
+        val size = trailMetrics().chip
+        preferredSize = java.awt.Dimension(size, size)
+        minimumSize = preferredSize
+        add(button, BorderLayout.CENTER)
+    }
+
+/** 卡片边距：上、右为 0，让「收起」贴住右上角；左、下留出拖拽热区。 */
+internal fun trailCardBorder(): javax.swing.border.Border =
+    JBUI.Borders.empty(0, TRAIL_RESIZE_ZONE, TRAIL_RESIZE_ZONE, 0)
+
+/** 卡片标题行：标题在左，「收起」占右上角按钮位，行高等于按钮位。 */
+internal fun trailCardHeader(title: JComponent, collapseButton: JComponent): JComponent =
+    JPanel(BorderLayout()).apply {
+        isOpaque = false
+        border = JBUI.Borders.emptyBottom(2)
+        add(title.apply { border = JBUI.Borders.emptyLeft(6) }, BorderLayout.CENTER)
+        add(trailCornerSlot(collapseButton), BorderLayout.EAST)
+    }
+
+/** 卡片左、下边缘的拖拽热区宽度（未缩放）。 */
+internal const val TRAIL_RESIZE_ZONE = 6

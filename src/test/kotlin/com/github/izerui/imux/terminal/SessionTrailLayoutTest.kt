@@ -84,4 +84,27 @@ class SessionTrailLayoutTest {
 
         assertEquals(Dimension(200, 100), size)
     }
+
+    @Test
+    fun `展开后收起按钮正好落在折叠图标的位置`() {
+        val chipSize = com.intellij.util.ui.JBUI.scale(24)
+        for (cardWidth in listOf(240, 360, 600)) {
+            val button = javax.swing.JButton()
+            val card = javax.swing.JPanel(java.awt.BorderLayout()).apply {
+                border = trailCardBorder()
+                add(trailCardHeader(javax.swing.JLabel("会话轨迹"), button), java.awt.BorderLayout.NORTH)
+                setSize(cardWidth, 300)
+            }
+            fun layout(c: java.awt.Component) {
+                if (c !is java.awt.Container) return
+                c.doLayout()
+                c.components.forEach { layout(it) }
+            }
+            layout(card)
+
+            // 卡片与折叠图标都锚定同一个右上角（见 trailBounds），折叠图标占卡片右上 chip×chip
+            val slot = javax.swing.SwingUtilities.convertRectangle(button.parent, button.bounds, card)
+            assertEquals("@${cardWidth}px", Rectangle(cardWidth - chipSize, 0, chipSize, chipSize), slot)
+        }
+    }
 }

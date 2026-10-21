@@ -77,6 +77,45 @@ class TrailStateStoreTest {
     }
 
     @Test
+    fun `更新时加载状态带着旧结果，第一次生成时没有`() {
+        cache["s2"] = CachedView(result("旧"), stale = true)
+        val release = CountDownLatch(1)
+        val store = store(generate = { _, _ ->
+            release.await(5, TimeUnit.SECONDS)
+            result("新")
+        })
+
+        store.generate("s1", TAB)
+        store.generate("s2", TAB)
+
+        assertNull("第一次生成没有旧内容", (store.state("s1") as TrailState.Loading).previous)
+        assertEquals("旧", (store.state("s2") as TrailState.Loading).previous!!.nodes.single().text)
+        release.countDown()
+        store.await("s2")
+        assertEquals("完成后整体换成新结果", "新", (store.state("s2") as TrailState.Ready).result.nodes.single().text)
+        store.await("s1")
+    }
+
+    @Test
+    fun `失败后再更新，加载中仍显示失败前的旧结果`() {
+        cache["s1"] = CachedView(result("旧"), stale = true)
+        val edt = QueuedEdt()
+        var fail = true
+        val release = CountDownLatch(1)
+        val store = store(onEdt = edt.onEdt, generate = { _, _ ->
+            if (fail) throw IllegalStateException("boom")
+            release.await(5, TimeUnit.SECONDS)
+            result("新")
+        })
+        store.generate("s1", TAB); store.await("s1"); edt.drain()
+        fail = false
+
+        store.generate("s1", TAB)
+        assertEquals("旧", (store.state("s1") as TrailState.Loading).previous!!.nodes.single().text)
+        release.countDown(); store.await("s1"); edt.drain()
+    }
+
+    @Test
     fun `生成中重复触发只调用一次`() {
         val calls = AtomicInteger()
         val release = CountDownLatch(1)
@@ -227,14 +266,15 @@ class TrailStateStoreTest {
         })
         store.generate("s1", TAB)
         store.generate("s2", TAB)
-        notified.clear()
+        // 面板在回调里读状态：记录的必须是回调当时看到的，而不是 releaseOwner 返回之后的
+        val seenInCallback = java.util.concurrent.ConcurrentHashMap<String, TrailState>()
+        store.addListener { key -> seenInCallback[key] = store.state(key) }
 
         store.releaseOwner(TAB)
         release.countDown()
 
-        assertTrue("每个被清理的会话都要通知：$notified", notified.containsAll(listOf("s1", "s2")))
-        assertEquals("刷新后看到的不再是加载中", TrailState.Empty, store.state("s1"))
-        assertEquals(TrailState.Empty, store.state("s2"))
+        assertEquals("s1 的面板在回调里应读到 Empty", TrailState.Empty, seenInCallback["s1"])
+        assertEquals("s2 的面板在回调里应读到 Empty", TrailState.Empty, seenInCallback["s2"])
     }
 
     @Test

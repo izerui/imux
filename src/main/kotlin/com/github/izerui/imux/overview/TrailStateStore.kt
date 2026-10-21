@@ -21,7 +21,8 @@ sealed interface TrailState {
     /** 已落盘，但从未生成过。 */
     data object Empty : TrailState
 
-    data class Loading(val progress: String?, val startedAt: Long) : TrailState
+    /** [previous] 是更新前已有的结果，更新期间照常展示，完成后整体替换；第一次生成时为 null。 */
+    data class Loading(val progress: String?, val startedAt: Long, val previous: OverviewResult? = null) : TrailState
 
     data class Ready(val result: OverviewResult, val stale: Boolean) : TrailState
 
@@ -92,7 +93,7 @@ internal class TrailStateStore(
         }
         beforeGeneration[key] = states[key] ?: NO_RECORD
         owners[key] = owner
-        states[key] = TrailState.Loading(null, clock())
+        states[key] = TrailState.Loading(null, clock(), previous)
 
         val job = scope.launch(ioDispatcher, start = CoroutineStart.LAZY) {
             val self = coroutineContext[Job]

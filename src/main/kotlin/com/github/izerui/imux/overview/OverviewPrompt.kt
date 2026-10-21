@@ -116,11 +116,11 @@ ${recordFormatZh(agentType)}
 
 ## 如何更新
 
-1. 输出更新后的完整时间线：先是之前的节点，再接上新增内容的节点
-2. 之前的节点原则上原样保留，不要改写措辞；但时间线超过约 20 个节点时，把较早的、相邻的同类节点合并成一个概括节点（CHANGE、ERROR 节点和回滚区间不合并）
+1. 把上次的时间线和新增内容合在一起，整体重新整理，输出完整时间线，反映会话从开始到第 $endLine 行的全部进展
+2. 旧节点可以改写、合并或删减：用更概括的说法归并相关步骤，去掉已不重要的细节；需求变更、报错和被放弃的方案仍要在时间线里体现
 3. 新内容表明之前某段方案最终被放弃时，用 ROLLBACK_START 和 ROLLBACK_END 把那段节点包起来
 4. 上次末尾的 IN_PROGRESS 节点按新内容改为已完成的描述，或删去
-5. 新增内容通常新增 0-3 个节点，只记里程碑级的进展（需求确认、方案落定、实现完成、测试结果、需求变更、报错、回滚）；零碎的追问和小修小补归并进上一个相关节点，或者不记
+5. 新增内容只记里程碑级的进展（需求确认、方案落定、实现完成、测试结果、需求变更、报错、回滚），零碎的追问和小修小补归并进相关节点，或者不记
 
 ${readOnlyAndFormatZh()}
 """.trimIndent()
@@ -145,11 +145,11 @@ Lines after $endLine were appended after this run started: do not read them and 
 
 ## How to update
 
-1. Output the complete updated timeline: the earlier nodes first, followed by nodes for the new content
-2. Keep earlier nodes as they are and do not reword them; but if the timeline has more than about 20 nodes, merge earlier adjacent nodes of the same type into one summary node (never merge CHANGE or ERROR nodes or rollback sections)
+1. Combine the previous timeline with the new content and reorganize it as a whole: output one complete timeline covering the session's progress from the start to line $endLine
+2. Earlier nodes may be reworded, merged or dropped: fold related steps into broader nodes and drop details that no longer matter; requirement changes, errors and abandoned approaches must still be reflected in the timeline
 3. If the new content shows that an earlier approach was eventually abandoned, wrap those nodes with ROLLBACK_START and ROLLBACK_END
 4. Update the previous trailing IN_PROGRESS node to reflect the new content, or drop it
-5. For the new content, usually add 0-3 nodes and record only milestone-level progress (requirements settled, approach decided, implementation done, test results, requirement changes, errors, rollbacks); fold minor follow-ups and small fixes into the previous related node, or leave them out
+5. For the new content, record only milestone-level progress (requirements settled, approach decided, implementation done, test results, requirement changes, errors, rollbacks); fold minor follow-ups and small fixes into the related node, or leave them out
 
 ${readOnlyAndFormatEn()}
 """.trimIndent()
@@ -180,7 +180,7 @@ TYPE 取值：
 ## 规则
 
 1. 按时间顺序串成一条线，不按对话轮次拆分
-2. 每个节点只写一句话，突出"做了什么"和"关键判断/结果"；不罗列文件名、命令、参数等实现细节，除非它就是这一步的核心
+2. 每个节点只写一句话，突出"做了什么"和"关键判断/结果"：每个节点不超过 30 个字，只写一件事，不用分号或逗号把多件事串在一起；不逐项列举具体子项（模型、报表、字段等），用一个概括词代替；不罗列文件名、命令、参数等实现细节，除非它就是这一步的核心
 3. 主线任务与穿插的旁支任务要区分
 4. 如果存在需求变更、方案回滚、执行报错，必须用对应 TYPE 标记
 5. 回滚区间用 ROLLBACK_START 和 ROLLBACK_END 包裹，中间的节点也用 MAIN（它们会被整体灰化显示）
@@ -215,7 +215,7 @@ TYPE values:
 ## Rules
 
 1. Follow chronological order, do not split by conversation rounds
-2. One sentence per node — highlight what was done and key decisions/results; do not list file names, commands or parameters unless they are the point of that step
+2. One sentence per node — highlight what was done and key decisions/results: at most about 20 words per node, one thing per node, do not chain several things with semicolons or commas; do not enumerate specific items (models, reports, fields, etc.), use one summarizing word instead; do not list file names, commands or parameters unless they are the point of that step
 3. Distinguish main tasks from side tasks
 4. Mark requirement changes, rollbacks, and errors with their corresponding TYPE
 5. Wrap rollback sections with ROLLBACK_START and ROLLBACK_END; nodes inside also use MAIN

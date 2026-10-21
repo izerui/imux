@@ -603,12 +603,57 @@ class ProgressOverviewTest {
     @Test
     fun `短文字时链接紧跟文字，右侧留空`() = onEdt {
         val root = buildResultPanel(previousTrail, stale = true) {}
-        val host = layoutOffscreen(root, 600, 400)
+        val host = layoutOffscreen(root, 800, 400)
         val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
         val link = allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>().single()
         val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
         val bannerRect = javax.swing.SwingUtilities.convertRectangle(banner.parent, banner.bounds, host)
         assertTrue("宽卡片里链接不应被推到最右侧：link=$linkRect banner=$bannerRect", linkRect.maxX < bannerRect.maxX - 100)
+    }
+
+    @Test
+    fun `更新中进度在顶部，旧时间线照常可看，且不再提供更新入口`() = onEdt {
+        var cancels = 0
+        val view = buildUpdatingPanel(previousTrail) { cancels++ }
+        view.progress.update("执行命令 sed -n '1143,1144p' /Users/x/.claude/projects/a.jsonl", 9)
+        val root = view.component
+        val host = layoutOffscreen(root, 360, 400)
+
+        val north = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
+        assertTrue("进度放在顶部横幅里", javax.swing.SwingUtilities.isDescendingFrom(view.progress.component, north))
+        val panes = allComponents(root).filterIsInstance<javax.swing.JTextPane>()
+        assertEquals("旧时间线照常显示", listOf("实现 JWT", "补测试"), panes.map { it.text })
+        val nodeRect = javax.swing.SwingUtilities.convertRectangle(panes.first().parent, panes.first().bounds, host)
+        val bannerRect = javax.swing.SwingUtilities.convertRectangle(north.parent, north.bounds, host)
+        assertTrue("旧时间线在进度横幅下方：node=$nodeRect banner=$bannerRect", nodeRect.y >= bannerRect.maxY && nodeRect.height > 0)
+
+        val links = allComponents(root).filterIsInstance<com.intellij.ui.components.ActionLink>()
+        assertEquals("只有取消，没有更新轨迹", listOf(ImuxBundle.message("action.overview.cancel")), links.map { it.text })
+        links.single().doClick()
+        assertEquals(1, cancels)
+    }
+
+    @Test
+    fun `窄卡片里顶部进度仍看得到动作，耗时与取消完整显示`() = onEdt {
+        for (width in listOf(240, 360)) {
+            val view = buildUpdatingPanel(previousTrail) {}
+            view.progress.update("执行命令 sed -n '1143,1144p' /Users/liuyuhua/.claude/projects/-Users-liuyuhua-github-imux/a.jsonl", 123)
+            val host = layoutOffscreen(view.component, width, 400)
+            val north = (view.component.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
+            val banner = javax.swing.SwingUtilities.convertRectangle(north.parent, north.bounds, host)
+            fun rect(c: java.awt.Component) = javax.swing.SwingUtilities.convertRectangle(c.parent, c.bounds, host)
+            val cancel = allComponents(north).filterIsInstance<com.intellij.ui.components.ActionLink>().single()
+            val where = "@${width}px banner=$banner action=${rect(view.progress.action)} elapsed=${rect(view.progress.elapsed)} cancel=${rect(cancel)}"
+
+            assertTrue("动作文字仍要留出可读宽度：$where", view.progress.action.width >= com.intellij.util.ui.JBUI.scale(100))
+            for (c in listOf(view.progress.elapsed, cancel)) {
+                assertTrue("${c.javaClass.simpleName} 不能被压扁：$where", c.width >= c.preferredSize.width)
+                assertTrue("${c.javaClass.simpleName} 要完整落在横幅内：$where", banner.contains(rect(c)))
+            }
+            assertTrue("耗时完整显示三位数：$where", view.progress.elapsed.text == elapsedText(123))
+            assertTrue("动作在耗时左侧、不重叠：$where", rect(view.progress.action).maxX <= rect(view.progress.elapsed).x)
+            assertTrue("耗时在取消左侧、不重叠：$where", rect(view.progress.elapsed).maxX <= rect(cancel).x)
+        }
     }
 
     @Test
@@ -919,7 +964,7 @@ class ProgressOverviewTest {
         assertEquals("command not found: claude", overviewErrorText(com.github.izerui.imux.agent.OneShotAgentException("command not found: claude")))
 
         val zh = com.github.izerui.imux.settings.PluginLanguage.SIMPLIFIED_CHINESE
-        assertEquals("AI 响应超时，请稍后重新生成", ImuxBundle.message(zh, "action.overview.failed.timeout"))
+        assertEquals("AI 响应超时，请稍后再更新", ImuxBundle.message(zh, "action.overview.failed.timeout"))
         assertEquals("正在执行 Read", ImuxBundle.message(zh, "action.overview.progress.tool", "Read"))
         assertEquals("35 秒", ImuxBundle.message(zh, "action.overview.progress.elapsed", 35))
     }

@@ -54,6 +54,24 @@ class SessionTrailOverlaySourceTest {
     }
 
     @Test
+    fun `编辑器把正文、滚动条和叠加控件接到收起监听，随编辑器切换重绑并在早退前解绑`() {
+        val create = editor.bodyAfter("private fun createEditorComponent()", '{')
+        for (target in listOf("navigatorComponent", "scrollButton", "peerBanner")) {
+            assertTrue("点 $target 也算点在轨迹之外", create.contains("trailOutsideClicks.attach($target)"))
+        }
+        assertTrue(
+            "终端编辑器切换时重绑正文与滚动条",
+            editor.normalized.contains("trailOutsideClicks.bindEditor(editor?.let(::terminalClickTargets).orEmpty())"),
+        )
+        val dispose = editor.bodyAfter("override fun dispose()", '{')
+        val unbind = dispose.indexOf("trailOutsideClicks.dispose()")
+        assertTrue("拖动重建时终端被沿用，必须在早退前解绑", unbind >= 0 && unbind < dispose.indexOf("CLOSING_TO_REOPEN"))
+        assertFalse("卡片本身不能挂收起监听", editor.normalized.contains("trailOutsideClicks.attach(trailOverlay"))
+        assertTrue(overlay.normalized.contains("fun collapse() = setExpanded(false)"))
+        assertFalse("项目约定不用全局 AWT 监听", editor.normalized.contains("addAWTEventListener"))
+    }
+
+    @Test
     fun `面板上的按钮不抢终端焦点`() {
         assertTrue(overlay.normalized.contains("isFocusable = false"))
         assertFalse(overlay.normalized.contains("requestFocus"))
