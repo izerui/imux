@@ -45,6 +45,15 @@ class SessionTrailOverlaySourceTest {
     }
 
     @Test
+    fun `收起按钮没有点击死区且点击区域足够大`() {
+        assertFalse(
+            "InplaceButton 在鼠标刚移入时会吞掉点击（TimedDeadzone），收起按钮显得不灵敏",
+            overlay.normalized.contains("InplaceButton("),
+        )
+        assertTrue(overlay.normalized.contains("ActionButton( collapseAction,"))
+    }
+
+    @Test
     fun `面板上的按钮不抢终端焦点`() {
         assertTrue(overlay.normalized.contains("isFocusable = false"))
         assertFalse(overlay.normalized.contains("requestFocus"))

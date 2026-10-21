@@ -22,7 +22,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.BadgeIcon
-import com.intellij.ui.InplaceButton
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
@@ -109,7 +108,31 @@ internal class SessionTrailOverlay(
     }
 
     private val titleLabel = JBLabel().apply { font = JBUI.Fonts.label().asBold() }
-    private val collapseButton = InplaceButton("", AllIcons.General.HideToolWindow) { setExpanded(false) }.apply { isFocusable = false }
+    private val collapseAction =
+        object : DumbAwareAction(AllIcons.General.HideToolWindow) {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun update(event: AnActionEvent) {
+                event.presentation.text = ImuxBundle.message("action.overview.collapse")
+            }
+
+            override fun actionPerformed(event: AnActionEvent) = setExpanded(false)
+        }
+
+    /**
+     * 不用 InplaceButton：它在鼠标刚移入时会忽略点击（TimedDeadzone），移过去马上点就没反应；
+     * 点击区域也只有图标那么大。ActionButton 与折叠图标一致，22px 点击区、有悬停反馈。
+     */
+    private val collapseButton =
+        ActionButton(
+            collapseAction,
+            collapseAction.templatePresentation.clone(),
+            CHIP_ACTION_PLACE,
+            ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE,
+        ).apply {
+            setLook(ActionButtonLook.SYSTEM_LOOK)
+            isFocusable = false
+        }
     private val body = JPanel(BorderLayout()).apply { isOpaque = false }
 
     val card: JComponent = TrailSurface(showGrip = true).apply {
@@ -210,7 +233,7 @@ internal class SessionTrailOverlay(
 
     private fun render(state: TrailState) {
         titleLabel.text = ImuxBundle.message("action.overview.text")
-        collapseButton.toolTipText = ImuxBundle.message("action.overview.collapse")
+        collapseButton.update()
 
         val sameLoading = state is TrailState.Loading && renderedState is TrailState.Loading &&
             (renderedState as TrailState.Loading).startedAt == state.startedAt
