@@ -86,7 +86,7 @@ class ProgressOverviewTest {
     // ── OverviewCache 测试（走生产缓存路径） ──
 
     @Test
-    fun `putIfUnchanged 文件大小不变时写入缓存`() {
+    fun `put 写入缓存`() {
         val file = Files.createTempFile("cache-test", ".jsonl")
         file.toFile().deleteOnExit()
         Files.writeString(file, "content")
@@ -95,30 +95,32 @@ class ProgressOverviewTest {
         val cache = OverviewCache(null)
         val result = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "测试")), Instant.now())
 
-        val stored = cache.putIfUnchanged("s1", result, file, snapshotSize)
+        val stored = cache.put("s1", result, snapshotSize)
 
-        assertEquals("大小不变时应缓存成功", CacheWrite.SAVED, stored)
+        assertTrue("应缓存成功", stored)
         assertNotNull("缓存应命中", cache.get("s1"))
         assertEquals("缓存的摘要应一致", result, cache.get("s1")!!.result)
     }
 
     @Test
-    fun `putIfUnchanged 生成期间文件增长则不缓存`() {
+    fun `生成期间文件增长时仍保存本次结果与截止位置，只判定过期`() {
         val file = Files.createTempFile("cache-test", ".jsonl")
         file.toFile().deleteOnExit()
-        Files.writeString(file, "original")
-        val snapshotSize = Files.size(file)
+        Files.writeString(file, "u1\n")
+        val cursor = trailCursor(file, Files.size(file))
 
         // 模拟 CLI 生成期间主会话追加内容
-        Files.writeString(file, "original\nnew content appended during CLI execution")
+        Files.writeString(file, "u1\nnew content appended during CLI execution\n")
 
         val cache = OverviewCache(null)
-        val result = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "过时摘要")), Instant.now())
+        val shown = storeOverview(cache, "s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "本次摘要")), Instant.now()), file, cursor)
 
-        val stored = cache.putIfUnchanged("s1", result, file, snapshotSize)
-
-        assertEquals("文件增长后不应缓存", CacheWrite.STALE, stored)
-        assertNull("缓存应为空", cache.get("s1"))
+        assertTrue("截止之后有新内容，展示为过期", shown.stale)
+        val cached = cache.get("s1")!!
+        assertEquals("本次摘要仍要保存，作为下次增量的基线", "本次摘要", cached.result.nodes.single().text)
+        assertEquals(cursor.lines, cached.lineCount)
+        assertEquals(cursor.bytes, cached.fileSize)
+        assertTrue(isStale(cached, file))
     }
 
     @Test
@@ -130,7 +132,7 @@ class ProgressOverviewTest {
 
         val cache = OverviewCache(null)
         val result = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now())
-        cache.putIfUnchanged("s1", result, file, snapshotSize)
+        cache.put("s1", result, snapshotSize)
 
         // 模拟之后主会话追加了新消息
         Files.writeString(file, "initial content\nnew message after caching")
@@ -142,25 +144,6 @@ class ProgressOverviewTest {
             cached.fileSize != currentSize,
         )
     }
-
-    @Test
-    fun `把 putIfUnchanged 改成无条件存储会导致本测试失败`() {
-        val file = Files.createTempFile("cache-guard", ".jsonl")
-        file.toFile().deleteOnExit()
-        Files.writeString(file, "before generation")
-        val snapshotSize = Files.size(file)
-
-        Files.writeString(file, "before generation\nappended during generation")
-
-        val cache = OverviewCache(null)
-        val stale = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "stale")), Instant.now())
-        val stored = cache.putIfUnchanged("guard", stale, file, snapshotSize)
-
-        assertEquals("如果 putIfUnchanged 不检查大小变化，这里会是 SAVED", CacheWrite.STALE, stored)
-        assertNull("旧摘要不应命中", cache.get("guard"))
-    }
-
-    // ── 磁盘持久化测试 ──
 
     @Test
     fun `缓存写入磁盘后新实例可读取`() {
@@ -180,7 +163,7 @@ class ProgressOverviewTest {
             ),
             Instant.now(),
         )
-        cache1.putIfUnchanged("s1", result, sessionFile, fileSize)
+        cache1.put("s1", result, fileSize)
 
         val cache2 = OverviewCache(storageDir)
         val loaded = cache2.get("s1")
@@ -204,7 +187,7 @@ class ProgressOverviewTest {
 
         val cache = OverviewCache(storageDir)
         val result = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now())
-        cache.putIfUnchanged("s1", result, sessionFile, fileSize)
+        cache.put("s1", result, fileSize)
 
         Files.writeString(sessionFile, "original\nnew content")
 
@@ -227,7 +210,7 @@ class ProgressOverviewTest {
         Files.writeString(sessionFile, "content")
 
         val cache = OverviewCache(storageDir)
-        cache.putIfUnchanged("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "test")), Instant.now()), sessionFile, Files.size(sessionFile))
+        cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "test")), Instant.now()), Files.size(sessionFile))
 
         cache.remove("s1")
 
@@ -247,7 +230,7 @@ class ProgressOverviewTest {
 
         val cache = OverviewCache(storageDir)
         val old = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now())
-        assertEquals(CacheWrite.SAVED, cache.putIfUnchanged("s1", old, sessionFile, size))
+        assertTrue(cache.put("s1", old, size))
 
         // 刷新：直接重新生成，调用前就被取消，缓存不应被触碰
         try {
@@ -270,8 +253,8 @@ class ProgressOverviewTest {
         val size = Files.size(sessionFile)
 
         val cache = OverviewCache(storageDir)
-        cache.putIfUnchanged("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now()), sessionFile, size)
-        cache.putIfUnchanged("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "新摘要")), Instant.now()), sessionFile, size)
+        cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now()), size)
+        cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "新摘要")), Instant.now()), size)
 
         assertEquals("新摘要", cache.get("s1")!!.result.nodes.single().text)
         assertEquals("新摘要", OverviewCache(storageDir).get("s1")!!.result.nodes.single().text)
@@ -290,7 +273,7 @@ class ProgressOverviewTest {
         val cache = OverviewCache(notADir)
         val generated = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "摘要")), Instant.now())
 
-        val shown = storeOverview(cache, "s1", generated, sessionFile, size)
+        val shown = storeOverview(cache, "s1", generated, sessionFile, TrailCursor(0, size))
 
         assertTrue("返回给界面的结果应标记保存失败", shown.saveFailed)
         assertEquals("摘要内容仍应展示", "摘要", shown.nodes.single().text)
@@ -309,7 +292,7 @@ class ProgressOverviewTest {
         val shown = storeOverview(
             OverviewCache(storageDir), "s1",
             OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "摘要")), Instant.now()),
-            sessionFile, Files.size(sessionFile),
+            sessionFile, TrailCursor(0, Files.size(sessionFile)),
         )
 
         assertFalse(shown.saveFailed)
@@ -375,25 +358,6 @@ class ProgressOverviewTest {
     }
 
     @Test
-    fun `弹窗标题带上会话标题`() {
-        assertEquals("会话轨迹 — 修复登录流程", overviewDialogTitle("会话轨迹", "修复登录流程"))
-        assertEquals("会话轨迹 — 多行 标题", overviewDialogTitle("会话轨迹", "  多行\n标题 "))
-    }
-
-    @Test
-    fun `会话标题缺失时只显示功能名`() {
-        assertEquals("会话轨迹", overviewDialogTitle("会话轨迹", null))
-        assertEquals("会话轨迹", overviewDialogTitle("会话轨迹", "   "))
-    }
-
-    @Test
-    fun `过长的会话标题截断`() {
-        val title = overviewDialogTitle("会话轨迹", "长".repeat(100))
-        assertTrue(title.endsWith("…"))
-        assertEquals("会话轨迹 — ".length + 40, title.length)
-    }
-
-    @Test
     fun `会话没有新交互时摘要不过期`() {
         val sessionFile = Files.createTempFile("session", ".jsonl")
         sessionFile.toFile().deleteOnExit()
@@ -412,7 +376,7 @@ class ProgressOverviewTest {
         Files.writeString(sessionFile, user("修复登录"))
 
         val cache = OverviewCache(storageDir)
-        cache.putIfUnchanged("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now()), sessionFile, Files.size(sessionFile))
+        cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now()), Files.size(sessionFile))
 
         Files.writeString(sessionFile, user("修复登录") + "\n" + user("再加个日志"))
 
@@ -428,30 +392,28 @@ class ProgressOverviewTest {
     }
 
     @Test
-    fun `生成期间追加消息时展示层拿到过期状态且旧磁盘摘要保留`() {
+    fun `生成期间追加消息时展示层拿到过期状态，新摘要写入内存和磁盘`() {
         val storageDir = Files.createTempDirectory("overview-cache-test")
         storageDir.toFile().deleteOnExit()
         val sessionFile = Files.createTempFile("session", ".jsonl")
         sessionFile.toFile().deleteOnExit()
-        Files.writeString(sessionFile, user("修复登录"))
+        Files.writeString(sessionFile, user("修复登录") + "\n")
 
         val cache = OverviewCache(storageDir)
-        val old = OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now())
-        assertEquals(CacheWrite.SAVED, cache.putIfUnchanged("s1", old, sessionFile, Files.size(sessionFile)))
+        cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧摘要")), Instant.now()), 1)
 
-        // 重新生成：先取快照，生成期间主会话追加消息，生成完成后写入
-        val snapshot = Files.size(sessionFile)
-        val nodes = generateTrail("prompt", { _ ->
-            Files.writeString(sessionFile, user("修复登录") + "\n" + user("生成期间的新要求"))
+        // 重新生成：生成期间主会话追加消息
+        val shown = runTrailGeneration(cache, "s1", sessionFile, { _, _ -> "prompt" }, runAgent = {
+            Files.writeString(sessionFile, user("修复登录") + "\n" + user("生成期间的新要求") + "\n")
             "[MAIN] 新摘要"
         })
-        val shown = storeOverview(cache, "s1", OverviewResult(nodes, Instant.now()), sessionFile, snapshot)
 
         assertTrue("展示层应拿到过期状态", shown.stale)
         assertFalse(shown.saveFailed)
         assertEquals("仍展示本次生成的内容", "新摘要", shown.nodes.single().text)
-        assertEquals("内存缓存保留旧摘要", "旧摘要", cache.get("s1")!!.result.nodes.single().text)
-        assertEquals("磁盘缓存保留旧摘要", "旧摘要", OverviewCache(storageDir).get("s1")!!.result.nodes.single().text)
+        assertEquals("内存缓存换成本次摘要", "新摘要", cache.get("s1")!!.result.nodes.single().text)
+        assertEquals("磁盘缓存换成本次摘要", "新摘要", OverviewCache(storageDir).get("s1")!!.result.nodes.single().text)
+        assertEquals("截止在生成开始时的第 1 行", 1L, cache.get("s1")!!.lineCount)
     }
 
     @Test
@@ -463,7 +425,7 @@ class ProgressOverviewTest {
         val shown = storeOverview(
             OverviewCache(null), "s1",
             OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "摘要")), Instant.now()),
-            sessionFile, Files.size(sessionFile),
+            sessionFile, TrailCursor(1, Files.size(sessionFile)),
         )
 
         assertFalse(shown.stale)
@@ -483,7 +445,7 @@ class ProgressOverviewTest {
         sessionFile.toFile().deleteOnExit()
 
         // 会话刚开始时打开总览：空摘要也会缓存并落盘
-        storeOverview(OverviewCache(storageDir), "s1", OverviewResult(emptyList(), Instant.now()), sessionFile, Files.size(sessionFile))
+        storeOverview(OverviewCache(storageDir), "s1", OverviewResult(emptyList(), Instant.now()), sessionFile, TrailCursor(0, Files.size(sessionFile)))
 
         // 之后有了真实对话
         Files.writeString(sessionFile, user("帮我实现 JWT 认证"))
@@ -523,6 +485,46 @@ class ProgressOverviewTest {
         assertEquals(1, clicks)
     }
 
+    @Test
+    fun `无旧结果的失败视图显示错误信息并可重新生成`() {
+        var clicks = 0
+        val panel = buildErrorPanel("CLI 退出码 1") { clicks++ }
+
+        assertTrue(labelTexts(panel).contains(ImuxBundle.message("action.overview.failed")))
+        assertEquals(
+            "错误全文放在可选中复制的文本区里",
+            "CLI 退出码 1",
+            allComponents(panel).filterIsInstance<javax.swing.JTextArea>().single().text,
+        )
+        allComponents(panel).filterIsInstance<com.intellij.ui.components.ActionLink>().single().doClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun `失败横幅带上错误信息并可重新生成`() {
+        var clicks = 0
+        val banner = buildFailedBanner("超时") { clicks++ }
+
+        assertTrue(labelTexts(banner).contains(ImuxBundle.message("action.overview.failed.banner", "超时")))
+        allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>().single().doClick()
+        assertEquals(1, clicks)
+    }
+
+    @Test
+    fun `提示视图按需带操作链接`() {
+        var clicks = 0
+        val withAction = buildHintPanel("还没有轨迹", "生成轨迹" to { clicks++ })
+        val link = allComponents(withAction).filterIsInstance<com.intellij.ui.components.ActionLink>().single()
+        assertEquals("生成轨迹", link.text)
+        assertTrue("链接不应抢走终端焦点", !link.isFocusable)
+        link.doClick()
+        assertEquals(1, clicks)
+
+        val plain = buildHintPanel("会话尚未保存", null)
+        assertTrue(labelTexts(plain).any { it.contains("会话尚未保存") })
+        assertTrue(allComponents(plain).none { it is com.intellij.ui.components.ActionLink })
+    }
+
     // ── 实际时间线布局（离屏、EDT） ──
 
     /**
@@ -552,6 +554,94 @@ class ProgressOverviewTest {
         var result: Result<T>? = null
         javax.swing.SwingUtilities.invokeAndWait { result = runCatching(block) }
         return result!!.getOrThrow()
+    }
+
+    // ── 横幅里的「重新生成」在窄卡片中必须完整可见 ──
+
+    private val longCliError =
+        "codex exited with code 1: error: unexpected argument '--dangerously-bypass-approvals-and-sandbox' found; " +
+            "tip: to pass '--dangerously-bypass-approvals-and-sandbox' as a value, use '-- --dangerously-bypass-approvals-and-sandbox'"
+
+    private val previousTrail =
+        OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "实现 JWT"), OverviewNode(NodeSymbol.MAIN, "补测试")), Instant.now())
+
+    /**
+     * 离屏布局后，链接按首选尺寸完整画出（没有被压扁），且整块落在横幅里、横幅又落在根面板里。
+     * 只找到链接再 doClick 抓不到被挤到第二行、超出 NORTH 高度而被裁掉的情况。
+     */
+    private fun assertRetryLinkVisible(root: javax.swing.JComponent, width: Int, case: String) {
+        val host = layoutOffscreen(root, width, 400)
+        val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
+        assertNotNull("$case：应有横幅", banner)
+        val link = allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>()
+            .single { it.text == ImuxBundle.message("action.overview.retry") }
+
+        val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
+        val bannerRect = javax.swing.SwingUtilities.convertRectangle(banner.parent, banner.bounds, host)
+        val where = "$case @ ${width}px：link=$linkRect banner=$bannerRect"
+        assertTrue("链接不能被压扁：$where", link.width >= link.preferredSize.width && link.height >= link.preferredSize.height)
+        assertTrue("链接必须完整落在横幅可见区域内：$where", bannerRect.contains(linkRect))
+        assertTrue("横幅必须完整落在面板内：$where", java.awt.Rectangle(0, 0, host.width, host.height).contains(bannerRect))
+
+        // 链接紧跟在文字后面，而不是推到横幅最右侧；文字过长时截断的是文字
+        val text = allComponents(banner).filterIsInstance<javax.swing.JLabel>()
+            .single { it !is com.intellij.ui.components.ActionLink && it.icon == null }
+        assertEquals(
+            "链接应紧跟文字：$where text=${text.bounds}",
+            text.x + text.width + com.intellij.util.ui.JBUI.scale(6),
+            link.x,
+        )
+    }
+
+    @Test
+    fun `长错误文本的失败横幅在窄卡片里仍完整显示重新生成`() = onEdt {
+        for (width in listOf(240, 360)) {
+            assertRetryLinkVisible(buildFailedWithPrevious(longCliError, previousTrail) {}, width, "失败横幅")
+        }
+    }
+
+    @Test
+    fun `短文字时链接紧跟文字，右侧留空`() = onEdt {
+        val root = buildResultPanel(previousTrail, stale = true) {}
+        val host = layoutOffscreen(root, 600, 400)
+        val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
+        val link = allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>().single()
+        val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
+        val bannerRect = javax.swing.SwingUtilities.convertRectangle(banner.parent, banner.bounds, host)
+        assertTrue("宽卡片里链接不应被推到最右侧：link=$linkRect banner=$bannerRect", linkRect.maxX < bannerRect.maxX - 100)
+    }
+
+    @Test
+    fun `失败横幅截断的错误文字可以悬停查看全文`() = onEdt {
+        val root = buildFailedWithPrevious(longCliError, previousTrail) {}
+        layoutOffscreen(root, 240, 400)
+        val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
+        val message = allComponents(banner).filterIsInstance<javax.swing.JLabel>()
+            .single { it.text == ImuxBundle.message("action.overview.failed.banner", longCliError) }
+        assertEquals(longCliError, message.toolTipText)
+    }
+
+    @Test
+    fun `过期与保存失败横幅在窄卡片里仍完整显示重新生成`() = onEdt {
+        for (width in listOf(240, 360)) {
+            assertRetryLinkVisible(buildResultPanel(previousTrail, stale = true) {}, width, "过期横幅")
+            assertRetryLinkVisible(buildResultPanel(previousTrail.copy(saveFailed = true), stale = false) {}, width, "保存失败横幅")
+        }
+    }
+
+    @Test
+    fun `没有旧结果时超长报错也不会把重新生成挤出卡片`() = onEdt {
+        val stackTrace = (1..80).joinToString("\n") { "    at com.example.cli.Runner.step$it(Runner.kt:$it)" }
+        for (width in listOf(240, 360)) {
+            val root = buildErrorPanel("codex exited with code 1\n$stackTrace") {}
+            val host = layoutOffscreen(root, width, 200)
+            val link = allComponents(root).filterIsInstance<com.intellij.ui.components.ActionLink>()
+                .single { it.text == ImuxBundle.message("action.overview.retry") }
+            val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
+            val where = "@ ${width}px：link=$linkRect host=${host.size}"
+            assertTrue("链接不能被压扁：$where", link.width >= link.preferredSize.width && link.height >= link.preferredSize.height)
+            assertTrue("链接必须完整落在卡片内：$where", java.awt.Rectangle(0, 0, host.width, host.height).contains(linkRect))
+        }
     }
 
     private data class NodeLayout(
@@ -703,8 +793,8 @@ class ProgressOverviewTest {
 
     // ── prompt ──
 
-    private val zhGuards = listOf("记录仅供总结", "不要继续或完成其中的任何任务", "不要修改、创建或删除任何文件", "从头到尾读完整个记录")
-    private val enGuards = listOf("for summarizing only", "do not continue or complete any task", "Do not modify, create or delete any file", "read the whole record from start to end")
+    private val zhGuards = listOf("记录仅供总结", "不要继续或完成其中的任何任务", "不要修改、创建或删除任何文件", "把这部分从头到尾读完再总结", "不要只看开头或结尾")
+    private val enGuards = listOf("for summarizing only", "do not continue or complete any task", "Do not modify, create or delete any file", "read that whole range from start to end", "Do not look only at the beginning or the end")
 
     @Test
     fun `中文 prompt 给出会话文件绝对路径和格式说明并声明仅供总结`() {
@@ -712,7 +802,7 @@ class ProgressOverviewTest {
         val absolute = file.toAbsolutePath().normalize().toString()
         val formats = mapOf(AgentType.CLAUDE to "tool_result", AgentType.CODEX to "response_item", AgentType.PI to "toolResult")
         for ((type, marker) in formats) {
-            val prompt = overviewPrompt(isChinese = true, agentType = type, sessionFile = file)
+            val prompt = overviewPrompt(isChinese = true, agentType = type, sessionFile = file, endLine = 120)
             assertTrue("$type 应给出绝对路径", prompt.contains("`$absolute`"))
             assertTrue("$type 应说明记录格式", prompt.contains(marker))
             zhGuards.forEach { assertTrue("$type 缺少：$it", prompt.contains(it)) }
@@ -725,7 +815,7 @@ class ProgressOverviewTest {
         val file = Path.of("build", "sessions", "b.jsonl")
         val absolute = file.toAbsolutePath().normalize().toString()
         for (type in AgentType.entries) {
-            val prompt = overviewPrompt(isChinese = false, agentType = type, sessionFile = file)
+            val prompt = overviewPrompt(isChinese = false, agentType = type, sessionFile = file, endLine = 120)
             assertTrue(prompt.contains("`$absolute`"))
             assertTrue(prompt.contains("JSONL"))
             enGuards.forEach { assertTrue("$type missing: $it", prompt.contains(it)) }
@@ -739,7 +829,7 @@ class ProgressOverviewTest {
         file.toFile().deleteOnExit()
         Files.writeString(file, user("机密需求：修复支付回调"))
 
-        val prompt = overviewPrompt(isChinese = true, agentType = AgentType.CLAUDE, sessionFile = file)
+        val prompt = overviewPrompt(isChinese = true, agentType = AgentType.CLAUDE, sessionFile = file, endLine = 1)
         assertFalse("正文由智能体自己读取，不应塞进 prompt", prompt.contains("修复支付回调"))
     }
 

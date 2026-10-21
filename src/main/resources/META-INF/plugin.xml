@@ -49,7 +49,7 @@
       <ul>
         <li><b>结对编程</b>——绑定另一个智能体当副驾驶，主会话每完成一轮，它就审查一次并把反馈发回主会话</li>
         <li><b>审查一次</b>——不用绑定副驾驶，选任意智能体按你的要求做一次性审查</li>
-        <li><b>会话轨迹</b>——把长会话浓缩成一条按时间排列的进展时间线，标出主线、旁支、需求变更、报错和放弃的方案；由智能体自己读取会话记录，并实时显示进度</li>
+        <li><b>会话轨迹</b>——把长会话浓缩成一条按时间排列的进展时间线，标出主线、旁支、需求变更、报错和放弃的方案；由智能体自己读取会话记录，并实时显示进度；显示在每个会话标签页右上角，可折叠、可调整大小</li>
       </ul>
 
       <p><b>imux 不托管你的对话。</b>会话历史保存在各个 CLI 自己的存储里，卸载插件后会话历史完整保留。</p>
@@ -176,14 +176,10 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
         <action
-                id="imux.ProgressOverview"
-                class="com.github.izerui.imux.terminal.ProgressOverviewAction"
-                text="Session Trail"
-                description="See how this session has progressed from the start to now"
-                icon="AllIcons.Actions.Preview">
-            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="before"
-                          relative-to-action="imux.HandoffSession"/>
-        </action>
+                id="imux.ToggleSessionTrail"
+                class="com.github.izerui.imux.terminal.ToggleSessionTrailAction"
+                text="Toggle Session Trail Panel"
+                description="Show or hide the session trail panel in the top-right corner of this session"/>
         <action
                 id="imux.CloseNonSessionEditors"
                 class="com.github.izerui.imux.terminal.CloseNonSessionEditorsAction"

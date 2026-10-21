@@ -371,7 +371,6 @@ class AgentSessionTree(
                             model.sessionOf(data.id)?.let { source ->
                                 actions.add(renameSessionTitleAction(project, source))
                                 actions.addSeparator()
-                                actions.add(progressOverviewAction(project, source.id, tree))
                                 actions.add(handoffActionGroup(project, source))
                                 actions.addSeparator()
                                 actions.add(deleteSessionAction(project, monitor, source, data.running))

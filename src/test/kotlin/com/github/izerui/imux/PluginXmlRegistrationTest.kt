@@ -165,6 +165,21 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `会话轨迹只从右上角面板进入，另注册了面板切换动作`() {
+        assertFalse(
+            "右键菜单不再有「会话轨迹」，统一从会话标签页右上角面板进入",
+            pluginXml.contains("""id="imux.ProgressOverview"""") || pluginXml.contains("ProgressOverviewAction"),
+        )
+        val toggle =
+            pluginXml.substringAfter("""id="imux.ToggleSessionTrail"""", "").substringBefore("/>")
+        assertTrue(
+            "面板切换动作应注册，供用户在 Keymap 中绑定快捷键",
+            toggle.contains("""class="com.github.izerui.imux.terminal.ToggleSessionTrailAction""""),
+        )
+        assertFalse("不预设快捷键，避免与终端或 CLI 冲突", toggle.contains("keyboard-shortcut"))
+    }
+
+    @Test
     fun `独立的标题重新生成动作已并入重命名框`() {
         assertFalse(
             "自动生成只是重命名框里的按钮，不再单独注册一个右键菜单项",

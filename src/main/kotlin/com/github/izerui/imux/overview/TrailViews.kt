@@ -6,26 +6,12 @@ import com.github.izerui.imux.agent.AgentProgressKind
 import com.github.izerui.imux.agent.OneShotAgentTimeoutException
 import com.github.izerui.imux.settings.PluginLanguage
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.EDT
-import com.intellij.openapi.application.ModalityState
-import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.DialogWrapper
-import com.intellij.openapi.util.Disposer
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.FlowLayout
@@ -42,183 +28,89 @@ import javax.swing.SwingConstants
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 
-internal fun showProgressOverviewPopup(
-    project: Project,
-    sessionKey: String,
-    owner: Component,
-) {
-    ProgressOverviewDialog(project, sessionKey).show()
-}
-
-private class ProgressOverviewDialog(
-    private val project: Project,
-    private val sessionKey: String,
-) : DialogWrapper(project, false) {
-
-    private val contentPanel = JPanel(BorderLayout()).apply {
-        preferredSize = JBUI.size(500, 400)
+/**
+ * 没有可展示的旧结果时的失败视图：标题固定在上方，「重新生成」固定在底部，
+ * 错误信息放在中间的滚动区里按卡片宽度换行、可选中复制。CLI 报错可能带整段堆栈，
+ * 不能让它把重试入口挤出卡片。
+ */
+internal fun buildErrorPanel(message: String, onRetry: () -> Unit): JComponent {
+    val header = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        border = JBUI.Borders.empty(12, 0, 6, 0)
+        add(centeredRow(JBLabel(AllIcons.General.Error)))
+        add(Box.createVerticalStrut(JBUI.scale(6)))
+        add(centeredRow(JBLabel(ImuxBundle.message("action.overview.failed")).apply {
+            font = JBUI.Fonts.label(13f).asBold()
+        }))
     }
-    private val popupScope: CoroutineScope
-    private var loadingRow: LoadingRow? = null
-    /** 加载态的进度：最近一条智能体动作 + 已用时间，每秒刷新。 */
-    private var latestProgress: String? = null
-    private var loadingStartedAt = 0L
-    private val elapsedTimer = javax.swing.Timer(1_000) { refreshLoadingRow() }
-
-    init {
-        title = overviewDialogTitle(
-            ImuxBundle.message("action.overview.text"),
-            com.github.izerui.imux.monitor.SessionMonitor.getInstance(project).model.sessionOf(sessionKey)?.title,
-        )
-        isModal = false
-        setOKButtonText(ImuxBundle.message("action.overview.retry"))
-
-        val service = ProgressOverviewService.getInstance(project)
-        popupScope = service.createChildScope()
-        Disposer.register(disposable) {
-            elapsedTimer.stop()
-            popupScope.cancel("dialog disposed")
-        }
-
-        init()
-
-        val cached = service.cachedOverview(sessionKey)
-        if (cached != null) {
-            showResult(cached.result, stale = cached.stale)
-        } else {
-            showLoading()
-            launchGeneration()
-        }
+    val detail = javax.swing.JTextArea(message).apply {
+        isEditable = false
+        isOpaque = false
+        lineWrap = true
+        wrapStyleWord = true
+        foreground = JBColor.GRAY
+        font = JBUI.Fonts.smallFont()
+        border = JBUI.Borders.empty()
     }
-
-    override fun createCenterPanel(): JComponent = contentPanel
-
-    override fun createActions() = arrayOf(cancelAction.apply {
-        putValue(javax.swing.Action.NAME, ImuxBundle.message("action.peer.close"))
-    })
-
-    private fun showLoading() {
-        contentPanel.removeAll()
-        val row = LoadingRow()
-        loadingRow = row
-        latestProgress = null
-        loadingStartedAt = System.currentTimeMillis()
-        refreshLoadingRow()
-        elapsedTimer.restart()
-        contentPanel.add(row.component, BorderLayout.CENTER)
-        contentPanel.revalidate()
-        contentPanel.repaint()
+    val scroll = JBScrollPane(
+        detail,
+        ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+        ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
+    ).apply {
+        border = JBUI.Borders.empty(0, 12)
+        isOpaque = false
+        viewport.isOpaque = false
     }
-
-    private fun showProgress(event: AgentProgressEvent) {
-        // 工具完成、整体完成这类事件不换文字，保留上一条“正在做什么”
-        overviewProgressText(event)?.let { latestProgress = it }
-        refreshLoadingRow()
-    }
-
-    private fun refreshLoadingRow() {
-        val row = loadingRow ?: return
-        val seconds = ((System.currentTimeMillis() - loadingStartedAt) / 1_000).coerceAtLeast(0)
-        row.update(latestProgress ?: ImuxBundle.message("action.overview.loading"), seconds)
-    }
-
-    private fun stopLoading() {
-        elapsedTimer.stop()
-        loadingRow = null
-    }
-
-    private fun showResult(result: OverviewResult, stale: Boolean) {
-        stopLoading()
-        contentPanel.removeAll()
-        contentPanel.add(buildResultPanel(result, stale) {
-            showLoading()
-            launchGeneration()
-        }, BorderLayout.CENTER)
-        contentPanel.revalidate()
-        contentPanel.repaint()
-    }
-
-    private fun showError(errorMessage: String) {
-        stopLoading()
-        contentPanel.removeAll()
-        val center = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = JBUI.Borders.empty(60, 40)
-            isOpaque = false
-        }
-
-        val iconRow = JPanel(FlowLayout(FlowLayout.CENTER)).apply {
-            isOpaque = false
-            add(JBLabel(AllIcons.General.Error))
-        }
-        center.add(iconRow)
-        center.add(Box.createVerticalStrut(JBUI.scale(8)))
-
-        val titleRow = JPanel(FlowLayout(FlowLayout.CENTER)).apply {
-            isOpaque = false
-            add(JBLabel(ImuxBundle.message("action.overview.failed")).apply {
-                font = JBUI.Fonts.label(13f).asBold()
-            })
-        }
-        center.add(titleRow)
-        center.add(Box.createVerticalStrut(JBUI.scale(4)))
-
-        val hintRow = JPanel(FlowLayout(FlowLayout.CENTER)).apply {
-            isOpaque = false
-            // CLI 的报错可能很长，按弹窗宽度换行显示
-            add(JBLabel(wrappedLabelHtml(errorMessage, JBUI.scale(380))).apply {
-                foreground = JBColor.GRAY
-                font = JBUI.Fonts.smallFont()
-            })
-        }
-        center.add(hintRow)
-        center.add(Box.createVerticalStrut(JBUI.scale(12)))
-
-        val retryLink = ActionLink(ImuxBundle.message("action.overview.retry")) {
-            showLoading()
-            launchGeneration()
-        }
-        val retryRow = JPanel(FlowLayout(FlowLayout.CENTER)).apply {
-            isOpaque = false
-            add(retryLink)
-        }
-        center.add(retryRow)
-
-        contentPanel.add(center, BorderLayout.CENTER)
-        contentPanel.revalidate()
-        contentPanel.repaint()
-    }
-
-    private fun launchGeneration() {
-        popupScope.launch(Dispatchers.IO) {
-            try {
-                val result = runInterruptible {
-                    ProgressOverviewService.getInstance(project).generateOverview(sessionKey) { progress ->
-                        ApplicationManager.getApplication().invokeLater({
-                            if (!isDisposed) showProgress(progress)
-                        }, ModalityState.any())
-                    }
-                }
-                withContext(Dispatchers.EDT) {
-                    if (!isDisposed) {
-                        showResult(result, stale = result.stale)
-                    }
-                }
-            } catch (_: CancellationException) {
-                // scope cancelled — nothing to show
-            } catch (e: Exception) {
-                if (project.isDisposed) return@launch
-                val message = overviewErrorText(e)
-                LOG.warn("Progress overview generation failed", e)
-                withContext(Dispatchers.EDT) {
-                    if (!isDisposed) {
-                        showError(message)
-                    }
-                }
-            }
-        }
+    return JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(header, BorderLayout.NORTH)
+        add(scroll, BorderLayout.CENTER)
+        add(centeredRow(regenerateLink(onRetry)).apply { border = JBUI.Borders.empty(6, 0, 10, 0) }, BorderLayout.SOUTH)
     }
 }
+
+/** 有旧结果时的失败横幅：旧时间线照常显示在下面。 */
+internal fun buildFailedBanner(message: String, onRetry: () -> Unit): JComponent =
+    bannerRow(
+        AllIcons.General.Error,
+        ImuxBundle.message("action.overview.failed.banner", message),
+        FAILED_BANNER_BACKGROUND,
+        tooltip = message,
+        onRegenerate = onRetry,
+    )
+
+/** 重新生成失败、但有旧结果：顶部失败横幅，下面照常显示旧时间线。 */
+internal fun buildFailedWithPrevious(message: String, previous: OverviewResult, onRetry: () -> Unit): JComponent =
+    JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(buildFailedBanner(message, onRetry), BorderLayout.NORTH)
+        add(buildResultPanel(previous, stale = false, onRetry), BorderLayout.CENTER)
+    }
+
+/** 未落盘、未生成时的说明文字，可带一个操作链接。 */
+internal fun buildHintPanel(text: String, action: Pair<String, () -> Unit>?): JComponent {
+    val center = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(16, 12)
+        isOpaque = false
+    }
+    center.add(centeredRow(JBLabel(wrappedLabelHtml(text, JBUI.scale(220))).apply { foreground = JBColor.GRAY }))
+    if (action != null) {
+        center.add(Box.createVerticalStrut(JBUI.scale(10)))
+        center.add(centeredRow(ActionLink(action.first).apply {
+            isFocusable = false
+            addActionListener { action.second() }
+        }))
+    }
+    return center
+}
+
+private fun centeredRow(component: JComponent): JComponent =
+    JPanel(FlowLayout(FlowLayout.CENTER, 0, 0)).apply {
+        isOpaque = false
+        add(component)
+    }
 
 /** 智能体当前在做什么；不需要换文字的事件返回 null。 */
 internal fun overviewProgressText(event: AgentProgressEvent): String? = when (event.kind) {
@@ -416,50 +308,89 @@ internal fun buildResultPanel(
 }
 
 private fun regenerateLink(onRegenerate: () -> Unit) =
-    ActionLink(ImuxBundle.message("action.overview.retry")).apply { addActionListener { onRegenerate() } }
+    ActionLink(ImuxBundle.message("action.overview.retry")).apply {
+        isFocusable = false
+        addActionListener { onRegenerate() }
+    }
 
 private fun statusBanner(result: OverviewResult, stale: Boolean, onRegenerate: () -> Unit): JComponent? {
     val isAllSide = result.nodes.isNotEmpty() && result.nodes.all { it.symbol == NodeSymbol.SIDE }
-    if (result.saveFailed) {
-        val bannerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(2))).apply {
-            isOpaque = true
-            background = JBColor(0xFDECEA.toInt(), 0x3C1F1F)
-            border = JBUI.Borders.empty(4, 8)
-            add(JBLabel(AllIcons.General.Warning))
-            add(JBLabel(ImuxBundle.message("action.overview.save.failed")))
-            add(regenerateLink(onRegenerate))
-        }
-        return bannerPanel
-    } else if (stale) {
-        val bannerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(2))).apply {
-            isOpaque = true
-            background = JBColor(0xFFF8E1.toInt(), 0x3B3820)
-            border = JBUI.Borders.empty(4, 8)
-            add(JBLabel(AllIcons.General.Warning))
-            add(JBLabel(ImuxBundle.message("action.overview.stale")))
-            add(regenerateLink(onRegenerate))
-        }
-        return bannerPanel
-    } else if (isAllSide) {
-        val bannerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(2))).apply {
-            isOpaque = true
-            background = JBColor(0xE3F2FD.toInt(), 0x1E3A5F)
-            border = JBUI.Borders.empty(4, 8)
-            add(JBLabel(AllIcons.General.Information))
-            add(JBLabel(ImuxBundle.message("action.overview.qa.hint")))
-        }
-        return bannerPanel
+    return when {
+        result.saveFailed -> bannerRow(
+            AllIcons.General.Warning, ImuxBundle.message("action.overview.save.failed"), FAILED_BANNER_BACKGROUND,
+            onRegenerate = onRegenerate,
+        )
+        stale -> bannerRow(
+            AllIcons.General.Warning, ImuxBundle.message("action.overview.stale"), JBColor(0xFFF8E1.toInt(), 0x3B3820),
+            onRegenerate = onRegenerate,
+        )
+        isAllSide -> bannerRow(
+            AllIcons.General.Information, ImuxBundle.message("action.overview.qa.hint"), JBColor(0xE3F2FD.toInt(), 0x1E3A5F),
+        )
+        else -> null
     }
-
-    return null
 }
 
-private const val MAX_TITLE_SESSION_CHARS = 40
+private val FAILED_BANNER_BACKGROUND = JBColor(0xFDECEA.toInt(), 0x3C1F1F)
 
-internal fun overviewDialogTitle(base: String, sessionTitle: String?): String {
-    val name = sessionTitle?.trim()?.replace(Regex("\\s+"), " ")?.takeIf(String::isNotEmpty) ?: return base
-    val shown = if (name.length > MAX_TITLE_SESSION_CHARS) name.take(MAX_TITLE_SESSION_CHARS - 1) + "…" else name
-    return "$base — $shown"
+/**
+ * 单行横幅：图标、文字、「重新生成」依次靠左排开，链接紧跟在文字后面。
+ * 放不下时只压缩文字（JLabel 截断成省略号、悬停看全文），链接始终按首选尺寸完整显示。
+ *
+ * 横幅放在 BorderLayout.NORTH，只按首选的单行高度分配空间；用 FlowLayout 时窄卡片里链接会
+ * 被挤到第二行而被裁掉，用户就看不到重试入口了。
+ */
+private fun bannerRow(
+    icon: javax.swing.Icon,
+    text: String,
+    background: java.awt.Color,
+    tooltip: String = text,
+    onRegenerate: (() -> Unit)? = null,
+): JComponent =
+    JPanel(LeadingRowLayout(JBUI.scale(6))).apply {
+        isOpaque = true
+        this.background = background
+        border = JBUI.Borders.empty(4, 8)
+        add(JBLabel(icon))
+        add(JBLabel(text).apply { toolTipText = tooltip })
+        if (onRegenerate != null) add(regenerateLink(onRegenerate))
+    }
+
+/**
+ * 靠左排成一行、垂直居中：第二个组件（文字）可压缩，其余按首选宽度完整摆放。
+ * 空间够时各占首选宽度，右侧留空；不够时只压缩文字，后面的组件仍紧跟在它后面。
+ */
+private class LeadingRowLayout(private val gap: Int) : java.awt.LayoutManager {
+    override fun addLayoutComponent(name: String?, comp: java.awt.Component) = Unit
+    override fun removeLayoutComponent(comp: java.awt.Component) = Unit
+    override fun minimumLayoutSize(parent: java.awt.Container): java.awt.Dimension = preferredLayoutSize(parent)
+
+    override fun preferredLayoutSize(parent: java.awt.Container): java.awt.Dimension {
+        val sizes = parent.components.map { it.preferredSize }
+        val insets = parent.insets
+        return java.awt.Dimension(
+            sizes.sumOf { it.width } + gap * (sizes.size - 1).coerceAtLeast(0) + insets.left + insets.right,
+            (sizes.maxOfOrNull { it.height } ?: 0) + insets.top + insets.bottom,
+        )
+    }
+
+    override fun layoutContainer(parent: java.awt.Container) {
+        val components = parent.components
+        val insets = parent.insets
+        val available = parent.width - insets.left - insets.right
+        val widths = components.map { it.preferredSize.width }.toMutableList()
+        val total = widths.sum() + gap * (widths.size - 1).coerceAtLeast(0)
+        if (total > available && widths.size > 1) {
+            widths[1] = (widths[1] - (total - available)).coerceAtLeast(0)
+        }
+        val centerY = insets.top + (parent.height - insets.top - insets.bottom) / 2
+        var x = insets.left
+        components.forEachIndexed { index, component ->
+            val height = component.preferredSize.height
+            component.setBounds(x, centerY - height / 2, widths[index], height)
+            x += widths[index] + gap
+        }
+    }
 }
 
 /**
@@ -543,4 +474,3 @@ internal fun createNodePanel(node: OverviewNode, inRollback: Boolean, isChinese:
     }
 }
 
-private val LOG = logger<ProgressOverviewService>()

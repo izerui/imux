@@ -1,0 +1,413 @@
+package com.github.izerui.imux.terminal
+
+import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.overview.LoadingRow
+import com.github.izerui.imux.overview.ProgressOverviewService
+import com.github.izerui.imux.overview.TrailState
+import com.github.izerui.imux.overview.buildErrorPanel
+import com.github.izerui.imux.overview.buildFailedWithPrevious
+import com.github.izerui.imux.overview.buildHintPanel
+import com.github.izerui.imux.overview.buildResultPanel
+import com.github.izerui.imux.settings.ImuxSettings
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionToolbar
+import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ex.ActionButtonLook
+import com.intellij.openapi.actionSystem.impl.ActionButton
+import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.BadgeIcon
+import com.intellij.ui.InplaceButton
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.ActionLink
+import com.intellij.ui.components.JBLabel
+import com.intellij.util.Alarm
+import com.intellij.util.ui.JBUI
+import java.awt.BorderLayout
+import java.awt.Cursor
+import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.KeyboardFocusManager
+import java.awt.Point
+import java.awt.RenderingHints
+import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.JComponent
+import javax.swing.JPanel
+import javax.swing.KeyStroke
+import javax.swing.SwingUtilities
+import javax.swing.Timer
+
+/**
+ * 会话标签页正文右上角的轨迹面板：折叠时是一个小图标，展开是一张可滚动、可调整大小的卡片。
+ *
+ * 两个组件都由 [AgentTerminalFileEditor] 放进终端上方的 `PALETTE_LAYER`，只遮住自身范围，
+ * 不改变终端尺寸，TUI 不会重新排版。这里只负责显示：状态与生成任务在
+ * [com.github.izerui.imux.overview.TrailStateStore]，展开状态在 [AgentTerminalVirtualFile.trailExpanded]，
+ * 所以拖动标签页重建编辑器后内容不丢，同一会话的多个编辑器实例看到的也是同一份内容。
+ */
+internal class SessionTrailOverlay(
+    private val project: Project,
+    private val virtualFile: AgentTerminalVirtualFile,
+    parent: Disposable,
+    private val focusTerminal: () -> Unit,
+    private val relayout: () -> Unit,
+) : Disposable {
+    private val store get() = ProgressOverviewService.getInstance(project).trailStore
+    private val key get() = virtualFile.sessionKey
+
+    private var disposed = false
+    private var shownExpanded = virtualFile.trailExpanded
+    private var renderedKey: String? = null
+    private var renderedState: TrailState? = null
+    private var loadingRow: LoadingRow? = null
+    private val loadingTimer = Timer(1_000) { updateLoadingRow() }
+    private val monitorAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+
+    /** 拖拽中的临时尺寸；松手后写入 [TrailSizeSetting]。 */
+    private var dragSize: java.awt.Dimension? = null
+    private var availableWidth = 0
+    private var availableHeight = 0
+
+    private val expandAction =
+        object : DumbAwareAction() {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun update(event: AnActionEvent) {
+                val state = store.state(key)
+                event.presentation.icon = chipIcon(state)
+                event.presentation.text =
+                    if (state is TrailState.Unavailable) ImuxBundle.message("action.overview.pending")
+                    else ImuxBundle.message("action.overview.text")
+                event.presentation.isEnabled = state !is TrailState.Unavailable
+            }
+
+            override fun actionPerformed(event: AnActionEvent) = setExpanded(true)
+        }
+
+    private val chipButton =
+        ActionButton(
+            expandAction,
+            expandAction.templatePresentation.clone(),
+            CHIP_ACTION_PLACE,
+            ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE,
+        ).apply {
+            setLook(ActionButtonLook.SYSTEM_LOOK)
+            isFocusable = false
+        }
+
+    val chip: JComponent = TrailSurface().apply {
+        layout = BorderLayout()
+        add(chipButton, BorderLayout.CENTER)
+    }
+
+    private val titleLabel = JBLabel().apply { font = JBUI.Fonts.label().asBold() }
+    private val collapseButton = InplaceButton("", AllIcons.General.HideToolWindow) { setExpanded(false) }.apply { isFocusable = false }
+    private val body = JPanel(BorderLayout()).apply { isOpaque = false }
+
+    val card: JComponent = TrailSurface(showGrip = true).apply {
+        layout = BorderLayout()
+        // 左侧、底部的留白就是拖拽热区：落在卡片自身而不是子组件上，鼠标事件才会交给卡片
+        border = JBUI.Borders.empty(4, RESIZE_ZONE, RESIZE_ZONE, 4)
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(2, 6, 4, 2)
+                add(titleLabel, BorderLayout.WEST)
+                add(
+                    JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
+                        isOpaque = false
+                        add(collapseButton)
+                    },
+                    BorderLayout.EAST,
+                )
+            },
+            BorderLayout.NORTH,
+        )
+        add(body, BorderLayout.CENTER)
+        isVisible = false
+        val escape = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)
+        getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(escape, "imux.collapseTrail")
+        actionMap.put("imux.collapseTrail", object : javax.swing.AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) = setExpanded(false)
+        })
+        ResizeHandler().let {
+            addMouseListener(it)
+            addMouseMotionListener(it)
+        }
+    }
+
+    init {
+        Disposer.register(parent, this)
+        val removeListener = store.addListener { changed -> if (changed == key) refresh() }
+        Disposer.register(this) { removeListener() }
+        TerminalHost.getInstance(project).addSessionKeyMigratedListener(this) { _, to ->
+            if (to == key) refresh()
+        }
+        // 会话有新交互时摘要会过期；输出期间事件很密，合并成每秒最多一次
+        SessionMonitor.getInstance(project).addListener(this) {
+            if (monitorAlarm.isEmpty) monitorAlarm.addRequest(::refresh, MONITOR_REFRESH_MS)
+        }
+        ImuxSettings.getInstance().addLanguageListener(this) {
+            renderedState = null
+            refresh()
+        }
+        refresh()
+    }
+
+    /** 由编辑器在 `doLayout` 中调用；[rightReserve] 是导航轨道连同右侧留白的宽度。 */
+    fun layout(width: Int, height: Int, rightReserve: Int) {
+        val metrics = trailMetrics()
+        val expanded = virtualFile.trailExpanded
+        chip.isVisible = !expanded
+        card.isVisible = expanded
+        availableWidth = (width - rightReserve - metrics.margin * 2).coerceAtLeast(0)
+        availableHeight = (height - metrics.margin * 2).coerceAtLeast(0)
+        val size = dragSize
+        val desiredWidth = size?.width ?: JBUI.scale(TrailSizeSetting.width())
+        val desiredHeight = size?.height ?: desiredCardHeight()
+        val bounds = trailBounds(width, height, rightReserve, expanded, desiredWidth, desiredHeight, metrics)
+        if (expanded) card.bounds = bounds else chip.bounds = bounds
+    }
+
+    /** 有时间线时用设定高度；提示、加载、报错这类短内容按内容收紧，不超过设定高度。 */
+    private fun desiredCardHeight(): Int {
+        val setting = JBUI.scale(TrailSizeSetting.height())
+        val hasTimeline = when (val state = renderedState) {
+            is TrailState.Ready -> state.result.nodes.isNotEmpty()
+            is TrailState.Failed -> state.previous?.nodes?.isNotEmpty() == true
+            else -> false
+        }
+        if (hasTimeline) return setting
+        return card.preferredSize.height.coerceAtLeast(JBUI.scale(TrailSizeSetting.COMPACT_HEIGHT)).coerceAtMost(setting)
+    }
+
+    private fun setExpanded(expanded: Boolean) {
+        if (virtualFile.trailExpanded == expanded) return
+        virtualFile.trailExpanded = expanded
+        store.notifyChanged(key)
+    }
+
+    private fun refresh() {
+        if (disposed || project.isDisposed) return
+        val expanded = virtualFile.trailExpanded
+        if (shownExpanded && !expanded) returnFocusIfInside()
+        shownExpanded = expanded
+
+        val state = store.state(key)
+        chipButton.update()
+        chipButton.repaint()
+        if (expanded) render(state) else loadingTimer.stop()
+        relayout()
+    }
+
+    private fun render(state: TrailState) {
+        titleLabel.text = ImuxBundle.message("action.overview.text")
+        collapseButton.toolTipText = ImuxBundle.message("action.overview.collapse")
+
+        val sameLoading = state is TrailState.Loading && renderedState is TrailState.Loading &&
+            (renderedState as TrailState.Loading).startedAt == state.startedAt
+        if (renderedKey == key && sameLoading) {
+            renderedState = state
+            updateLoadingRow()
+            if (!loadingTimer.isRunning) loadingTimer.start()
+            return
+        }
+        if (renderedKey == key && renderedState == state) return
+        renderedKey = key
+        renderedState = state
+
+        loadingRow = null
+        loadingTimer.stop()
+        body.removeAll()
+        body.add(contentFor(state), BorderLayout.CENTER)
+        if (state is TrailState.Loading) {
+            updateLoadingRow()
+            loadingTimer.restart()
+        }
+        body.revalidate()
+        body.repaint()
+    }
+
+    private fun contentFor(state: TrailState): JComponent {
+        val regenerate = { store.generate(key, virtualFile.tabId) }
+        return when (state) {
+            TrailState.Unavailable -> buildHintPanel(ImuxBundle.message("action.overview.pending"), null)
+            TrailState.Empty -> buildHintPanel(
+                ImuxBundle.message("action.overview.empty"),
+                ImuxBundle.message("action.overview.generate") to regenerate,
+            )
+            is TrailState.Loading -> loadingPanel()
+            is TrailState.Ready -> buildResultPanel(state.result, state.stale, regenerate)
+            is TrailState.Failed -> {
+                val previous = state.previous
+                if (previous == null) buildErrorPanel(state.message, regenerate)
+                else buildFailedWithPrevious(state.message, previous, regenerate)
+            }
+        }
+    }
+
+    private fun loadingPanel(): JComponent {
+        val row = LoadingRow()
+        loadingRow = row
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(16, 0)
+            add(row.component, BorderLayout.CENTER)
+            add(
+                JPanel(FlowLayout(FlowLayout.CENTER)).apply {
+                    isOpaque = false
+                    add(ActionLink(ImuxBundle.message("action.overview.cancel")) { store.cancel(key) }.apply { isFocusable = false })
+                },
+                BorderLayout.SOUTH,
+            )
+        }
+    }
+
+    private fun updateLoadingRow() {
+        val row = loadingRow ?: return
+        val state = renderedState as? TrailState.Loading ?: return
+        val seconds = ((System.currentTimeMillis() - state.startedAt) / 1_000).coerceAtLeast(0)
+        row.update(state.progress ?: ImuxBundle.message("action.overview.loading"), seconds)
+    }
+
+    private fun chipIcon(state: TrailState): javax.swing.Icon =
+        when {
+            state is TrailState.Loading -> AnimatedIcon.Default.INSTANCE
+            state is TrailState.Failed || (state is TrailState.Ready && state.stale) ->
+                BadgeIcon(AllIcons.Actions.Preview, BADGE_COLOR)
+            else -> AllIcons.Actions.Preview
+        }
+
+    /** 收起时若焦点在卡片里（比如刚选中了节点文字），交还终端，免得键盘输入落空。 */
+    private fun returnFocusIfInside() {
+        val owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner ?: return
+        if (SwingUtilities.isDescendingFrom(owner, card)) focusTerminal()
+    }
+
+    override fun dispose() {
+        disposed = true
+        loadingTimer.stop()
+    }
+
+    /** 卡片锚定右上角：拖左边缘改宽、拖下边缘改高、拖左下角同时改；双击左下角恢复默认大小。 */
+    private inner class ResizeHandler : MouseAdapter() {
+        private var start: Point? = null
+        private var startWidth = 0
+        private var startHeight = 0
+        private var resizeWidth = false
+        private var resizeHeight = false
+
+        private fun zone(event: MouseEvent): Pair<Boolean, Boolean> {
+            val edge = JBUI.scale(RESIZE_ZONE)
+            return (event.x < edge) to (event.y > card.height - edge)
+        }
+
+        override fun mouseMoved(event: MouseEvent) {
+            val (left, bottom) = zone(event)
+            card.cursor = Cursor.getPredefinedCursor(
+                when {
+                    left && bottom -> Cursor.SW_RESIZE_CURSOR
+                    left -> Cursor.W_RESIZE_CURSOR
+                    bottom -> Cursor.S_RESIZE_CURSOR
+                    else -> Cursor.DEFAULT_CURSOR
+                },
+            )
+            card.toolTipText = if (left || bottom) ImuxBundle.message("action.overview.resize.hint") else null
+        }
+
+        override fun mousePressed(event: MouseEvent) {
+            val (left, bottom) = zone(event)
+            if (!left && !bottom) return
+            start = event.locationOnScreen
+            startWidth = card.width
+            startHeight = card.height
+            resizeWidth = left
+            resizeHeight = bottom
+        }
+
+        override fun mouseDragged(event: MouseEvent) {
+            val origin = start ?: return
+            val point = event.locationOnScreen
+            dragSize = resizedTrailSize(
+                startWidth, startHeight,
+                point.x - origin.x, point.y - origin.y,
+                resizeWidth, resizeHeight,
+                availableWidth, availableHeight,
+                trailMetrics(),
+            )
+            relayout()
+        }
+
+        override fun mouseReleased(event: MouseEvent) {
+            val size = dragSize ?: return
+            start = null
+            dragSize = null
+            TrailSizeSetting.save(
+                if (resizeWidth) JBUI.unscale(size.width) else TrailSizeSetting.width(),
+                if (resizeHeight) JBUI.unscale(size.height) else TrailSizeSetting.height(),
+            )
+            relayout()
+        }
+
+        override fun mouseClicked(event: MouseEvent) {
+            val (left, bottom) = zone(event)
+            if (event.clickCount == 2 && left && bottom) {
+                TrailSizeSetting.reset()
+                relayout()
+            }
+        }
+
+        override fun mouseExited(event: MouseEvent) {
+            if (start == null) card.cursor = Cursor.getDefaultCursor()
+        }
+    }
+
+    private companion object {
+        const val CHIP_ACTION_PLACE = "imuxSessionTrail"
+        const val MONITOR_REFRESH_MS = 1_000
+        const val RESIZE_ZONE = 6
+        val BADGE_COLOR = JBColor.namedColor("Imux.SessionTrail.staleBadge", JBColor(0xE08E0B, 0xD9A343))
+    }
+}
+
+/** 与消息导航预览卡片同一套底色与描边的圆角面板；可在左下角画拖拽手柄。 */
+private class TrailSurface(private val showGrip: Boolean = false) : JPanel() {
+    init {
+        isOpaque = false
+    }
+
+    override fun paintComponent(graphics: Graphics) {
+        val g = graphics.create() as Graphics2D
+        try {
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val arc = JBUI.scale(8)
+            g.color = BACKGROUND
+            g.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            g.color = BORDER
+            g.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            if (showGrip) {
+                val inset = JBUI.scale(3)
+                g.color = JBColor.GRAY
+                for (step in 1..2) {
+                    val d = JBUI.scale(4) * step
+                    g.drawLine(inset, height - 1 - inset - d, inset + d, height - 1 - inset)
+                }
+            }
+        } finally {
+            g.dispose()
+        }
+    }
+
+    private companion object {
+        val BACKGROUND = JBColor.namedColor("Imux.SessionMessageNavigator.previewBackground", JBColor(0xF7F8FA, 0x2B2D30))
+        val BORDER = JBColor.namedColor("Imux.SessionMessageNavigator.previewBorder", JBColor(0xD1D5DB, 0x393B40))
+    }
+}

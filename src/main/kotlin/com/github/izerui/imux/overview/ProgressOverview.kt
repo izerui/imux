@@ -13,14 +13,13 @@ import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.resolveShell
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.nio.file.Files
 import java.nio.file.Path
@@ -52,16 +51,46 @@ data class CachedView(
     val stale: Boolean,
 )
 
-/** 会话文件大小与生成时快照不同，即生成后又有新的消息或工具输出。 */
+/** 会话文件大小与摘要覆盖到的位置不同，即之后又有新的消息或工具输出。 */
 internal fun isStale(cached: CachedOverview, sessionFile: Path): Boolean =
     runCatching { Files.size(sessionFile) }.getOrDefault(-1L) != cached.fileSize
 
-internal enum class CacheWrite { STALE, SAVED, SAVE_FAILED }
-
 internal data class CachedOverview(
     val result: OverviewResult,
+    /** 摘要覆盖到的字节位置（截止行末尾）；文件比它大就是过期。 */
     val fileSize: Long,
+    /** 摘要覆盖到的行数，增量生成从下一行读起；升级前的旧缓存没有，为 null。 */
+    val lineCount: Long? = null,
 )
+
+/**
+ * 本次生成的截止位置：快照之内最后一个完整行（以换行结尾）的行号，及该行末尾的字节位置。
+ *
+ * 提示词明确要求智能体只读到 [lines] 行，所以生成结果恰好覆盖到这里。生成期间会话继续追加的
+ * 内容、快照时还没写完的半行都在截止之后，留给下一次增量。
+ */
+internal data class TrailCursor(val lines: Long, val bytes: Long)
+
+internal fun trailCursor(file: Path, limitBytes: Long): TrailCursor {
+    var lines = 0L
+    var lastLineEnd = 0L
+    var offset = 0L
+    Files.newInputStream(file).use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (offset < limitBytes) {
+            val read = input.read(buffer, 0, minOf(buffer.size.toLong(), limitBytes - offset).toInt())
+            if (read < 0) break
+            for (i in 0 until read) {
+                if (buffer[i] == '\n'.code.toByte()) {
+                    lines++
+                    lastLineEnd = offset + i + 1
+                }
+            }
+            offset += read
+        }
+    }
+    return TrailCursor(lines, lastLineEnd)
+}
 
 internal class OverviewCache(private val storageDir: Path?) {
     private val LOG = logger<OverviewCache>()
@@ -75,20 +104,21 @@ internal class OverviewCache(private val storageDir: Path?) {
         return loaded
     }
 
-    fun putIfUnchanged(
+    /**
+     * 保存摘要及它覆盖到的位置，返回是否已写入磁盘。不在这里判断过期：生成期间会话继续追加时
+     * 也照样保存，否则这次已经总结过的部分下次还要重读；过期由 [isStale] 按 [fileSize] 判断。
+     */
+    fun put(
         sessionKey: String,
         result: OverviewResult,
-        filePath: Path,
-        snapshotSize: Long,
-    ): CacheWrite {
-        val currentSize = runCatching { Files.size(filePath) }.getOrDefault(0L)
-        if (currentSize != snapshotSize) return CacheWrite.STALE
-        val saved = saveToDisk(sessionKey, CachedOverview(result, snapshotSize))
+        fileSize: Long,
+        lineCount: Long? = null,
+    ): Boolean {
+        val saved = saveToDisk(sessionKey, CachedOverview(result, fileSize, lineCount))
         // 失败标记只留在内存，本次会话再打开仍提示未落盘；磁盘格式不含此字段
-        memory[sessionKey] = CachedOverview(result.copy(saveFailed = !saved), snapshotSize)
-        if (saved) return CacheWrite.SAVED
-        LOG.warn("会话轨迹：摘要已生成但磁盘保存失败 sessionKey=$sessionKey")
-        return CacheWrite.SAVE_FAILED
+        memory[sessionKey] = CachedOverview(result.copy(saveFailed = !saved), fileSize, lineCount)
+        if (!saved) LOG.warn("会话轨迹：摘要已生成但磁盘保存失败 sessionKey=$sessionKey")
+        return saved
     }
 
     fun remove(sessionKey: String) {
@@ -114,6 +144,7 @@ internal class OverviewCache(private val storageDir: Path?) {
             val json = com.google.gson.GsonBuilder().create()
             val obj = com.google.gson.JsonObject().apply {
                 addProperty("fileSize", cached.fileSize)
+                cached.lineCount?.let { addProperty("lineCount", it) }
                 addProperty("generatedAt", cached.result.generatedAt.toEpochMilli())
                 val nodesArray = com.google.gson.JsonArray()
                 for (node in cached.result.nodes) {
@@ -153,24 +184,56 @@ internal class OverviewCache(private val storageDir: Path?) {
                     text = nodeObj.get("text").asString,
                 )
             }
-            CachedOverview(OverviewResult(nodes, generatedAt), fileSize)
+            val lineCount = obj.get("lineCount")?.takeUnless { it.isJsonNull }?.asLong
+            CachedOverview(OverviewResult(nodes, generatedAt), fileSize, lineCount)
         }.getOrNull()
     }
 }
 
-/** 写入缓存，并把保存失败、生成期间已过期的状态带回给调用方展示。 */
+/** 按截止位置写入缓存，并把保存失败、截止之后又有新内容（已过期）的状态带回给调用方展示。 */
 internal fun storeOverview(
     cache: OverviewCache,
     sessionKey: String,
     result: OverviewResult,
     filePath: Path,
-    snapshotSize: Long,
-): OverviewResult =
-    when (cache.putIfUnchanged(sessionKey, result, filePath, snapshotSize)) {
-        CacheWrite.SAVED -> result
-        CacheWrite.SAVE_FAILED -> result.copy(saveFailed = true)
-        CacheWrite.STALE -> result.copy(stale = true)
+    cursor: TrailCursor,
+): OverviewResult {
+    val saved = cache.put(sessionKey, result, cursor.bytes, cursor.lines)
+    val stale = runCatching { Files.size(filePath) }.getOrDefault(-1L) != cursor.bytes
+    return result.copy(saveFailed = !saved, stale = stale)
+}
+
+/**
+ * 一次生成：定下截止位置 → 选完整或增量提示词 → 调智能体 → 按截止位置保存。
+ *
+ * 与 CLI、IDE 服务无关的部分都在这里，生成期间会话继续追加的情形可以直接测试。
+ */
+internal fun runTrailGeneration(
+    cache: OverviewCache,
+    sessionKey: String,
+    sessionFile: Path,
+    buildPrompt: (cached: CachedOverview?, cursor: TrailCursor) -> String,
+    runAgent: (String) -> String,
+    isCancelled: () -> Boolean = { false },
+): OverviewResult {
+    val snapshotSize = runCatching { Files.size(sessionFile) }.getOrDefault(0L)
+    val cursor = if (snapshotSize == 0L) TrailCursor(0, 0) else trailCursor(sessionFile, snapshotSize)
+    if (cursor.lines == 0L) {
+        return storeOverview(cache, sessionKey, OverviewResult(emptyList(), Instant.now()), sessionFile, cursor)
     }
+    val cached = cache.get(sessionKey)
+    // 截止位置与上次完全相同：要么已是最新，要么只多了一截还没写完的半行。旧结果正好覆盖到这里，
+    // 再调智能体只会把同样的内容重读一遍，直接返回旧结果并重新判断是否过期。
+    // 截止位置倒退（文件缩短、被改写）则由 trailPrompt 退回完整生成。
+    if (cached != null && cached.lineCount == cursor.lines && cached.fileSize == cursor.bytes) {
+        val result = cached.result
+        // 上次只是没写进磁盘：重试保存即可，同样不必重新生成
+        if (!result.saveFailed) return result.copy(stale = isStale(cached, sessionFile))
+        return storeOverview(cache, sessionKey, result.copy(saveFailed = false), sessionFile, cursor)
+    }
+    val nodes = generateTrail(buildPrompt(cached, cursor), runAgent, isCancelled)
+    return storeOverview(cache, sessionKey, OverviewResult(nodes, Instant.now()), sessionFile, cursor)
+}
 
 @Service(Service.Level.PROJECT)
 class ProgressOverviewService(
@@ -179,6 +242,16 @@ class ProgressOverviewService(
 ) {
     internal val overviewCache = OverviewCache(
         project.basePath?.let { Path.of(it, ".idea", "imux", "overviews") },
+    )
+
+    /** 各会话标签页右上角面板共享的轨迹状态与生成任务。 */
+    internal val trailStore = TrailStateStore(
+        scope = coroutineScope,
+        loadCached = ::cachedOverview,
+        isAvailable = { SessionMonitor.getInstance(project).model.sessionOf(it) != null },
+        generate = { key, onProgress -> generateOverview(key, onProgress) },
+        errorText = ::overviewErrorText,
+        onEdt = { action -> ApplicationManager.getApplication().invokeLater(action, ModalityState.any()) },
     )
 
     /** 清理截止时仍未退出的 CLI 进程树；下次生成前再尝试销毁。 */
@@ -201,14 +274,7 @@ class ProgressOverviewService(
         val session = SessionMonitor.getInstance(project).model.sessionOf(sessionKey)
             ?: throw IllegalStateException("Session not found: $sessionKey")
 
-        // 先记下大小：生成期间会话又有新交互时，结果按过期处理，见 storeOverview
-        val snapshotSize = runCatching { Files.size(session.filePath) }.getOrDefault(0L)
-        if (snapshotSize == 0L) {
-            return storeOverview(overviewCache, sessionKey, OverviewResult(emptyList(), Instant.now()), session.filePath, snapshotSize)
-        }
-
         val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-        val prompt = overviewPrompt(isChinese, session.agentType, session.filePath)
         val shell = resolveShell(
             System.getenv("SHELL"),
             isWindows = SystemInfo.isWindows,
@@ -227,9 +293,14 @@ class ProgressOverviewService(
         unexited.retry()
         // 每次调用登记进程；进程确认退出才注销，结束时兜底销毁仍登记的进程
         val running = ConcurrentLinkedQueue<AtomicReference<TrackedProcess?>>()
-        val nodes = try {
-            generateTrail(
-                prompt,
+        return try {
+            runTrailGeneration(
+                overviewCache,
+                sessionKey,
+                session.filePath,
+                buildPrompt = { cached, cursor ->
+                    trailPrompt(isChinese, session.agentType, session.filePath, cached, cursor)
+                },
                 runAgent = { text ->
                     runTracked(running) { processRef ->
                         runOneShotAgent(
@@ -248,10 +319,7 @@ class ProgressOverviewService(
         } finally {
             unexited.addAll(cleanupProcesses(running))
         }
-        return storeOverview(overviewCache, sessionKey, OverviewResult(nodes, Instant.now()), session.filePath, snapshotSize)
     }
-
-    fun createChildScope(): CoroutineScope = CoroutineScope(SupervisorJob(coroutineScope.coroutineContext[Job]))
 
     companion object {
         fun getInstance(project: Project): ProgressOverviewService = project.service()

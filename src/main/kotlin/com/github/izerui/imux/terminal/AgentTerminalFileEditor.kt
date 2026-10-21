@@ -103,6 +103,21 @@ class AgentTerminalFileEditor(
     private var observedEditor: Editor? = null
     private var imeCompositionSupport: AgentImeCompositionSupport? = null
     private val messageNavigator = SessionMessageNavigator(project, virtualFile, this)
+    private var terminalLayer: JComponent? = null
+    private val trailOverlay =
+        SessionTrailOverlay(
+            project,
+            virtualFile,
+            this,
+            focusTerminal = {
+                IdeFocusManager.getInstance(project)
+                    .requestFocusInProject(virtualFile.terminalView.preferredFocusableComponent, project)
+            },
+            relayout = {
+                terminalLayer?.revalidate()
+                terminalLayer?.repaint()
+            },
+        )
     private val activeModelDispatcher = ActiveModelDispatcher(
         schedule = { runnable ->
             ApplicationManager.getApplication().invokeLater {
@@ -327,6 +342,10 @@ class AgentTerminalFileEditor(
                     setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
                     add(navigatorComponent)
                     setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
+                    add(trailOverlay.chip)
+                    setLayer(trailOverlay.chip, JLayeredPane.PALETTE_LAYER)
+                    add(trailOverlay.card)
+                    setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
                 }
 
                 override fun uiDataSnapshot(sink: DataSink) {
@@ -355,8 +374,12 @@ class AgentTerminalFileEditor(
                     val navigatorX =
                         (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
                     navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
+
+                    // 轨迹面板放在导航轨道左侧，轨道始终完整可用
+                    trailOverlay.layout(width, height, navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET))
                 }
             }
+        this.terminalLayer = terminalLayer
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             add(peerBanner, BorderLayout.NORTH)
@@ -568,6 +591,12 @@ class AgentTerminalFileEditor(
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
 
         val sessionKey = virtualFile.sessionKey
+        // 会话真正关闭才取消轨迹生成；拖动标签页、分屏重建已在上面早退，任务继续。
+        // 按 tabId 而不是当前 sessionKey 清理：/clear、/new 迁移前仍在跑的任务登记在旧 key 下
+        com.github.izerui.imux.overview.ProgressOverviewService
+            .getInstance(project)
+            .trailStore
+            .releaseOwner(virtualFile.tabId)
         TerminalHost.getInstance(project).closeSession(virtualFile)
         com.github.izerui.imux.monitor.SessionMonitor
             .getInstance(project)

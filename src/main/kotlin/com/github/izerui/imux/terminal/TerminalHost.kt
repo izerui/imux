@@ -466,10 +466,10 @@ class TerminalHost(
             ?.let { file -> file.sessionId?.let { file.agentType to it } }
 
     /** 结对编程可在会话落盘前使用内部记账 key；不得用于复制、恢复或交接。 */
-    internal fun sessionKeyFor(view: TerminalView): String? =
-        files.values
-            .firstOrNull { it.terminalView === view }
-            ?.sessionKey
+    internal fun sessionKeyFor(view: TerminalView): String? = fileFor(view)?.sessionKey
+
+    internal fun fileFor(view: TerminalView): AgentTerminalVirtualFile? =
+        files.values.firstOrNull { it.terminalView === view }
 
     /**
      * [command] 收的是 tabId 而不是拼好的命令行：Windows 上启动命令里要嵌入
