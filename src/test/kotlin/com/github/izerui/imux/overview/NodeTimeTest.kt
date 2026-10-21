@@ -103,7 +103,8 @@ class NodeTimeTest {
         assertEquals(3, symbols.size); assertEquals(2, connectors.size); assertEquals(2, times.size)
         val lineX = rect(symbols.first()).x
         assertTrue("圆点在同一列：${symbols.map { rect(it) }}", symbols.all { rect(it).x == lineX })
-        assertTrue("竖线与圆点同列：${connectors.map { rect(it) }} vs $lineX", connectors.all { rect(it).x + it.insets.left == lineX + symbols.first().insets.left })
+        val lineCenter = rect(symbols.first()).centerX.toInt() - 0
+        assertTrue("竖线与圆点同列：${connectors.map { rect(it) }} vs ${symbols.map { rect(it) }}", connectors.all { glyphCenterX(it, ::rect) == glyphCenterX(symbols.first(), ::rect) })
         assertTrue("时间都在轨迹线左边：${times.map { rect(it) }} vs $lineX", times.all { rect(it).maxX <= lineX })
         assertTrue("时间右对齐、紧贴轨迹线", times.all { it.horizontalAlignment == javax.swing.SwingConstants.RIGHT } && times.map { rect(it).maxX }.distinct().size == 1)
         assertTrue("长短不同的时间都完整显示", times.all { it.width >= it.preferredSize.width })
@@ -172,6 +173,40 @@ class NodeTimeTest {
         val tag = allComponents(node).filterIsInstance<javax.swing.JLabel>().single { it.text == "已回滚" }
         fun rect(c: java.awt.Component) = javax.swing.SwingUtilities.convertRectangle(c.parent, c.bounds, host)
         assertTrue("同一行：pane=${rect(pane)} tag=${rect(tag)}", rect(tag).y == rect(pane).y && rect(tag).x >= rect(pane).maxX)
+    }
+
+    /** 符号在其标签里的绘制中心：标签居中对齐时就是去掉内边距后的区域中心。 */
+    private fun glyphCenterX(label: javax.swing.JLabel, rect: (java.awt.Component) -> java.awt.Rectangle): Int {
+        val r = rect(label)
+        val insets = label.insets
+        return r.x + insets.left + (r.width - insets.left - insets.right) / 2
+    }
+
+    @Test
+    fun `所有类型的符号与连接竖线居中在同一列`() = onEdt {
+        for (withTime in listOf(false, true)) {
+            val now = Instant.now()
+            val types = listOf(
+                NodeSymbol.MAIN, NodeSymbol.ERROR, NodeSymbol.ROLLBACK_START, NodeSymbol.MAIN, NodeSymbol.ROLLBACK_END,
+                NodeSymbol.SIDE, NodeSymbol.CHANGE, NodeSymbol.IN_PROGRESS,
+            )
+            val nodes = types.mapIndexed { i, t -> OverviewNode(t, "节点 $i", if (withTime && i == 0) now.minusSeconds(60) else null) }
+            val panel = buildResultPanel(OverviewResult(nodes, now), stale = false) {}
+            val host = layoutOffscreen(panel, 360, 800)
+            fun rect(c: java.awt.Component) = javax.swing.SwingUtilities.convertRectangle(c.parent, c.bounds, host)
+            val timeline = allComponents(panel).filterIsInstance<ScrollablePanel>().single()
+            val connectors = timeline.components.filterIsInstance<javax.swing.JLabel>()
+            val symbols = timeline.components.filterIsInstance<javax.swing.JPanel>().map { row ->
+                allComponents(row).filterIsInstance<javax.swing.JLabel>().first { it.toolTipText == null && it.text?.isNotBlank() == true && it.text !in setOf("已回滚", "rolled back") }
+            }
+            assertEquals(types.size, symbols.size)
+            assertEquals(types.size - 1, connectors.size)
+            val all = symbols + connectors
+            val centers = all.map { glyphCenterX(it, ::rect) }
+            assertTrue("withTime=$withTime 符号与竖线都居中：${all.map { it.text to it.horizontalAlignment }}", all.all { it.horizontalAlignment == javax.swing.SwingConstants.CENTER })
+            assertEquals("withTime=$withTime 同一列中心：${all.map { it.text }} -> $centers", 1, centers.distinct().size)
+            assertEquals("符号文字不带前导空格：${symbols.map { it.text }}", symbols.map { it.text.trim() }, symbols.map { it.text })
+        }
     }
 
     @Test

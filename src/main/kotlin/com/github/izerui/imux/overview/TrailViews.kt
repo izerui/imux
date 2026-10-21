@@ -300,11 +300,14 @@ internal fun buildResultPanel(
         if (node.symbol == NodeSymbol.ROLLBACK_END) inRollback = false
 
         if (index < result.nodes.size - 1) {
-            val connector = JBLabel("   │").apply {
+            val connector = symbolColumnLabel("│").apply {
                 foreground = JBColor(0x999999.toInt(), 0x555555)
-                font = JBUI.Fonts.label(12f)
-                // 让出时间列，与节点的圆点保持在同一列
-                border = BorderFactory.createEmptyBorder(0, JBUI.scale(4) + timeColumnWidth, 0, 0)
+                alignmentX = Component.LEFT_ALIGNMENT
+                // 让出节点行的左内边距和时间列，与节点符号落在同一列
+                val left = JBUI.scale(4) + timeColumnWidth
+                border = BorderFactory.createEmptyBorder(0, left, 0, 0)
+                preferredSize = java.awt.Dimension(left + symbolColumnWidth(), preferredSize.height)
+                maximumSize = preferredSize
             }
             timelinePanel.add(connector)
         }
@@ -459,8 +462,8 @@ internal fun createNodePanel(
     val symbol = when (node.symbol) {
         NodeSymbol.MAIN -> if (inRollback) "╳" else "●"
         NodeSymbol.SIDE -> "○"
-        NodeSymbol.ROLLBACK_START -> "┌─"
-        NodeSymbol.ROLLBACK_END -> "└─"
+        NodeSymbol.ROLLBACK_START -> "┌"
+        NodeSymbol.ROLLBACK_END -> "└"
         NodeSymbol.CHANGE -> "↻"
         NodeSymbol.ERROR -> "⚠"
         NodeSymbol.IN_PROGRESS -> "◐"
@@ -488,11 +491,9 @@ internal fun createNodePanel(
         alignmentX = Component.LEFT_ALIGNMENT
         border = JBUI.Borders.empty(1, 4, 1, 4)
 
-        val symbolLabel = JBLabel("   $symbol").apply {
+        val symbolLabel = symbolColumnLabel(symbol).apply {
             foreground = symbolColor
-            font = JBUI.Fonts.label(12f)
             verticalAlignment = SwingConstants.TOP
-            border = JBUI.Borders.emptyRight(4)
         }
         if (timeColumnWidth <= 0) {
             add(symbolLabel, BorderLayout.WEST)
@@ -625,3 +626,21 @@ private class TextWithTrailingTagLayout(private val gap: Int, private val minTex
         }
     }
 }
+
+/** 轨迹线上出现的全部符号；列宽按其中最宽的一个算。 */
+private val TRAIL_GLYPHS = listOf("●", "○", "╳", "┌", "└", "↻", "⚠", "◐", "│")
+
+/**
+ * 符号列宽：所有符号里最宽的那个再加左右留白。符号是比例字体里的文字，宽窄不一
+ * （⚠ 常由更宽的符号字体渲染），只有固定列宽加居中才能让各行的圆点和竖线落在同一条线上。
+ */
+internal fun symbolColumnWidth(): Int =
+    TRAIL_GLYPHS.maxOf { JBLabel(it).apply { font = JBUI.Fonts.label(12f) }.preferredSize.width } + JBUI.scale(12)
+
+/** 轨迹线这一列里的一格：固定列宽、居中绘制。节点符号和连接竖线共用，保证同一列中心。 */
+private fun symbolColumnLabel(glyph: String): JBLabel =
+    JBLabel(glyph).apply {
+        font = JBUI.Fonts.label(12f)
+        horizontalAlignment = SwingConstants.CENTER
+        preferredSize = java.awt.Dimension(symbolColumnWidth(), preferredSize.height)
+    }
