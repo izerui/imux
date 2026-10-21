@@ -35,6 +35,8 @@ enum class NodeSymbol {
 data class OverviewNode(
     val symbol: NodeSymbol,
     val text: String,
+    /** 这一步开始的时间，智能体从会话记录的时间戳抄出；没有或校验不通过为 null。 */
+    val time: Instant? = null,
 )
 
 data class OverviewResult(
@@ -151,6 +153,7 @@ internal class OverviewCache(private val storageDir: Path?) {
                     val nodeObj = com.google.gson.JsonObject()
                     nodeObj.addProperty("symbol", node.symbol.name)
                     nodeObj.addProperty("text", node.text)
+                    node.time?.let { nodeObj.addProperty("time", it.toEpochMilli()) }
                     nodesArray.add(nodeObj)
                 }
                 add("nodes", nodesArray)
@@ -182,6 +185,7 @@ internal class OverviewCache(private val storageDir: Path?) {
                 OverviewNode(
                     symbol = NodeSymbol.valueOf(nodeObj.get("symbol").asString),
                     text = nodeObj.get("text").asString,
+                    time = nodeObj.get("time")?.takeUnless { it.isJsonNull }?.asLong?.let(Instant::ofEpochMilli),
                 )
             }
             val lineCount = obj.get("lineCount")?.takeUnless { it.isJsonNull }?.asLong
@@ -231,7 +235,8 @@ internal fun runTrailGeneration(
         if (!result.saveFailed) return result.copy(stale = isStale(cached, sessionFile))
         return storeOverview(cache, sessionKey, result.copy(saveFailed = false), sessionFile, cursor)
     }
-    val nodes = generateTrail(buildPrompt(cached, cursor), runAgent, isCancelled)
+    val startedAt = Instant.now()
+    val nodes = sanitizeNodeTimes(generateTrail(buildPrompt(cached, cursor), runAgent, isCancelled), startedAt)
     return storeOverview(cache, sessionKey, OverviewResult(nodes, Instant.now()), sessionFile, cursor)
 }
 
@@ -355,7 +360,7 @@ internal const val TRAIL_ATTEMPTS = 2
 internal class OverviewParseException(val rawOutput: String) :
     RuntimeException("Overview output could not be parsed into timeline nodes")
 
-private val NODE_PATTERN = Regex("""^\[(\w+)]\s*(.+)$""")
+private val NODE_PATTERN = Regex("""^\[(\w+)(?:\|([^\]]*))?]\s*(.+)$""")
 
 internal fun parseOverviewOutput(output: String): List<OverviewNode> {
     return output.lines()
@@ -363,7 +368,8 @@ internal fun parseOverviewOutput(output: String): List<OverviewNode> {
             val trimmed = line.trim()
             val match = NODE_PATTERN.matchEntire(trimmed) ?: return@mapNotNull null
             val type = match.groupValues[1]
-            val text = match.groupValues[2].trim()
+            val time = parseNodeTime(match.groupValues[2])
+            val text = match.groupValues[3].trim()
             val symbol = when (type.uppercase()) {
                 "MAIN" -> NodeSymbol.MAIN
                 "SIDE" -> NodeSymbol.SIDE
@@ -374,6 +380,27 @@ internal fun parseOverviewOutput(output: String): List<OverviewNode> {
                 "IN_PROGRESS" -> NodeSymbol.IN_PROGRESS
                 else -> NodeSymbol.MAIN
             }
-            OverviewNode(symbol, text)
+            OverviewNode(symbol, text, time)
         }
+}
+
+/** 时间写坏了不影响节点本身，只是不显示时间。 */
+private fun parseNodeTime(raw: String): Instant? {
+    val value = raw.trim().ifEmpty { return null }
+    return runCatching { java.time.OffsetDateTime.parse(value).toInstant() }.getOrNull()
+        ?: runCatching { Instant.parse(value) }.getOrNull()
+}
+
+/**
+ * 时间是智能体从记录里抄的，可能抄错：晚于本次生成开始（留 1 分钟误差）、或比前一个有时间的节点还早
+ * （顺序倒退）的都去掉，只显示可信的。
+ */
+internal fun sanitizeNodeTimes(nodes: List<OverviewNode>, startedAt: Instant): List<OverviewNode> {
+    val latest = startedAt.plusSeconds(60)
+    var previous: Instant? = null
+    return nodes.map { node ->
+        val time = node.time?.takeIf { !it.isAfter(latest) && (previous == null || !it.isBefore(previous)) }
+        if (time != null) previous = time
+        if (time == node.time) node else node.copy(time = time)
+    }
 }

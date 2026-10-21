@@ -288,11 +288,13 @@ internal fun buildResultPanel(
         border = JBUI.Borders.empty(8, 4, 8, 4)
     }
 
+    // 只要有一个节点带时间就留出时间列，都没有时与以前一样
+    val timeColumnWidth = timeColumnWidthFor(result.nodes)
     var inRollback = false
     for ((index, node) in result.nodes.withIndex()) {
         if (node.symbol == NodeSymbol.ROLLBACK_START) inRollback = true
 
-        val nodePanel = createNodePanel(node, inRollback, isChinese)
+        val nodePanel = createNodePanel(node, inRollback, isChinese, timeColumnWidth)
         timelinePanel.add(nodePanel)
 
         if (node.symbol == NodeSymbol.ROLLBACK_END) inRollback = false
@@ -301,7 +303,8 @@ internal fun buildResultPanel(
             val connector = JBLabel("   │").apply {
                 foreground = JBColor(0x999999.toInt(), 0x555555)
                 font = JBUI.Fonts.label(12f)
-                border = JBUI.Borders.emptyLeft(4)
+                // 让出时间列，与节点的圆点保持在同一列
+                border = BorderFactory.createEmptyBorder(0, JBUI.scale(4) + timeColumnWidth, 0, 0)
             }
             timelinePanel.add(connector)
         }
@@ -443,7 +446,16 @@ internal class ScrollablePanel : JPanel(), Scrollable {
     override fun getScrollableTracksViewportHeight() = false
 }
 
-internal fun createNodePanel(node: OverviewNode, inRollback: Boolean, isChinese: Boolean): JPanel {
+/**
+ * [timeColumnWidth] 是轨迹线左边时间列的宽度，同一条时间线里各行相同；为 0 时不占这一列。
+ * 默认按本节点自己的时间计算，单独调用时也能显示时间。
+ */
+internal fun createNodePanel(
+    node: OverviewNode,
+    inRollback: Boolean,
+    isChinese: Boolean,
+    timeColumnWidth: Int = node.time?.let { timeColumnWidthFor(listOf(node)) } ?: 0,
+): JPanel {
     val symbol = when (node.symbol) {
         NodeSymbol.MAIN -> if (inRollback) "╳" else "●"
         NodeSymbol.SIDE -> "○"
@@ -482,7 +494,25 @@ internal fun createNodePanel(node: OverviewNode, inRollback: Boolean, isChinese:
             verticalAlignment = SwingConstants.TOP
             border = JBUI.Borders.emptyRight(4)
         }
-        add(symbolLabel, BorderLayout.WEST)
+        if (timeColumnWidth <= 0) {
+            add(symbolLabel, BorderLayout.WEST)
+        } else {
+            // 时间单独成列放在轨迹线左边；没有时间的节点也占同样宽度，整条线保持笔直
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(
+                        (node.time?.let(::nodeTimeLabel) ?: JBLabel()).apply {
+                            horizontalAlignment = SwingConstants.RIGHT
+                            preferredSize = java.awt.Dimension(timeColumnWidth, preferredSize.height)
+                        },
+                        BorderLayout.WEST,
+                    )
+                    add(symbolLabel, BorderLayout.CENTER)
+                },
+                BorderLayout.WEST,
+            )
+        }
 
         val textPane = JTextPane().apply {
             text = node.text
@@ -495,17 +525,103 @@ internal fun createNodePanel(node: OverviewNode, inRollback: Boolean, isChinese:
             StyleConstants.setLineSpacing(attrs, 0.2f)
             styledDocument.setParagraphAttributes(0, document.length, attrs, false)
         }
-        add(textPane, BorderLayout.CENTER)
-
-        if (node.symbol == NodeSymbol.ROLLBACK_START) {
+        if (node.symbol != NodeSymbol.ROLLBACK_START) {
+            add(textPane, BorderLayout.CENTER)
+        } else {
             val tag = JBLabel(if (isChinese) "已回滚" else "rolled back").apply {
                 foreground = JBColor(0xAA5555.toInt(), 0x8B4513)
                 font = JBUI.Fonts.smallFont()
                 verticalAlignment = SwingConstants.TOP
-                border = JBUI.Borders.emptyLeft(8)
             }
-            add(tag, BorderLayout.EAST)
+            add(
+                JPanel(TextWithTrailingTagLayout(JBUI.scale(8), JBUI.scale(120))).apply {
+                    isOpaque = false
+                    add(textPane)
+                    add(tag)
+                },
+                BorderLayout.CENTER,
+            )
         }
     }
 }
 
+/**
+ * 节点时间的显示：当天只显示时分，当年显示月日时分，跨年只显示日期（悬停可看到完整时间）。
+ * 时间列按最长的那个预留宽度，跨年再带时分会把窄卡片里的正文挤得太窄。
+ */
+internal fun nodeTimeText(time: java.time.Instant, now: java.time.Instant, zone: java.time.ZoneId): String {
+    val at = time.atZone(zone)
+    val today = now.atZone(zone)
+    val pattern = when {
+        at.toLocalDate() == today.toLocalDate() -> "HH:mm"
+        at.year == today.year -> "MM-dd HH:mm"
+        else -> "yyyy-MM-dd"
+    }
+    return java.time.format.DateTimeFormatter.ofPattern(pattern).format(at)
+}
+
+private fun nodeTimeLabel(time: java.time.Instant): JBLabel =
+    JBLabel(nodeTimeText(time, java.time.Instant.now(), java.time.ZoneId.systemDefault())).apply {
+        foreground = JBColor(0x999999.toInt(), 0x787878)
+        font = JBUI.Fonts.smallFont()
+        verticalAlignment = SwingConstants.TOP
+        border = JBUI.Borders.empty(1, 0, 0, 2)
+        toolTipText = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+            .format(time.atZone(java.time.ZoneId.systemDefault()))
+    }
+
+/** 时间列宽：取这条时间线里最长的时间；一个都没有时为 0。 */
+internal fun timeColumnWidthFor(nodes: List<OverviewNode>): Int =
+    nodes.mapNotNull { it.time }.maxOfOrNull { nodeTimeLabel(it).preferredSize.width } ?: 0
+
+/**
+ * 正文加尾随标签（「已回滚」）：宽度够时标签在正文右边；正文剩不到 [minTextWidth] 时标签换到下一行，
+ * 正文占满整行。窄卡片里时间列已经占去一块宽度，标签再固定在右边会把正文挤没。
+ */
+private class TextWithTrailingTagLayout(private val gap: Int, private val minTextWidth: Int) : java.awt.LayoutManager {
+    override fun addLayoutComponent(name: String?, comp: java.awt.Component) = Unit
+    override fun removeLayoutComponent(comp: java.awt.Component) = Unit
+    override fun minimumLayoutSize(parent: java.awt.Container): java.awt.Dimension = preferredLayoutSize(parent)
+
+    private fun inline(width: Int, tag: java.awt.Component) = width - tag.preferredSize.width - gap >= minTextWidth
+
+    /** 正文按给定宽度换行后的高度。 */
+    private fun textHeight(text: java.awt.Component, width: Int): Int {
+        text.setSize(width.coerceAtLeast(1), Short.MAX_VALUE.toInt())
+        return text.preferredSize.height
+    }
+
+    override fun preferredLayoutSize(parent: java.awt.Container): java.awt.Dimension {
+        val (text, tag) = parent.components
+        val insets = parent.insets
+        val width = parent.width - insets.left - insets.right
+        if (width <= 0) {
+            return java.awt.Dimension(
+                text.preferredSize.width + gap + tag.preferredSize.width + insets.left + insets.right,
+                maxOf(text.preferredSize.height, tag.preferredSize.height) + insets.top + insets.bottom,
+            )
+        }
+        val height = if (inline(width, tag)) {
+            maxOf(textHeight(text, width - tag.preferredSize.width - gap), tag.preferredSize.height)
+        } else {
+            textHeight(text, width) + tag.preferredSize.height
+        }
+        return java.awt.Dimension(width + insets.left + insets.right, height + insets.top + insets.bottom)
+    }
+
+    override fun layoutContainer(parent: java.awt.Container) {
+        val (text, tag) = parent.components
+        val insets = parent.insets
+        val width = parent.width - insets.left - insets.right
+        val tagSize = tag.preferredSize
+        if (inline(width, tag)) {
+            val textWidth = width - tagSize.width - gap
+            text.setBounds(insets.left, insets.top, textWidth, textHeight(text, textWidth))
+            tag.setBounds(insets.left + textWidth + gap, insets.top, tagSize.width, tagSize.height)
+        } else {
+            val textHeight = textHeight(text, width)
+            text.setBounds(insets.left, insets.top, width, textHeight)
+            tag.setBounds(insets.left, insets.top + textHeight, tagSize.width, tagSize.height)
+        }
+    }
+}

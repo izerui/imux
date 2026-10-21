@@ -851,7 +851,7 @@ class ProgressOverviewTest {
             assertTrue("$type 应给出绝对路径", prompt.contains("`$absolute`"))
             assertTrue("$type 应说明记录格式", prompt.contains(marker))
             zhGuards.forEach { assertTrue("$type 缺少：$it", prompt.contains(it)) }
-            assertTrue(prompt.contains("[TYPE] 一句话描述"))
+            assertTrue(prompt.contains("[TYPE|时间] 一句话描述"))
         }
     }
 
@@ -864,7 +864,7 @@ class ProgressOverviewTest {
             assertTrue(prompt.contains("`$absolute`"))
             assertTrue(prompt.contains("JSONL"))
             enGuards.forEach { assertTrue("$type missing: $it", prompt.contains(it)) }
-            assertTrue(prompt.contains("[TYPE] One-sentence description"))
+            assertTrue(prompt.contains("[TYPE|time] One-sentence description"))
         }
     }
 
