@@ -175,13 +175,40 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
 private fun Ledger.recordedFor(id: String): String =
     history.filter { it.question.directionId == id && it.answer != Answer.Skipped }.joinToString("；") { it.recorded }
 
-/** 失败页「生成结果」不调用 Agent：原需求后面按顺序列出已定与默认的结论。 */
+/**
+ * 「已确认」的结论：所有 DECIDED/DEFAULTED 方向的非空 conclusion（按方向顺序），
+ * 加上用户已回答（非跳过）但方向尚未 DECIDED/DEFAULTED/DROPPED 的 history 记录
+ * （按 history 顺序），去重。
+ */
+internal fun Ledger.confirmedConclusions(): List<String> {
+    val settledIds = directions.filter { it.status == DECIDED || it.status == DEFAULTED }.mapTo(mutableSetOf()) { it.id }
+    val seen = mutableSetOf<String>()
+    val result = mutableListOf<String>()
+    // 1. DECIDED / DEFAULTED directions' conclusion, in direction order
+    for (d in directions) {
+        if (d.status == DECIDED || d.status == DEFAULTED) {
+            val c = d.conclusion?.takeIf(String::isNotBlank) ?: continue
+            if (seen.add(c)) result += c
+        }
+    }
+    // 2. Non-skipped history records whose direction exists and is NOT DECIDED/DEFAULTED/DROPPED
+    for (record in history) {
+        if (record.answer == Answer.Skipped) continue
+        val d = direction(record.question.directionId) ?: continue
+        if (d.id in settledIds || d.status == DROPPED) continue
+        val c = record.recorded.takeIf(String::isNotBlank) ?: continue
+        if (seen.add(c)) result += c
+    }
+    return result
+}
+
+/** 失败页「生成结果」不调用 Agent：原需求后面按顺序列出已确认的结论。 */
 internal fun composeFallback(ledger: Ledger): String =
     buildString {
         append(ledger.requirement.trim())
-        val settled = ledger.directions.filter { it.status == DECIDED || it.status == DEFAULTED }.mapNotNull { it.conclusion?.takeIf(String::isNotBlank) }
-        if (settled.isNotEmpty()) {
+        val confirmed = ledger.confirmedConclusions()
+        if (confirmed.isNotEmpty()) {
             append("\n\n")
-            settled.forEach { append("- ").append(it).append('\n') }
+            confirmed.forEach { append("- ").append(it).append('\n') }
         }
     }.trimEnd()

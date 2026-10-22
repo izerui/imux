@@ -402,4 +402,132 @@ class ClarificationFlowTest {
         assertEquals(ClarificationState.Result("REQ"), f.state)
         assertEquals(1, prompts.size)
     }
+
+    // ---- 用户刚确认的回答在生成结果中不丢失 ----
+
+    /** 首轮有两个方向：d1 有 CONFIRMED-MARK-4R 选项，d2 有 fallback UNANSWERED-MARK-8T */
+    private val firstTwoDirections =
+        """{"understanding":"u","directions":{"add":[
+           {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
+           {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"UNANSWERED-MARK-8T"}
+           ]},"notes":"n",
+           "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CONFIRMED-MARK-4R"},
+                        {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+
+    @Test
+    fun `用户刚确认的回答在 RESULT 提示词的 confirmed 数组中出现`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger(0)
+        val resultPromptRef = AtomicReference<String>()
+        val f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
+            prompts += prompt
+            when (calls.incrementAndGet()) {
+                1 -> firstTwoDirections
+                2 -> { started.countDown(); release.await(5, TimeUnit.SECONDS); askD2() }
+                3 -> { resultPromptRef.set(prompt); """{"requirement":"FINAL"}""" }
+                else -> error("unexpected call")
+            }
+        })
+        val r1 = f.begin("REQ", null)
+        f.advance(r1)
+        // Answer d1 with Picked("a") => conclusion = CONFIRMED-MARK-4R
+        val r2 = f.answer(Answer.Picked("a"), null)!!
+        // Block the next round
+        val worker = thread { f.advance(r2) }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        // While round 2 is blocked, begin result
+        val r3 = f.beginResult()!!
+        release.countDown()
+        worker.join(5_000)
+        f.generateResult(r3)
+        assertEquals(ClarificationState.Result("FINAL"), f.state)
+        val resultPrompt = resultPromptRef.get()!!
+        // Extract the confirmed array from the JSON — find "confirmed" key
+        val confirmedIdx = resultPrompt.indexOf("\"confirmed\"")
+        assertTrue("RESULT prompt must contain confirmed array", confirmedIdx >= 0)
+        val afterConfirmed = resultPrompt.substring(confirmedIdx)
+        assertTrue("confirmed array must contain the user's just-confirmed answer", afterConfirmed.contains("CONFIRMED-MARK-4R"))
+        assertFalse("confirmed array must NOT contain unanswered direction's fallback", afterConfirmed.substringBefore("\"constraints\"").contains("UNANSWERED-MARK-8T"))
+    }
+
+    @Test
+    fun `用户刚确认的回答在兜底结果中出现`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger(0)
+        val f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
+            prompts += prompt
+            when (calls.incrementAndGet()) {
+                1 -> firstTwoDirections
+                2 -> { started.countDown(); release.await(5, TimeUnit.SECONDS); askD2() }
+                else -> error("unexpected call")
+            }
+        })
+        val r1 = f.begin("REQ", null)
+        f.advance(r1)
+        val r2 = f.answer(Answer.Picked("a"), null)!!
+        val worker = thread { f.advance(r2) }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        // beginResult invalidates the in-flight round, then fallback
+        f.beginResult()
+        release.countDown()
+        worker.join(5_000)
+        f.fallbackResult()
+        val result = (f.state as ClarificationState.Result).requirement
+        assertTrue("fallback must contain the user's confirmed answer", result.contains("CONFIRMED-MARK-4R"))
+        assertFalse("fallback must NOT contain unanswered direction's fallback", result.contains("UNANSWERED-MARK-8T"))
+    }
+
+    @Test
+    fun `OPEN 方向的模型部分结论不出现在 confirmed 数组和兜底结果中`() {
+        // Build a ledger where d1 is answered (OPEN with open points) and d2 has a model conclusion but no user answer
+        val firstWithPartial =
+            """{"understanding":"u","directions":{"add":[
+               {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
+               {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"F2"}
+               ]},"notes":"n",
+               "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CONFIRMED-MARK-4R"},
+                            {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+        // Round 2: previous reports d1 as OPEN (still has open points), asks d2 but we'll intercept
+        val round2WithPartialD1 =
+            """{"previous":{"id":"d1","status":"OPEN","conclusion":"PARTIAL-MARK-6W","openPoints":["open"]},"notes":"n",
+               "next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger(0)
+        val resultPromptRef = AtomicReference<String>()
+        val f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
+            prompts += prompt
+            when (calls.incrementAndGet()) {
+                1 -> firstWithPartial
+                2 -> round2WithPartialD1
+                3 -> { started.countDown(); release.await(5, TimeUnit.SECONDS); """{"requirement":"FINAL"}""" }
+                4 -> { resultPromptRef.set(prompt); """{"requirement":"FINAL2"}""" }
+                else -> error("unexpected call")
+            }
+        })
+        val r1 = f.begin("REQ", null)
+        f.advance(r1)
+        // Answer d1 => CONFIRMED-MARK-4R
+        val r2 = f.answer(Answer.Picked("a"), null)!!
+        f.advance(r2)
+        // Now d1 is OPEN (previous reported OPEN), d2 is ACTIVE (being asked)
+        // d1 has conclusion PARTIAL-MARK-6W from the model — but the user's answer CONFIRMED-MARK-4R is in history
+        assertEquals(DirectionStatus.OPEN, f.ledger.direction("d1")!!.status)
+        assertEquals("PARTIAL-MARK-6W", f.ledger.direction("d1")!!.conclusion)
+        // Don't answer d2. Begin result while round 3 would be blocked.
+        val r3 = f.beginResult()!!
+        // The RESULT prompt should have confirmed containing CONFIRMED-MARK-4R but NOT PARTIAL-MARK-6W (model partial)
+        // and NOT unanswered d2's model conclusion
+        // First let's check fallback
+        f.fallbackResult()
+        val fallbackText = (f.state as ClarificationState.Result).requirement
+        assertTrue("fallback must contain user-answered OPEN direction", fallbackText.contains("CONFIRMED-MARK-4R"))
+        assertFalse("fallback must NOT contain model's partial conclusion on unanswered d2", fallbackText.contains("C2A"))
+        assertFalse("fallback must NOT contain model's partial conclusion on unanswered d2 option b", fallbackText.contains("C2B"))
+    }
 }

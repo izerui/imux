@@ -54,14 +54,14 @@ private fun phaseInstruction(phase: Phase, isChinese: Boolean): String =
             Phase.FIRST -> "这是首轮。先调查项目，给出 understanding（你的理解、代码现状与这次会碰到哪里），在 directions.add 里列出所有需要用户确认的方向，并给出第一个问题；没有需要确认的方向时直接返回 done。"
             Phase.ROUND -> "用户已回答上一轮的问题（见 history 最后一条）。带着全部已确认内容继续调查：用 previous 交代 reportPrevious 指向的方向是否已定，重新审视方向列表，给出下一个问题；没有需要用户拍板的方向了就返回 done。"
             Phase.CORRECTED -> "用户纠正了你的理解（见 corrections）。按新理解重新调查，重新给出 understanding，并重新审视方向列表；其余同逐轮要求。"
-            Phase.RESULT -> "用户要求现在生成结果。把原需求与所有 DECIDED、DEFAULTED 方向的 conclusion 融合成调整后的需求：精炼，只到方向层，不附带任何说明、依据、未决事项或标记；没定的方向不要写成已定。"
+            Phase.RESULT -> "用户要求现在生成结果。把原需求与 confirmed 数组中的每一条融合成调整后的需求：精炼，只到方向层，不附带任何说明、依据、未决事项或标记；没定的方向不要写成已定。"
         }
     } else {
         when (phase) {
             Phase.FIRST -> "This is the first round. Investigate the project, give `understanding` (your understanding, how the code works today and what the change touches), list every direction that needs the user's confirmation in `directions.add`, and ask the first question; if nothing needs confirming, return `done`."
             Phase.ROUND -> "The user answered the last question (see the last entry of `history`). Continue investigating with everything confirmed so far: use `previous` to report whether the direction in `reportPrevious` is settled, re-examine the list, and ask the next question; when no direction needs the user's call, return `done`."
             Phase.CORRECTED -> "The user corrected your understanding (see `corrections`). Investigate again with the new understanding, give `understanding` again and re-examine the list; otherwise as in a normal round."
-            Phase.RESULT -> "The user asked for the result now. Merge the original requirement with the `conclusion` of every DECIDED and DEFAULTED direction into the adjusted requirement: concise, at the level of direction, with no explanations, evidence, open items or markers; never write an unsettled direction as settled."
+            Phase.RESULT -> "The user asked for the result now. Merge the original requirement with every entry in the `confirmed` array into the adjusted requirement: concise, at the level of direction, with no explanations, evidence, open items or markers; never write an unsettled direction as settled."
         }
     }
 
@@ -116,6 +116,7 @@ private fun ledgerJson(ledger: Ledger): String {
                 )
             },
             "notes" to ledger.notes,
+            "confirmed" to ledger.confirmedConclusions(),
             "constraints" to linkedMapOf(
                 "mustAsk" to ledger.pinned,
                 "frozen" to ledger.directions.filter { it.status == DirectionStatus.DEFAULTED }.map { it.id },

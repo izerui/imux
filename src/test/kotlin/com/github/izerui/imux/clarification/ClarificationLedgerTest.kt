@@ -254,4 +254,84 @@ class ClarificationLedgerTest {
         val answered = base.recordAnswer(ask("d1").question, Answer.Picked("a"), null)
         assertEquals(DirectionStatus.ACTIVE, answered.releaseUnanswered().direction("d1")!!.status)
     }
+
+    // ---- confirmedConclusions ----
+
+    @Test
+    fun `confirmedConclusions 包含 DECIDED 方向的结论`() {
+        val ledger = base.copy(
+            directions = listOf(dir("d1", DirectionStatus.DECIDED).copy(conclusion = "DECIDED-MARK")),
+        )
+        assertTrue(ledger.confirmedConclusions().contains("DECIDED-MARK"))
+    }
+
+    @Test
+    fun `confirmedConclusions 包含 DEFAULTED 方向的结论`() {
+        val ledger = base.copy(
+            directions = listOf(dir("d1", DirectionStatus.DEFAULTED).copy(conclusion = "DEFAULTED-MARK")),
+        )
+        assertTrue(ledger.confirmedConclusions().contains("DEFAULTED-MARK"))
+    }
+
+    @Test
+    fun `confirmedConclusions 包含 ACTIVE 方向上用户已回答的记录`() {
+        val question = ask("d1").question
+        val ledger = base.copy(
+            directions = listOf(dir("d1", DirectionStatus.ACTIVE)),
+        ).recordAnswer(question, Answer.Picked("a"), null)
+        val confirmed = ledger.confirmedConclusions()
+        assertTrue("ACTIVE answered should be included", confirmed.contains("conclusion-a"))
+    }
+
+    @Test
+    fun `confirmedConclusions 包含 OPEN 方向上用户已回答的记录`() {
+        // Simulate: user answered, then model reported previous.status=OPEN (still has open points)
+        val question = ask("d1").question
+        val answered = base.recordAnswer(question, Answer.Picked("b"), null)
+        // Merge with previous status=OPEN to put d1 back to OPEN
+        val merged = answered.merge(
+            response(ask("d2"), previous = Previous("d1", decided = false, conclusion = "partial", openPoints = listOf("point"))),
+            emptySet(),
+        )
+        assertTrue(merged.errors.isEmpty())
+        assertEquals(DirectionStatus.OPEN, merged.ledger.direction("d1")!!.status)
+        val confirmed = merged.ledger.confirmedConclusions()
+        assertTrue("OPEN answered should be included", confirmed.contains("conclusion-b"))
+    }
+
+    @Test
+    fun `confirmedConclusions 不包含从未回答的方向`() {
+        val ledger = base.copy(
+            directions = listOf(dir("d1", DirectionStatus.OPEN).copy(conclusion = null, fallback = "UNANSWERED-FB")),
+        )
+        val confirmed = ledger.confirmedConclusions()
+        assertFalse("never-answered direction must not appear", confirmed.contains("UNANSWERED-FB"))
+        assertTrue("never-answered direction: empty confirmed", confirmed.isEmpty())
+    }
+
+    @Test
+    fun `confirmedConclusions 不包含 DROPPED 方向上的旧回答`() {
+        val question = ask("d1").question
+        val answered = base.recordAnswer(question, Answer.Picked("a"), null)
+        // Drop d1
+        val dropped = answered.copy(
+            directions = answered.directions.map { if (it.id == "d1") it.copy(status = DirectionStatus.DROPPED) else it },
+        )
+        val confirmed = dropped.confirmedConclusions()
+        assertFalse("DROPPED answered must not appear", confirmed.contains("conclusion-a"))
+    }
+
+    @Test
+    fun `confirmedConclusions 对 DECIDED 方向同时有 history 时不重复`() {
+        val question = ask("d1").question
+        val answered = base.recordAnswer(question, Answer.Picked("a"), null)
+        // Mark d1 as DECIDED with the same conclusion
+        val decided = answered.copy(
+            directions = answered.directions.map {
+                if (it.id == "d1") it.copy(status = DirectionStatus.DECIDED, conclusion = "conclusion-a") else it
+            },
+        )
+        val confirmed = decided.confirmedConclusions()
+        assertEquals("no duplicates", 1, confirmed.count { it == "conclusion-a" })
+    }
 }
