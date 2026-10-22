@@ -75,6 +75,21 @@ class CodexSessionReaderTest {
     }
 
     @Test
+    fun `需求澄清续接的 codex exec 会话不出现在会话列表里`() {
+        // 与真实的 codex exec（不加 --ephemeral）首轮写下的 session_meta 一致：source 为 exec、没有 thread_source；
+        // 续接后同一个文件里有多条用户消息
+        writeRollout(
+            "01a16450-3d47-7b90-ad5a-97f82254eaa6",
+            "/Users/demo/proj",
+            userMessage("# 需求澄清") + "\n" + userMessage("用户对这一批问题的回答"),
+            source = "\"exec\"",
+        )
+        writeRollout("uuid-cli", "/Users/demo/proj")
+
+        assertEquals(listOf("uuid-cli"), reader().read("/Users/demo/proj").map { it.id })
+    }
+
+    @Test
     fun `标题回退为最后一条用户消息`() {
         writeRollout(
             "uuid-msg",
