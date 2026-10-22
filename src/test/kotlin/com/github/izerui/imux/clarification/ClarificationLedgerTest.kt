@@ -336,4 +336,73 @@ class ClarificationLedgerTest {
         val confirmed = decided.confirmedConclusions()
         assertEquals("no duplicates", 1, confirmed.count { it == "conclusion-a" })
     }
+
+    // ---- reopen voids earlier answers ----
+
+    @Test
+    fun `重新打开方向后旧回答被作废且不出现在 confirmedConclusions 中`() {
+        // Answer d1 with a distinct marker, model reports DECIDED, then reopen
+        val question = ask("d1").question
+        val answered = base.recordAnswer(question, Answer.Picked("a"), null)
+        // Simulate model reporting DECIDED
+        val decided = answered.copy(
+            directions = answered.directions.map {
+                if (it.id == "d1") it.copy(status = DirectionStatus.DECIDED, conclusion = "OLD-MARK-3P") else it
+            },
+            history = answered.history.map {
+                if (it.question.directionId == "d1") it.copy(recorded = "OLD-MARK-3P") else it
+            },
+        )
+        assertTrue("before reopen, confirmedConclusions contains OLD-MARK-3P", decided.confirmedConclusions().contains("OLD-MARK-3P"))
+        val reopened = decided.reopen("d1")
+        // confirmedConclusions must not contain OLD-MARK-3P
+        assertFalse("after reopen, confirmedConclusions must not contain OLD-MARK-3P", reopened.confirmedConclusions().contains("OLD-MARK-3P"))
+        // history record still exists and is voided
+        val record = reopened.history.single { it.question.directionId == "d1" }
+        assertTrue("history record must still exist and be voided", record.voided)
+    }
+
+    @Test
+    fun `重新打开后重新回答再 DECIDED 时结论只取新回答`() {
+        // Answer d1 with OLD-MARK-3P, DECIDED, reopen, answer again with NEW-MARK-7H, merge DECIDED
+        val q1 = ask("d1").question
+        val answered = base.recordAnswer(q1, Answer.OwnWords("OLD-MARK-3P"), null)
+        val decided = answered.copy(
+            directions = answered.directions.map {
+                if (it.id == "d1") it.copy(status = DirectionStatus.DECIDED, conclusion = "OLD-MARK-3P") else it
+            },
+        )
+        val reopened = decided.reopen("d1")
+        // Answer again with new marker
+        val q2 = Question("d1", "Q2", "R", "B", listOf(option("a"), option("b")))
+        val reAnswered = reopened.recordAnswer(q2, Answer.OwnWords("NEW-MARK-7H"), null)
+        // Merge a response that reports previous DECIDED for d1
+        val out = reAnswered.merge(
+            response(ask("d2"), previous = Previous("d1", decided = true, conclusion = "模型转述", openPoints = emptyList())),
+            emptySet(),
+        )
+        assertTrue(out.errors.isEmpty())
+        assertEquals("NEW-MARK-7H", out.ledger.direction("d1")!!.conclusion)
+        assertTrue("confirmedConclusions contains NEW-MARK-7H", out.ledger.confirmedConclusions().contains("NEW-MARK-7H"))
+        assertFalse("confirmedConclusions must not contain OLD-MARK-3P", out.ledger.confirmedConclusions().contains("OLD-MARK-3P"))
+    }
+
+    @Test
+    fun `重新打开一个方向不影响另一个方向的记录`() {
+        // d1 DECIDED with history, d2 DECIDED with history; reopen d1 only
+        val q1 = ask("d1").question
+        val q2 = Question("d2", "Q2", "R", "B", listOf(option("a"), option("b")))
+        val answered = base
+            .recordAnswer(q1, Answer.OwnWords("D1-MARK"), null)
+            .recordAnswer(q2, Answer.OwnWords("D2-MARK"), null)
+        // Set both to DECIDED so reopen is allowed
+        val decided = answered.copy(
+            directions = answered.directions.map { it.copy(status = DirectionStatus.DECIDED) },
+        )
+        val reopened = decided.reopen("d1")
+        // d1's record is voided
+        assertTrue(reopened.history.first { it.question.directionId == "d1" }.voided)
+        // d2's record is NOT voided
+        assertFalse(reopened.history.first { it.question.directionId == "d2" }.voided)
+    }
 }

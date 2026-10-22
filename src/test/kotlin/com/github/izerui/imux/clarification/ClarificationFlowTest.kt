@@ -546,4 +546,79 @@ class ClarificationFlowTest {
         assertFalse("fallback must NOT contain model's partial conclusion", fallbackText.contains("PARTIAL-MARK-6W"))
         assertTrue("fallback must contain user's confirmed answer", fallbackText.contains("CONFIRMED-MARK-4R"))
     }
+
+    // ---- reopen voids earlier answers in prompt and fallback ----
+
+    @Test
+    fun `重新打开方向后 RESULT 提示词的 confirmed 不含旧回答且 ledgerJson 中 voided 为 true`() {
+        // Round 1: ask d1 with OLD-MARK-3P option;
+        // Round 2: model reports d1 DECIDED, asks d2;
+        // User reopens d1 while at d2;
+        // User skips d2; Round 3: model reports d2 DEFAULTED, asks d1 again with NEW-MARK-7H option;
+        // User answers d1 again; Round 4: model reports d1 DECIDED, done;
+        // Then generate result.
+        val firstWithOld =
+            """{"understanding":"u","directions":{"add":[
+               {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
+               {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"F2"}
+               ]},"notes":"n",
+               "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"OLD-MARK-3P"},
+                            {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+        val round2AskD2 =
+            """{"previous":{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n",
+               "next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+        // After skip d2 + reopen d1, model asks d1 again
+        val round3AskD1Again =
+            """{"previous":{"id":"d2","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n",
+               "next":{"type":"question","directionId":"d1","question":"Q1 again","reason":"r","basis":"b",
+                 "options":[{"id":"c","label":"C","recommended":true,"conclusion":"NEW-MARK-7H"},
+                            {"id":"d","label":"D","recommended":false,"conclusion":"CD"}]}}"""
+        val round4Done =
+            """{"previous":{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n",
+               "next":{"type":"done","requirement":"ADJUSTED"}}"""
+        val resultPromptRef = java.util.concurrent.atomic.AtomicReference<String>()
+        val calls = java.util.concurrent.atomic.AtomicInteger(0)
+        val f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
+            prompts += prompt
+            when (calls.incrementAndGet()) {
+                1 -> firstWithOld
+                2 -> round2AskD2
+                3 -> round3AskD1Again
+                4 -> round4Done
+                5 -> { resultPromptRef.set(prompt); """{"requirement":"FINAL"}""" }
+                else -> error("unexpected call")
+            }
+        })
+        // Round 1
+        f.advance(f.begin("REQ", null))
+        // Answer d1 => OLD-MARK-3P; Round 2 reports DECIDED, asks d2
+        f.advance(f.answer(Answer.Picked("a"), null)!!)
+        assertEquals(DirectionStatus.DECIDED, f.ledger.direction("d1")!!.status)
+        // Reopen d1 while looking at d2 question
+        f.reopen("d1")
+        assertEquals(DirectionStatus.OPEN, f.ledger.direction("d1")!!.status)
+        // Skip d2; Round 3 asks d1 again
+        f.advance(f.skip("d2")!!)
+        assertEquals("d1", (f.state as ClarificationState.Asking).question.directionId)
+        // Answer d1 again => NEW-MARK-7H; Round 4 reports DECIDED, done
+        f.advance(f.answer(Answer.Picked("c"), null)!!)
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+
+        // Round 4 prompt (prompts[3]) carries the ledger with voided records and updated confirmed
+        val round4Prompt = prompts[3]
+        val confirmedIdx = round4Prompt.indexOf("\"confirmed\"")
+        assertTrue("round 4 prompt must contain confirmed array", confirmedIdx >= 0)
+        val confirmedSlice = round4Prompt.substring(confirmedIdx).substringBefore("\"constraints\"")
+        assertFalse("confirmed slice must NOT contain OLD-MARK-3P", confirmedSlice.contains("OLD-MARK-3P"))
+
+        // composeFallback must also lack OLD-MARK-3P
+        val fallback = composeFallback(f.ledger)
+        assertFalse("composeFallback must NOT contain OLD-MARK-3P", fallback.contains("OLD-MARK-3P"))
+
+        // ledger JSON history entry for the old answer has voided: true
+        val historySlice = round4Prompt.substring(round4Prompt.indexOf("\"history\"")).substringBefore("\"notes\"")
+        assertTrue("history must contain voided: true", historySlice.contains("\"voided\": true"))
+    }
 }

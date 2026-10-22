@@ -49,6 +49,8 @@ internal data class AnswerRecord(
     val question: Question,
     val answer: Answer,
     val recorded: String,
+    /** 方向被重新打开时，该方向上的旧记录标为作废；作废的记录不算已确认。 */
+    val voided: Boolean = false,
 )
 
 /** 插件持有的台账，每轮完整交给 Agent。 */

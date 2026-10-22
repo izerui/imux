@@ -39,6 +39,7 @@ internal fun Ledger.reopen(id: String): Ledger {
     val d = direction(id) ?: return this
     if (d.status == OPEN || d.status == ACTIVE) return this
     return replace(d.copy(status = OPEN, userOwned = true, conclusion = null, openPoints = emptyList()))
+        .copy(history = history.map { if (it.question.directionId == id) it.copy(voided = true) else it })
 }
 
 /**
@@ -173,7 +174,7 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
 }
 
 private fun Ledger.recordedFor(id: String): String =
-    history.filter { it.question.directionId == id && it.answer != Answer.Skipped }.joinToString("；") { it.recorded }
+    history.filter { it.question.directionId == id && it.answer != Answer.Skipped && !it.voided }.joinToString("；") { it.recorded }
 
 /**
  * 「已确认」的结论：所有 DECIDED/DEFAULTED 方向的非空 conclusion（按方向顺序），
@@ -191,9 +192,9 @@ internal fun Ledger.confirmedConclusions(): List<String> {
             if (seen.add(c)) result += c
         }
     }
-    // 2. Non-skipped history records whose direction exists and is NOT DECIDED/DEFAULTED/DROPPED
+    // 2. Non-skipped, non-voided history records whose direction exists and is NOT DECIDED/DEFAULTED/DROPPED
     for (record in history) {
-        if (record.answer == Answer.Skipped) continue
+        if (record.answer == Answer.Skipped || record.voided) continue
         val d = direction(record.question.directionId) ?: continue
         if (d.id in settledIds || d.status == DROPPED) continue
         val c = record.recorded.takeIf(String::isNotBlank) ?: continue
