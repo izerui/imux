@@ -30,7 +30,8 @@ internal enum class PendingWork { ROUND, RESULT }
 internal class ClarificationFlow(
     private val isChinese: Boolean,
     private val guidance: String,
-    private val runAgent: (String) -> String,
+    private val runAgent: (prompt: String, onProgress: (String) -> Unit) -> String,
+    private val classifyFailure: (Throwable) -> Pair<FailureReason, String> = { FailureReason.AGENT_ERROR to (it.message ?: it.javaClass.simpleName) },
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val lock = Any()
@@ -59,39 +60,45 @@ internal class ClarificationFlow(
         return generation
     }
 
-    fun begin(requirement: String, background: String?) {
+    fun begin(requirement: String, background: String?): Long {
+        val runId: Long
         synchronized(lock) {
             ledger = Ledger(requirement.trim(), background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
             phase = Phase.FIRST
-            investigate(PendingWork.ROUND)
+            runId = investigate(PendingWork.ROUND)
         }
         changed()
+        return runId
     }
 
-    /** 背景快照在 IO 线程读取，读完后、调用 Agent 之前补进台账。 */
-    fun attachBackground(background: String?) {
-        synchronized(lock) { ledger = ledger.copy(background = background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null }) }
-    }
-
-    fun answer(answer: Answer, correction: String?) {
+    /** 背景快照在 IO 线程读取，读完后、调用 Agent 之前补进台账。忽略已过期的 runId。 */
+    fun attachBackground(runId: Long, background: String?) {
         synchronized(lock) {
-            val asking = state as? ClarificationState.Asking ?: return
+            if (runId != generation || state !is ClarificationState.Investigating) return
+            ledger = ledger.copy(background = background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
+        }
+    }
+
+    fun answer(answer: Answer, correction: String?): Long? {
+        val runId: Long?
+        synchronized(lock) {
+            val asking = state as? ClarificationState.Asking ?: return null
             ledger = ledger.recordAnswer(asking.question, answer, correction)
             phase = if (correction.isNullOrBlank()) Phase.ROUND else Phase.CORRECTED
-            investigate(PendingWork.ROUND)
+            runId = investigate(PendingWork.ROUND)
         }
         changed()
+        return runId
     }
 
-    /** 返回 true 表示跳过的正是当前问题，调用方需要再跑一轮。 */
-    fun skip(id: String): Boolean {
+    /** 非 null 的 runId 表示跳过的正是当前问题，调用方需要用返回的 runId 跑一轮。 */
+    fun skip(id: String): Long? {
         val current = synchronized(lock) { (state as? ClarificationState.Asking)?.question?.takeIf { it.directionId == id } }
         if (current != null) {
-            answer(Answer.Skipped, null)
-            return true
+            return answer(Answer.Skipped, null)
         }
         userEdit(id) { it.skip(id) }
-        return false
+        return null
     }
 
     fun pin(id: String) = userEdit(id) { it.pin(id) }
@@ -117,18 +124,29 @@ internal class ClarificationFlow(
     }
 
     /** 一轮调查：调用 Agent、合并；协议错误或问题因用户操作失效时重新调用一次。 */
-    fun advance() {
+    fun advance(runId: Long) {
         var feedback = emptyList<String>()
         var retried = false
         while (true) {
-            val (prompt, runId) =
+            val prompt =
                 synchronized(lock) {
-                    // 取消可能抢在这里之前：此时已不在调查中，不能再开一轮
-                    if (state !is ClarificationState.Investigating) return
+                    if (runId != generation || state !is ClarificationState.Investigating) return
                     changedDuringRun.clear()
-                    clarificationPrompt(phase, ledger, isChinese, guidance, feedback) to generation
+                    clarificationPrompt(phase, ledger, isChinese, guidance, feedback)
                 }
-            val raw = runAgent(prompt)
+            val raw: String
+            try {
+                raw = runAgent(prompt) { text -> progress(runId, text) }
+            } catch (e: Throwable) {
+                rethrowIfCancellation(e)
+                synchronized(lock) {
+                    if (runId != generation || state !is ClarificationState.Investigating) return
+                    val (reason, detail) = classifyFailure(e)
+                    state = ClarificationState.Failed(reason, detail, null)
+                }
+                changed()
+                return
+            }
             val again: List<String>? =
                 synchronized(lock) {
                     if (runId != generation) return
@@ -166,20 +184,34 @@ internal class ClarificationFlow(
         }
     }
 
-    fun beginResult() {
-        synchronized(lock) { investigate(PendingWork.RESULT) }
+    fun beginResult(): Long {
+        val runId: Long
+        synchronized(lock) { runId = investigate(PendingWork.RESULT) }
         changed()
+        return runId
     }
 
-    fun generateResult() {
+    fun generateResult(runId: Long) {
         var feedback = emptyList<String>()
         repeat(2) { attempt ->
-            val (prompt, runId) =
+            val prompt =
                 synchronized(lock) {
-                    if (state !is ClarificationState.Investigating) return
-                    clarificationPrompt(Phase.RESULT, ledger, isChinese, guidance, feedback) to generation
+                    if (runId != generation || state !is ClarificationState.Investigating) return
+                    clarificationPrompt(Phase.RESULT, ledger, isChinese, guidance, feedback)
                 }
-            val raw = runAgent(prompt)
+            val raw: String
+            try {
+                raw = runAgent(prompt) { text -> progress(runId, text) }
+            } catch (e: Throwable) {
+                rethrowIfCancellation(e)
+                synchronized(lock) {
+                    if (runId != generation || state !is ClarificationState.Investigating) return
+                    val (reason, detail) = classifyFailure(e)
+                    state = ClarificationState.Failed(reason, detail, null)
+                }
+                changed()
+                return
+            }
             synchronized(lock) {
                 if (runId != generation) return
                 try {
@@ -204,43 +236,42 @@ internal class ClarificationFlow(
         changed()
     }
 
-    fun continueClarifying() {
+    fun continueClarifying(): Long? {
+        val runId: Long?
         synchronized(lock) {
-            if (state !is ClarificationState.Result) return
+            if (state !is ClarificationState.Result) return null
             phase = Phase.ROUND
-            investigate(PendingWork.ROUND)
+            runId = investigate(PendingWork.ROUND)
         }
         changed()
+        return runId
     }
 
     /** 从失败状态重试失败的那一步；不在失败状态返回 null。 */
-    fun retry(): PendingWork? {
-        val work =
-            synchronized(lock) {
-                if (state !is ClarificationState.Failed) return null
-                pending.also { investigate(it) }
-            }
+    fun retry(): Pair<PendingWork, Long>? {
+        val result: Pair<PendingWork, Long>
+        synchronized(lock) {
+            if (state !is ClarificationState.Failed) return null
+            val runId = investigate(pending)
+            result = pending to runId
+        }
         changed()
-        return work
+        return result
     }
 
-    fun progress(text: String) {
+    fun progress(runId: Long, text: String) {
         synchronized(lock) {
+            if (runId != generation) return
             val current = state as? ClarificationState.Investigating ?: return
             state = current.copy(progress = text)
         }
         changed()
     }
 
-    fun cancelled() = fail(FailureReason.CANCELLED, "", null, force = true)
-
-    fun fail(reason: FailureReason, detail: String, raw: String?) = fail(reason, detail, raw, force = false)
-
-    private fun fail(reason: FailureReason, detail: String, raw: String?, force: Boolean) {
+    fun cancelled() {
         synchronized(lock) {
-            if (!force && state !is ClarificationState.Investigating) return
             generation++
-            state = ClarificationState.Failed(reason, detail, raw)
+            state = ClarificationState.Failed(FailureReason.CANCELLED, "", null)
         }
         changed()
     }
@@ -269,5 +300,14 @@ internal class ClarificationFlow(
     fun sendCancelled() {
         synchronized(lock) { (state as? ClarificationState.Sending)?.let { state = ClarificationState.Result(it.requirement) } }
         changed()
+    }
+
+    companion object {
+        private fun rethrowIfCancellation(e: Throwable) {
+            if (e is java.util.concurrent.CancellationException) throw e
+            if (e is InterruptedException) throw e
+            // kotlin.coroutines.cancellation.CancellationException extends IllegalStateException
+            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
+        }
     }
 }
