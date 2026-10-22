@@ -48,4 +48,32 @@ class ClarificationServiceSourceTest {
         assertTrue(migrate.contains("flows.remove(from)"))
         assertFalse(migrate.contains(".cancel("))
     }
+
+    @Test
+    fun `取消与关闭清理都先作废本轮再取消任务`() {
+        val cancel = source.bodyAfter("internal fun cancel(", '{')
+        val cancelledIdx = cancel.indexOf(".cancelled()")
+        val cancelJobIdx = cancel.indexOf("?.cancel()")
+        assertTrue("cancel() 必须先调 cancelled()", cancelledIdx >= 0 && cancelledIdx < cancelJobIdx)
+
+        val release = source.bodyAfter("internal fun releaseOwner(", '{')
+        val relCancelledIdx = release.indexOf(".cancelled()")
+        assertTrue("releaseOwner() 必须先调 cancelled()", relCancelledIdx >= 0)
+        // releaseOwner 通过 discard 间接取消任务，自身不含 ?.cancel()
+    }
+
+    @Test
+    fun `生成结果不先行取消在途任务`() {
+        val finish = source.bodyAfter("internal fun finish(", '{')
+        assertTrue("finish() 必须调用 beginResult(", finish.contains("beginResult("))
+        val beginIdx = finish.indexOf("beginResult(")
+        val cancelIdx = finish.indexOf("?.cancel()")
+        assertTrue("finish() 在 beginResult 之前不能有 ?.cancel()", cancelIdx < 0 || cancelIdx > beginIdx)
+    }
+
+    @Test
+    fun `launch 助手在 IO 调度器上运行`() {
+        val launchBody = source.bodyAfter("private fun launch(", '{')
+        assertTrue(launchBody.contains("Dispatchers.IO"))
+    }
 }

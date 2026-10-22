@@ -55,7 +55,6 @@ class ClarificationService(
 ) : Disposable {
     private val flows = ConcurrentHashMap<String, ClarificationFlow>()
     private val owners = ConcurrentHashMap<String, String>()
-    private val agentTypes = ConcurrentHashMap<String, AgentType>()
     private val jobs = ConcurrentHashMap<String, Job>()
     private val dialogs = ConcurrentHashMap<String, ClarificationDialog>()
     private val unexited = UnexitedProcesses()
@@ -75,7 +74,6 @@ class ClarificationService(
             return
         }
         owners[sessionKey] = tabId
-        agentTypes[sessionKey] = agentType
         val flow = flows.getOrPut(sessionKey) { newFlow(agentType) }
         val dialog = ClarificationDialog(project, this, flow, title)
         dialogs[sessionKey] = dialog
@@ -128,7 +126,6 @@ class ClarificationService(
 
     internal fun finish(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
-        jobs.remove(sessionKey)?.cancel()
         val runId = flow.beginResult()
         launch(sessionKey) { flow.generateResult(runId) }
     }
@@ -151,6 +148,7 @@ class ClarificationService(
     }
 
     internal fun cancel(sessionKey: String) {
+        // 先让流程作废这一轮，再中断任务：中断后 runAgent 若抛出被包装的异常，也只会被当作过期结果忽略
         flows[sessionKey]?.cancelled()
         jobs.remove(sessionKey)?.cancel()
     }
@@ -258,7 +256,6 @@ class ClarificationService(
         jobs.remove(sessionKey)?.cancel()
         flows.remove(sessionKey)
         owners.remove(sessionKey)
-        agentTypes.remove(sessionKey)
         dialogs.remove(sessionKey)?.close(com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE)
     }
 
@@ -274,7 +271,6 @@ class ClarificationService(
         if (from == to) return
         flows.remove(from)?.let { flows[to] = it }
         owners.remove(from)?.let { owners[to] = it }
-        agentTypes.remove(from)?.let { agentTypes[to] = it }
         jobs.remove(from)?.let { jobs[to] = it }
         dialogs.remove(from)?.let {
             dialogs[to] = it
@@ -284,6 +280,7 @@ class ClarificationService(
 
     override fun dispose() {
         jobs.values.forEach { it.cancel() }
+        // 项目关闭时窗口不会随之关闭，必须由服务收起
         dialogs.values.toList().forEach { it.close(com.intellij.openapi.ui.DialogWrapper.CANCEL_EXIT_CODE) }
         dialogs.clear()
     }
