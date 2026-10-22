@@ -24,6 +24,9 @@ Investigate before asking. Read what the request refers to and the code, configu
 AGENTS.md or CLAUDE.md) it connects to, until you can explain how the relevant parts work today and what this change
 would touch. Never ask the user what the project already answers.
 
+Investigate read-only: reading and searching the code is enough. Do not modify any file, do not run builds or
+tests, and do not start servers or long-running commands — the main agent may be working in the same workspace.
+
 ## Ask only what the user must decide
 
 There is one test: **if any agent given this task would know what to do, do not ask.** Only directions where different

@@ -350,7 +350,7 @@ private fun ledgerJson(ledger: Ledger): String {
                 linkedMapOf(
                     "directionId" to it.question.directionId,
                     "question" to it.question.text,
-                    "options" to it.question.options.map { o -> linkedMapOf("id" to o.id, "label" to o.label, "conclusion" to o.conclusion) },
+                    // 答过的题不再带选项：结论已记在 recorded，提示词随轮数增长得慢一些
                     "answer" to when (val a = it.answer) {
                         is Answer.Picked -> "picked:${a.optionId}"
                         is Answer.OwnWords -> "own-words"
@@ -985,8 +985,10 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
     if (response.notes.length > MAX_NOTES_CHARS) errors += "notes must not exceed $MAX_NOTES_CHARS characters"
     merged = merged.copy(notes = response.notes, understanding = response.understanding ?: merged.understanding)
 
-    // 4. 下一步
-    var invalidatedByUser = false
+    // 4. 下一步。问题本身的毛病（targetProblems）与其余结构错误分开记：
+    //    只有问题之所以无效是因为调查期间用户动过它针对的方向或「先问这个」，才算用户造成
+    val targetProblems = mutableListOf<String>()
+    var touchedByUser = false
     val next: MergedNext? =
         when (val n = response.next) {
             is Next.Done -> MergedNext.Done(n.requirement)
@@ -999,8 +1001,8 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
                 val pin = merged.pinned
                 if (pin != null && id != pin) problems += "the user asked to discuss $pin next"
                 if (problems.isNotEmpty()) {
-                    invalidatedByUser = (id != null && id in changedByUser) || (pin != null && pin in changedByUser)
-                    errors += problems
+                    touchedByUser = (id != null && id in changedByUser) || (pin != null && pin in changedByUser)
+                    targetProblems += problems
                     null
                 } else {
                     merged = merged.replace(d!!.copy(status = ACTIVE)).copy(pinned = merged.pinned.takeUnless { it == id })
@@ -1009,7 +1011,10 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
             }
         }
 
-    if (errors.isNotEmpty()) return MergeOutcome(this, null, errors, invalidatedByUser && errors.size == errors.count { it.startsWith("question targets") || it.startsWith("the user asked") })
+    if (errors.isNotEmpty() || targetProblems.isNotEmpty()) {
+        val causedByUser = errors.isEmpty() && touchedByUser
+        return MergeOutcome(this, null, errors + targetProblems, causedByUser)
+    }
     return MergeOutcome(merged.copy(lastAsked = null), next, emptyList(), invalidatedByUser = false)
 }
 
@@ -2617,9 +2622,21 @@ class ClarificationEntrySourceTest {
     }
 
     @Test
-    fun `需求澄清入口与单次审查同时显示和隐藏`() {
-        assertTrue(editor.normalized.contains("peerReviewOnceLink.isVisible = true clarifyLink.isVisible = true"))
-        assertTrue(editor.normalized.contains("peerReviewOnceLink.isVisible = false clarifyLink.isVisible = false"))
+    fun `需求澄清入口在结对编程未开启与已开启两种状态下都显示`() {
+        val refresh = editor.bodyAfter("private fun refreshPeerBanner()", '{')
+        val idle = refresh.substringBefore("} else {")
+        val bound = refresh.substringAfter("} else {")
+        assertTrue("未开启结对编程时显示", idle.contains("clarifyLink.isVisible = true"))
+        assertTrue("已开启结对编程时显示", bound.contains("clarifyLink.isVisible = true"))
+        assertTrue("任何分支都不隐藏它", !refresh.contains("clarifyLink.isVisible = false"))
+    }
+
+    @Test
+    fun `关掉结对编程提示后横幅仍在且只隐藏结对编程的内容`() {
+        val idle = editor.bodyAfter("private fun refreshPeerBanner()", '{').substringBefore("} else {")
+        assertTrue("横幅保留以放需求澄清", idle.contains("peerBanner.isVisible = true"))
+        assertTrue("结对编程提示随不再提示隐藏", idle.contains("peerEnableLink.isVisible = !virtualFile.peerBannerDismissed"))
+        assertTrue("单次审查随不再提示隐藏", idle.contains("peerReviewOnceLink.isVisible = !virtualFile.peerBannerDismissed"))
     }
 }
 ```
@@ -2696,7 +2713,29 @@ class ClarifyRequirementAction : DumbAwareAction() {
 
 - `peerBanner` 里 `add(peerReviewOnceLink)` 之后加 `add(clarifyLink)`；
 - 语言监听里 `peerReviewOnceLink.text = …` 之后加 `clarifyLink.text = ImuxBundle.message("clarify.action.text")`；
-- `refreshPeerBanner()` 里 `peerReviewOnceLink.isVisible = true` 之后紧接一行 `clarifyLink.isVisible = true`，`peerReviewOnceLink.isVisible = false` 之后紧接一行 `clarifyLink.isVisible = false`；
+- `refreshPeerBanner()` 改为「需求澄清」始终显示，"不再提示"只隐藏结对编程自己的内容。`status == null` 分支里把
+
+```kotlin
+            peerBanner.isVisible = !virtualFile.peerBannerDismissed
+            peerEnableLink.isVisible = true
+            peerReviewOnceLink.isVisible = true
+            peerDismissLink.isVisible = true
+```
+
+  替换为
+
+```kotlin
+            // 横幅始终在：需求澄清不随结对编程的「不再提示」消失；不再提示只收起结对编程自己的内容
+            peerBanner.isVisible = true
+            peerIcon.isVisible = !virtualFile.peerBannerDismissed
+            peerEnableLink.isVisible = !virtualFile.peerBannerDismissed
+            peerReviewOnceLink.isVisible = !virtualFile.peerBannerDismissed
+            peerDismissLink.isVisible = !virtualFile.peerBannerDismissed
+            clarifyLink.isVisible = true
+```
+
+  `else` 分支（结对编程已开启）在 `peerDismissLink.isVisible = false` 之后加 `peerIcon.isVisible = true` 与 `clarifyLink.isVisible = true`；
+- 先用 `grep -rn "peerBanner.isVisible\|peerBannerDismissed" src/test/kotlin` 确认没有既有用例断言"关掉提示后横幅整条隐藏"；有则按新行为更新该断言并在提交说明里写明；
 - `dispose` 里 `ProgressOverviewService…releaseOwner(virtualFile.tabId)` 之后加（用 `serviceIfCreated`：从没用过澄清的项目，关闭途中不该为此新建服务、注册监听）：
 
 ```kotlin
@@ -2746,6 +2785,8 @@ Run: `./gradlew runIde`
    再试一次：先让主会话执行一个较长的任务，执行中点「交给 Agent」，窗口显示「等待当前回合结束」，回合结束后才发出；
    让 Claude 停在一个权限确认框上再点「交给 Agent」，确认框不被误答，处理完确认框、回合结束后才发出；
    等待期间点「取消发送」回到结果页，文本还在；
+   分别在 Claude、Codex、Pi 会话里发送一段约 6,000 字的需求，确认主会话完整收到（结对编程注入上限是 4,000 字，更长的没验证过）；
+6. 点横幅的"不再提示"后横幅只剩「需求澄清」；开启结对编程后横幅显示副驾驶状态，「需求澄清」仍在；
 5. 中途关闭窗口再打开，状态恢复；关闭会话标签页后再打开窗口，从头开始。
 
 每一项记下通过或失败现象；失败的修复后从 Step 1 重来。
