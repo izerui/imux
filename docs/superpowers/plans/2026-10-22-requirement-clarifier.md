@@ -20,6 +20,8 @@
 - 单次 Agent 一律经 `oneShotAgentInvocation` + `runOneShotAgent`（最大权限、不保存会话、按设置注入 IDEA MCP），固定用当前会话的 `agentType`；每轮超时 `600` 秒。
 - 背景快照上限 `8_000` 字符；调查笔记上限 `6_000` 字符。
 - 输出只有调整后的需求本身，不附带任何内容；发送复用 `trySendPeerFeedback`（括号粘贴 + 回车），不写文件。
+- 发送时机与结对编程对齐：会话 ID 在 `SessionMonitor.runningIds` 中、或 Claude 运行态 `isWaiting` 时等待，其余立即发；等待与重试可取消。
+- 界面线程上不做文件读取；背景快照在 IO 线程读取。
 - 所有用户可见文案进 `ImuxBundle*.properties`，10 个语言文件键集合相同、占位符一致（`ImuxBundleTest` 会检查）。
 - 测试命令：`./gradlew test --tests '<全限定类名>'`；全量 `./gradlew test`。
 
@@ -877,7 +879,7 @@ internal fun Ledger.recordAnswer(question: Question, answer: Answer, correction:
     val direction = direction(question.directionId) ?: return this
     val recorded =
         when (answer) {
-            is Answer.Picked -> question.options.first { it.id == answer.optionId }.conclusion
+            is Answer.Picked -> question.options.firstOrNull { it.id == answer.optionId }?.conclusion ?: return this
             is Answer.OwnWords -> answer.text.trim()
             Answer.Skipped -> direction.fallback
         }
@@ -1049,7 +1051,7 @@ git commit -m "feat(clarification): 台账合并 Agent 提议，用户操作优�
 **Interfaces:**
 - Consumes: Task 1～3。
 - Produces:
-  - `internal sealed interface ClarificationState { Input; Investigating(progress: String?, startedAt: Long); Asking(question: Question); Result(requirement: String); Sending(requirement: String); Failed(reason: FailureReason, detail: String, raw: String?) }`
+  - `internal sealed interface ClarificationState { Input; Investigating(progress: String?, startedAt: Long); Asking(question: Question); Result(requirement: String); Sending(requirement: String, waitingForTurn: Boolean); Failed(reason: FailureReason, detail: String, raw: String?) }`
   - `internal enum class FailureReason { CANCELLED, TIMEOUT, AGENT_ERROR, PROTOCOL }`
   - `internal enum class PendingWork { ROUND, RESULT }`
   - `internal class ClarificationFlow(isChinese: Boolean, guidance: String, runAgent: (String) -> String, clock: () -> Long = System::currentTimeMillis)`，成员：
@@ -1057,7 +1059,8 @@ git commit -m "feat(clarification): 台账合并 Agent 提议，用户操作优�
     `begin(requirement: String, background: String?)`、`advance()`（阻塞，在 IO 线程调用）、`answer(answer: Answer, correction: String?)`、
     `skip(id: String): Boolean`（返回 true 表示跳过的是当前问题，调用方需要再跑一轮）、`pin(id)`、`reopen(id)`、`addDirection(title: String)`、
     `beginResult()`、`generateResult()`（阻塞）、`fallbackResult()`、`continueClarifying()`、`retry(): PendingWork?`、
-    `progress(text: String)`、`cancelled()`、`fail(reason, detail, raw)`、`editResult(text: String)`、`sending()`、`sendFailed()`
+    `attachBackground(background: String?)`、`progress(text: String)`、`cancelled()`、`fail(reason, detail, raw)`、`editResult(text: String)`、
+    `sending(waitingForTurn: Boolean)`、`sendCancelled()`
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -1214,6 +1217,28 @@ class ClarificationFlowTest {
     }
 
     @Test
+    fun `发送中切换等待原因且取消后回到结果页文本保留`() {
+        val f = flow("""{"notes":"","next":{"type":"done","requirement":"ADJUSTED"}}""")
+        f.begin("REQ", null)
+        f.advance()
+        f.sending(waitingForTurn = true)
+        assertEquals(ClarificationState.Sending("ADJUSTED", waitingForTurn = true), f.state)
+        f.sending(waitingForTurn = false)
+        assertEquals(ClarificationState.Sending("ADJUSTED", waitingForTurn = false), f.state)
+        f.sendCancelled()
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+    }
+
+    @Test
+    fun `背景快照补进台账后进入提示词`() {
+        val f = flow(first)
+        f.begin("REQ", null)
+        f.attachBackground("LATE BACKGROUND")
+        f.advance()
+        assertTrue(prompts.single().contains("LATE BACKGROUND"))
+    }
+
+    @Test
     fun `兜底结果不调用 Agent`() {
         val f = flow(first)
         f.begin("REQ", null)
@@ -1246,8 +1271,8 @@ internal sealed interface ClarificationState {
 
     data class Result(val requirement: String) : ClarificationState
 
-    /** 正在等终端接收（括号粘贴未开启时持续重试）。 */
-    data class Sending(val requirement: String) : ClarificationState
+    /** 正在发送：[waitingForTurn] 为 true 时在等主会话这一轮结束，否则在等终端可以接收。 */
+    data class Sending(val requirement: String, val waitingForTurn: Boolean) : ClarificationState
 
     data class Failed(val reason: FailureReason, val detail: String, val raw: String?) : ClarificationState
 }
@@ -1301,6 +1326,11 @@ internal class ClarificationFlow(
             investigate(PendingWork.ROUND)
         }
         changed()
+    }
+
+    /** 背景快照在 IO 线程读取，读完后、调用 Agent 之前补进台账。 */
+    fun attachBackground(background: String?) {
+        synchronized(lock) { ledger = ledger.copy(background = background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null }) }
     }
 
     fun answer(answer: Answer, correction: String?) {
@@ -1479,12 +1509,24 @@ internal class ClarificationFlow(
         synchronized(lock) { if (state is ClarificationState.Result) state = ClarificationState.Result(text) }
     }
 
-    fun sending() {
-        synchronized(lock) { (state as? ClarificationState.Result)?.let { state = ClarificationState.Sending(it.requirement) } }
-        changed()
+    /** 从结果页进入发送，或在发送中切换"等这一轮结束 / 等终端接收"。状态不变时不通知。 */
+    fun sending(waitingForTurn: Boolean) {
+        val changedNow =
+            synchronized(lock) {
+                val requirement =
+                    when (val s = state) {
+                        is ClarificationState.Result -> s.requirement
+                        is ClarificationState.Sending -> if (s.waitingForTurn == waitingForTurn) return else s.requirement
+                        else -> return
+                    }
+                state = ClarificationState.Sending(requirement, waitingForTurn)
+                true
+            }
+        if (changedNow) changed()
     }
 
-    fun sendFailed() {
+    /** 取消发送或发送失败：回到结果页，文本保留。 */
+    fun sendCancelled() {
         synchronized(lock) { (state as? ClarificationState.Sending)?.let { state = ClarificationState.Result(it.requirement) } }
         changed()
     }
@@ -1613,11 +1655,12 @@ git commit -m "refactor(peer): 抽出会话最近对话读取函数，供需求�
   - `internal fun answer(sessionKey: String, answer: Answer, correction: String?)`
   - `internal fun skip(sessionKey: String, id: String)`、`pin(...)`、`reopen(...)`、`addDirection(sessionKey: String, title: String)`
   - `internal fun finish(sessionKey: String)`、`fallback(sessionKey: String)`、`continueClarifying(sessionKey: String)`、`retry(sessionKey: String)`、`cancel(sessionKey: String)`
-  - `internal fun send(sessionKey: String, text: String)`
+  - `internal fun send(sessionKey: String, text: String)`、`internal fun cancelSend(sessionKey: String)`
   - `internal fun dialogClosed(sessionKey: String)`
   - `internal fun releaseOwner(tabId: String)`
+  - `internal fun mainSessionBusy(running: Set<String>, waiting: Set<String>, sessionKey: String): Boolean`（顶层纯函数）
 
-- [ ] **Step 1: 写失败的测试**（服务依赖 IDE，按项目惯例对接线做源码断言）
+- [ ] **Step 1: 写失败的测试**（服务依赖 IDE，按项目惯例对接线做源码断言；发送时机的判定抽成纯函数单测）
 
 ```kotlin
 package com.github.izerui.imux.clarification
@@ -1644,6 +1687,27 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
+    fun `发送时机读取运行集合与 Claude 等待确认状态`() {
+        val busy = source.bodyAfter("private fun isMainSessionBusy(", '{')
+        assertTrue(busy.contains("runningIds"))
+        assertTrue(busy.contains("isWaiting"))
+    }
+
+    @Test
+    fun `背景快照在后台线程读取`() {
+        val start = source.bodyAfter("internal fun start(", '{')
+        val launch = start.indexOf("launch(")
+        val read = start.indexOf("latestConversationOf(")
+        assertTrue("背景快照必须在 launch 的 IO 任务里读取", launch >= 0 && read > launch)
+    }
+
+    @Test
+    fun `项目关闭时服务关闭打开的窗口`() {
+        val dispose = source.bodyAfter("override fun dispose()", '{')
+        assertTrue(dispose.contains(".close("))
+    }
+
+    @Test
     fun `会话 key 迁移时移动状态而不取消在途一轮`() {
         val migrate = source.normalized.substringAfter("private fun migrate(").substringBefore("override fun dispose")
         assertTrue(migrate.contains("flows.remove(from)"))
@@ -1652,9 +1716,28 @@ class ClarificationServiceSourceTest {
 }
 ```
 
+再新建 `src/test/kotlin/com/github/izerui/imux/clarification/MainSessionBusyTest.kt`：
+
+```kotlin
+package com.github.izerui.imux.clarification
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class MainSessionBusyTest {
+    @Test
+    fun `执行中与等待确认都算忙而空闲不算`() {
+        assertTrue(mainSessionBusy(running = setOf("s1"), waiting = emptySet(), sessionKey = "s1"))
+        assertTrue(mainSessionBusy(running = emptySet(), waiting = setOf("s1"), sessionKey = "s1"))
+        assertFalse(mainSessionBusy(running = setOf("s2"), waiting = setOf("s3"), sessionKey = "s1"))
+    }
+}
+```
+
 - [ ] **Step 2: 运行，确认失败**
 
-Run: `./gradlew test --tests 'com.github.izerui.imux.clarification.ClarificationServiceSourceTest'`
+Run: `./gradlew test --tests 'com.github.izerui.imux.clarification.ClarificationServiceSourceTest' --tests 'com.github.izerui.imux.clarification.MainSessionBusyTest'`
 Expected: FAIL（文件不存在）。
 
 - [ ] **Step 3: 写实现**
@@ -1757,11 +1840,13 @@ class ClarificationService(
 
     internal fun start(sessionKey: String, requirement: String, includeBackground: Boolean) {
         val flow = flows[sessionKey] ?: return
-        val background =
-            if (!includeBackground) null
-            else SessionMonitor.getInstance(project).model.sessionOf(sessionKey)?.let { latestConversationOf(it, emptyList(), MAX_BACKGROUND_CHARS) }
-        flow.begin(requirement, background)
-        launch(sessionKey, flow) { it.advance() }
+        val session = if (includeBackground) SessionMonitor.getInstance(project).model.sessionOf(sessionKey) else null
+        flow.begin(requirement, null)
+        // 最多读会话文件末尾 32MB，不能放在界面线程
+        launch(sessionKey, flow) {
+            it.attachBackground(session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
+            it.advance()
+        }
     }
 
     internal fun answer(sessionKey: String, answer: Answer, correction: String?) {
@@ -1855,30 +1940,46 @@ class ClarificationService(
     }
 
     /**
-     * 立即发送并提交，排队还是插入由主会话决定。括号粘贴未开启时持续重试（与结对编程相同）；
+     * 与结对编程对齐的发送时机：主会话正在执行、或 Claude 停在确认框上时等这一轮结束，其余立即发。
+     * 判定读的是 [SessionMonitor] 已有的运行集合与运行态，与结对编程触发审查用的是同一组信号；
+     * 在循环里轮询而不是挂在「轮次完成」事件上，确认框被 Esc 取消、直接回到空闲时也能发出去。
+     * 括号粘贴未开启时持续重试（与 `PeerCoordinator.injectFeedback` 相同）；可随时取消；
      * 标签页已关闭则通知并提供复制。
      */
     internal fun send(sessionKey: String, text: String) {
         val flow = flows[sessionKey] ?: return
         jobs.remove(sessionKey)?.cancel()
-        flow.sending()
+        flow.sending(waitingForTurn = isMainSessionBusy(sessionKey))
         jobs[sessionKey] =
             scope.launch(Dispatchers.EDT) {
                 while (isActive) {
                     val key = currentKeyOf(flow) ?: return@launch
                     val view = TerminalHost.getInstance(project).terminalViewOf(key)
                     if (view == null) {
-                        flow.sendFailed()
+                        flow.sendCancelled()
                         notifyUndelivered(text)
                         return@launch
                     }
-                    if (trySendPeerFeedback(view.createSendTextBuilder(), text)) {
+                    val busy = isMainSessionBusy(key)
+                    flow.sending(waitingForTurn = busy)
+                    if (!busy && trySendPeerFeedback(view.createSendTextBuilder(), text)) {
                         discard(key)
                         return@launch
                     }
-                    delay(SEND_RETRY_MILLIS)
+                    delay(if (busy) BUSY_POLL_MILLIS else SEND_RETRY_MILLIS)
                 }
             }
+    }
+
+    internal fun cancelSend(sessionKey: String) {
+        jobs.remove(sessionKey)?.cancel()
+        flows[sessionKey]?.sendCancelled()
+    }
+
+    private fun isMainSessionBusy(sessionKey: String): Boolean {
+        val monitor = SessionMonitor.getInstance(project)
+        val waiting = monitor.runtime.values.filter { it.isWaiting }.map { it.sessionId }.toSet()
+        return mainSessionBusy(monitor.runningIds, waiting, sessionKey)
     }
 
     private fun notifyUndelivered(text: String) {
@@ -1930,6 +2031,9 @@ class ClarificationService(
 
     override fun dispose() {
         jobs.values.forEach { it.cancel() }
+        // 项目关闭时窗口不会随之关闭，必须由服务收起
+        dialogs.values.toList().forEach { it.close(com.intellij.openapi.ui.DialogWrapper.CANCEL_EXIT_CODE) }
+        dialogs.clear()
     }
 
     companion object {
@@ -1937,9 +2041,14 @@ class ClarificationService(
 
         internal const val AGENT_TIMEOUT_SECONDS = 600L
         private const val SEND_RETRY_MILLIS = 100L
+        private const val BUSY_POLL_MILLIS = 500L
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"
     }
 }
+
+/** 主会话正在执行或停在确认框上（只有 Claude 有这个信号）。纯函数，便于单测。 */
+internal fun mainSessionBusy(running: Set<String>, waiting: Set<String>, sessionKey: String): Boolean =
+    sessionKey in running || sessionKey in waiting
 ```
 
 说明：
@@ -1982,8 +2091,8 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt src/main/kotlin/com/github/izerui/imux/clarification/ClarificationDialog.kt src/test/kotlin/com/github/izerui/imux/clarification/ClarificationServiceSourceTest.kt
-git commit -m "feat(clarification): 项目级服务负责单次调用、取消、迁移、关闭清理与发送"
+git add src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt src/main/kotlin/com/github/izerui/imux/clarification/ClarificationDialog.kt src/test/kotlin/com/github/izerui/imux/clarification/ClarificationServiceSourceTest.kt src/test/kotlin/com/github/izerui/imux/clarification/MainSessionBusyTest.kt
+git commit -m "feat(clarification): 项目级服务负责单次调用、取消、迁移、关闭清理，并按结对编程的时机发送"
 ```
 
 ---
@@ -2034,6 +2143,8 @@ clarify.result.send=Send to Agent
 clarify.result.copy=Copy
 clarify.result.back=Continue Clarifying
 clarify.sending=Waiting for the terminal to accept input…
+clarify.sending.turn=Waiting for the current turn to finish…
+clarify.sending.cancel=Cancel Sending
 clarify.round=Round {0}
 clarify.failed.cancelled=Cancelled
 clarify.failed.timeout=Timed out after {0}s
@@ -2079,6 +2190,8 @@ clarify.result.send=交给 Agent
 clarify.result.copy=复制
 clarify.result.back=继续澄清
 clarify.sending=等待终端可以接收…
+clarify.sending.turn=等待当前回合结束…
+clarify.sending.cancel=取消发送
 clarify.round=第 {0} 轮
 clarify.failed.cancelled=已取消
 clarify.failed.timeout={0} 秒后超时
@@ -2174,8 +2287,11 @@ internal class ClarificationDialog(
     }
     private val right = JPanel(BorderLayout())
     private val roundLabel = JBLabel()
+    /** 右栏当前显示的状态。只有状态变了才重建右栏，否则正在输入的文字、选中的选项会被清掉。 */
+    private var renderedState: ClarificationState? = null
+    private var elapsedLabel: JBLabel? = null
     private val finishButton = JButton(ImuxBundle.message("clarify.finish")).apply { addActionListener { service.finish(sessionKey) } }
-    private val elapsedTimer = Timer(1_000) { if (flow.state is ClarificationState.Investigating) render() }
+    private val elapsedTimer = Timer(1_000) { updateElapsed() }
     private val listener: () -> Unit = { ApplicationManager.getApplication().invokeLater({ render() }, ModalityState.any()) }
 
     init {
@@ -2234,20 +2350,28 @@ internal class ClarificationDialog(
         directionModel.replaceAll(ledger.directions.filter { it.status != DirectionStatus.DROPPED })
         roundLabel.text = if (ledger.history.isEmpty() && state is ClarificationState.Input) "" else ImuxBundle.message("clarify.round", ledger.history.size + 1)
         finishButton.isEnabled = state is ClarificationState.Asking
+        if (state == renderedState) return
+        renderedState = state
+        elapsedLabel = null
         right.removeAll()
         right.add(
             when (state) {
                 ClarificationState.Input -> inputPanel()
                 is ClarificationState.Investigating -> investigatingPanel(state)
                 is ClarificationState.Asking -> askingPanel(state.question, ledger)
-                is ClarificationState.Result -> resultPanel(state.requirement, sending = false)
-                is ClarificationState.Sending -> resultPanel(state.requirement, sending = true)
+                is ClarificationState.Result -> resultPanel(state.requirement)
+                is ClarificationState.Sending -> sendingPanel(state)
                 is ClarificationState.Failed -> failedPanel(state)
             },
             BorderLayout.NORTH,
         )
         right.revalidate()
         right.repaint()
+    }
+
+    private fun updateElapsed() {
+        val state = flow.state as? ClarificationState.Investigating ?: return
+        elapsedLabel?.text = ImuxBundle.message("clarify.elapsed", ((System.currentTimeMillis() - state.startedAt) / 1_000).coerceAtLeast(0))
     }
 
     private fun column(): JPanel = JPanel(VerticalFlowLayout(VerticalFlowLayout.TOP, 0, JBUI.scale(6), true, false))
@@ -2280,10 +2404,12 @@ internal class ClarificationDialog(
     }
 
     private fun investigatingPanel(state: ClarificationState.Investigating): JComponent {
-        val seconds = ((System.currentTimeMillis() - state.startedAt) / 1_000).coerceAtLeast(0)
+        val elapsed = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
+        elapsedLabel = elapsed
+        updateElapsed()
         return column().apply {
             add(JBLabel(ImuxBundle.message("clarify.investigating", state.progress.orEmpty()), AllIcons.Process.Step_1, JBLabel.LEADING))
-            add(JBLabel(ImuxBundle.message("clarify.elapsed", seconds)).apply { foreground = UIUtil.getContextHelpForeground() })
+            add(elapsed)
             add(buttons(button("clarify.cancel") { service.cancel(sessionKey) }))
         }
     }
@@ -2337,29 +2463,33 @@ internal class ClarificationDialog(
         return panel
     }
 
-    private fun resultPanel(requirement: String, sending: Boolean): JComponent {
+    private fun resultPanel(requirement: String): JComponent {
         val area = JBTextArea(requirement, 14, 50).apply {
             lineWrap = true
             wrapStyleWord = true
-            isEditable = !sending
         }
-        val panel = column()
-        panel.add(JBLabel(ImuxBundle.message("clarify.result.title")).apply { font = font.deriveFont(java.awt.Font.BOLD) })
-        panel.add(JBScrollPane(area))
-        if (sending) {
-            panel.add(JBLabel(ImuxBundle.message("clarify.sending"), AllIcons.Process.Step_1, JBLabel.LEADING))
-        } else {
-            panel.add(buttons(
+        return column().apply {
+            add(JBLabel(ImuxBundle.message("clarify.result.title")).apply { font = font.deriveFont(java.awt.Font.BOLD) })
+            add(JBScrollPane(area))
+            add(buttons(
                 button("clarify.result.back") { service.continueClarifying(sessionKey) },
                 button("clarify.result.copy") { CopyPasteManager.getInstance().setContents(StringSelection(area.text)) },
                 button("clarify.result.send") {
+                    if (area.text.isBlank()) return@button
                     flow.editResult(area.text)
-                    if (area.text.isNotBlank()) service.send(sessionKey, area.text)
+                    service.send(sessionKey, area.text)
                 },
             ))
         }
-        return panel
     }
+
+    private fun sendingPanel(state: ClarificationState.Sending): JComponent =
+        column().apply {
+            add(JBLabel(ImuxBundle.message("clarify.result.title")).apply { font = font.deriveFont(java.awt.Font.BOLD) })
+            add(JBScrollPane(JBTextArea(state.requirement, 14, 50).apply { lineWrap = true; wrapStyleWord = true; isEditable = false }))
+            add(JBLabel(ImuxBundle.message(if (state.waitingForTurn) "clarify.sending.turn" else "clarify.sending"), AllIcons.Process.Step_1, JBLabel.LEADING))
+            add(buttons(button("clarify.sending.cancel") { service.cancelSend(sessionKey) }))
+        }
 
     private fun failedPanel(state: ClarificationState.Failed): JComponent {
         val message = when (state.reason) {
@@ -2480,8 +2610,10 @@ class ClarificationEntrySourceTest {
     }
 
     @Test
-    fun `关闭标签页时按标签页身份清理需求澄清`() {
-        assertTrue(editor.normalized.contains("ClarificationService.getInstance(project).releaseOwner(virtualFile.tabId)"))
+    fun `关闭标签页时按标签页身份清理需求澄清且不为此新建服务`() {
+        val dispose = editor.bodyAfter("override fun dispose()", '{')
+        assertTrue("按标签页身份清理", dispose.contains(".releaseOwner(virtualFile.tabId)"))
+        assertTrue("项目关闭途中不能新建服务", dispose.contains("project.serviceIfCreated<ClarificationService>()?.releaseOwner(virtualFile.tabId)"))
     }
 
     @Test
@@ -2565,13 +2697,14 @@ class ClarifyRequirementAction : DumbAwareAction() {
 - `peerBanner` 里 `add(peerReviewOnceLink)` 之后加 `add(clarifyLink)`；
 - 语言监听里 `peerReviewOnceLink.text = …` 之后加 `clarifyLink.text = ImuxBundle.message("clarify.action.text")`；
 - `refreshPeerBanner()` 里 `peerReviewOnceLink.isVisible = true` 之后紧接一行 `clarifyLink.isVisible = true`，`peerReviewOnceLink.isVisible = false` 之后紧接一行 `clarifyLink.isVisible = false`；
-- `dispose` 里 `ProgressOverviewService…releaseOwner(virtualFile.tabId)` 之后加：
+- `dispose` 里 `ProgressOverviewService…releaseOwner(virtualFile.tabId)` 之后加（用 `serviceIfCreated`：从没用过澄清的项目，关闭途中不该为此新建服务、注册监听）：
 
 ```kotlin
-        com.github.izerui.imux.clarification.ClarificationService.getInstance(project).releaseOwner(virtualFile.tabId)
+        project.serviceIfCreated<ClarificationService>()?.releaseOwner(virtualFile.tabId)
 ```
 
-  并在文件顶部加 `import com.github.izerui.imux.clarification.ClarificationService`，把上一行写成 `ClarificationService.getInstance(project).releaseOwner(virtualFile.tabId)`（源码测试按这个写法断言）。
+  并在文件顶部加 `import com.github.izerui.imux.clarification.ClarificationService` 与 `import com.intellij.openapi.components.serviceIfCreated`。
+  注意保持轨迹那一行在前：`SessionTrailOverlaySourceTest` 用 `indexOf(".releaseOwner(virtualFile.tabId)")` 取第一处。
 
 - [ ] **Step 5: 运行测试，确认通过**
 
@@ -2610,6 +2743,9 @@ Run: `./gradlew runIde`
 2. 输入一句话需求 → 调查中显示进度与秒数 → 首轮同屏显示理解、方向列表、第一个问题；
 3. 选一个选项确认 → 下一轮的问题建立在回答之上；右键某方向「跳过」后它显示默认结论；
 4. 「够了，生成结果」→ 结果可编辑 → 「交给 Agent」→ 需求出现在会话里并被提交，窗口关闭；
+   再试一次：先让主会话执行一个较长的任务，执行中点「交给 Agent」，窗口显示「等待当前回合结束」，回合结束后才发出；
+   让 Claude 停在一个权限确认框上再点「交给 Agent」，确认框不被误答，处理完确认框、回合结束后才发出；
+   等待期间点「取消发送」回到结果页，文本还在；
 5. 中途关闭窗口再打开，状态恢复；关闭会话标签页后再打开窗口，从头开始。
 
 每一项记下通过或失败现象；失败的修复后从 Step 1 重来。
