@@ -28,7 +28,7 @@ class ClarificationFlowTest {
         """{"understanding":"u","directions":{"add":[{"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
            {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"F2"}]},"notes":"n",
            "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
-             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"PICKED-MARK-2B"}]}}"""
 
     private fun askD2(previousStatus: String = "DECIDED") =
         """{"previous":{"id":"d1","status":"$previousStatus","conclusion":"","openPoints":[]},"notes":"n",
@@ -58,7 +58,7 @@ class ClarificationFlowTest {
         val round2 = prompts[1]
         assertTrue("round 2 should contain requirement", round2.contains("REQ-MARK-7Q"))
         assertTrue("round 2 should contain background", round2.contains("BG-MARK-3X"))
-        assertTrue("round 2 should contain round-1 conclusion CB", round2.contains("CB"))
+        assertTrue("round 2 should contain round-1 conclusion", round2.contains("PICKED-MARK-2B"))
         assertTrue("round 2 should contain correction", round2.contains("FIX-MARK-9Z"))
         val r3 = f.answer(Answer.OwnWords("OWN-MARK-5K"), correction = null)!!
         f.advance(r3)
@@ -66,7 +66,7 @@ class ClarificationFlowTest {
         val round3 = prompts[2]
         assertTrue("round 3 should contain requirement", round3.contains("REQ-MARK-7Q"))
         assertTrue("round 3 should contain background", round3.contains("BG-MARK-3X"))
-        assertTrue("round 3 should contain round-1 conclusion CB", round3.contains("CB"))
+        assertTrue("round 3 should contain round-1 conclusion", round3.contains("PICKED-MARK-2B"))
         assertTrue("round 3 should contain correction", round3.contains("FIX-MARK-9Z"))
         assertTrue("round 3 should contain own words", round3.contains("OWN-MARK-5K"))
         assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
@@ -209,15 +209,23 @@ class ClarificationFlowTest {
     @Test
     fun `过期的 runId 调用 advance 不会触发 runAgent`() {
         val calls = AtomicInteger(0)
+        val doneResponse = """{"understanding":"u","notes":"","next":{"type":"done","requirement":"ADJUSTED"}}"""
         val f = ClarificationFlow(false, "G", runAgent = { _, _ ->
             calls.incrementAndGet()
-            """{"understanding":"u","notes":"","next":{"type":"done","requirement":"ADJUSTED"}}"""
+            doneResponse
         })
-        val staleRunId = f.begin("REQ", null)
+        val r1 = f.begin("REQ", null)
         f.cancelled()
-        // Now advance with the stale runId
-        f.advance(staleRunId)
-        assertEquals(0, calls.get())
+        val (_, r2) = f.retry()!!
+        // Now state is Investigating with r2; advance with stale r1 should be a no-op
+        val ledgerBefore = f.ledger
+        f.advance(r1)
+        assertEquals("stale advance must not call runAgent", 0, calls.get())
+        assertTrue("state must remain Investigating", f.state is ClarificationState.Investigating)
+        assertEquals("ledger must be unchanged", ledgerBefore, f.ledger)
+        // r2 advance works normally
+        f.advance(r2)
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
     }
 
     @Test
@@ -258,15 +266,19 @@ class ClarificationFlowTest {
 
     @Test
     fun `背景快照补进台账后进入提示词`() {
-        val f = flow(first)
-        val runId = f.begin("REQ", null)
-        f.attachBackground(runId, "LATE BACKGROUND")
-        f.advance(runId)
-        assertTrue(prompts.single().contains("LATE BACKGROUND"))
-        // A stale runId's attachBackground must not change the ledger
-        val bgBefore = f.ledger.background
-        f.attachBackground(runId, "SHOULD BE IGNORED")
-        assertEquals(bgBefore, f.ledger.background)
+        val doneResponse = """{"understanding":"u","notes":"","next":{"type":"done","requirement":"ADJUSTED"}}"""
+        val f = flow(first, doneResponse)
+        val r1 = f.begin("REQ", null)
+        f.attachBackground(r1, "LATE BACKGROUND")
+        f.advance(r1)
+        assertTrue(prompts[0].contains("LATE BACKGROUND"))
+        // Stale runId's attachBackground must be ignored while a new run is Investigating
+        f.cancelled()
+        val (_, r2) = f.retry()!!
+        f.attachBackground(r1, "STALE-BG-MARK")
+        assertTrue("stale attachBackground must not change ledger", f.ledger.background != "STALE-BG-MARK")
+        f.advance(r2)
+        assertTrue("stale background must not appear in prompt", !prompts.last().contains("STALE-BG-MARK"))
     }
 
     @Test
