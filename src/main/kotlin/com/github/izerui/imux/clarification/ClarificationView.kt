@@ -5,16 +5,17 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.AlignY
-import com.intellij.ui.dsl.builder.BottomGap
 import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
 import com.intellij.ui.dsl.builder.Panel
 import com.intellij.ui.dsl.builder.RightGap
@@ -22,19 +23,29 @@ import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.TopGap
 import com.intellij.ui.dsl.builder.panel
-import com.intellij.ui.dsl.builder.plus
 import com.intellij.ui.dsl.builder.rows
+import com.intellij.util.ui.EmptyIcon
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.Dimension
+import java.awt.KeyboardFocusManager
 import java.awt.Rectangle
+import java.awt.event.ActionEvent
+import java.awt.event.ItemEvent
+import java.awt.event.KeyEvent
+import javax.swing.AbstractAction
+import javax.swing.JComponent
 import javax.swing.JEditorPane
+import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.JToggleButton
 import javax.swing.JViewport
+import javax.swing.KeyStroke
 import javax.swing.Scrollable
 import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
+import javax.swing.text.JTextComponent
 
 /** 视图里用到的文案来源；默认按插件语言取，预览测试可指定语言。 */
 internal fun interface ViewMessages {
@@ -43,27 +54,67 @@ internal fun interface ViewMessages {
 
 internal val pluginMessages = ViewMessages { key, params -> ImuxBundle.message(key, *params) }
 
-/** 视图内的链接、内联按钮转给调用方；对话框底部按钮不在视图里。 */
+/** 视图转给对话框的事；对话框底部按钮不在视图里。 */
 internal interface ClarificationViewCallbacks {
-    fun editRequirement()
+    /** 这一批的草稿；对话框把它存在流程里，窗口关了再打开时接着用。 */
+    fun draftsFor(batch: List<Question>): BatchDrafts
 
-    fun skipDirection(id: String)
-
-    fun pinDirection(id: String)
-
-    fun reopenDirection(id: String)
-
-    fun addDirection()
+    /** 提问页换了标签（另一题或提交页），按钮栏要跟着换。 */
+    fun askingPageChanged()
 
     fun showAgentOutput(raw: String)
 }
+
+/** 一题还没提交的回答。 */
+internal class DraftAnswer {
+    val picked = linkedSetOf<String>()
+    var other = false
+    var otherText = ""
+
+    /** 填写完整时的回答；什么都没选、或选了"其他"却没写字时为 null（提交时按不回答处理）。 */
+    fun toAnswer(question: Question): Answer? {
+        val own = otherText.trim().takeIf { other && it.isNotEmpty() }
+        val ids = question.options.map { it.id }.filter { it in picked }
+        return when {
+            !question.multiSelect && own != null -> Answer.OwnWords(own)
+            !question.multiSelect -> ids.singleOrNull()?.let { Answer.Picked(listOf(it)) }
+            ids.isEmpty() -> own?.let(Answer::OwnWords)
+            else -> Answer.Picked(ids, own)
+        }
+    }
+}
+
+/** 一批问题的草稿与当前标签（0..n-1 是各题，n 是提交页）。只在 EDT 上读写。 */
+internal class BatchDrafts(val batch: List<Question>) {
+    val answers: Map<String, DraftAnswer> = batch.associate { it.directionId to DraftAnswer() }
+    var tab = 0
+
+    fun draftOf(question: Question): DraftAnswer = answers.getValue(question.directionId)
+
+    /** 已填写的回答，按方向 ID；没填写的不在其中。 */
+    fun filled(): Map<String, Answer> =
+        batch.mapNotNull { q -> draftOf(q).toAnswer(q)?.let { q.directionId to it } }.toMap()
+
+    val page: AskingPage
+        get() =
+            when {
+                batch.size == 1 -> AskingPage.SINGLE
+                tab >= batch.size -> AskingPage.REVIEW
+                tab == batch.lastIndex -> AskingPage.LAST_QUESTION
+                else -> AskingPage.QUESTION
+            }
+}
+
+/** 提问页当前停在哪：只有一题、某一题、最后一题、提交页。决定主按钮。 */
+internal enum class AskingPage { SINGLE, QUESTION, LAST_QUESTION, REVIEW }
 
 /**
  * 需求澄清窗口的内容区：只依据（状态、台账）构建与更新组件，不依赖 Project 与服务，
  * 底部按钮由对话框按 [buttonBar] 显示。
  *
- * 头部（需求 + 方向清单）只在需求或方向变化时重建；中间区域只在 [needsCenterRebuild] 为真时重建，
- * 其余变化（批次缩短、调查进度、发送原因、已用秒数）就地更新，用户正在输入的内容不丢。
+ * 不反复渲染：头部（需求与已确认）只在内容变化时重建；中间区域只在 [needsCenterRebuild] 为真时重建，
+ * 调查进度、已用秒数、发送原因只改各自的标签；提问页里只有当前题目区域随换标签重建，
+ * 回答存在 [BatchDrafts] 里，切回来原样恢复。三处重建各有计数，供测试断言。
  */
 internal class ClarificationView(
     private val callbacks: ClarificationViewCallbacks,
@@ -85,35 +136,51 @@ internal class ClarificationView(
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
 
-    /** 方向清单是否展开，视图生命期内记住。 */
-    private var listExpanded = false
+    // ---- 重建计数（测试用） ----
+    internal var headerRebuilds = 0
+        private set
+    internal var centerRebuilds = 0
+        private set
+    internal var questionRebuilds = 0
+        private set
+
     private var headerKey: Any? = null
     private var renderedState: ClarificationState? = null
+    private var renderedLedger: Ledger? = null
 
     // ---- 各页保持的组件，供对话框读取输入与就地更新 ----
     private var inputArea: JBTextArea? = null
     private var backgroundCheck: JBCheckBox? = null
     private var backgroundRow: Row? = null
     private var backgroundAvailable = false
-    private var progressText: JEditorPane? = null
+    private var progressLabel: JBLabel? = null
     private var elapsedComment: JEditorPane? = null
     private var investigationKind = InvestigationKind.ROUND
     private var investigationStartedAt = 0L
     private var sendingLabel: JBLabel? = null
     private var resultArea: JBTextArea? = null
-    internal var asking: AskingWidgets? = null
+
+    // ---- 提问页 ----
+    private var drafts: BatchDrafts? = null
+    internal var tabs: JBTabbedPane? = null
+        private set
+    private val questionArea = JPanel(BorderLayout()).apply { isOpaque = false }
+    private val unansweredIcon by lazy { EmptyIcon.create(AllIcons.General.GreenCheckmark) }
+    internal var options: OptionWidgets? = null
         private set
 
-    /** 提问页的可变部件；批次缩短时就地更新，这些实例保持不变。 */
-    internal class AskingWidgets(
-        val header: JEditorPane,
-        val radios: List<JBRadioButton>,
-        val otherRadio: JBRadioButton,
-        val otherField: JBTextField,
-        val correctionArea: JBTextArea?,
-        val correctionRow: Row?,
-    ) {
-        var correctionVisible = false
+    /** 当前题目的选项按钮与"其他"。 */
+    internal class OptionWidgets(val buttons: List<JToggleButton>, val otherButton: JToggleButton, val otherField: JBTextField)
+
+    init {
+        // 数字键选择选项、←/→ 换标签：焦点在内容区任何位置（输入框除外）都可用
+        val map = component.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        for (n in 1..9) {
+            map.put(KeyStroke.getKeyStroke(KeyEvent.VK_0 + n, 0), "imux.choose$n")
+            map.put(KeyStroke.getKeyStroke(KeyEvent.VK_NUMPAD0 + n, 0), "imux.choose$n")
+            component.actionMap.put("imux.choose$n", keyAction { if (!typingInText()) choose(n - 1) })
+        }
+        installTabKeys(component)
     }
 
     fun render(
@@ -122,20 +189,21 @@ internal class ClarificationView(
         canFinish: Boolean,
         inputPrefill: String,
     ) {
-        val isInput = state is ClarificationState.Input
-        renderHeader(ledger, isInput)
+        renderedLedger = ledger
+        renderHeader(state, ledger)
         val old = renderedState
         renderedState = state
         if (!needsCenterRebuild(old, state)) {
             updateInPlace(state)
             return
         }
+        centerRebuilds++
         clearWidgets()
         val page =
             when (state) {
                 ClarificationState.Input -> inputPage(inputPrefill)
                 is ClarificationState.Investigating -> investigatingPage(state, investigationKind(canFinish, ledger))
-                is ClarificationState.Asking -> askingPage(state, ledger)
+                is ClarificationState.Asking -> askingPage(state)
                 is ClarificationState.Result -> resultPage(state.requirement)
                 is ClarificationState.Sending -> sendingPage(state)
                 is ClarificationState.Failed -> failedPage(state)
@@ -144,12 +212,7 @@ internal class ClarificationView(
         body.add(page, BorderLayout.CENTER)
         content.revalidate()
         content.repaint()
-    }
-
-    /** 展开或收起方向清单（与点击折叠标题相同），下次渲染头部时生效。 */
-    internal fun setListExpanded(expanded: Boolean) {
-        listExpanded = expanded
-        headerKey = null
+        if (state is ClarificationState.Asking) focusCurrent()
     }
 
     fun isShowingInput(): Boolean = renderedState is ClarificationState.Input
@@ -171,18 +234,24 @@ internal class ClarificationView(
 
     fun resultText(): String = resultArea?.text.orEmpty()
 
-    /** 当前选中的回答；什么都没选（或"其他想法"没写字）时返回 null。 */
-    fun currentAnswer(): Answer? {
-        val widgets = asking ?: return null
-        val question = (renderedState as? ClarificationState.Asking)?.question ?: return null
-        if (widgets.otherRadio.isSelected) return widgets.otherField.text.takeIf { it.isNotBlank() }?.let { Answer.OwnWords(it) }
-        val picked = widgets.radios.indexOfFirst { it.isSelected }
-        return if (picked >= 0) Answer.Picked(question.options[picked].id) else null
+    /** 提问页停在哪；不在提问页时为 null。 */
+    fun askingPage(): AskingPage? = drafts?.takeIf { renderedState is ClarificationState.Asking }?.page
+
+    /** 这一批已填写的回答。 */
+    fun answers(): Map<String, Answer> = drafts?.takeIf { renderedState is ClarificationState.Asking }?.filled().orEmpty()
+
+    /** 下一题，或从最后一题到提交页。 */
+    fun nextTab() {
+        selectTab((drafts?.tab ?: return) + 1)
     }
 
-    fun correctionText(): String? {
-        val widgets = asking ?: return null
-        return widgets.correctionArea?.text?.takeIf { widgets.correctionVisible && it.isNotBlank() }
+    fun previousTab() {
+        selectTab((drafts?.tab ?: return) - 1)
+    }
+
+    fun selectTab(index: Int) {
+        val strip = tabs ?: return
+        if (index in 0 until strip.tabCount) strip.selectedIndex = index
     }
 
     private fun clearWidgets() {
@@ -190,96 +259,56 @@ internal class ClarificationView(
         backgroundCheck = null
         backgroundRow = null
         backgroundAvailable = false
-        progressText = null
+        progressLabel = null
         elapsedComment = null
         sendingLabel = null
         resultArea = null
-        asking = null
+        drafts = null
+        tabs = null
+        options = null
+        questionArea.removeAll()
     }
 
     private fun updateInPlace(state: ClarificationState) {
         when (state) {
-            is ClarificationState.Asking -> asking?.header?.text = questionHeaderLine(state.index, state.batch.size, messages)
-            is ClarificationState.Investigating -> progressText?.text = progressLine(state.progress)
+            is ClarificationState.Investigating -> progressLabel?.let { setProgress(it, state.progress) }
             is ClarificationState.Sending -> sendingLabel?.text = sendingReason(state)
             else -> Unit
         }
     }
 
-    // ---- 头部：需求一行 + 方向清单 ----
+    // ---- 头部：需求一行 + 已确认 ----
 
-    private fun renderHeader(ledger: Ledger, isInput: Boolean) {
-        val key: Any = if (isInput) Unit else ledger.requirement to ledger.directions
+    private fun renderHeader(state: ClarificationState, ledger: Ledger) {
+        val shown = state is ClarificationState.Investigating || state is ClarificationState.Asking || state is ClarificationState.Failed
+        val confirmed = if (shown) ledger.confirmedConclusions() else emptyList()
+        val key: Any = if (shown) ledger.requirement to confirmed else Unit
         if (key == headerKey) return
         headerKey = key
+        headerRebuilds++
         header.removeAll()
-        if (!isInput) header.add(headerPanel(ledger), BorderLayout.CENTER)
+        if (shown) header.add(headerPanel(ledger.requirement, confirmed), BorderLayout.CENTER)
         header.revalidate()
         header.repaint()
     }
 
-    private fun headerPanel(ledger: Ledger): DialogPanel =
+    private fun headerPanel(requirement: String, confirmed: List<String>): DialogPanel =
         panel {
             row {
-                cell(EllipsisLabel(messages.get("clarify.header.requirement", ledger.requirement.replace(Regex("\\s+"), " ").trim())))
-                    .applyToComponent { toolTipText = requirementTooltip(ledger.requirement) }
+                cell(EllipsisLabel(messages.get("clarify.header.requirement", requirement.replace(Regex("\\s+"), " ").trim())))
+                    .applyToComponent { toolTipText = requirementTooltip(requirement) }
                     .resizableColumn()
                     .align(AlignX.FILL)
-                link(messages.get("clarify.header.edit")) { callbacks.editRequirement() }
             }
-            val list =
-                collapsibleGroup(listTitle(ledger.directions, messages)) {
-                    for (direction in ledger.directions) directionRow(direction)
-                    row {
-                        link(messages.get("clarify.directions.add")) { callbacks.addDirection() }
-                            .applyToComponent { icon = AllIcons.General.Add }
-                    }
+            if (confirmed.isNotEmpty()) {
+                row {
+                    text(confirmed.joinToString(CONFIRMED_GAP) { "$CHECK_ICON&nbsp;" + html(it) }, MAX_LINE_LENGTH_WORD_WRAP)
+                        .resizableColumn()
+                        .align(AlignX.FILL)
                 }
-            list.expanded = listExpanded
-            list.addExpandedListener { listExpanded = it }
-            list.bottomGap(BottomGap.SMALL)
-        }
-
-    private fun Panel.directionRow(direction: Direction) {
-        val dropped = direction.status == DirectionStatus.DROPPED
-        val detail =
-            when (direction.status) {
-                DirectionStatus.DROPPED -> direction.dropReason
-                DirectionStatus.DECIDED, DirectionStatus.DEFAULTED -> direction.conclusion
-                else -> null
             }
-        row {
-            label(statusWord(direction.status))
-                .widthGroup(STATUS_WIDTH_GROUP)
-                .align(AlignY.TOP)
-                .applyToComponent { if (dropped) foreground = UIUtil.getContextHelpForeground() }
-            val title =
-                text(html(direction.title), MAX_LINE_LENGTH_WORD_WRAP)
-                    .resizableColumn()
-                    .align(AlignX.FILL)
-                    .applyToComponent { if (dropped) foreground = UIUtil.getContextHelpForeground() }
-            if (!detail.isNullOrBlank()) title.comment(html(detail), MAX_LINE_LENGTH_WORD_WRAP)
-            val actions = directionRowActions(direction.status)
-            if (DirectionAction.SKIP in actions) {
-                link(messages.get("clarify.directions.skip")) { callbacks.skipDirection(direction.id) }
-                    .align(AlignY.TOP)
-                    .applyToComponent { toolTipText = messages.get("clarify.directions.skip.tooltip") }
-            }
-            if (DirectionAction.PIN in actions) link(messages.get("clarify.directions.pin")) { callbacks.pinDirection(direction.id) }.align(AlignY.TOP)
-            if (DirectionAction.REOPEN in actions) link(messages.get("clarify.directions.reopen")) { callbacks.reopenDirection(direction.id) }.align(AlignY.TOP)
+            separator()
         }
-    }
-
-    private fun statusWord(status: DirectionStatus): String =
-        messages.get(
-            when (status) {
-                DirectionStatus.OPEN -> "clarify.status.open"
-                DirectionStatus.ACTIVE -> "clarify.status.active"
-                DirectionStatus.DECIDED -> "clarify.status.decided"
-                DirectionStatus.DEFAULTED -> "clarify.status.defaulted"
-                DirectionStatus.DROPPED -> "clarify.status.dropped"
-            },
-        )
 
     // ---- 各状态的中间区域 ----
 
@@ -299,23 +328,27 @@ internal class ClarificationView(
     private fun investigatingPage(state: ClarificationState.Investigating, kind: InvestigationKind): DialogPanel {
         investigationKind = kind
         investigationStartedAt = state.startedAt
+        val label = EllipsisLabel("")
+        setProgress(label, state.progress)
+        progressLabel = label
         return panel {
             row {
                 icon(AnimatedIcon.Default.INSTANCE).align(AlignY.TOP).gap(RightGap.SMALL)
-                val progress =
-                    text(progressLine(state.progress), MAX_LINE_LENGTH_WORD_WRAP)
+                elapsedComment =
+                    cell(label)
                         .resizableColumn()
                         .align(AlignX.FILL)
                         .comment(elapsedText(System.currentTimeMillis()), MAX_LINE_LENGTH_WORD_WRAP)
-                progressText = progress.component
-                elapsedComment = progress.comment
+                        .comment
             }
         }
     }
 
-    private fun progressLine(progress: String?): String {
+    /** 当前一步只占一行：长路径从中间省略，整行放不下再从末尾省略，完整内容看 tooltip。 */
+    private fun setProgress(label: JBLabel, progress: String?) {
         val key = if (investigationKind == InvestigationKind.RESULT) "clarify.investigating.result" else "clarify.investigating"
-        return html(messages.get(key, progress.orEmpty()).trim())
+        label.text = messages.get(key, shortenPaths(progress.orEmpty())).trim()
+        label.toolTipText = progress?.takeIf { it.isNotBlank() }
     }
 
     private fun elapsedText(nowMillis: Long): String {
@@ -329,71 +362,243 @@ internal class ClarificationView(
         return messages.get(key, seconds)
     }
 
-    private fun askingPage(state: ClarificationState.Asking, ledger: Ledger): DialogPanel {
-        val question = state.question
-        val understanding = ledger.understanding?.takeIf { state.index == 0 && (ledger.history.isEmpty() || ledger.corrections.isNotEmpty()) }
-        var correction: JBTextArea? = null
-        var correctionRow: Row? = null
-        lateinit var headerComment: JEditorPane
-        val radios = mutableListOf<JBRadioButton>()
-        lateinit var otherRadio: JBRadioButton
-        val otherField = JBTextField()
-        val page =
-            panel {
-                if (understanding != null) {
-                    collapsibleGroup(messages.get("clarify.understanding.title")) {
-                        row { text(html(understanding), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
-                        row {
-                            button(messages.get("clarify.understanding.correct")) {
-                                val widgets = asking ?: return@button
-                                widgets.correctionVisible = !widgets.correctionVisible
-                                widgets.correctionRow?.visible(widgets.correctionVisible)
-                                if (widgets.correctionVisible) widgets.correctionArea?.requestFocusInWindow()
-                            }
-                        }
-                        correctionRow =
-                            row {
-                                correction =
-                                    multiline("", 3)
-                                        .applyToComponent { emptyText.text = messages.get("clarify.understanding.correct.placeholder") }
-                                        .component
-                            }.visible(false)
-                    }.apply { expanded = true }
-                }
-                row { headerComment = comment(questionHeaderLine(state.index, state.batch.size, messages)).component }
-                row { text(html(question.text), MAX_LINE_LENGTH_WORD_WRAP).bold().resizableColumn().align(AlignX.FILL) }
-                whyLine(question)?.let { why ->
-                    row { comment(why, MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
-                }
-                buttonsGroup {
-                    question.options.forEachIndexed { i, option ->
-                        val label = if (option.recommended) messages.get("clarify.question.recommended", option.label) else option.label
-                        row {
-                            radios +=
-                                cell(WrappingRadioButton(label))
-                                    .comment(html(messages.get("clarify.question.becomes", option.conclusion)), MAX_LINE_LENGTH_WORD_WRAP)
-                                    .resizableColumn()
-                                    .align(AlignX.FILL)
-                                    .applyToComponent { isSelected = option.recommended }
-                                    .component
-                        }.topGap(if (i == 0) TopGap.SMALL else TopGap.NONE)
-                    }
-                    row {
-                        otherRadio = cell(JBRadioButton(messages.get("clarify.question.other"))).component
-                        cell(otherField).resizableColumn().align(AlignX.FILL)
-                    }
+    // ---- 提问页：标签条 + 当前题目（或提交页） ----
+
+    private fun askingPage(state: ClarificationState.Asking): JComponent {
+        val d = callbacks.draftsFor(state.batch)
+        drafts = d
+        val page = JPanel(BorderLayout()).apply { isOpaque = false }
+        if (state.batch.size > 1) {
+            val strip = tabStrip(d)
+            tabs = strip
+            page.add(strip, BorderLayout.NORTH)
+            questionArea.border = JBUI.Borders.emptyTop(6)
+        } else {
+            d.tab = 0
+            questionArea.border = null
+        }
+        page.add(questionArea, BorderLayout.CENTER)
+        rebuildQuestionArea()
+        return page
+    }
+
+    private fun tabStrip(d: BatchDrafts): JBTabbedPane {
+        val strip = TabStrip()
+        for (q in d.batch) {
+            strip.addTab(StringUtil.shortenTextWithEllipsis(q.header, HEADER_CHARS, 0), null, emptyTab(), q.text)
+        }
+        strip.addTab(messages.get("clarify.question.submit"), null, emptyTab(), null)
+        d.batch.indices.forEach { updateTabMark(strip, d, it) }
+        d.tab = d.tab.coerceIn(0, d.batch.size)
+        strip.selectedIndex = d.tab
+        strip.addChangeListener {
+            val index = strip.selectedIndex
+            if (index >= 0 && index != d.tab) {
+                d.tab = index
+                rebuildQuestionArea()
+                focusCurrent()
+                callbacks.askingPageChanged()
+            }
+        }
+        return strip
+    }
+
+    /** 标签条只要一行标签，内容区由下面的题目区域承担。 */
+    private fun emptyTab(): JComponent = JPanel().apply {
+        isOpaque = false
+        preferredSize = Dimension(0, 0)
+    }
+
+    /** 答过的题打 ✓；没答的放同样大小的空图标，标签不会因此左右跳动。 */
+    private fun updateTabMark(strip: JBTabbedPane, d: BatchDrafts, index: Int) {
+        val q = d.batch[index]
+        val icon = if (d.draftOf(q).toAnswer(q) != null) AllIcons.General.GreenCheckmark else unansweredIcon
+        if (strip.getIconAt(index) == icon) return
+        strip.setIconAt(index, icon)
+        // JBTabbedPane 用 JLabel 作标签组件显示标题，setIconAt 不会同步到它
+        (strip.getTabComponentAt(index) as? JLabel)?.icon = icon
+    }
+
+    private fun rebuildQuestionArea() {
+        val d = drafts ?: return
+        questionRebuilds++
+        options = null
+        questionArea.removeAll()
+        val panel = if (d.tab >= d.batch.size) reviewPanel(d) else questionPanel(d, d.batch[d.tab])
+        questionArea.add(panel, BorderLayout.CENTER)
+        questionArea.revalidate()
+        questionArea.repaint()
+    }
+
+    private fun questionPanel(d: BatchDrafts, question: Question): DialogPanel {
+        val draft = d.draftOf(question)
+        val multi = question.multiSelect
+        fun toggle(text: String): JToggleButton = if (multi) JBCheckBox(text) else JBRadioButton(text)
+        val buttons =
+            question.options.mapIndexed { i, option ->
+                val label = StringUtil.shortenTextWithEllipsis(option.label, LABEL_CHARS, 0)
+                val text = "${i + 1}. " + if (option.recommended) messages.get("clarify.question.recommended", label) else label
+                toggle(text).apply {
+                    if (label != option.label) toolTipText = option.label
+                    isSelected = option.id in draft.picked
                 }
             }
+        val otherButton = toggle("${question.options.size + 1}. " + messages.get("clarify.question.other")).apply { isSelected = draft.other }
+        val otherField = JBTextField(draft.otherText)
+
+        fun changed() {
+            tabs?.let { updateTabMark(it, d, d.tab) }
+        }
+        buttons.forEachIndexed { i, button ->
+            val id = question.options[i].id
+            button.addItemListener { e ->
+                if (e.stateChange == ItemEvent.SELECTED) {
+                    if (!multi) {
+                        draft.picked.clear()
+                        draft.other = false
+                    }
+                    draft.picked += id
+                } else {
+                    draft.picked -= id
+                }
+                changed()
+            }
+        }
+        otherButton.addItemListener { e ->
+            draft.other = e.stateChange == ItemEvent.SELECTED
+            if (draft.other && !multi) draft.picked.clear()
+            // 选了"其他"就是要写字
+            if (draft.other && !otherField.hasFocus()) otherField.requestFocusInWindow()
+            changed()
+        }
         otherField.document.addDocumentListener(
-            object : com.intellij.ui.DocumentAdapter() {
+            object : DocumentAdapter() {
                 override fun textChanged(e: DocumentEvent) {
-                    if (otherField.text.isNotEmpty()) otherRadio.isSelected = true
+                    draft.otherText = otherField.text
+                    // 在"其他"里打字就是选了它
+                    if (otherField.text.isNotEmpty() && !otherButton.isSelected) otherButton.isSelected = true else changed()
                 }
             },
         )
-        asking = AskingWidgets(headerComment, radios, otherRadio, otherField, correction, correctionRow)
-        return page
+        val all = buttons + otherButton
+        all.forEachIndexed { i, button -> installOptionKeys(button, all, i, choosesOnEnter = !multi) }
+        options = OptionWidgets(buttons, otherButton, otherField)
+
+        val fallback = renderedLedger?.direction(question.directionId)?.fallback.orEmpty()
+        return panel {
+            row { text(html(question.text), MAX_LINE_LENGTH_WORD_WRAP).bold().resizableColumn().align(AlignX.FILL) }
+            // 单选题放进 UI DSL 的按钮组（互斥由它负责），多选题是独立的复选框
+            val optionRows: Panel.() -> Unit = {
+                question.options.forEachIndexed { i, option ->
+                    row { cell(buttons[i]).comment(html(option.description), MAX_LINE_LENGTH_WORD_WRAP) }
+                        .topGap(if (i == 0) TopGap.SMALL else TopGap.NONE)
+                }
+                row {
+                    cell(otherButton).gap(RightGap.SMALL)
+                    cell(otherField).resizableColumn().align(AlignX.FILL)
+                }
+            }
+            if (multi) optionRows() else buttonsGroup(init = optionRows)
+            if (fallback.isNotBlank()) {
+                row { comment(html(messages.get("clarify.question.unanswered", fallback)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
+                    .topGap(TopGap.SMALL)
+            }
+        }
     }
+
+    /** 提交页：逐题列出回答，点标签回到那一题修改。 */
+    private fun reviewPanel(d: BatchDrafts): DialogPanel =
+        panel {
+            row { label(messages.get("clarify.review.title")).bold() }
+            row { comment(messages.get("clarify.review.comment"), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
+            d.batch.forEachIndexed { i, q ->
+                val answer = d.draftOf(q).toAnswer(q)
+                row {
+                    link(StringUtil.shortenTextWithEllipsis(q.header, HEADER_CHARS, 0)) { selectTab(i) }
+                        .align(AlignY.TOP)
+                        .gap(RightGap.SMALL)
+                        .applyToComponent { toolTipText = q.text }
+                    if (answer != null) {
+                        text(html(answerSummary(q, answer)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL)
+                    } else {
+                        val fallback = renderedLedger?.direction(q.directionId)?.fallback.orEmpty()
+                        comment(html(messages.get("clarify.review.unanswered", fallback)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL)
+                    }
+                }.layout(RowLayout.PARENT_GRID)
+            }
+        }
+
+    private fun answerSummary(question: Question, answer: Answer): String =
+        when (answer) {
+            is Answer.Picked ->
+                (question.options.filter { it.id in answer.optionIds }.map { it.label } + listOfNotNull(answer.other?.let { messages.get("clarify.review.other", it) }))
+                    .joinToString(" · ")
+            is Answer.OwnWords -> messages.get("clarify.review.other", answer.text)
+            Answer.Skipped -> ""
+        }
+
+    /** 焦点落在当前题选中的选项上（没选就是第一个）；提交页落在标签条上，回车即提交。 */
+    private fun focusCurrent() {
+        val w = options
+        if (w == null) {
+            tabs?.requestFocusInWindow()
+            return
+        }
+        ((w.buttons + w.otherButton).firstOrNull { it.isSelected } ?: w.buttons.firstOrNull())?.requestFocusInWindow()
+    }
+
+    /** 数字键：第 n 个选项（单选选中、多选勾选或取消）；最后一个数字是"其他"，并把焦点放进输入框。 */
+    private fun choose(index: Int) {
+        val w = options ?: return
+        val multi = w.buttons.firstOrNull() is JBCheckBox
+        when {
+            index < w.buttons.size -> {
+                val button = w.buttons[index]
+                button.isSelected = !(multi && button.isSelected)
+                button.requestFocusInWindow()
+            }
+            index == w.buttons.size -> {
+                w.otherButton.isSelected = true
+                w.otherField.requestFocusInWindow()
+            }
+        }
+    }
+
+    /**
+     * 选项按钮上的键：←/→ 换标签，↑/↓ 在选项间移动焦点（不改选择）；单选题回车先选中焦点所在的选项，
+     * 再按默认按钮。平台单选按钮自带的方向键行为在这里被覆盖。
+     */
+    private fun installOptionKeys(button: JToggleButton, all: List<JToggleButton>, index: Int, choosesOnEnter: Boolean) {
+        installTabKeys(button)
+        val map = button.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        map.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "imux.optionUp")
+        map.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "imux.optionDown")
+        button.actionMap.put("imux.optionUp", keyAction { all.getOrNull(index - 1)?.requestFocusInWindow() })
+        button.actionMap.put("imux.optionDown", keyAction { all.getOrNull(index + 1)?.requestFocusInWindow() })
+        if (choosesOnEnter) {
+            button.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "imux.chooseAndGo")
+            button.actionMap.put(
+                "imux.chooseAndGo",
+                keyAction {
+                    button.isSelected = true
+                    if (button === options?.otherButton) options?.otherField?.requestFocusInWindow()
+                    else SwingUtilities.getRootPane(button)?.defaultButton?.takeIf { it.isShowing }?.doClick()
+                },
+            )
+        }
+    }
+
+    private fun installTabKeys(target: JComponent) {
+        val map = target.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        map.put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), "imux.previousTab")
+        map.put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), "imux.nextTab")
+        target.actionMap.put("imux.previousTab", keyAction { if (!typingInText()) previousTab() })
+        target.actionMap.put("imux.nextTab", keyAction { if (!typingInText()) nextTab() })
+    }
+
+    private fun typingInText(): Boolean = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner is JTextComponent
+
+    // ---- 结果、发送、失败 ----
 
     /** UI DSL 自带的多行输入框（带内边距、放在滚动面板里），按宽度换行，填满所在的行。 */
     private fun Row.multiline(text: String, rows: Int) =
@@ -407,32 +612,20 @@ internal class ClarificationView(
                 caretPosition = 0
             }
 
-    private fun whyLine(question: Question): String? {
-        val lines =
-            listOfNotNull(
-                question.reason.takeIf { it.isNotBlank() }?.let { messages.get("clarify.question.why", it) },
-                question.basis.takeIf { it.isNotBlank() }?.let { messages.get("clarify.question.basis", it) },
-            )
-        return if (lines.isEmpty()) null else lines.joinToString("<br>") { html(it) }
-    }
-
-    private fun resultPage(requirement: String): DialogPanel {
-        return panel {
+    private fun resultPage(requirement: String): DialogPanel =
+        panel {
             row { label(messages.get("clarify.result.title")).bold() }
             row { resultArea = multiline(requirement, 8).component }.resizableRow()
-            row { comment(messages.get("clarify.result.comment"), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
         }
-    }
 
-    private fun sendingPage(state: ClarificationState.Sending): DialogPanel {
-        return panel {
+    private fun sendingPage(state: ClarificationState.Sending): DialogPanel =
+        panel {
             row {
                 icon(AnimatedIcon.Default.INSTANCE).gap(RightGap.SMALL)
                 sendingLabel = JBLabel(sendingReason(state)).also { cell(it) }
             }
             row { multiline(state.requirement, 8).applyToComponent { isEditable = false } }.resizableRow()
         }
-    }
 
     private fun sendingReason(state: ClarificationState.Sending): String =
         messages.get(if (state.waitingForTurn) "clarify.sending.turn" else "clarify.sending")
@@ -464,8 +657,6 @@ internal class ClarificationView(
     }
 }
 
-private const val STATUS_WIDTH_GROUP = "directionStatusWord"
-
 /** 调查的种类：决定进度文案，以及「够了，生成结果」是否出现。 */
 internal enum class InvestigationKind { FIRST_ROUND, ROUND, RESULT }
 
@@ -477,26 +668,23 @@ internal fun investigationKind(canFinish: Boolean, ledger: Ledger): Investigatio
         else -> InvestigationKind.ROUND
     }
 
-/** "问题 i/n"，一批多于一题时接上"这一批不用再查代码"的说明。index 从 0 起。 */
-internal fun questionHeaderLine(index: Int, total: Int, messages: ViewMessages = pluginMessages): String {
-    val head = messages.get("clarify.question.header", index + 1, total)
-    return if (total > 1) head + " · " + messages.get("clarify.question.batch.note") else head
-}
+/** 进度里的长路径从中间省略，保留开头与文件名。 */
+internal fun shortenPaths(text: String): String =
+    text.split(' ').joinToString(" ") { token ->
+        if (token.length > MAX_PATH_CHARS && ('/' in token || '\\' in token)) StringUtil.shortenPathWithEllipsis(token, MAX_PATH_CHARS) else token
+    }
 
-/** 方向清单的折叠标题："方向清单（已定 N · 待定 N · 跳过 N[ · 已去掉 N]）"。 */
-internal fun listTitle(directions: List<Direction>, messages: ViewMessages = pluginMessages): String {
-    val counts = progressCounts(directions)
-    val progress =
-        buildString {
-            append(messages.get("clarify.progress", counts.decided, counts.open, counts.defaulted))
-            // 属性文件会去掉值开头的空格，分隔符在这里补上
-            if (counts.dropped > 0) append(" · ").append(messages.get("clarify.progress.dropped", counts.dropped))
-        }
-    return messages.get("clarify.list.title", progress)
-}
+private const val MAX_PATH_CHARS = 48
+private const val CHECK_ICON = "<icon src='AllIcons.General.GreenCheckmark'>"
+private const val CONFIRMED_GAP = "&nbsp;&nbsp;&nbsp; "
 
 /** 交给 UI DSL 的文字按 HTML 显示：转义并保留换行。 */
 private fun html(text: String): String = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")
+
+private fun keyAction(body: () -> Unit) =
+    object : AbstractAction() {
+        override fun actionPerformed(e: ActionEvent) = body()
+    }
 
 /** 宽度不够时省略显示的单行标签：首选宽度不撑大窗口，完整内容看 tooltip。 */
 private class EllipsisLabel(text: String) : JBLabel(text) {
@@ -506,35 +694,6 @@ private class EllipsisLabel(text: String) : JBLabel(text) {
 
     companion object {
         private const val MIN_ELLIPSIS_WIDTH = 60
-    }
-}
-
-/**
- * 选项文字较长时按可用宽度换行的单选按钮。JRadioButton 本身不换行，这里用 HTML 文本，
- * 首选高度按当前宽度计算；首选宽度不超过所在列，避免把内容撑出窗口。
- */
-internal class WrappingRadioButton(private val plain: String) : JBRadioButton() {
-    init {
-        text = "<html>" + html(plain) + "</html>"
-    }
-
-    override fun getPreferredSize(): Dimension {
-        val natural = super.getPreferredSize()
-        val view = getClientProperty(javax.swing.plaf.basic.BasicHTML.propertyKey) as? javax.swing.text.View ?: return natural
-        if (width <= 0) return natural
-        val chrome = natural.width - view.getPreferredSpan(javax.swing.text.View.X_AXIS).toInt()
-        val available = (width - chrome).coerceAtLeast(1)
-        if (available >= view.getPreferredSpan(javax.swing.text.View.X_AXIS)) return natural
-        view.setSize(available.toFloat(), 0f)
-        val textHeight = view.getPreferredSpan(javax.swing.text.View.Y_AXIS).toInt()
-        val insets = insets
-        return Dimension(width, maxOf(natural.height, textHeight + insets.top + insets.bottom))
-    }
-
-    override fun getMinimumSize(): Dimension = Dimension(JBUI.scale(MIN_RADIO_WIDTH), super.getMinimumSize().height)
-
-    companion object {
-        private const val MIN_RADIO_WIDTH = 80
     }
 }
 
@@ -557,4 +716,32 @@ private class FillViewportPanel : JPanel(BorderLayout()), Scrollable {
     override fun getScrollableTracksViewportWidth(): Boolean = true
 
     override fun getScrollableTracksViewportHeight(): Boolean = (parent as? JViewport)?.let { it.height > preferredSize.height } == true
+}
+
+/**
+ * 只用作标签条的 [JBTabbedPane]（各标签的内容都是空的，题目区域在它下面）。标签多或窗口窄时折成多行，不截断；
+ * 平台算首选高度时按"内容宽度"（这里是 0）折行，会多出一大片空白，所以首选高度改按当前宽度下标签实际占的高度，
+ * 宽度变了再重新布局一次。
+ */
+private class TabStrip : JBTabbedPane() {
+    private var laidOutWidth = -1
+
+    init {
+        tabLayoutPolicy = WRAP_TAB_LAYOUT
+        addComponentListener(
+            object : java.awt.event.ComponentAdapter() {
+                override fun componentResized(e: java.awt.event.ComponentEvent) {
+                    if (width != laidOutWidth) revalidate()
+                }
+            },
+        )
+    }
+
+    override fun getPreferredSize(): Dimension {
+        val natural = super.getPreferredSize()
+        if (width <= 0 || tabCount == 0) return natural
+        laidOutWidth = width
+        val bottom = (0 until tabCount).maxOf { i -> getBoundsAt(i)?.let { it.y + it.height } ?: 0 }
+        return Dimension(natural.width, bottom + insets.bottom + JBUI.scale(1))
+    }
 }

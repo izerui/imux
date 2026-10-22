@@ -15,7 +15,6 @@ class ClarificationPromptTest {
                 Direction("d1", "恢复范围", "影响状态保存", "TerminalSession.kt", "只恢复连接"),
                 Direction("d2", "多标签页", "影响范围", "TerminalHost.kt", "逐个重连", status = DirectionStatus.DEFAULTED),
             ),
-            pinned = "d1",
             awaitingReport = listOf("d1", "d2"),
         )
 
@@ -50,9 +49,9 @@ class ClarificationPromptTest {
     }
 
     @Test
-    fun `提示词写明先问这个与冻结方向与这一批需要交代的方向`() {
+    fun `提示词写明冻结方向与上一批需要交代的方向`() {
         val prompt = clarificationPrompt(Phase.ROUND, ledger, isChinese = false, guidance = "g")
-        assertTrue(prompt.contains("\"mustAsk\": \"d1\""))
+        assertFalse("不再有先问这个", prompt.contains("mustAsk"))
         assertTrue(prompt.contains("\"frozen\": [\n      \"d2\"\n    ]"))
         assertTrue(prompt.contains("\"reportAnswered\": [\n      \"d1\",\n      \"d2\"\n    ]"))
     }
@@ -67,7 +66,6 @@ class ClarificationPromptTest {
     fun `各阶段提示词都以只输出 JSON 且不修改文件结尾`() {
         assertTrue(clarificationPrompt(Phase.FIRST, ledger, true, "g").trimEnd().endsWith(JSON_ONLY_ZH))
         assertTrue(clarificationPrompt(Phase.ROUND, ledger, true, "g").trimEnd().endsWith(JSON_ONLY_ZH))
-        assertTrue(clarificationPrompt(Phase.CORRECTED, ledger, true, "g").trimEnd().endsWith(JSON_ONLY_ZH))
         assertTrue(clarificationPrompt(Phase.RESULT, ledger, true, "g").trimEnd().endsWith(JSON_ONLY_ZH))
         assertTrue(clarificationPrompt(Phase.RESULT, ledger, false, "g").trimEnd().endsWith(JSON_ONLY_EN))
     }
@@ -77,5 +75,36 @@ class ClarificationPromptTest {
         val prompt = clarificationPrompt(Phase.RESULT, ledger, isChinese = false, guidance = "g")
         assertTrue(prompt.contains("{\"requirement\": \"...\"}"))
         assertFalse(prompt.contains("\"next\""))
+    }
+
+    @Test
+    fun `提问阶段的中英提示词都写明每批一到四题、短标签、说明即记录、不给其他`() {
+        for (chinese in listOf(true, false)) {
+            for (phase in listOf(Phase.FIRST, Phase.ROUND)) {
+                val prompt = clarificationPrompt(phase, ledger, chinese, "g")
+                val name = "${if (chinese) "zh" else "en"} $phase"
+                assertTrue("$name：1～4 题", prompt.contains(if (chinese) "1～$MAX_QUESTIONS_PER_ROUND" else "1-$MAX_QUESTIONS_PER_ROUND"))
+                assertTrue("$name：header 字数", prompt.contains("\"header\"") && prompt.contains("$HEADER_CHARS"))
+                assertTrue("$name：description", prompt.contains("description"))
+                assertTrue("$name：multiSelect", prompt.contains("multiSelect"))
+                assertTrue("$name：不给其他", prompt.contains(if (chinese) "不要给\"其他\"选项" else "Do not include an \"Other\" option"))
+            }
+        }
+    }
+
+    @Test
+    fun `history 里多选与原话的回答都写明`() {
+        val q = Question("d1", "H", "Q", true, listOf(ChoiceOption("a", "A", "DA", true), ChoiceOption("b", "B", "DB", false)))
+        val withHistory =
+            ledger.copy(
+                history = listOf(
+                    AnswerRecord(q, Answer.Picked(listOf("a", "b"), "OWN"), "DA；DB；OWN"),
+                    AnswerRecord(q, Answer.Skipped, "只恢复连接"),
+                ),
+            )
+        val prompt = clarificationPrompt(Phase.ROUND, withHistory, isChinese = false, guidance = "g")
+        assertTrue(prompt.contains("\"picked:a,b+own-words\""))
+        assertTrue(prompt.contains("\"unanswered\""))
+        assertTrue(prompt.contains("DA；DB；OWN"))
     }
 }

@@ -16,12 +16,7 @@ internal data class NewDirection(
     val fallback: String,
 )
 
-internal data class DroppedDirection(
-    val id: String,
-    val reason: String,
-)
-
-/** 模型对这一批里用户回答过的某个方向的交代：已定，或仍待确认（附已有结论与剩余疑点）。 */
+/** 模型对上一批里用户回答过的某个方向的交代：已定，或仍待确认（附已有结论与剩余疑点）。 */
 internal data class AnsweredReport(
     val id: String,
     val decided: Boolean,
@@ -29,11 +24,18 @@ internal data class AnsweredReport(
     val openPoints: List<String>,
 )
 
-/** 每轮一批问题的上限；数量由模型判断，见设计文档「每轮一批问题」。 */
-internal const val MAX_QUESTIONS_PER_ROUND = 5
+/** 每轮问题数的上限，与 Claude Code 的提问相同；数量由模型判断，见设计文档「照 Claude Code 的提问过程」。 */
+internal const val MAX_QUESTIONS_PER_ROUND = 4
+
+/** 标签条上的短标签：提示词要求不超过 [HEADER_CHARS] 个字，超过 [MAX_HEADER_CHARS] 才算错（重调一次代价是一整轮调查）。 */
+internal const val HEADER_CHARS = 12
+internal const val MAX_HEADER_CHARS = 16
+
+/** 选项短标签的建议长度；界面上超出的部分省略显示。 */
+internal const val LABEL_CHARS = 20
 
 internal sealed interface Next {
-    /** 1～[MAX_QUESTIONS_PER_ROUND] 个问题，插件逐题展示，整批答完才调用下一轮。 */
+    /** 1～[MAX_QUESTIONS_PER_ROUND] 个问题；用户整批提交后才调用下一轮。 */
     data class Ask(val questions: List<Question>) : Next
 
     data class Done(val requirement: String) : Next
@@ -42,7 +44,8 @@ internal sealed interface Next {
 internal data class RoundResponse(
     val understanding: String?,
     val added: List<NewDirection>,
-    val dropped: List<DroppedDirection>,
+    /** 模型提议去掉的方向 ID。 */
+    val dropped: List<String>,
     val answered: List<AnsweredReport>,
     val notes: String,
     val next: Next,
@@ -83,11 +86,7 @@ internal fun parseRoundResponse(raw: String): RoundResponse {
                 NewDirection(fields.getValue("tempId"), fields.getValue("title"), fields.getValue("why"), fields.getValue("source"), fields.getValue("fallback"))
             }
         }
-    val dropped =
-        (directions?.arr("drop") ?: JsonArray()).mapNotNull { element ->
-            val o = element.asObjOrNull() ?: return@mapNotNull null
-            o.str("id")?.takeIf(String::isNotEmpty)?.let { DroppedDirection(it, o.str("reason").orEmpty()) }
-        }
+    val dropped = (directions?.arr("drop") ?: JsonArray()).mapNotNull { it.asObjOrNull()?.str("id")?.takeIf(String::isNotEmpty) }
 
     val answered =
         root.arr("answered").mapIndexedNotNull { i, element ->
@@ -128,24 +127,38 @@ internal fun parseRoundResponse(raw: String): RoundResponse {
 
 private fun parseQuestion(o: JsonObject, path: String, errors: MutableList<String>): Question {
     val directionId = o.str("directionId").orEmpty()
+    val header = o.str("header").orEmpty()
     val text = o.str("question").orEmpty()
     if (directionId.isEmpty()) errors += "$path.directionId must not be empty"
+    if (header.isEmpty()) errors += "$path.header must not be empty"
+    if (header.codePointCount(0, header.length) > MAX_HEADER_CHARS) errors += "$path.header must be at most $HEADER_CHARS characters"
     if (text.isEmpty()) errors += "$path.question must not be empty"
     val options =
         o.arr("options").mapNotNull { it.asObjOrNull() }.map { opt ->
             ChoiceOption(
                 id = opt.str("id").orEmpty(),
                 label = opt.str("label").orEmpty(),
+                description = opt.str("description").orEmpty(),
                 recommended = opt.get("recommended")?.takeIf { it.isJsonPrimitive }?.asBoolean == true,
-                conclusion = opt.str("conclusion").orEmpty(),
             )
         }
     if (options.size !in 2..4) errors += "$path.options must have 2-4 items"
     if (options.any { it.id.isEmpty() || it.label.isEmpty() }) errors += "$path: every option needs id and label"
-    if (options.any { it.conclusion.isEmpty() }) errors += "$path: every option needs a non-empty conclusion"
+    if (options.any { it.description.isEmpty() }) errors += "$path: every option needs a non-empty description"
     if (options.map { it.id }.toSet().size != options.size) errors += "$path: option ids must be unique"
-    return Question(directionId, text, o.str("reason").orEmpty(), o.str("basis").orEmpty(), options)
+    if (options.any { isOtherLabel(it.label) }) errors += "$path: do not include an \"Other\" option; the plugin adds it"
+    val multiSelect = o.get("multiSelect")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+    return Question(directionId, header, text, multiSelect, options)
 }
+
+/** 模型自己加的"其他"选项：插件会追加带输入框的"其他"，模型再加一个就重复了。 */
+internal fun isOtherLabel(label: String): Boolean {
+    val l = label.trim().lowercase().trimEnd(':', '：', '.', '。', '…')
+    return l in OTHER_LABELS || OTHER_PREFIXES.any { l.startsWith(it) }
+}
+
+private val OTHER_LABELS = setOf("other", "others", "something else", "其他", "其它", "其他想法", "其他方案", "其他选项", "自定义")
+private val OTHER_PREFIXES = listOf("other (", "other:", "其他（", "其他(", "其他：", "其它（", "其它(")
 
 internal fun parseRequirementResponse(raw: String): String =
     jsonObjectIn(raw).str("requirement")?.takeIf(String::isNotEmpty)

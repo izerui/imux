@@ -108,19 +108,18 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
-    fun `restart 先作废流程再取消任务`() {
-        val restart = source.bodyAfter("internal fun restart(", '{')
-        val cancelledIdx = restart.indexOf(".cancelled()")
-        val cancelJobIdx = restart.indexOf("?.cancel()")
-        assertTrue("restart() 必须先调 cancelled()", cancelledIdx >= 0 && cancelledIdx < cancelJobIdx)
-        assertTrue("restart() 创建新流程", restart.contains("newFlow("))
-        assertTrue("restart() 让对话框绑定新流程", restart.contains("rebind("))
+    fun `提交一批只发起一次调查`() {
+        val submit = source.bodyAfter("internal fun submit(", '{')
+        assertTrue(submit.contains("flow.submitBatch(answers)"))
+        assertEquals("只登记一个调查任务", 1, Regex("launch\\(").findAll(submit).count())
+        assertTrue(submit.contains("flow.advance(runId)"))
     }
 
     @Test
-    fun `restart 的新流程保存到 flows 映射`() {
-        val restart = source.bodyAfter("internal fun restart(", '{')
-        assertTrue("新流程替换旧流程", restart.contains("flows[sessionKey] = newFlow"))
+    fun `删掉的方向操作与重新开始不再出现`() {
+        for (gone in listOf("fun answer(", "fun skip(", "fun pin(", "fun reopen(", "fun addDirection(", "fun restart(", "agentTypes")) {
+            assertFalse("不再有 $gone", source.normalized.contains(gone))
+        }
     }
 
     @Test
@@ -143,6 +142,6 @@ class ClarificationServiceSourceTest {
     @Test
     fun `调查中与提问页没有待送达的需求`() {
         assertNull(undeliveredRequirement(ClarificationState.Investigating(null, 0)))
-        assertNull(undeliveredRequirement(ClarificationState.Asking(listOf(Question("d1", "Q", "", "", emptyList())), 0)))
+        assertNull(undeliveredRequirement(ClarificationState.Asking(listOf(Question("d1", "H", "Q", false, emptyList())))))
     }
 }

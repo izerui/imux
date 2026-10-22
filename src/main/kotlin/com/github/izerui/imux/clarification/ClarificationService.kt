@@ -56,7 +56,6 @@ class ClarificationService(
 ) : Disposable {
     private val flows = ConcurrentHashMap<String, ClarificationFlow>()
     private val owners = ConcurrentHashMap<String, String>()
-    private val agentTypes = ConcurrentHashMap<String, AgentType>()
     private val jobs = ConcurrentHashMap<String, Job>()
     private val dialogs = ConcurrentHashMap<String, ClarificationDialog>()
     private val unexited = UnexitedProcesses()
@@ -76,7 +75,6 @@ class ClarificationService(
             return
         }
         owners[sessionKey] = tabId
-        agentTypes[sessionKey] = agentType
         val flow = flows.getOrPut(sessionKey) { newFlow(agentType) }
         val dialog = ClarificationDialog(project, this, flow, title)
         dialogs[sessionKey] = dialog
@@ -113,27 +111,17 @@ class ClarificationService(
         }
     }
 
-    internal fun answer(sessionKey: String, answer: Answer, correction: String?) {
+    /** 提交这一批回答：一次写进台账，只发起一次调查。 */
+    internal fun submit(sessionKey: String, answers: Map<String, Answer>) {
         val flow = flows[sessionKey] ?: return
-        val runId = flow.answer(answer, correction) ?: return
+        val runId = flow.submitBatch(answers) ?: return
         launch(sessionKey, flow) { flow.advance(runId) }
     }
 
-    internal fun skip(sessionKey: String, id: String) {
+    /** 「够了，生成结果」：提问页里已填写的回答 [answers] 一并记下。 */
+    internal fun finish(sessionKey: String, answers: Map<String, Answer>) {
         val flow = flows[sessionKey] ?: return
-        val runId = flow.skip(id) ?: return
-        launch(sessionKey, flow) { flow.advance(runId) }
-    }
-
-    internal fun pin(sessionKey: String, id: String) { flows[sessionKey]?.pin(id) }
-
-    internal fun reopen(sessionKey: String, id: String) { flows[sessionKey]?.reopen(id) }
-
-    internal fun addDirection(sessionKey: String, title: String) { flows[sessionKey]?.addDirection(title) }
-
-    internal fun finish(sessionKey: String) {
-        val flow = flows[sessionKey] ?: return
-        val runId = flow.beginResult() ?: return
+        val runId = flow.beginResult(answers) ?: return
         launch(sessionKey, flow) { flow.generateResult(runId) }
     }
 
@@ -158,20 +146,6 @@ class ClarificationService(
         // 先让流程作废这一轮，再中断任务：中断后 runAgent 若抛出被包装的异常，也只会被当作过期结果忽略
         flows[sessionKey]?.cancelled()
         jobs.remove(sessionKey)?.cancel()
-    }
-
-    /**
-     * [修改]：丢弃当前澄清，创建新流程，对话框回到输入页并带上原需求。
-     * 先作废在途一轮，再取消任务——与 [cancel] 相同的顺序。
-     */
-    internal fun restart(sessionKey: String) {
-        val flow = flows[sessionKey] ?: return
-        val type = agentTypes[sessionKey] ?: return
-        flow.cancelled()
-        jobs.remove(sessionKey)?.cancel()
-        val newFlow = newFlow(type)
-        flows[sessionKey] = newFlow
-        dialogs[sessionKey]?.rebind(newFlow)
     }
 
     /**
@@ -288,7 +262,6 @@ class ClarificationService(
         jobs.remove(sessionKey)?.cancel()
         flows.remove(sessionKey)
         owners.remove(sessionKey)
-        agentTypes.remove(sessionKey)
         dialogs.remove(sessionKey)?.close(com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE)
     }
 
@@ -311,7 +284,6 @@ class ClarificationService(
         synchronized(jobs) {
             flows.remove(from)?.let { flows[to] = it }
             owners.remove(from)?.let { owners[to] = it }
-            agentTypes.remove(from)?.let { agentTypes[to] = it }
             jobs.remove(from)?.let { jobs[to] = it }
         }
         dialogs.remove(from)?.let {

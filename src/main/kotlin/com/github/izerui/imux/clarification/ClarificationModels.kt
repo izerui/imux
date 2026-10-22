@@ -9,68 +9,64 @@ internal data class Direction(
     val title: String,
     val why: String,
     val source: String,
-    /** 用户跳过时的默认处理，事先写明；用户没见过的默认，他也就没法拒绝。 */
+    /** 用户不回答时的默认处理，事先写明；用户没见过的默认，他也就没法拒绝。 */
     val fallback: String,
     val status: DirectionStatus = DirectionStatus.OPEN,
-    /** 用户添加或重新打开的方向：Agent 不能去掉，只能由用户的回答来定。 */
-    val userOwned: Boolean = false,
     val conclusion: String? = null,
     val openPoints: List<String> = emptyList(),
-    /** 模型去掉该方向时给的理由；界面在去掉的方向旁原样显示。 */
-    val dropReason: String? = null,
 )
 
 internal data class ChoiceOption(
     val id: String,
+    /** 短标签，选项旁显示。 */
     val label: String,
+    /** 一行说明，显示在标签下；选中后原样记下。 */
+    val description: String,
     val recommended: Boolean,
-    /** 选了它，方向就定为什么；界面原样显示，选中后原样记下。 */
-    val conclusion: String,
 )
 
 internal data class Question(
     val directionId: String,
+    /** 短标签，显示在标签条上。 */
+    val header: String,
     val text: String,
-    val reason: String,
-    val basis: String,
+    val multiSelect: Boolean,
     val options: List<ChoiceOption>,
 )
 
 internal sealed interface Answer {
-    data class Picked(val optionId: String) : Answer
+    /** 选中的选项（单选恰好一个）；多选题还可以同时写下"其他"的原话 [other]。 */
+    data class Picked(val optionIds: List<String>, val other: String? = null) : Answer
 
+    /** 只写了"其他"的原话。 */
     data class OwnWords(val text: String) : Answer
 
+    /** 没有回答：按方向事先写明的默认处理。 */
     data object Skipped : Answer
 }
 
-/** 一次问答；[recorded] 是记下的方向结论：选项自带的结论、用户原话或跳过时的默认处理。 */
+/** 一次问答；[recorded] 是记下的方向结论：选中选项的说明（及原话）、用户原话或不回答时的默认处理。 */
 internal data class AnswerRecord(
     val question: Question,
     val answer: Answer,
     val recorded: String,
-    /** 方向被重新打开时，该方向上的旧记录标为作废；作废的记录不算已确认。 */
-    val voided: Boolean = false,
 )
 
 /** 插件持有的台账，每轮完整交给 Agent。 */
 internal data class Ledger(
     val requirement: String,
     val background: String?,
+    /** 模型首轮的复述，只作为之后各轮的背景，不在界面上显示。 */
     val understanding: String? = null,
-    val corrections: List<String> = emptyList(),
     val directions: List<Direction> = emptyList(),
     val history: List<AnswerRecord> = emptyList(),
     val notes: String = "",
-    /** 用户「先问这个」指定的方向；该方向的问题展示出来后清空。 */
-    val pinned: String? = null,
     /**
-     * 这一批里用户已回答（非跳过）、还等模型交代的方向，按回答顺序；
+     * 上一批里用户回答了（非不回答）、还等模型交代的方向，按回答顺序；
      * 下一轮返回必须在 answered 里逐个交代它们，交代完（合并成功）清空。
      */
     val awaitingReport: List<String> = emptyList(),
     val nextDirectionNumber: Int = 1,
-    val nextUserNumber: Int = 1,
 ) {
     fun direction(id: String): Direction? = directions.firstOrNull { it.id == id }
 
