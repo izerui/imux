@@ -169,9 +169,10 @@ class ClarificationViewPreviewTest {
                 isOpaque = false
                 list.forEach { add(JButton(ImuxBundle.message(PluginLanguage.SIMPLIFIED_CHINESE, it.labelKey)).apply { name = it.name }) }
             }
+        // 与 DialogWrapper 的按钮栏一样，留白属于按钮栏自己
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyTop(12)
+            border = JBUI.Borders.empty(12, 16)
             add(buttons(bar.left), BorderLayout.WEST)
             add(buttons(bar.right), BorderLayout.EAST)
         }
@@ -180,9 +181,9 @@ class ClarificationViewPreviewTest {
     /** 视图 + 按钮栏组成整个窗口内容，按给定尺寸布局；返回根面板。 */
     private fun window(view: ClarificationView, state: ClarificationState, canFinish: Boolean, ledger: Ledger, width: Int, height: Int): JRootPane {
         val bar = barFor(view, state, canFinish, ledger)
+        // 与真实窗口一致：内容区直接贴着窗口边缘放，不额外加边框——内边距必须来自视图自己
         val content =
             JPanel(BorderLayout()).apply {
-                border = JBUI.Borders.empty(12, 16, 12, 16)
                 add(view.component, BorderLayout.CENTER)
                 add(bar, BorderLayout.SOUTH)
             }
@@ -248,9 +249,7 @@ class ClarificationViewPreviewTest {
         for (c in texts) {
             val r: Rectangle = SwingUtilities.convertRectangle(c.parent, c.bounds, viewport.view)
             val label = (c as? JLabel)?.text ?: (c as? AbstractButton)?.text ?: c.javaClass.simpleName
-            // 单选/复选框的边界含透明留白，题目区域把它挪到左缘之外，可见部分仍从 0 开始
-            val transparentPadding = if (c is javax.swing.JToggleButton) JBUI.scale(4) else 0
-            assertTrue("$name：「$label」左边越界 x=${r.x}", r.x >= -transparentPadding)
+            assertTrue("$name：「$label」左边越界 x=${r.x}", r.x >= 0)
             assertTrue("$name：「$label」右边超出视口 ${r.x + r.width} > $visibleWidth", r.x + r.width <= visibleWidth)
             val ellipsized = c.javaClass.simpleName == "EllipsisLabel"
             if ((c is JLabel || c is AbstractButton) && !ellipsized) {
@@ -276,15 +275,29 @@ class ClarificationViewPreviewTest {
         assertTrue("$name：内容不需要竖向滚动", view.component.viewport.view.preferredSize.height <= viewport.height)
     }
 
-    /** 头部的需求行、标签条、问句与第一个选项左边对齐（同一条内容左缘）。 */
-    private fun assertLeftAligned(view: ClarificationView, name: String) {
-        val viewport = view.component.viewport
-        fun x(c: Component) = SwingUtilities.convertPoint(c.parent, c.x, c.y, viewport).x + ((c as? JComponent)?.insets?.left ?: 0)
-        val requirementLine = allOf<JLabel>(view.component).first { it.javaClass.simpleName == "EllipsisLabel" }
-        // 问句是题目面板里的第一段文字
-        val question = allOf<javax.swing.JEditorPane>(view.options!!.buttons[0].parent).first()
-        assertEquals("$name：问句与需求行左对齐", x(requirementLine), x(question))
-        assertEquals("$name：标签条与需求行左对齐", x(requirementLine), view.tabs?.let { x(it) } ?: x(requirementLine))
+    /**
+     * 内容与窗口左右边缘之间留出内边距：每个可见的文字、按钮、输入框、标签条、分隔线（窗口坐标）
+     * 离左右边缘都不少于 [CONTENT_PADDING_H]。多行输入框按它所在的滚动面板算，标签条内部的标签不单独算。
+     */
+    private fun assertEdgePadding(view: ClarificationView, root: JRootPane, name: String) {
+        val pad = JBUI.scale(CONTENT_PADDING_H)
+        val inner = tree(view.component.viewport.view).filter { c ->
+            c !== view.component.viewport.view &&
+                (c is JScrollPane || c is javax.swing.JTabbedPane)
+        }
+        val checked =
+            tree(view.component.viewport.view).filter { c ->
+                showing(c, root) && c.width > 0 &&
+                    (c is JLabel || c is AbstractButton || c is JTextComponent || c is javax.swing.JTabbedPane || c is javax.swing.JSeparator || c is JScrollPane) &&
+                    inner.none { it !== c && SwingUtilities.isDescendingFrom(c, it) }
+            }
+        assertTrue("$name：有要检查的组件", checked.isNotEmpty())
+        for (c in checked) {
+            val r = SwingUtilities.convertRectangle(c.parent, c.bounds, root)
+            val label = (c as? JLabel)?.text ?: (c as? AbstractButton)?.text ?: c.javaClass.simpleName
+            assertTrue("$name：「$label」离左边缘 ${r.x} < $pad", r.x >= pad)
+            assertTrue("$name：「$label」离右边缘 ${root.width - (r.x + r.width)} < $pad", r.x + r.width <= root.width - pad)
+        }
     }
 
     private fun check(
@@ -305,6 +318,7 @@ class ClarificationViewPreviewTest {
         assertTrue("$name 已写出", file.length() > 0)
         assertTrue("$name：内容区在 JScrollPane 里", view.component is JScrollPane)
         assertNoHorizontalClipping(view, root, name)
+        assertEdgePadding(view, root, name)
         return view
     }
 
@@ -353,7 +367,6 @@ class ClarificationViewPreviewTest {
         }
         assertEquals("tooltip 是完整标签与问句", "失败提示 — " + longQuestion.text, strip.getToolTipTextAt(0))
         assertQuestionFits(big, "asking-batch-640x520")
-        assertLeftAligned(big, "asking-batch-640x520")
         check("asking-batch-460x400", ClarificationState.Asking(batch), ledger, 460, 400, drafts = drafts)
     }
 
@@ -371,7 +384,6 @@ class ClarificationViewPreviewTest {
         assertTrue("其他也是复选框", w.otherButton is javax.swing.JCheckBox)
         assertEquals(Answer.Picked(listOf("a", "c"), "终端标题也恢复"), view.answers()["d5"])
         assertQuestionFits(view, "asking-multi-640x520")
-        assertLeftAligned(view, "asking-multi-640x520")
     }
 
     @Test
@@ -516,5 +528,37 @@ class ClarificationViewPreviewTest {
         fire(view.options!!.buttons[0], JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, KeyEvent.VK_LEFT)
         assertEquals("← 回到第一题", 0, view.tabs!!.selectedIndex)
         assertTrue("回来后选择还在", view.options!!.buttons[1].isSelected)
+    }
+
+    // ---- 默认尺寸 ----
+
+    @Test
+    fun `各页按打开时的默认尺寸渲染：宽 560、高按内容限制在 360～520`() {
+        val asking = listOf(methodQuestion)
+        val pages =
+            listOf(
+                Triple("input", ClarificationState.Input, false),
+                Triple("investigating", ClarificationState.Investigating("读取 src/main/kotlin/com/github/izerui/imux/terminal/TerminalSessionReconnector.kt", System.currentTimeMillis() - 42_000, run = 3), true),
+                Triple("asking-single", ClarificationState.Asking(asking), true),
+                Triple("asking-batch", ClarificationState.Asking(batch), true),
+                Triple("result", ClarificationState.Result(resultText), false),
+                Triple("failed", ClarificationState.Failed(FailureReason.TIMEOUT, "600", null), false),
+            )
+        val width = JBUI.scale(ClarificationDialog.INITIAL_WIDTH)
+        val heights = mutableMapOf<String, Int>()
+        for ((page, state, canFinish) in pages) {
+            val view = ClarificationView(FakeCallbacks(), zh)
+            view.render(state, ledger, canFinish, "")
+            val bar = barFor(view, state, canFinish, ledger)
+            // 预览里没有标题栏，窗口其余部分只有按钮栏
+            val height = initialHeight(view.preferredContentHeight(width), bar.preferredSize.height)
+            heights[page] = height
+            assertTrue("$page：高度在 360～520 之间（$height）", height in JBUI.scale(MIN_INITIAL_HEIGHT)..JBUI.scale(MAX_INITIAL_HEIGHT))
+            val root = window(view, state, canFinish, ledger, width, height)
+            png(root, "default-$page-${width}x$height")
+            assertNoHorizontalClipping(view, root, "default-$page")
+            assertEdgePadding(view, root, "default-$page")
+        }
+        assertTrue("一道短问题的窗口比一批长问题矮：${heights}", heights.getValue("asking-single") < heights.getValue("asking-batch"))
     }
 }

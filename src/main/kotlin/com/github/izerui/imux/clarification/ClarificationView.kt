@@ -125,6 +125,8 @@ internal class ClarificationView(
     private val body = JPanel(BorderLayout()).apply { isOpaque = false }
     private val content =
         FillViewportPanel().apply {
+            // 内边距放在滚动内容上而不是滚动面板上：窗口边缘与内容之间始终留白，滚动条（New UI 下浮在内容上）落在留白里
+            border = JBUI.Borders.empty(CONTENT_PADDING_V, CONTENT_PADDING_H)
             add(header, BorderLayout.NORTH)
             add(body, BorderLayout.CENTER)
         }
@@ -165,7 +167,7 @@ internal class ClarificationView(
     private var drafts: BatchDrafts? = null
     internal var tabs: JBTabbedPane? = null
         private set
-    private val questionArea = VisualLeftPanel()
+    private val questionArea = JPanel(BorderLayout()).apply { isOpaque = false }
     private val unansweredIcon by lazy { EmptyIcon.create(AllIcons.General.GreenCheckmark) }
     internal var options: OptionWidgets? = null
         private set
@@ -214,6 +216,23 @@ internal class ClarificationView(
         content.revalidate()
         content.repaint()
         if (state is ClarificationState.Asking) focusCurrent()
+    }
+
+    /**
+     * 当前页在给定宽度下需要的高度（含内边距）。自动换行的文字的首选高度取决于上一次布局给的宽度，
+     * 所以按这个宽度布局几遍再取首选高度；只在打开窗口时算一次初始尺寸用，不需要窗口 peer。
+     */
+    fun preferredContentHeight(width: Int): Int {
+        content.setSize(width, content.height.coerceAtLeast(1))
+        repeat(3) { layoutTree(content) }
+        return content.preferredSize.height
+    }
+
+    private fun layoutTree(c: java.awt.Component) {
+        if (c is Container) {
+            c.doLayout()
+            c.components.forEach(::layoutTree)
+        }
     }
 
     fun isShowingInput(): Boolean = renderedState is ClarificationState.Input
@@ -427,7 +446,7 @@ internal class ClarificationView(
         options = null
         questionArea.removeAll()
         val panel = if (d.tab >= d.batch.size) reviewPanel(d) else questionPanel(d, d.batch[d.tab])
-        questionArea.add(panel)
+        questionArea.add(panel, BorderLayout.CENTER)
         questionArea.revalidate()
         questionArea.repaint()
     }
@@ -680,6 +699,10 @@ internal fun shortenPaths(text: String): String =
     }
 
 private const val MAX_PATH_CHARS = 48
+
+/** 内容区的内边距（未缩放）：与原生对话框按钮栏的左右留白一致。 */
+internal const val CONTENT_PADDING_H = 16
+internal const val CONTENT_PADDING_V = 10
 private const val CHECK_ICON = "<icon src='AllIcons.General.GreenCheckmark'>"
 private const val CONFIRMED_GAP = "&nbsp;&nbsp;&nbsp; "
 
@@ -711,7 +734,11 @@ private class FillViewportPanel : JPanel(BorderLayout()), Scrollable {
         isOpaque = false
     }
 
-    override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+    /**
+     * 故意给得很小：对话框打开时平台取"pack 尺寸"与初始尺寸的较大者，内容区若按全部内容报首选尺寸，
+     * 窗口就会被撑大；初始尺寸由对话框按当前页内容另算（[ClarificationView.preferredContentHeight]）。
+     */
+    override fun getPreferredScrollableViewportSize(): Dimension = JBUI.size(360, 160)
 
     override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int = JBUI.scale(16)
 
@@ -751,34 +778,3 @@ private class TabStrip : JBTabbedPane() {
     }
 }
 
-/**
- * 题目区域：UI DSL 为单选/复选框边界里的透明留白把整列文字右移了 2～3px，问句、圆点、方框就比上面的需求行、
- * 标签条靠右。这里把唯一的子面板向左挪回这段距离：可见的圆点、方框与文字落在与头部同一条左缘上，
- * 越出左缘的只有按钮边界里的透明留白。宽度相应加宽，右缘不变。
- */
-private class VisualLeftPanel : JPanel(null) {
-    init {
-        isOpaque = false
-    }
-
-    /** 文字的左缘：单选/复选框的组件边界含透明留白，可见的圆点、方框与文字同在这一列。 */
-    private fun leftGap(child: Container): Int =
-        child.components.filter { it.isVisible && it !is JToggleButton }.minOfOrNull { it.x }?.coerceAtLeast(0) ?: 0
-
-    override fun doLayout() {
-        val child = components.firstOrNull() as? Container ?: return
-        val inner = Rectangle(insets.left, insets.top, width - insets.left - insets.right, height - insets.top - insets.bottom)
-        child.setBounds(inner.x, inner.y, inner.width, inner.height)
-        child.doLayout()
-        val gap = leftGap(child)
-        child.setBounds(inner.x - gap, inner.y, inner.width + gap, inner.height)
-    }
-
-    override fun getPreferredSize(): Dimension {
-        val child = components.firstOrNull() ?: return Dimension(insets.left + insets.right, insets.top + insets.bottom)
-        val d = child.preferredSize
-        return Dimension(d.width + insets.left + insets.right, d.height + insets.top + insets.bottom)
-    }
-
-    override fun getMinimumSize(): Dimension = preferredSize
-}

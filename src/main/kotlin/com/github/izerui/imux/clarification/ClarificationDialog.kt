@@ -68,9 +68,23 @@ internal class ClarificationDialog(
 
     override fun createCenterPanel(): JComponent = view.component
 
-    override fun getInitialSize(): Dimension = JBUI.size(640, 520)
-
-    override fun getDimensionServiceKey(): String = "imux.clarification.dialog"
+    /**
+     * 打开时算一次的初始尺寸（之后不随状态变化改窗口大小，免得窗口跳来跳去）：宽 560，
+     * 高 = 当前页在这个宽度下的内容高度 + 窗口其余部分（标题栏、按钮栏、边框），限制在 360～520 之间——
+     * 短问题不开出一个高高的空窗口，长内容在窗口里滚动。平台在 pack 之后才取这个尺寸，此时窗口其余部分量得出来；
+     * 平台取 pack 尺寸与它的较大者，内容区的首选视口尺寸因此故意给得很小（见 [ClarificationView]）。
+     */
+    override fun getInitialSize(): Dimension {
+        val width = JBUI.scale(INITIAL_WIDTH)
+        val win = window
+        val viewport = view.component
+        val restOfWindow =
+            if (win != null && win.height > 0 && viewport.height > 0) win.height - viewport.height
+            else JBUI.scale(REST_OF_WINDOW_ESTIMATE)
+        val horizontalChrome = if (win != null && win.width > 0 && viewport.width > 0) win.width - viewport.width else 0
+        val content = view.preferredContentHeight((width - horizontalChrome).coerceAtLeast(JBUI.scale(200)))
+        return Dimension(width, initialHeight(content, restOfWindow))
+    }
 
     override fun dispose() {
         elapsedTimer.stop()
@@ -152,6 +166,10 @@ internal class ClarificationDialog(
 
     companion object {
         private const val MAC_ORDER_PRIMARY = 100
+        internal const val INITIAL_WIDTH = 560
+
+        /** 量不到窗口其余部分时（没有 pack）按标题栏 + 按钮栏的常见高度估计。 */
+        private const val REST_OF_WINDOW_ESTIMATE = 90
 
         /** 右侧候选按钮（Windows 顺序，主操作在前，关闭在最后）。 */
         private val RIGHT_ORDER =
@@ -197,6 +215,13 @@ internal class RenderCoalescer(private val schedule: (Runnable) -> Unit, private
 }
 
 // ---- 纯函数：提取出来方便单测 ----
+
+internal const val MIN_INITIAL_HEIGHT = 360
+internal const val MAX_INITIAL_HEIGHT = 520
+
+/** 初始高度：内容高度加窗口其余部分，限制在 [MIN_INITIAL_HEIGHT]～[MAX_INITIAL_HEIGHT]（缩放后）。 */
+internal fun initialHeight(contentHeight: Int, restOfWindow: Int): Int =
+    (contentHeight + restOfWindow).coerceIn(JBUI.scale(MIN_INITIAL_HEIGHT), JBUI.scale(MAX_INITIAL_HEIGHT))
 
 /** 底部按钮栏的按钮。 */
 internal enum class BarButton(val labelKey: String) {
