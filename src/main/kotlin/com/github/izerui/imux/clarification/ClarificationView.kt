@@ -27,6 +27,7 @@ import com.intellij.ui.dsl.builder.rows
 import com.intellij.util.ui.EmptyIcon
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Container
 import java.awt.Dimension
 import java.awt.KeyboardFocusManager
 import java.awt.Rectangle
@@ -164,7 +165,7 @@ internal class ClarificationView(
     private var drafts: BatchDrafts? = null
     internal var tabs: JBTabbedPane? = null
         private set
-    private val questionArea = JPanel(BorderLayout()).apply { isOpaque = false }
+    private val questionArea = VisualLeftPanel()
     private val unansweredIcon by lazy { EmptyIcon.create(AllIcons.General.GreenCheckmark) }
     internal var options: OptionWidgets? = null
         private set
@@ -385,9 +386,10 @@ internal class ClarificationView(
     private fun tabStrip(d: BatchDrafts): JBTabbedPane {
         val strip = TabStrip()
         for (q in d.batch) {
-            strip.addTab(StringUtil.shortenTextWithEllipsis(q.header, HEADER_CHARS, 0), null, emptyTab(), q.text)
+            strip.addTab(truncateCodePoints(q.header, MAX_HEADER_CHARS), unansweredIcon, emptyTab(), headerTooltip(q))
         }
-        strip.addTab(messages.get("clarify.question.submit"), null, emptyTab(), null)
+        // 提交页也占同样的图标位，各标签间距一致
+        strip.addTab(messages.get("clarify.question.submit"), unansweredIcon, emptyTab(), null)
         d.batch.indices.forEach { updateTabMark(strip, d, it) }
         d.tab = d.tab.coerceIn(0, d.batch.size)
         strip.selectedIndex = d.tab
@@ -425,7 +427,7 @@ internal class ClarificationView(
         options = null
         questionArea.removeAll()
         val panel = if (d.tab >= d.batch.size) reviewPanel(d) else questionPanel(d, d.batch[d.tab])
-        questionArea.add(panel, BorderLayout.CENTER)
+        questionArea.add(panel)
         questionArea.revalidate()
         questionArea.repaint()
     }
@@ -436,7 +438,7 @@ internal class ClarificationView(
         fun toggle(text: String): JToggleButton = if (multi) JBCheckBox(text) else JBRadioButton(text)
         val buttons =
             question.options.mapIndexed { i, option ->
-                val label = StringUtil.shortenTextWithEllipsis(option.label, LABEL_CHARS, 0)
+                val label = truncateCodePoints(option.label, LABEL_CHARS)
                 val text = "${i + 1}. " + if (option.recommended) messages.get("clarify.question.recommended", label) else label
                 toggle(text).apply {
                     if (label != option.label) toolTipText = option.label
@@ -514,10 +516,10 @@ internal class ClarificationView(
             d.batch.forEachIndexed { i, q ->
                 val answer = d.draftOf(q).toAnswer(q)
                 row {
-                    link(StringUtil.shortenTextWithEllipsis(q.header, HEADER_CHARS, 0)) { selectTab(i) }
+                    link(truncateCodePoints(q.header, MAX_HEADER_CHARS)) { selectTab(i) }
                         .align(AlignY.TOP)
                         .gap(RightGap.SMALL)
-                        .applyToComponent { toolTipText = q.text }
+                        .applyToComponent { toolTipText = headerTooltip(q) }
                     if (answer != null) {
                         text(html(answerSummary(q, answer)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL)
                     } else {
@@ -668,6 +670,9 @@ internal fun investigationKind(canFinish: Boolean, ledger: Ledger): Investigatio
         else -> InvestigationKind.ROUND
     }
 
+/** 标签与提交页链接的 tooltip：完整的短标签与问句。 */
+private fun headerTooltip(q: Question): String = q.header + " — " + q.text
+
 /** 进度里的长路径从中间省略，保留开头与文件名。 */
 internal fun shortenPaths(text: String): String =
     text.split(' ').joinToString(" ") { token ->
@@ -744,4 +749,36 @@ private class TabStrip : JBTabbedPane() {
         val bottom = (0 until tabCount).maxOf { i -> getBoundsAt(i)?.let { it.y + it.height } ?: 0 }
         return Dimension(natural.width, bottom + insets.bottom + JBUI.scale(1))
     }
+}
+
+/**
+ * 题目区域：UI DSL 为单选/复选框边界里的透明留白把整列文字右移了 2～3px，问句、圆点、方框就比上面的需求行、
+ * 标签条靠右。这里把唯一的子面板向左挪回这段距离：可见的圆点、方框与文字落在与头部同一条左缘上，
+ * 越出左缘的只有按钮边界里的透明留白。宽度相应加宽，右缘不变。
+ */
+private class VisualLeftPanel : JPanel(null) {
+    init {
+        isOpaque = false
+    }
+
+    /** 文字的左缘：单选/复选框的组件边界含透明留白，可见的圆点、方框与文字同在这一列。 */
+    private fun leftGap(child: Container): Int =
+        child.components.filter { it.isVisible && it !is JToggleButton }.minOfOrNull { it.x }?.coerceAtLeast(0) ?: 0
+
+    override fun doLayout() {
+        val child = components.firstOrNull() as? Container ?: return
+        val inner = Rectangle(insets.left, insets.top, width - insets.left - insets.right, height - insets.top - insets.bottom)
+        child.setBounds(inner.x, inner.y, inner.width, inner.height)
+        child.doLayout()
+        val gap = leftGap(child)
+        child.setBounds(inner.x - gap, inner.y, inner.width + gap, inner.height)
+    }
+
+    override fun getPreferredSize(): Dimension {
+        val child = components.firstOrNull() ?: return Dimension(insets.left + insets.right, insets.top + insets.bottom)
+        val d = child.preferredSize
+        return Dimension(d.width + insets.left + insets.right, d.height + insets.top + insets.bottom)
+    }
+
+    override fun getMinimumSize(): Dimension = preferredSize
 }

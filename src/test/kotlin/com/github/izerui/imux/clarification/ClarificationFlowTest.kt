@@ -602,4 +602,22 @@ class ClarificationFlowTest {
         f.advance(r1)
         assertTrue("在途一轮作废", f.ledger.history.isEmpty() && f.ledger.directions.isEmpty())
     }
+
+    @Test
+    fun `提交后草稿作废，之后同一方向一模一样的问题从空白开始`() {
+        val sameAgain =
+            """{"answered":[{"id":"d1","status":"OPEN","conclusion":"","openPoints":["p"]}],"notes":"n",
+               "next":{"type":"questions","questions":[${batchQuestion("d1", 1)}]}}"""
+        val firstOne =
+            """{"directions":{"add":[{"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"}]},"notes":"n",
+               "next":{"type":"questions","questions":[${batchQuestion("new-1", 1)}]}}"""
+        val f = flow(firstOne, sameAgain)
+        f.advance(f.begin("REQ", null))
+        val batch = (f.state as ClarificationState.Asking).batch
+        val drafts = BatchDrafts(batch).also { it.draftOf(batch.single()).picked += "b" }
+        f.drafts = drafts
+        f.advance(f.submitBatch(drafts.filled())!!)
+        assertEquals("下一批与上一批完全相同", batch, (f.state as ClarificationState.Asking).batch)
+        assertNull("草稿已随提交清空，不会被当成新一批的草稿", f.drafts)
+    }
 }

@@ -98,6 +98,8 @@ internal class ClarificationFlow(
         synchronized(lock) {
             val asking = state as? ClarificationState.Asking ?: return null
             for (question in asking.batch) ledger = ledger.recordAnswer(question, answers[question.directionId] ?: Answer.Skipped)
+            // 草稿随提交作废：之后同一方向出现一模一样的问题时，不能把这次的回答当成新的草稿带回来
+            drafts = null
             phase = Phase.ROUND
             runId = investigate(PendingWork.ROUND)
         }
@@ -105,7 +107,7 @@ internal class ClarificationFlow(
         return runId
     }
 
-    /** 一轮调查：调用 Agent、合并；协议错误或问题因用户操作失效时重新调用一次。 */
+    /** 一轮调查：调用 Agent、合并；返回不符合协议（含问题针对的方向不合规）时附上错误重新调用一次，仍不合格进入失败。 */
     fun advance(runId: Long) {
         var feedback = emptyList<String>()
         var retried = false

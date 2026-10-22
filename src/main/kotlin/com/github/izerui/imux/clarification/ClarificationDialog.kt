@@ -103,7 +103,8 @@ internal class ClarificationDialog(
         lastBar = bar
         val visible = (bar.left + bar.right).toSet()
         for (button in LEFT_ORDER + RIGHT_ORDER) buttonOf(button)?.isVisible = button in visible
-        rootPane?.defaultButton = buttonOf(bar.default)
+        // 调查中、发送中没有默认按钮：提交时多按一下回车不能把刚开始的调查（或发送）取消掉
+        rootPane?.defaultButton = bar.default?.let(::buttonOf)
         buttonPanels.forEach(::syncButtonGaps)
     }
 
@@ -214,8 +215,11 @@ internal enum class BarButton(val labelKey: String) {
     RETRY("clarify.retry"),
 }
 
-/** 一个状态下的按钮栏：[left]、[right] 按屏幕上从左到右的顺序；[default] 是回车触发的默认按钮。 */
-internal data class ButtonBar(val left: List<BarButton>, val right: List<BarButton>, val default: BarButton)
+/**
+ * 一个状态下的按钮栏：[left]、[right] 按屏幕上从左到右的顺序；[default] 是回车触发的默认按钮，
+ * 只有取消类操作的状态（调查中、发送中）没有默认按钮。
+ */
+internal data class ButtonBar(val left: List<BarButton>, val right: List<BarButton>, val default: BarButton?)
 
 /** 状态 → 按钮栏。只给出与当前状态相关的按钮（隐藏而不是禁用）；提问页的主按钮取决于停在哪一页。 */
 internal fun buttonBar(state: ClarificationState, canFinish: Boolean, ledger: Ledger, page: AskingPage?): ButtonBar =
@@ -225,7 +229,7 @@ internal fun buttonBar(state: ClarificationState, canFinish: Boolean, ledger: Le
             ButtonBar(
                 if (investigationKind(canFinish, ledger) == InvestigationKind.ROUND) listOf(BarButton.FINISH) else emptyList(),
                 listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION),
-                BarButton.CANCEL_INVESTIGATION,
+                null,
             )
         is ClarificationState.Asking -> {
             val primary =
@@ -237,7 +241,7 @@ internal fun buttonBar(state: ClarificationState, canFinish: Boolean, ledger: Le
             ButtonBar(if (canFinish) listOf(BarButton.FINISH) else emptyList(), listOf(BarButton.CLOSE, primary), primary)
         }
         is ClarificationState.Result -> ButtonBar(listOf(BarButton.CONTINUE, BarButton.COPY), listOf(BarButton.CLOSE, BarButton.SEND), BarButton.SEND)
-        is ClarificationState.Sending -> ButtonBar(emptyList(), listOf(BarButton.CANCEL_SEND), BarButton.CANCEL_SEND)
+        is ClarificationState.Sending -> ButtonBar(emptyList(), listOf(BarButton.CANCEL_SEND), null)
         is ClarificationState.Failed -> ButtonBar(listOf(BarButton.FALLBACK), listOf(BarButton.CLOSE, BarButton.RETRY), BarButton.RETRY)
     }
 

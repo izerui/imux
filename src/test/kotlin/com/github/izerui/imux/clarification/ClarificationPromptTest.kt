@@ -107,4 +107,14 @@ class ClarificationPromptTest {
         assertTrue(prompt.contains("\"unanswered\""))
         assertTrue(prompt.contains("DA；DB；OWN"))
     }
+
+    @Test
+    fun `逐轮说明按 reportAnswered 区分有无新回答，中英两版都是`() {
+        val zh = clarificationPrompt(Phase.ROUND, ledger, isChinese = true, guidance = "g")
+        assertTrue("中文：不再断言用户已提交", !zh.contains("用户已提交上一批回答"))
+        assertTrue("中文：说明 reportAnswered 为空时没有新回答", zh.contains("reportAnswered 不为空时") && zh.contains("为空时没有新回答"))
+        val en = clarificationPrompt(Phase.ROUND, ledger, isChinese = false, guidance = "g")
+        assertTrue("英文：不再断言用户已提交", !en.contains("The user submitted the last batch"))
+        assertTrue("英文：说明 reportAnswered 为空时没有新回答", en.contains("When `constraints.reportAnswered` is not empty") && en.contains("when it is empty there are no new answers"))
+    }
 }

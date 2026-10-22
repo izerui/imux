@@ -30,7 +30,7 @@ class ClarificationDialogSourceTest {
         assertTrue("没变就不动", update.contains("if (bar == lastBar) return"))
         assertTrue("隐藏而不是禁用", update.contains(".isVisible = button in visible"))
         assertFalse("不靠禁用按钮表达不可用", update.contains("isEnabled"))
-        assertTrue("切换默认按钮", update.contains("rootPane?.defaultButton = buttonOf(bar.default)"))
+        assertTrue("切换默认按钮，没有默认按钮时清空", update.contains("rootPane?.defaultButton = bar.default?.let(::buttonOf)"))
         assertTrue("换标签时更新按钮栏", dialog.normalized.contains("override fun askingPageChanged() = updateButtons()"))
     }
 

@@ -141,4 +141,16 @@ class ClarificationProtocolTest {
         val old = """{"notes":"","next":{"type":"question","directionId":"d1","question":"Q","options":[]}}"""
         assertTrue(errorsOf(old).any { it.contains("questions or done") })
     }
+
+    @Test
+    fun `通过校验的标签在界面上完整显示，截断按码点计数`() {
+        val longest = "𠀀".repeat(MAX_HEADER_CHARS)
+        parseRoundResponse(batchOf(oneQuestion(header = longest)))
+        assertEquals("最长的合法标签不截断", longest, truncateCodePoints(longest, MAX_HEADER_CHARS))
+        val tooLong = "𠀀".repeat(MAX_HEADER_CHARS + 1)
+        assertTrue("多一个码点就判错", errorsOf(batchOf(oneQuestion(header = tooLong))).any { it.contains("header") })
+        val cut = truncateCodePoints(tooLong, MAX_HEADER_CHARS)
+        assertEquals("截断后正好 MAX_HEADER_CHARS 个码点", MAX_HEADER_CHARS, cut.codePointCount(0, cut.length))
+        assertTrue(cut.endsWith("…"))
+    }
 }

@@ -70,13 +70,13 @@ private fun phaseInstruction(phase: Phase, isChinese: Boolean): String =
     if (isChinese) {
         when (phase) {
             Phase.FIRST -> "这是首轮。先调查项目，给出 understanding（你的理解、代码现状与这次会碰到哪里，只作为之后各轮的背景），在 directions.add 里列出所有需要用户确认的方向，并给出第一批问题；没有需要确认的方向时直接返回 done。$BATCH_RULE_ZH $QUESTION_RULE_ZH"
-            Phase.ROUND -> "用户已提交上一批回答（见 history 末尾的记录）。带着全部已确认内容继续调查：$ANSWERED_RULE_ZH 重新审视方向列表，给出下一批问题；没有需要用户拍板的方向了就返回 done。$BATCH_RULE_ZH $QUESTION_RULE_ZH"
+            Phase.ROUND -> "继续澄清。constraints.reportAnswered 不为空时，用户刚提交了其中这些方向的回答（见 history 末尾的记录）；为空时没有新回答（例如用户看过结果后要求继续）。带着全部已确认内容继续调查：$ANSWERED_RULE_ZH 重新审视方向列表，给出下一批问题；没有需要用户拍板的方向了就返回 done。$BATCH_RULE_ZH $QUESTION_RULE_ZH"
             Phase.RESULT -> "用户要求现在生成结果。把原需求与 confirmed 数组中的每一条融合成调整后的需求：精炼，只到方向层，不附带任何说明、依据、未决事项或标记；没定的方向不要写成已定。"
         }
     } else {
         when (phase) {
             Phase.FIRST -> "This is the first round. Investigate the project, give `understanding` (your understanding, how the code works today and what the change touches; it is only context for later rounds), list every direction that needs the user's confirmation in `directions.add`, and ask the first batch of questions; if nothing needs confirming, return `done`. $BATCH_RULE_EN $QUESTION_RULE_EN"
-            Phase.ROUND -> "The user submitted the last batch of answers (see the last entries of `history`). Continue investigating with everything confirmed so far: $ANSWERED_RULE_EN Re-examine the list and ask the next batch; when no direction needs the user's call, return `done`. $BATCH_RULE_EN $QUESTION_RULE_EN"
+            Phase.ROUND -> "Clarification continues. When `constraints.reportAnswered` is not empty, the user has just submitted answers for those directions (see the last entries of `history`); when it is empty there are no new answers (for example the user looked at the result and asked to continue). Continue investigating with everything confirmed so far: $ANSWERED_RULE_EN Re-examine the list and ask the next batch; when no direction needs the user's call, return `done`. $BATCH_RULE_EN $QUESTION_RULE_EN"
             Phase.RESULT -> "The user asked for the result now. Merge the original requirement with every entry in the `confirmed` array into the adjusted requirement: concise, at the level of direction, with no explanations, evidence, open items or markers; never write an unsettled direction as settled."
         }
     }

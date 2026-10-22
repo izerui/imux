@@ -42,8 +42,8 @@ the better.
   and done-criteria, goals and non-goals, behavior the user sees, edge cases, compatibility, scope, data and security
   helps — but bring up only what the user must decide.
 
-In the first round list every direction that needs confirming, so the user sees the whole picture at once; after that,
-each round goes deep on the batch that can be asked now.
+In the first round list every direction that needs confirming, so that later rounds can go deep batch by batch; after
+that, each round goes deep on the batch that can be asked now.
 
 ## Dare to push back
 

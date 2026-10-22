@@ -50,6 +50,7 @@ class ClarificationViewPreviewTest {
         private val zh = ViewMessages { key, params -> ImuxBundle.message(PluginLanguage.SIMPLIFIED_CHINESE, key, *params) }
         private val appDisposable = Disposer.newDisposable("ClarificationViewPreviewTest")
         private var originalLaf: LookAndFeel? = null
+        private var activatedIcons = false
 
         @JvmStatic
         @BeforeClass
@@ -57,7 +58,7 @@ class ClarificationViewPreviewTest {
             originalLaf = UIManager.getLookAndFeel()
             UIManager.setLookAndFeel(DarculaLaf())
             // 没有激活图标管理器时 AllIcons 全是占位的空图标；激活后预览里能看到真实的官方图标
-            runCatching { IconManager.activate(CoreIconManager()) }
+            activatedIcons = runCatching { IconManager.activate(CoreIconManager()) }.isSuccess
             // UI DSL 与 Darcula 构造组件时要用到的最少服务，测试结束随 appDisposable 一并撤掉
             val app = MockApplication(appDisposable)
             ApplicationManager.setApplication(app, appDisposable)
@@ -75,7 +76,7 @@ class ClarificationViewPreviewTest {
         @AfterClass
         fun uninstall() {
             Disposer.dispose(appDisposable)
-            IconManager.deactivate()
+            if (activatedIcons) IconManager.deactivate()
             originalLaf?.let { UIManager.setLookAndFeel(it) }
         }
     }
@@ -187,7 +188,7 @@ class ClarificationViewPreviewTest {
             }
         val root = JRootPane().apply { contentPane = content }
         val default = buttonBar(state, canFinish, ledger, view.askingPage()).default
-        root.defaultButton = allOf<JButton>(bar).first { it.name == default.name }
+        root.defaultButton = default?.let { d -> allOf<JButton>(bar).first { it.name == d.name } }
         root.setSize(width, height)
         // 自动换行的文字的首选高度取决于上一次布局给的宽度，布局几遍才稳定；没有窗口 peer 时逐层 doLayout
         repeat(4) {
@@ -247,7 +248,9 @@ class ClarificationViewPreviewTest {
         for (c in texts) {
             val r: Rectangle = SwingUtilities.convertRectangle(c.parent, c.bounds, viewport.view)
             val label = (c as? JLabel)?.text ?: (c as? AbstractButton)?.text ?: c.javaClass.simpleName
-            assertTrue("$name：「$label」左边越界 x=${r.x}", r.x >= 0)
+            // 单选/复选框的边界含透明留白，题目区域把它挪到左缘之外，可见部分仍从 0 开始
+            val transparentPadding = if (c is javax.swing.JToggleButton) JBUI.scale(4) else 0
+            assertTrue("$name：「$label」左边越界 x=${r.x}", r.x >= -transparentPadding)
             assertTrue("$name：「$label」右边超出视口 ${r.x + r.width} > $visibleWidth", r.x + r.width <= visibleWidth)
             val ellipsized = c.javaClass.simpleName == "EllipsisLabel"
             if ((c is JLabel || c is AbstractButton) && !ellipsized) {
@@ -271,6 +274,17 @@ class ClarificationViewPreviewTest {
             assertTrue("$name：「${(c as? AbstractButton)?.text ?: "其他输入框"}」在视口内 y=${r.y + r.height} > ${viewport.height}", r.y >= 0 && r.y + r.height <= viewport.height)
         }
         assertTrue("$name：内容不需要竖向滚动", view.component.viewport.view.preferredSize.height <= viewport.height)
+    }
+
+    /** 头部的需求行、标签条、问句与第一个选项左边对齐（同一条内容左缘）。 */
+    private fun assertLeftAligned(view: ClarificationView, name: String) {
+        val viewport = view.component.viewport
+        fun x(c: Component) = SwingUtilities.convertPoint(c.parent, c.x, c.y, viewport).x + ((c as? JComponent)?.insets?.left ?: 0)
+        val requirementLine = allOf<JLabel>(view.component).first { it.javaClass.simpleName == "EllipsisLabel" }
+        // 问句是题目面板里的第一段文字
+        val question = allOf<javax.swing.JEditorPane>(view.options!!.buttons[0].parent).first()
+        assertEquals("$name：问句与需求行左对齐", x(requirementLine), x(question))
+        assertEquals("$name：标签条与需求行左对齐", x(requirementLine), view.tabs?.let { x(it) } ?: x(requirementLine))
     }
 
     private fun check(
@@ -330,8 +344,16 @@ class ClarificationViewPreviewTest {
         // 第二题已经答过，标签上应有 ✓
         val drafts: (BatchDrafts) -> Unit = { it.draftOf(methodQuestion).picked += "a" }
         val big = check("asking-batch-640x520", ClarificationState.Asking(batch), ledger, 640, 520, drafts = drafts)
-        assertEquals("标签条：三题加提交页", 4, big.tabs!!.tabCount)
+        val strip = big.tabs!!
+        assertEquals("标签条：三题加提交页", 4, strip.tabCount)
+        for (i in 0 until strip.tabCount) {
+            val icon = (strip.getTabComponentAt(i) as JLabel).icon
+            assertNotNull("第 ${i + 1} 个标签有图标位", icon)
+            assertEquals("第 ${i + 1} 个标签的图标位宽度一致", JBUI.scale(16), icon.iconWidth)
+        }
+        assertEquals("tooltip 是完整标签与问句", "失败提示 — " + longQuestion.text, strip.getToolTipTextAt(0))
         assertQuestionFits(big, "asking-batch-640x520")
+        assertLeftAligned(big, "asking-batch-640x520")
         check("asking-batch-460x400", ClarificationState.Asking(batch), ledger, 460, 400, drafts = drafts)
     }
 
@@ -349,6 +371,7 @@ class ClarificationViewPreviewTest {
         assertTrue("其他也是复选框", w.otherButton is javax.swing.JCheckBox)
         assertEquals(Answer.Picked(listOf("a", "c"), "终端标题也恢复"), view.answers()["d5"])
         assertQuestionFits(view, "asking-multi-640x520")
+        assertLeftAligned(view, "asking-multi-640x520")
     }
 
     @Test

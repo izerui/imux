@@ -27,9 +27,18 @@ internal data class AnsweredReport(
 /** 每轮问题数的上限，与 Claude Code 的提问相同；数量由模型判断，见设计文档「照 Claude Code 的提问过程」。 */
 internal const val MAX_QUESTIONS_PER_ROUND = 4
 
-/** 标签条上的短标签：提示词要求不超过 [HEADER_CHARS] 个字，超过 [MAX_HEADER_CHARS] 才算错（重调一次代价是一整轮调查）。 */
+/**
+ * 标签条上的短标签：提示词要求不超过 [HEADER_CHARS] 个字，超过 [MAX_HEADER_CHARS] 才算错（重调一次代价是一整轮调查）；
+ * 界面也按 [MAX_HEADER_CHARS] 截断，所以通过校验的标签总是完整显示。都按码点计数。
+ */
 internal const val HEADER_CHARS = 12
 internal const val MAX_HEADER_CHARS = 16
+
+internal fun codePoints(text: String): Int = text.codePointCount(0, text.length)
+
+/** 按码点截断到 [max] 个字，超出用"…"结尾。 */
+internal fun truncateCodePoints(text: String, max: Int): String =
+    if (codePoints(text) <= max) text else text.substring(0, text.offsetByCodePoints(0, max - 1)) + "…"
 
 /** 选项短标签的建议长度；界面上超出的部分省略显示。 */
 internal const val LABEL_CHARS = 20
@@ -131,7 +140,7 @@ private fun parseQuestion(o: JsonObject, path: String, errors: MutableList<Strin
     val text = o.str("question").orEmpty()
     if (directionId.isEmpty()) errors += "$path.directionId must not be empty"
     if (header.isEmpty()) errors += "$path.header must not be empty"
-    if (header.codePointCount(0, header.length) > MAX_HEADER_CHARS) errors += "$path.header must be at most $HEADER_CHARS characters"
+    if (codePoints(header) > MAX_HEADER_CHARS) errors += "$path.header must be at most $HEADER_CHARS characters"
     if (text.isEmpty()) errors += "$path.question must not be empty"
     val options =
         o.arr("options").mapNotNull { it.asObjOrNull() }.map { opt ->

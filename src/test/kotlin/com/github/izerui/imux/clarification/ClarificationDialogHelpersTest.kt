@@ -129,20 +129,29 @@ class ClarificationDialogHelpersTest {
     }
 
     @Test
-    fun `每个状态的默认按钮都在右侧最后`() {
+    fun `有主操作的状态默认按钮在右侧最后`() {
         val states =
             listOf(
                 ClarificationState.Input,
-                ClarificationState.Investigating(null, 0),
                 ClarificationState.Asking(listOf(q("d1"))),
                 ClarificationState.Result("x"),
-                ClarificationState.Sending("x", false),
                 ClarificationState.Failed(FailureReason.CANCELLED, "", null),
             )
         for (state in states) {
             val bar = buttonBar(state, true, laterLedger, AskingPage.QUESTION)
+            assertNotNull("$state 有默认按钮", bar.default)
             assertEquals("$state", bar.default, bar.right.last())
         }
+    }
+
+    @Test
+    fun `调查中与发送中没有默认按钮，取消只能点按钮`() {
+        val investigating = buttonBar(ClarificationState.Investigating(null, 0), true, laterLedger, null)
+        assertNull("调查中：提交后多按一次回车不能取消刚开始的调查", investigating.default)
+        assertTrue("调查中仍可点取消", BarButton.CANCEL_INVESTIGATION in investigating.right)
+        val sending = buttonBar(ClarificationState.Sending("x", false), false, laterLedger, null)
+        assertNull("发送中：回车不能取消发送", sending.default)
+        assertTrue("发送中仍可点取消发送", BarButton.CANCEL_SEND in sending.right)
     }
 
     // ---- RenderCoalescer ----
