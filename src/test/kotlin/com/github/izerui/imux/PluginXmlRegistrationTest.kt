@@ -247,6 +247,14 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了需求澄清的终端右键菜单入口`() {
+        assertTrue(
+            "plugin.xml 未注册 ClarifyRequirementAction，终端右键菜单里不会出现「需求澄清」",
+            pluginXml.contains("com.github.izerui.imux.terminal.ClarifyRequirementAction"),
+        )
+    }
+
+    @Test
     fun `插件描述符合官方结构校验规则`() {
         val description =
             Regex(

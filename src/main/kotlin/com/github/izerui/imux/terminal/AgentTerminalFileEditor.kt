@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.clarification.ClarificationService
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.peer.PeerProgressEvent
@@ -20,6 +21,7 @@ import com.intellij.openapi.actionSystem.impl.ActionButton
 import com.intellij.openapi.application.ApplicationActivationListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -197,6 +199,13 @@ class AgentTerminalFileEditor(
             isFocusable = false
             border = JBUI.Borders.emptyLeft(12)
         }
+    private val clarifyLink: ActionLink =
+        ActionLink(ImuxBundle.message("clarify.action.text")) {
+            ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType, virtualFile.tabTitle)
+        }.apply {
+            isFocusable = false
+            border = JBUI.Borders.emptyLeft(12)
+        }
     private val peerDismissLink =
         ActionLink(ImuxBundle.message("action.peer.enable.dismiss")) {
             virtualFile.peerBannerDismissed = true
@@ -216,6 +225,7 @@ class AgentTerminalFileEditor(
             add(peerLabel)
             add(peerEnableLink)
             add(peerReviewOnceLink)
+            add(clarifyLink)
             add(peerDismissLink)
             add(peerCancelButton)
             add(peerCloseButton)
@@ -270,6 +280,7 @@ class AgentTerminalFileEditor(
             peerCloseButton.text = ImuxBundle.message("action.peer.close")
             peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
             peerReviewOnceLink.text = ImuxBundle.message("action.peer.once.hint")
+            clarifyLink.text = ImuxBundle.message("clarify.action.text")
             peerDismissLink.text = ImuxBundle.message("action.peer.enable.dismiss")
             refreshPeerBanner()
         }
@@ -402,16 +413,21 @@ class AgentTerminalFileEditor(
             peerLabel.isVisible = false
             peerCancelButton.isVisible = false
             peerCloseButton.isVisible = false
-            peerBanner.isVisible = !virtualFile.peerBannerDismissed
-            peerEnableLink.isVisible = true
-            peerReviewOnceLink.isVisible = true
-            peerDismissLink.isVisible = true
+            // 横幅始终在：需求澄清不随结对编程的「不再提示」消失；不再提示只收起结对编程自己的内容
+            peerBanner.isVisible = true
+            peerIcon.isVisible = !virtualFile.peerBannerDismissed
+            peerEnableLink.isVisible = !virtualFile.peerBannerDismissed
+            peerReviewOnceLink.isVisible = !virtualFile.peerBannerDismissed
+            peerDismissLink.isVisible = !virtualFile.peerBannerDismissed
+            clarifyLink.isVisible = true
             peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
         } else {
             peerBanner.isVisible = true
             peerEnableLink.isVisible = false
             peerReviewOnceLink.isVisible = false
             peerDismissLink.isVisible = false
+            peerIcon.isVisible = true
+            clarifyLink.isVisible = true
             peerLabel.isVisible = true
             peerCancelButton.isVisible = status.running
             peerCloseButton.isVisible = !status.running
@@ -607,6 +623,7 @@ class AgentTerminalFileEditor(
             .getInstance(project)
             .trailStore
             .releaseOwner(virtualFile.tabId)
+        project.serviceIfCreated<ClarificationService>()?.releaseOwner(virtualFile.tabId)
         TerminalHost.getInstance(project).closeSession(virtualFile)
         com.github.izerui.imux.monitor.SessionMonitor
             .getInstance(project)

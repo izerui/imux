@@ -176,6 +176,14 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
         <action
+                id="imux.ClarifyRequirement"
+                class="com.github.izerui.imux.terminal.ClarifyRequirementAction"
+                text="Clarify Requirement"
+                description="Before the agent starts, find unconsidered directions with the project's code"
+                icon="AllIcons.Actions.IntentionBulb">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </action>
+        <action
                 id="imux.ToggleSessionTrail"
                 class="com.github.izerui.imux.terminal.ToggleSessionTrailAction"
                 text="Toggle Session Trail Panel"
