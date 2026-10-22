@@ -238,22 +238,27 @@ imux 已有的结对编程、单次审查、会话轨迹都作用在**代码写�
 
 ## 实现状态
 
+**总体：代码实现完成，人工验收（`runIde` 走查）待执行；完成走查前不建议合并。**
+
+以下验证均针对 `bab9e44`（终审修复之后的 HEAD）。
+
 | 项 | 状态 |
 |---|---|
 | 设计文档（本文） | 已完成 |
 | 内嵌指南 `requirement-clarifier.zh.md` / `.en.md`、`NOTICE` | 已接入（`loadGuidance` 读取） |
 | `ClarificationModels.kt`（台账模型） | 已完成（`130f0a9`） |
 | `ClarificationProtocol.kt`（提示词拼装、JSON 解析校验） | 已完成（`130f0a9`、`c238a94`） |
-| `ClarificationLedger.kt`（台账合并、用户操作优先） | 已完成（`cfa4334`） |
-| `ClarificationFlow.kt`（状态机：逐轮调查、重试、取消、生成结果） | 已完成（`a5fda26`、`c73aaeb`、`1cb3cff`） |
-| `ClarificationService.kt`（项目级服务：单次调用、取消、迁移、关闭清理、发送时机） | 已完成（`2100a35`） |
-| `ClarificationDialog.kt`（非模态窗口） | 已完成（`5de6d6f`） |
+| `ClarificationLedger.kt`（台账合并、用户操作优先） | 已完成（`cfa4334`；终审修复 `bd8b182`） |
+| `ClarificationFlow.kt`（状态机：逐轮调查、重试、取消、生成结果） | 已完成（`a5fda26`、`c73aaeb`、`34de35a`；终审修复 `bd8b182`） |
+| `ClarificationService.kt`（项目级服务：单次调用、取消、迁移、关闭清理、发送时机） | 已完成（`2100a35`、`1cb3cff`；终审修复 `bd8b182`） |
+| `ClarificationDialog.kt`（非模态窗口） | 已完成（`5de6d6f`；终审修复 `bd8b182`） |
 | 横幅入口、右键菜单、`plugin.xml`、多语言文案 | 已完成（`47cf36a`、`5de6d6f`） |
 | 从 `PeerCoordinator` 抽出可复用的会话对话读取函数 | 已完成（`7d2511a`） |
-| 单元测试 | 已完成：1659 个用例，0 失败，0 错误（其中 clarification 包 62 个用例） |
-| `./gradlew test` | 通过：1659 tests, 0 failures, 0 errors, 0 skipped |
-| `./gradlew verifyPlugin` | 通过：IU-262.10315.125 Compatible（279 experimental API, 1 internal API）；IU-263.6800.24 Compatible（2 deprecated API, 279 experimental API, 1 internal API）。无 Compatibility problems，无 Critical findings |
-| `./gradlew runIde` 手动走通 | 待用户验证（未执行）。验证项：(1) 横幅「单次审查」旁出现「需求澄清」，右键菜单也有；(2) 输入需求→调查中进度→首轮同屏显示理解、方向、问题；(3) 选项确认→下一轮→跳过→默认结论；(4) 生成结果→可编辑→交给 Agent→发送时机与结对编程对齐→取消发送；(5) 中途关闭恢复、关标签页从头开始；(6) 横幅"不再提示"与结对编程共存 |
+| `./gradlew test` | 通过（`bab9e44`）：1686 tests, 0 failures, 0 errors |
+| `./gradlew verifyPlugin` | 通过（`bab9e44`）：IU-262.10315.125 Compatible（279 experimental API, 1 internal API）；IU-263.6800.24 Compatible（2 deprecated API, 279 experimental API, 1 internal API）。无 Compatibility problems。唯一的 internal API 为既有的 `IdeaMcpPort` 中 `PluginManagerCore.getPlugin`，非本功能引入；本功能新增的只有 experimental `TerminalView.createSendTextBuilder`（与结对编程相同） |
+| `./gradlew runIde` 人工走查 | **待执行**。验证项：(1) 横幅「单次审查」旁出现「需求澄清」，右键菜单也有；(2) 输入需求→调查中进度→首轮同屏显示理解、方向、问题；(3) 选项确认→下一轮→跳过→默认结论；(4) 生成结果→可编辑→交给 Agent；主会话执行中时显示"等待当前回合结束"、回合结束才发出；Claude 停在权限确认框时不误答；等待中可取消发送；(5) Claude、Codex、Pi 各发一段约 6,000 字的需求，确认完整收到；(6) 问题页「够了，生成结果」→「继续澄清」仍能再问该方向；调查中也能点「够了」；(7) 发送中关闭标签页，弹出可复制的通知；(8) 中途关闭窗口再打开恢复状态；关标签页后从头开始；(9) 横幅"不再提示"后只剩「需求澄清」，开启结对编程后仍在 |
+
+**已知遗留（复审确认为 Minor，未修）**：结果页里未发送的编辑在关闭标签页时不会带进通知；首轮或纠正理解那一轮中途生成结果后继续澄清，阶段被强制为逐轮；终端视图消失与关闭标签页可能各通知一次；取消与发送的少数路径在会话 key 迁移竞态下可能取消不到后台任务。
 
 ## 交给执行者决定的事项
 
