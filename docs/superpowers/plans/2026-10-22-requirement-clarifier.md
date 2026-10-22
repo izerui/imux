@@ -1650,7 +1650,7 @@ git commit -m "refactor(peer): 抽出会话最近对话读取函数，供需求�
 - Test: `src/test/kotlin/com/github/izerui/imux/clarification/ClarificationServiceSourceTest.kt`
 
 **Interfaces:**
-- Consumes: Task 4 `ClarificationFlow`；Task 5 `latestConversationOf`；`oneShotAgentInvocation`、`runOneShotAgent`、`runTracked`、`cleanupProcesses`、`UnexitedProcesses`、`OneShotAgentTimeoutException`（`agent` 包）；`overviewProgressText`（`overview/TrailViews.kt`）；`trySendPeerFeedback`（`peer` 包）；`TerminalHost.terminalViewOf`、`TerminalHost.addSessionKeyMigratedListener`；`SessionMonitor.getInstance(project).model.sessionOf`；`resolveShell`。
+- Consumes: Task 4 `ClarificationFlow`（**修复后的接口**：开始工作的状态转换返回 `runId`——`begin(...): Long`、`answer(...): Long?`、`skip(id): Long?`、`beginResult(): Long`、`continueClarifying(): Long?`、`retry(): Pair<PendingWork, Long>?`；`advance(runId)`、`generateResult(runId)`、`attachBackground(runId, background)` 全程核对同一个 runId；构造参数 `runAgent: (prompt: String, onProgress: (String) -> Unit) -> String` 与 `classifyFailure: (Throwable) -> Pair<FailureReason, String>`；Agent 抛出的异常由流程自己捕获并按 runId 处理，没有公开的 `fail`）；Task 5 `latestConversationOf`；`oneShotAgentInvocation`、`runOneShotAgent`、`runTracked`、`cleanupProcesses`、`UnexitedProcesses`、`OneShotAgentTimeoutException`（`agent` 包）；`overviewProgressText`（`overview/TrailViews.kt`）；`trySendPeerFeedback`（`peer` 包）；`TerminalHost.terminalViewOf`、`TerminalHost.addSessionKeyMigratedListener`；`SessionMonitor.getInstance(project).model.sessionOf`；`resolveShell`。
 - Produces（Task 7、8 使用）：
   - `class ClarificationService(project: Project, scope: CoroutineScope) : Disposable`，`companion fun getInstance(project): ClarificationService`
   - `internal fun open(sessionKey: String, tabId: String, agentType: AgentType, title: String)`
@@ -1777,7 +1777,6 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1835,9 +1834,15 @@ class ClarificationService(
 
     private fun newFlow(agentType: AgentType): ClarificationFlow {
         val chinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-        lateinit var flow: ClarificationFlow
-        flow = ClarificationFlow(chinese, loadGuidance(chinese), runAgent = { prompt -> runAgent(agentType, prompt) { flow } })
-        return flow
+        return ClarificationFlow(
+            chinese,
+            loadGuidance(chinese),
+            runAgent = { prompt, onProgress -> runAgent(agentType, prompt, onProgress) },
+            classifyFailure = { e ->
+                if (e is OneShotAgentTimeoutException) FailureReason.TIMEOUT to e.timeoutSeconds.toString()
+                else FailureReason.AGENT_ERROR to (e.message ?: e.javaClass.simpleName)
+            },
+        )
     }
 
     internal fun hasBackground(sessionKey: String): Boolean =
@@ -1846,23 +1851,24 @@ class ClarificationService(
     internal fun start(sessionKey: String, requirement: String, includeBackground: Boolean) {
         val flow = flows[sessionKey] ?: return
         val session = if (includeBackground) SessionMonitor.getInstance(project).model.sessionOf(sessionKey) else null
-        flow.begin(requirement, null)
+        val runId = flow.begin(requirement, null)
         // 最多读会话文件末尾 32MB，不能放在界面线程
-        launch(sessionKey, flow) {
-            it.attachBackground(session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
-            it.advance()
+        launch(sessionKey) {
+            flow.attachBackground(runId, session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
+            flow.advance(runId)
         }
     }
 
     internal fun answer(sessionKey: String, answer: Answer, correction: String?) {
         val flow = flows[sessionKey] ?: return
-        flow.answer(answer, correction)
-        launch(sessionKey, flow) { it.advance() }
+        val runId = flow.answer(answer, correction) ?: return
+        launch(sessionKey) { flow.advance(runId) }
     }
 
     internal fun skip(sessionKey: String, id: String) {
         val flow = flows[sessionKey] ?: return
-        if (flow.skip(id)) launch(sessionKey, flow) { it.advance() }
+        val runId = flow.skip(id) ?: return
+        launch(sessionKey) { flow.advance(runId) }
     }
 
     internal fun pin(sessionKey: String, id: String) { flows[sessionKey]?.pin(id) }
@@ -1874,49 +1880,43 @@ class ClarificationService(
     internal fun finish(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
         jobs.remove(sessionKey)?.cancel()
-        flow.beginResult()
-        launch(sessionKey, flow) { it.generateResult() }
+        val runId = flow.beginResult()
+        launch(sessionKey) { flow.generateResult(runId) }
     }
 
     internal fun fallback(sessionKey: String) { flows[sessionKey]?.fallbackResult() }
 
     internal fun continueClarifying(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
-        flow.continueClarifying()
-        launch(sessionKey, flow) { it.advance() }
+        val runId = flow.continueClarifying() ?: return
+        launch(sessionKey) { flow.advance(runId) }
     }
 
     internal fun retry(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
-        when (flow.retry()) {
-            PendingWork.ROUND -> launch(sessionKey, flow) { it.advance() }
-            PendingWork.RESULT -> launch(sessionKey, flow) { it.generateResult() }
-            null -> Unit
+        val (work, runId) = flow.retry() ?: return
+        when (work) {
+            PendingWork.ROUND -> launch(sessionKey) { flow.advance(runId) }
+            PendingWork.RESULT -> launch(sessionKey) { flow.generateResult(runId) }
         }
     }
 
     internal fun cancel(sessionKey: String) {
-        jobs.remove(sessionKey)?.cancel()
+        // 先让流程作废这一轮，再中断任务：中断后 runAgent 若抛出被包装的异常，也只会被当作过期结果忽略
         flows[sessionKey]?.cancelled()
-    }
-
-    private fun launch(sessionKey: String, flow: ClarificationFlow, body: (ClarificationFlow) -> Unit) {
         jobs.remove(sessionKey)?.cancel()
-        jobs[sessionKey] =
-            scope.launch(Dispatchers.IO) {
-                try {
-                    runInterruptible { body(flow) }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: OneShotAgentTimeoutException) {
-                    flow.fail(FailureReason.TIMEOUT, e.timeoutSeconds.toString(), null)
-                } catch (e: Throwable) {
-                    flow.fail(FailureReason.AGENT_ERROR, e.message ?: e.javaClass.simpleName, null)
-                }
-            }
     }
 
-    private fun runAgent(agentType: AgentType, prompt: String, flow: () -> ClarificationFlow): String {
+    /**
+     * 在 IO 线程跑一段阻塞的流程调用。Agent 的异常、进度、结果都由流程按调度时拿到的 runId 自己核对，
+     * 这里不再处理失败：取消、重试之后才真正启动的旧任务，带着旧 runId，进去就会被忽略。
+     */
+    private fun launch(sessionKey: String, body: () -> Unit) {
+        jobs.remove(sessionKey)?.cancel()
+        jobs[sessionKey] = scope.launch(Dispatchers.IO) { runInterruptible { body() } }
+    }
+
+    private fun runAgent(agentType: AgentType, prompt: String, onProgress: (String) -> Unit): String {
         val projectPath = project.basePath ?: "."
         val shell =
             resolveShell(
@@ -1936,7 +1936,7 @@ class ClarificationService(
                     prompt,
                     AGENT_TIMEOUT_SECONDS,
                     processRef,
-                    onProgress = { event -> overviewProgressText(event)?.let { flow().progress(it) } },
+                    onProgress = { event -> overviewProgressText(event)?.let(onProgress) },
                 )
             }
         } finally {
