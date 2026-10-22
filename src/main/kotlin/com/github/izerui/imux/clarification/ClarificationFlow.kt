@@ -7,7 +7,13 @@ internal sealed interface ClarificationState {
 
     data class Investigating(val progress: String?, val startedAt: Long) : ClarificationState
 
-    data class Asking(val question: Question) : ClarificationState
+    /**
+     * 正在问这一批的第 [index] 题（从 0 起）。回答后直接切到下一题，不调用 Agent；
+     * 整批答完、或提前结束（其他想法、纠正理解）才发起下一次调查。
+     */
+    data class Asking(val batch: List<Question>, val index: Int) : ClarificationState {
+        val question: Question get() = batch[index]
+    }
 
     data class Result(val requirement: String) : ClarificationState
 
@@ -79,26 +85,54 @@ internal class ClarificationFlow(
         }
     }
 
+    /**
+     * 回答当前一题。返回非 null 的 runId 表示这一批结束、调用方需要用它跑一轮调查：
+     * 这是最后一题，或回答是"其他想法"原话，或随回答纠正了理解。其余情况切到下一题，返回 null。
+     * 提前结束时，这一批里还没问到的题，其方向回到 OPEN，由下一轮重新判断。
+     */
     fun answer(answer: Answer, correction: String?): Long? {
         val runId: Long?
         synchronized(lock) {
             val asking = state as? ClarificationState.Asking ?: return null
-            ledger = ledger.recordAnswer(asking.question, answer, correction)
-            phase = if (correction.isNullOrBlank()) Phase.ROUND else Phase.CORRECTED
-            runId = investigate(PendingWork.ROUND)
+            runId = answerLocked(asking, answer, correction)
         }
         changed()
         return runId
     }
 
-    /** 非 null 的 runId 表示跳过的正是当前问题，调用方需要用返回的 runId 跑一轮。 */
-    fun skip(id: String): Long? {
-        val current = synchronized(lock) { (state as? ClarificationState.Asking)?.question?.takeIf { it.directionId == id } }
-        if (current != null) {
-            return answer(Answer.Skipped, null)
+    private fun answerLocked(asking: ClarificationState.Asking, answer: Answer, correction: String?): Long? {
+        ledger = ledger.recordAnswer(asking.question, answer, correction)
+        val corrected = !correction.isNullOrBlank()
+        if (!corrected && answer !is Answer.OwnWords && asking.index < asking.batch.lastIndex) {
+            state = asking.copy(index = asking.index + 1)
+            return null
         }
-        userEdit(id) { it.skip(id) }
-        return null
+        ledger = ledger.releaseUnanswered()
+        phase = if (corrected) Phase.CORRECTED else Phase.ROUND
+        return investigate(PendingWork.ROUND)
+    }
+
+    /**
+     * 跳过一个方向。跳过的正是当前一题时等同于回答"跳过"，返回值的含义同 [answer]；
+     * 跳过的是这一批里还没问到的题时，该题从这一批移除，方向按默认处理，返回 null。
+     */
+    fun skip(id: String): Long? {
+        val runId: Long?
+        synchronized(lock) {
+            val asking = state as? ClarificationState.Asking
+            if (asking != null && asking.question.directionId == id) {
+                runId = answerLocked(asking, Answer.Skipped, null)
+            } else {
+                ledger = ledger.skip(id)
+                changedDuringRun += id
+                if (asking != null && asking.batch.drop(asking.index + 1).any { it.directionId == id }) {
+                    state = asking.copy(batch = asking.batch.filterIndexed { i, q -> i <= asking.index || q.directionId != id })
+                }
+                runId = null
+            }
+        }
+        changed()
+        return runId
     }
 
     fun pin(id: String) = userEdit(id) { it.pin(id) }
@@ -162,7 +196,7 @@ internal class ClarificationFlow(
                             phase = Phase.ROUND
                             state =
                                 when (val next = outcome.next!!) {
-                                    is MergedNext.Ask -> ClarificationState.Asking(next.question)
+                                    is MergedNext.Ask -> ClarificationState.Asking(next.questions, 0)
                                     is MergedNext.Done -> ClarificationState.Result(next.requirement)
                                 }
                             null
@@ -197,7 +231,7 @@ internal class ClarificationFlow(
 
     /**
      * 开始生成结果；不可生成时返回 null。调查进行中调用时，递增的 runId 让在途一轮的返回作废。
-     * 从提问页离开时，被问而未回答的方向回到 OPEN。
+     * 从提问页（这一批的任何一题）离开时，这一批里还没回答的方向回到 OPEN；已回答的按已确认纳入结果。
      */
     fun beginResult(): Long? {
         val runId: Long

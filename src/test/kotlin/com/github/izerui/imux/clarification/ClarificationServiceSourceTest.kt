@@ -127,6 +127,6 @@ class ClarificationServiceSourceTest {
     @Test
     fun `调查中与提问页没有待送达的需求`() {
         assertNull(undeliveredRequirement(ClarificationState.Investigating(null, 0)))
-        assertNull(undeliveredRequirement(ClarificationState.Asking(Question("d1", "Q", "", "", emptyList()))))
+        assertNull(undeliveredRequirement(ClarificationState.Asking(listOf(Question("d1", "Q", "", "", emptyList())), 0)))
     }
 }

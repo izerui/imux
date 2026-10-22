@@ -64,8 +64,11 @@ internal data class Ledger(
     val notes: String = "",
     /** 用户「先问这个」指定的方向；该方向的问题展示出来后清空。 */
     val pinned: String? = null,
-    /** 用户刚回答（非跳过）的方向；下一轮返回必须用 previous 交代它。 */
-    val lastAsked: String? = null,
+    /**
+     * 这一批里用户已回答（非跳过）、还等模型交代的方向，按回答顺序；
+     * 下一轮返回必须在 answered 里逐个交代它们，交代完（合并成功）清空。
+     */
+    val awaitingReport: List<String> = emptyList(),
     val nextDirectionNumber: Int = 1,
     val nextUserNumber: Int = 1,
 ) {

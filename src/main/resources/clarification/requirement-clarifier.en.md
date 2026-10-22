@@ -43,7 +43,7 @@ the better.
   helps — but bring up only what the user must decide.
 
 In the first round list every direction that needs confirming, so the user sees the whole picture at once; after that,
-go deep on one per round.
+each round goes deep on the batch that can be asked now.
 
 ## Dare to push back
 
@@ -58,13 +58,21 @@ In the first round, restate in your own words what they want and why, as far as 
 today and what the change would touch. The user may correct your understanding. Not correcting it does not mean they
 confirmed it.
 
-## One direction at a time
+## A batch of questions per round
 
-Each round asks one question about one direction, and re-examines the whole list in light of everything confirmed so far:
+Each round asks 1–5 questions; you decide how many. When several questions can all be asked now and their answers do
+not change what you need to investigate next, ask them together, so the user does not wait for an investigation after
+every answer; when one answer decides what to investigate next, ask only that one. Each question in a batch targets a
+different direction. The plugin shows one question at a time and hands you all the answers once the batch is done; the
+batch ends early when the user writes their own idea or corrects your understanding, and the directions not yet asked go
+back to open for you to judge again next round.
+
+With a batch of answers, re-examine the whole list in light of everything confirmed so far:
 
 - If an answer makes a direction unnecessary, propose dropping it, with the reason.
 - If an answer or newly read code raises a new direction, add it with its source. Do not invent directions out of nowhere.
-- If the current direction is clear now, state the conclusion; if not, state what is concluded so far and what remains open.
+- For every direction answered in the batch: if it is clear now, state the conclusion; if not, state what is concluded
+  so far and what remains open.
 
 Directions the user skipped, pinned or added follow the plugin's constraints; you cannot close them for the user.
 

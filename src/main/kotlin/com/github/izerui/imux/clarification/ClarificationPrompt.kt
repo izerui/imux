@@ -48,20 +48,36 @@ internal fun clarificationPrompt(
         append(if (isChinese) JSON_ONLY_ZH else JSON_ONLY_EN)
     }
 
+private const val BATCH_RULE_ZH =
+    "next.questions 给 1～$MAX_QUESTIONS_PER_ROUND 个问题，数量由你判断：几个问题此刻都已能问、且彼此的回答不影响接下来要查什么，就一次给出；某个回答会决定接下来查什么，就只给这一题。同一批里每题针对不同的方向，且都处于 OPEN。插件逐题展示，整批答完才调用下一轮；用户选\"其他想法\"或纠正理解时这一批提前结束，没问到的方向回到 OPEN。constraints.mustAsk 不为 null 时，第一题必须针对它。"
+
+private const val BATCH_RULE_EN =
+    "`next.questions` holds 1-$MAX_QUESTIONS_PER_ROUND questions; you decide how many. Give several at once when they can all be asked now and their answers do not change what you need to investigate next; give only one when its answer decides what to investigate next. Each question in a batch targets a different direction, and every one of them must be OPEN. The plugin shows them one at a time and calls you again only when the whole batch is answered; the batch ends early when the user gives their own words or corrects your understanding, and the directions not yet asked go back to OPEN. When `constraints.mustAsk` is not null, the first question must target it."
+
+private const val ANSWERED_RULE_ZH =
+    "用 answered 逐个交代 constraints.reportAnswered 里的每个方向（这一批里用户回答过、非跳过的方向）：已定为 DECIDED，仍待确认为 OPEN 并附已有结论 conclusion 与剩余疑点 openPoints；不要交代不在其中的方向。"
+
+private const val ANSWERED_RULE_EN =
+    "Use `answered` to report every direction in `constraints.reportAnswered` (the directions the user answered, not skipped, in this batch): DECIDED when settled, or OPEN with the partial `conclusion` and the remaining `openPoints`; do not report any direction outside it."
+
+private const val VOIDED_ZH = "history 中 voided 为 true 的回答已被用户撤回（方向被重新打开），不得视为已确认。"
+
+private const val VOIDED_EN = "History entries with `voided: true` were withdrawn by the user (the direction was reopened) and must not be treated as confirmed."
+
 private fun phaseInstruction(phase: Phase, isChinese: Boolean): String =
     if (isChinese) {
         when (phase) {
-            Phase.FIRST -> "这是首轮。先调查项目，给出 understanding（你的理解、代码现状与这次会碰到哪里），在 directions.add 里列出所有需要用户确认的方向，并给出第一个问题；没有需要确认的方向时直接返回 done。"
-            Phase.ROUND -> "用户已回答上一轮的问题（见 history 最后一条）。带着全部已确认内容继续调查：用 previous 交代 reportPrevious 指向的方向是否已定，重新审视方向列表，给出下一个问题；没有需要用户拍板的方向了就返回 done。history 中 voided 为 true 的回答已被用户撤回（方向被重新打开），不得视为已确认。"
-            Phase.CORRECTED -> "用户纠正了你的理解（见 corrections）。按新理解重新调查，重新给出 understanding，并重新审视方向列表；其余同逐轮要求。history 中 voided 为 true 的回答已被用户撤回（方向被重新打开），不得视为已确认。"
-            Phase.RESULT -> "用户要求现在生成结果。把原需求与 confirmed 数组中的每一条融合成调整后的需求：精炼，只到方向层，不附带任何说明、依据、未决事项或标记；没定的方向不要写成已定。history 中 voided 为 true 的回答已被用户撤回（方向被重新打开），不得视为已确认。"
+            Phase.FIRST -> "这是首轮。先调查项目，给出 understanding（你的理解、代码现状与这次会碰到哪里），在 directions.add 里列出所有需要用户确认的方向，并给出第一批问题；没有需要确认的方向时直接返回 done。$BATCH_RULE_ZH"
+            Phase.ROUND -> "用户已回答上一批问题（见 history 末尾的记录）。带着全部已确认内容继续调查：$ANSWERED_RULE_ZH 重新审视方向列表，给出下一批问题；没有需要用户拍板的方向了就返回 done。$BATCH_RULE_ZH $VOIDED_ZH"
+            Phase.CORRECTED -> "用户纠正了你的理解（见 corrections）。按新理解重新调查，重新给出 understanding，并重新审视方向列表；其余同逐轮要求：$ANSWERED_RULE_ZH $BATCH_RULE_ZH $VOIDED_ZH"
+            Phase.RESULT -> "用户要求现在生成结果。把原需求与 confirmed 数组中的每一条融合成调整后的需求：精炼，只到方向层，不附带任何说明、依据、未决事项或标记；没定的方向不要写成已定。$VOIDED_ZH"
         }
     } else {
         when (phase) {
-            Phase.FIRST -> "This is the first round. Investigate the project, give `understanding` (your understanding, how the code works today and what the change touches), list every direction that needs the user's confirmation in `directions.add`, and ask the first question; if nothing needs confirming, return `done`."
-            Phase.ROUND -> "The user answered the last question (see the last entry of `history`). Continue investigating with everything confirmed so far: use `previous` to report whether the direction in `reportPrevious` is settled, re-examine the list, and ask the next question; when no direction needs the user's call, return `done`. History entries with `voided: true` were withdrawn by the user (the direction was reopened) and must not be treated as confirmed."
-            Phase.CORRECTED -> "The user corrected your understanding (see `corrections`). Investigate again with the new understanding, give `understanding` again and re-examine the list; otherwise as in a normal round. History entries with `voided: true` were withdrawn by the user (the direction was reopened) and must not be treated as confirmed."
-            Phase.RESULT -> "The user asked for the result now. Merge the original requirement with every entry in the `confirmed` array into the adjusted requirement: concise, at the level of direction, with no explanations, evidence, open items or markers; never write an unsettled direction as settled. History entries with `voided: true` were withdrawn by the user (the direction was reopened) and must not be treated as confirmed."
+            Phase.FIRST -> "This is the first round. Investigate the project, give `understanding` (your understanding, how the code works today and what the change touches), list every direction that needs the user's confirmation in `directions.add`, and ask the first batch of questions; if nothing needs confirming, return `done`. $BATCH_RULE_EN"
+            Phase.ROUND -> "The user answered the last batch of questions (see the last entries of `history`). Continue investigating with everything confirmed so far: $ANSWERED_RULE_EN Re-examine the list and ask the next batch; when no direction needs the user's call, return `done`. $BATCH_RULE_EN $VOIDED_EN"
+            Phase.CORRECTED -> "The user corrected your understanding (see `corrections`). Investigate again with the new understanding, give `understanding` again and re-examine the list; otherwise as in a normal round: $ANSWERED_RULE_EN $BATCH_RULE_EN $VOIDED_EN"
+            Phase.RESULT -> "The user asked for the result now. Merge the original requirement with every entry in the `confirmed` array into the adjusted requirement: concise, at the level of direction, with no explanations, evidence, open items or markers; never write an unsettled direction as settled. $VOIDED_EN"
         }
     }
 
@@ -73,17 +89,22 @@ private val ROUND_FORMAT =
         "add": [{"tempId": "new-1", "title": "...", "why": "...", "source": "...", "fallback": "..."}],
         "drop": [{"id": "d3", "reason": "..."}]
       },
-      "previous": {"id": "d1", "status": "DECIDED | OPEN", "conclusion": "...", "openPoints": ["..."]},
+      "answered": [{"id": "d1", "status": "DECIDED | OPEN", "conclusion": "...", "openPoints": ["..."]}],
       "notes": "...",
       "next": {
-        "type": "question",
-        "directionId": "new-1",
-        "question": "...", "reason": "...", "basis": "...",
-        "options": [{"id": "a", "label": "...", "recommended": true, "conclusion": "..."}]
+        "type": "questions",
+        "questions": [
+          {
+            "directionId": "new-1",
+            "question": "...", "reason": "...", "basis": "...",
+            "options": [{"id": "a", "label": "...", "recommended": true, "conclusion": "..."}]
+          }
+        ]
       }
     }
     next 也可以是 / next may also be: {"type": "done", "requirement": "..."}
-    tempId 以 new- 开头且本次内不重复；options 2～4 个，每个都有 conclusion；reportPrevious 不为 null 时 previous 必填；notes 不超过 $MAX_NOTES_CHARS 字符。
+    tempId 以 new- 开头且本次内不重复；questions 1～$MAX_QUESTIONS_PER_ROUND 个，各针对不同的方向；每题 options 2～4 个，每个都有 conclusion；answered 恰好交代 reportAnswered 里的每个方向；notes 不超过 $MAX_NOTES_CHARS 字符。
+    tempId starts with new- and is unique; 1-$MAX_QUESTIONS_PER_ROUND questions, each on a different direction; 2-4 options per question, each with a conclusion; answered reports exactly the directions in reportAnswered; notes at most $MAX_NOTES_CHARS characters.
     """.trimIndent()
 
 private const val RESULT_FORMAT = "{\"requirement\": \"...\"}"
@@ -121,7 +142,7 @@ private fun ledgerJson(ledger: Ledger): String {
             "constraints" to linkedMapOf(
                 "mustAsk" to ledger.pinned,
                 "frozen" to ledger.directions.filter { it.status == DirectionStatus.DEFAULTED }.map { it.id },
-                "reportPrevious" to ledger.lastAsked,
+                "reportAnswered" to ledger.awaitingReport,
             ),
         )
     return GsonBuilder().setPrettyPrinting().serializeNulls().disableHtmlEscaping().create().toJson(state)

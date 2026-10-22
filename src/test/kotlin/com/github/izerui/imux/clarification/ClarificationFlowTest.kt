@@ -29,16 +29,16 @@ class ClarificationFlowTest {
     private val first =
         """{"understanding":"u","directions":{"add":[{"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
            {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"F2"}]},"notes":"n",
-           "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
-             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"PICKED-MARK-2B"}]}}"""
+           "next":{"type":"questions","questions":[{"directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"PICKED-MARK-2B"}]}]}}"""
 
     private fun askD2(previousStatus: String = "DECIDED") =
-        """{"previous":{"id":"d1","status":"$previousStatus","conclusion":"","openPoints":[]},"notes":"n",
-           "next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
-             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+        """{"answered":[{"id":"d1","status":"$previousStatus","conclusion":"","openPoints":[]}],"notes":"n",
+           "next":{"type":"questions","questions":[{"directionId":"d2","question":"Q2","reason":"r","basis":"b",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}]}}"""
 
     private fun done(previous: String = "d2") =
-        """{"previous":{"id":"$previous","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n","next":{"type":"done","requirement":"ADJUSTED"}}"""
+        """{"answered":[{"id":"$previous","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n","next":{"type":"done","requirement":"ADJUSTED"}}"""
 
     @Test
     fun `首轮没有需要确认的方向时直接给出结果且只调用一次`() {
@@ -99,7 +99,7 @@ class ClarificationFlowTest {
     fun `调查期间跳过的方向使问题失效时用新台账重新调用且跳过保持`() {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val outputs = ArrayDeque(listOf(askD2(), """{"previous":{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n","next":{"type":"done","requirement":"ADJUSTED"}}"""))
+        val outputs = ArrayDeque(listOf(askD2(), """{"answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n","next":{"type":"done","requirement":"ADJUSTED"}}"""))
         val calls = AtomicInteger(0)
         lateinit var f: ClarificationFlow
         f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
@@ -282,8 +282,8 @@ class ClarificationFlowTest {
     }
 
     private fun askD1Again() =
-        """{"notes":"n","next":{"type":"question","directionId":"d1","question":"Q1 again","reason":"r","basis":"b",
-             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+        """{"notes":"n","next":{"type":"questions","questions":[{"directionId":"d1","question":"Q1 again","reason":"r","basis":"b",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}]}}"""
 
     @Test
     fun `问题页直接生成结果后继续澄清仍能再问同一方向`() {
@@ -382,8 +382,8 @@ class ClarificationFlowTest {
     fun `指定先问这个后模型返回 done 时附错误重新调用`() {
         val doneOut = """{"notes":"","next":{"type":"done","requirement":"ADJUSTED"}}"""
         val askD2Plain =
-            """{"notes":"n","next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
-                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+            """{"notes":"n","next":{"type":"questions","questions":[{"directionId":"d2","question":"Q2","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}]}}"""
         val f = flow(first, """{"requirement":"FINAL"}""", doneOut, askD2Plain)
         f.advance(f.begin("REQ", null))
         f.generateResult(f.beginResult()!!)
@@ -411,9 +411,9 @@ class ClarificationFlowTest {
            {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
            {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"UNANSWERED-MARK-8T"}
            ]},"notes":"n",
-           "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+           "next":{"type":"questions","questions":[{"directionId":"new-1","question":"Q1","reason":"r","basis":"b",
              "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CONFIRMED-MARK-4R"},
-                        {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+                        {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}]}}"""
 
     @Test
     fun `用户刚确认的回答在 RESULT 提示词的 confirmed 数组中出现`() {
@@ -489,13 +489,13 @@ class ClarificationFlowTest {
                {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
                {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"F2"}
                ]},"notes":"n",
-               "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+               "next":{"type":"questions","questions":[{"directionId":"new-1","question":"Q1","reason":"r","basis":"b",
                  "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CONFIRMED-MARK-4R"},
-                            {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+                            {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}]}}"""
         val round2WithPartialD1 =
-            """{"previous":{"id":"d1","status":"OPEN","conclusion":"PARTIAL-MARK-6W","openPoints":["open"]},"notes":"n",
-               "next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
-                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+            """{"answered":[{"id":"d1","status":"OPEN","conclusion":"PARTIAL-MARK-6W","openPoints":["open"]}],"notes":"n",
+               "next":{"type":"questions","questions":[{"directionId":"d2","question":"Q2","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}]}}"""
         val resultPromptRef = AtomicReference<String>()
         val f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
             prompts += prompt
@@ -562,21 +562,22 @@ class ClarificationFlowTest {
                {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"F1"},
                {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"F2"}
                ]},"notes":"n",
-               "next":{"type":"question","directionId":"new-1","question":"Q1","reason":"r","basis":"b",
+               "next":{"type":"questions","questions":[{"directionId":"new-1","question":"Q1","reason":"r","basis":"b",
                  "options":[{"id":"a","label":"A","recommended":true,"conclusion":"OLD-MARK-3P"},
-                            {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+                            {"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}]}}"""
         val round2AskD2 =
-            """{"previous":{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n",
-               "next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
-                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+            """{"answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n",
+               "next":{"type":"questions","questions":[{"directionId":"d2","question":"Q2","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}]}}"""
         // After skip d2 + reopen d1, model asks d1 again
+        // d2 was skipped, so nothing is awaiting a report: answered stays empty
         val round3AskD1Again =
-            """{"previous":{"id":"d2","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n",
-               "next":{"type":"question","directionId":"d1","question":"Q1 again","reason":"r","basis":"b",
+            """{"answered":[],"notes":"n",
+               "next":{"type":"questions","questions":[{"directionId":"d1","question":"Q1 again","reason":"r","basis":"b",
                  "options":[{"id":"c","label":"C","recommended":true,"conclusion":"NEW-MARK-7H"},
-                            {"id":"d","label":"D","recommended":false,"conclusion":"CD"}]}}"""
+                            {"id":"d","label":"D","recommended":false,"conclusion":"CD"}]}]}}"""
         val round4Done =
-            """{"previous":{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]},"notes":"n",
+            """{"answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n",
                "next":{"type":"done","requirement":"ADJUSTED"}}"""
         val resultPromptRef = java.util.concurrent.atomic.AtomicReference<String>()
         val calls = java.util.concurrent.atomic.AtomicInteger(0)
@@ -620,5 +621,173 @@ class ClarificationFlowTest {
         // ledger JSON history entry for the old answer has voided: true
         val historySlice = round4Prompt.substring(round4Prompt.indexOf("\"history\"")).substringBefore("\"notes\"")
         assertTrue("history must contain voided: true", historySlice.contains("\"voided\": true"))
+    }
+
+    // ---- 每轮一批问题 ----
+
+    private fun batchQuestion(dir: String, n: Int) =
+        """{"directionId":"$dir","question":"BQ$n","reason":"r","basis":"b",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"BATCH-PICK-$n"},{"id":"b","label":"B","recommended":false,"conclusion":"BATCH-OTHER-$n"}]}"""
+
+    /** 首轮三个方向、一批三题，每题针对一个方向。 */
+    private val firstBatchOfThree =
+        """{"understanding":"u","directions":{"add":[
+           {"tempId":"new-1","title":"T1","why":"w","source":"s","fallback":"BATCH-FB-1"},
+           {"tempId":"new-2","title":"T2","why":"w","source":"s","fallback":"BATCH-FB-2"},
+           {"tempId":"new-3","title":"T3","why":"w","source":"s","fallback":"BATCH-FB-3"}]},"notes":"n",
+           "next":{"type":"questions","questions":[${batchQuestion("new-1", 1)},${batchQuestion("new-2", 2)},${batchQuestion("new-3", 3)}]}}"""
+
+    private fun answeredDone(vararg ids: String) =
+        """{"answered":[${ids.joinToString(",") { """{"id":"$it","status":"DECIDED","conclusion":"","openPoints":[]}""" }}],"notes":"n",
+           "next":{"type":"done","requirement":"ADJUSTED"}}"""
+
+    @Test
+    fun `一批三题时前两题的回答不调用 Agent 答完第三题只调用一次且提示词带上三题的结论`() {
+        val f = flow(firstBatchOfThree, answeredDone("d1", "d2", "d3"))
+        f.advance(f.begin("REQ", null))
+        assertEquals(3, (f.state as ClarificationState.Asking).batch.size)
+
+        assertNull("第一题答完不发起调查", f.answer(Answer.Picked("a"), null))
+        assertEquals(1, prompts.size)
+        assertEquals("d2", (f.state as ClarificationState.Asking).question.directionId)
+        assertNull("第二题答完不发起调查", f.answer(Answer.Picked("a"), null))
+        assertEquals(1, prompts.size)
+        assertEquals("d3", (f.state as ClarificationState.Asking).question.directionId)
+
+        val runId = f.answer(Answer.Picked("a"), null)
+        assertTrue("最后一题答完发起调查", runId != null)
+        f.advance(runId!!)
+        assertEquals("整批只调用一次", 2, prompts.size)
+        val round2 = prompts[1]
+        assertTrue("带上第一题的结论", round2.contains("BATCH-PICK-1"))
+        assertTrue("带上第二题的结论", round2.contains("BATCH-PICK-2"))
+        assertTrue("带上第三题的结论", round2.contains("BATCH-PICK-3"))
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+    }
+
+    @Test
+    fun `第一题写其他想法时立即调查且没问到的两个方向回到待确认`() {
+        val f = flow(firstBatchOfThree)
+        f.advance(f.begin("REQ", null))
+        val runId = f.answer(Answer.OwnWords("OWN"), null)
+        assertTrue("其他想法提前结束这一批", runId != null)
+        assertTrue(f.state is ClarificationState.Investigating)
+        assertEquals("答过的方向等模型交代", DirectionStatus.ACTIVE, f.ledger.direction("d1")!!.status)
+        assertEquals("第二题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d2")!!.status)
+        assertEquals("第三题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d3")!!.status)
+        assertEquals(listOf("d1"), f.ledger.awaitingReport)
+    }
+
+    @Test
+    fun `第一题随回答纠正理解时立即调查`() {
+        val f = flow(firstBatchOfThree, """{"understanding":"u2","answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n","next":{"type":"done","requirement":"ADJUSTED"}}""")
+        f.advance(f.begin("REQ", null))
+        val runId = f.answer(Answer.Picked("a"), correction = "FIX")
+        assertTrue("纠正理解提前结束这一批", runId != null)
+        assertEquals("第二题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d2")!!.status)
+        assertEquals("第三题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d3")!!.status)
+        f.advance(runId!!)
+        assertTrue("下一轮按纠正后的阶段说明调用", prompts[1].contains("corrected your understanding"))
+    }
+
+    @Test
+    fun `批中跳过当前一题时继续下一题而不调用 Agent`() {
+        val f = flow(firstBatchOfThree)
+        f.advance(f.begin("REQ", null))
+        assertNull(f.skip("d1"))
+        assertEquals(1, prompts.size)
+        val asking = f.state as ClarificationState.Asking
+        assertEquals("d2", asking.question.directionId)
+        assertEquals(DirectionStatus.DEFAULTED, f.ledger.direction("d1")!!.status)
+        assertTrue("跳过的不等模型交代", f.ledger.awaitingReport.isEmpty())
+    }
+
+    @Test
+    fun `在清单里跳过这一批里还没问到的题时该题从这一批移除且按默认处理`() {
+        val f = flow(firstBatchOfThree, answeredDone("d1", "d2"))
+        f.advance(f.begin("REQ", null))
+        assertNull(f.skip("d3"))
+        val asking = f.state as ClarificationState.Asking
+        assertEquals(listOf("d1", "d2"), asking.batch.map { it.directionId })
+        assertEquals("仍停在当前一题", "d1", asking.question.directionId)
+        assertEquals(DirectionStatus.DEFAULTED, f.ledger.direction("d3")!!.status)
+        assertNull(f.answer(Answer.Picked("a"), null))
+        val runId = f.answer(Answer.Picked("a"), null)
+        assertTrue("剩下的最后一题答完即调查", runId != null)
+        f.advance(runId!!)
+        assertEquals(2, prompts.size)
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+    }
+
+    @Test
+    fun `批中生成结果时已回答的纳入 confirmed 与兜底结果而没问到的不纳入且继续澄清后回到待确认`() {
+        val resultPrompt = AtomicReference<String>()
+        val calls = AtomicInteger(0)
+        val f = ClarificationFlow(false, "G", runAgent = { prompt, _ ->
+            prompts += prompt
+            when (calls.incrementAndGet()) {
+                1 -> firstBatchOfThree
+                2 -> { resultPrompt.set(prompt); """{"requirement":"FINAL"}""" }
+                else -> """{"answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n","next":{"type":"done","requirement":"ADJUSTED"}}"""
+            }
+        })
+        f.advance(f.begin("REQ", null))
+        assertNull(f.answer(Answer.Picked("a"), null))
+        assertTrue("批中任何一题都能生成结果", f.canFinish)
+        f.generateResult(f.beginResult()!!)
+
+        val confirmed = resultPrompt.get().substring(resultPrompt.get().indexOf("\"confirmed\"")).substringBefore("\"constraints\"")
+        assertTrue("已回答的第一题算已确认", confirmed.contains("BATCH-PICK-1"))
+        assertFalse("当前没答的第二题不算", confirmed.contains("BATCH-PICK-2"))
+        assertFalse("没问到的第三题不算", confirmed.contains("BATCH-PICK-3"))
+        assertFalse("没问到的第三题的默认处理不算", confirmed.contains("BATCH-FB-3"))
+
+        val fallback = composeFallback(f.ledger)
+        assertTrue("兜底结果含已回答的第一题", fallback.contains("BATCH-PICK-1"))
+        assertFalse("兜底结果不含第二题", fallback.contains("BATCH-PICK-2") || fallback.contains("BATCH-FB-2"))
+        assertFalse("兜底结果不含第三题", fallback.contains("BATCH-PICK-3") || fallback.contains("BATCH-FB-3"))
+
+        val runId = f.continueClarifying()!!
+        assertEquals("第二题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d2")!!.status)
+        assertEquals("第三题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d3")!!.status)
+        assertEquals("已回答的方向仍等模型交代", listOf("d1"), f.ledger.awaitingReport)
+        f.advance(runId)
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+    }
+
+    @Test
+    fun `批中兜底结果含已回答的而不含没问到的`() {
+        val f = flow(firstBatchOfThree)
+        f.advance(f.begin("REQ", null))
+        assertNull(f.answer(Answer.Picked("a"), null))
+        f.fallbackResult()
+        val result = (f.state as ClarificationState.Result).requirement
+        assertTrue(result.contains("BATCH-PICK-1"))
+        assertFalse(result.contains("BATCH-PICK-2"))
+        assertFalse(result.contains("BATCH-PICK-3"))
+        assertEquals("第二题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d2")!!.status)
+        assertEquals("第三题的方向回到待确认", DirectionStatus.OPEN, f.ledger.direction("d3")!!.status)
+    }
+
+    @Test
+    fun `先问这个在下一次调查生效且下一批第一题针对它`() {
+        val pinnedSecond =
+            """{"answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n",
+               "next":{"type":"questions","questions":[${batchQuestion("d2", 4)},${batchQuestion("d3", 5)}]}}"""
+        val pinnedFirst =
+            """{"answered":[{"id":"d1","status":"DECIDED","conclusion":"","openPoints":[]}],"notes":"n",
+               "next":{"type":"questions","questions":[${batchQuestion("d3", 5)},${batchQuestion("d2", 4)}]}}"""
+        val f = flow(firstBatchOfThree, pinnedSecond, pinnedFirst)
+        f.advance(f.begin("REQ", null))
+        // OwnWords ends the batch: d2/d3 go back to OPEN, so d3 can be pinned before the next round runs
+        val runId = f.answer(Answer.OwnWords("OWN"), null)!!
+        f.pin("d3")
+        assertEquals("d3", f.ledger.pinned)
+        f.advance(runId)
+        assertEquals("第一题没针对先问这个的方向时附错误重调", 3, prompts.size)
+        assertTrue(prompts[2].contains("the first question must target it"))
+        val asking = f.state as ClarificationState.Asking
+        assertEquals("d3", asking.question.directionId)
+        assertNull("出题后指定解除", f.ledger.pinned)
     }
 }

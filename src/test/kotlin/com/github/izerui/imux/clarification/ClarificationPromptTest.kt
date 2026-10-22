@@ -16,7 +16,7 @@ class ClarificationPromptTest {
                 Direction("d2", "多标签页", "影响范围", "TerminalHost.kt", "逐个重连", status = DirectionStatus.DEFAULTED),
             ),
             pinned = "d1",
-            lastAsked = "d1",
+            awaitingReport = listOf("d1", "d2"),
         )
 
     private fun rawResource(name: String): String =
@@ -50,11 +50,11 @@ class ClarificationPromptTest {
     }
 
     @Test
-    fun `提示词写明先问这个与冻结方向与需要交代的上一轮方向`() {
+    fun `提示词写明先问这个与冻结方向与这一批需要交代的方向`() {
         val prompt = clarificationPrompt(Phase.ROUND, ledger, isChinese = false, guidance = "g")
         assertTrue(prompt.contains("\"mustAsk\": \"d1\""))
         assertTrue(prompt.contains("\"frozen\": [\n      \"d2\"\n    ]"))
-        assertTrue(prompt.contains("\"reportPrevious\": \"d1\""))
+        assertTrue(prompt.contains("\"reportAnswered\": [\n      \"d1\",\n      \"d2\"\n    ]"))
     }
 
     @Test

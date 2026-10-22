@@ -11,10 +11,10 @@ class ClarificationProtocolTest {
         """
         {"understanding":"理解","directions":{"add":[{"tempId":"new-1","title":"恢复范围","why":"w","source":"s","fallback":"f"}],
          "drop":[{"id":"d3","reason":"r"}]},
-         "previous":{"id":"d1","status":"OPEN","conclusion":"c","openPoints":["p"]},
+         "answered":[{"id":"d1","status":"OPEN","conclusion":"c","openPoints":["p"]}],
          "notes":"n",
-         "next":{"type":"question","directionId":"new-1","question":"Q","reason":"R","basis":"B",
-           "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}
+         "next":{"type":"questions","questions":[{"directionId":"new-1","question":"Q","reason":"R","basis":"B",
+           "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}]}}
         """.trimIndent()
 
     private fun errorsOf(raw: String): List<String> =
@@ -31,10 +31,10 @@ class ClarificationProtocolTest {
         assertEquals("理解", r.understanding)
         assertEquals(listOf(NewDirection("new-1", "恢复范围", "w", "s", "f")), r.added)
         assertEquals(listOf(DroppedDirection("d3", "r")), r.dropped)
-        assertEquals(Previous("d1", decided = false, conclusion = "c", openPoints = listOf("p")), r.previous)
+        assertEquals(listOf(AnsweredReport("d1", decided = false, conclusion = "c", openPoints = listOf("p"))), r.answered)
         val ask = r.next as Next.Ask
-        assertEquals("new-1", ask.question.directionId)
-        assertEquals(listOf("CA", "CB"), ask.question.options.map { it.conclusion })
+        assertEquals("new-1", ask.questions.single().directionId)
+        assertEquals(listOf("CA", "CB"), ask.questions.single().options.map { it.conclusion })
     }
 
     @Test
@@ -47,7 +47,7 @@ class ClarificationProtocolTest {
     fun `done 返回带出调整后的需求`() {
         val r = parseRoundResponse("""{"notes":"","next":{"type":"done","requirement":"调整后的需求"}}""")
         assertEquals(Next.Done("调整后的需求"), r.next)
-        assertNull(r.previous)
+        assertTrue(r.answered.isEmpty())
     }
 
     @Test
@@ -72,8 +72,8 @@ class ClarificationProtocolTest {
     }
 
     @Test
-    fun `previous 状态不是 DECIDED 或 OPEN 时判为错误`() {
-        assertTrue(errorsOf(question.replace("\"status\":\"OPEN\"", "\"status\":\"PAUSED\"")).any { it.contains("previous") })
+    fun `answered 状态不是 DECIDED 或 OPEN 时判为错误`() {
+        assertTrue(errorsOf(question.replace("\"status\":\"OPEN\"", "\"status\":\"PAUSED\"")).any { it.contains("answered[0].status") })
     }
 
     @Test
@@ -84,5 +84,40 @@ class ClarificationProtocolTest {
             fail("空 requirement 应报错")
         } catch (_: ProtocolException) {
         }
+    }
+
+    private val oneQuestion =
+        """{"directionId":"d1","question":"Q","reason":"R","basis":"B",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}"""
+
+    private fun batchOf(n: Int) = """{"notes":"","next":{"type":"questions","questions":[${List(n) { oneQuestion }.joinToString(",")}]}}"""
+
+    @Test
+    fun `一批多题按顺序解析`() {
+        val r = parseRoundResponse(batchOf(5))
+        assertEquals(5, (r.next as Next.Ask).questions.size)
+    }
+
+    @Test
+    fun `一批多于五题判为错误`() {
+        assertTrue(errorsOf(batchOf(6)).any { it.contains("1-5") })
+    }
+
+    @Test
+    fun `一批没有题判为错误`() {
+        assertTrue(errorsOf(batchOf(0)).any { it.contains("1-5") })
+    }
+
+    @Test
+    fun `批中某题的选项不合格时错误指明是第几题`() {
+        val bad = oneQuestion.replace(""",{"id":"b","label":"B","recommended":false,"conclusion":"CB"}""", "")
+        val raw = """{"notes":"","next":{"type":"questions","questions":[$oneQuestion,$bad]}}"""
+        assertTrue(errorsOf(raw).any { it.contains("questions[1]") && it.contains("2-4") })
+    }
+
+    @Test
+    fun `旧的单题格式不再被接受`() {
+        val old = """{"notes":"","next":{"type":"question","directionId":"d1","question":"Q","options":[]}}"""
+        assertTrue(errorsOf(old).any { it.contains("questions or done") })
     }
 }

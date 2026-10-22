@@ -21,15 +21,20 @@ internal data class DroppedDirection(
     val reason: String,
 )
 
-internal data class Previous(
+/** 模型对这一批里用户回答过的某个方向的交代：已定，或仍待确认（附已有结论与剩余疑点）。 */
+internal data class AnsweredReport(
     val id: String,
     val decided: Boolean,
     val conclusion: String,
     val openPoints: List<String>,
 )
 
+/** 每轮一批问题的上限；数量由模型判断，见设计文档「每轮一批问题」。 */
+internal const val MAX_QUESTIONS_PER_ROUND = 5
+
 internal sealed interface Next {
-    data class Ask(val question: Question) : Next
+    /** 1～[MAX_QUESTIONS_PER_ROUND] 个问题，插件逐题展示，整批答完才调用下一轮。 */
+    data class Ask(val questions: List<Question>) : Next
 
     data class Done(val requirement: String) : Next
 }
@@ -38,7 +43,7 @@ internal data class RoundResponse(
     val understanding: String?,
     val added: List<NewDirection>,
     val dropped: List<DroppedDirection>,
-    val previous: Previous?,
+    val answered: List<AnsweredReport>,
     val notes: String,
     val next: Next,
 )
@@ -84,12 +89,15 @@ internal fun parseRoundResponse(raw: String): RoundResponse {
             o.str("id")?.takeIf(String::isNotEmpty)?.let { DroppedDirection(it, o.str("reason").orEmpty()) }
         }
 
-    val previous =
-        root.obj("previous")?.let { p ->
+    val answered =
+        root.arr("answered").mapIndexedNotNull { i, element ->
+            val p = element.asObjOrNull() ?: run { errors += "answered[$i] must be an object"; return@mapIndexedNotNull null }
+            val id = p.str("id").orEmpty()
             val status = p.str("status")
-            if (status != "DECIDED" && status != "OPEN") errors += "previous.status must be DECIDED or OPEN"
-            Previous(
-                id = p.str("id").orEmpty(),
+            if (id.isEmpty()) errors += "answered[$i].id must not be empty"
+            if (status != "DECIDED" && status != "OPEN") errors += "answered[$i].status must be DECIDED or OPEN"
+            AnsweredReport(
+                id = id,
                 decided = status == "DECIDED",
                 conclusion = p.str("conclusion").orEmpty(),
                 openPoints = p.arr("openPoints").mapNotNull { it.takeIf { e -> e.isJsonPrimitive }?.asString?.trim()?.takeIf(String::isNotEmpty) },
@@ -101,19 +109,28 @@ internal fun parseRoundResponse(raw: String): RoundResponse {
         when (nextObj?.str("type")) {
             "done" -> nextObj.str("requirement")?.takeIf(String::isNotEmpty)?.let(Next::Done)
                 ?: run { errors += "next.requirement must not be empty"; null }
-            "question" -> parseQuestion(nextObj, errors)
-            else -> { errors += "next.type must be question or done"; null }
+            "questions" -> {
+                val items = nextObj.arr("questions")
+                if (items.size() !in 1..MAX_QUESTIONS_PER_ROUND) errors += "next.questions must have 1-$MAX_QUESTIONS_PER_ROUND items"
+                val questions =
+                    items.mapIndexedNotNull { i, element ->
+                        element.asObjOrNull()?.let { parseQuestion(it, "next.questions[$i]", errors) }
+                            ?: run { errors += "next.questions[$i] must be an object"; null }
+                    }
+                Next.Ask(questions)
+            }
+            else -> { errors += "next.type must be questions or done"; null }
         }
 
     if (errors.isNotEmpty() || next == null) throw ProtocolException(errors.ifEmpty { listOf("next is missing") })
-    return RoundResponse(root.str("understanding")?.takeIf(String::isNotEmpty), added, dropped, previous, root.str("notes").orEmpty(), next)
+    return RoundResponse(root.str("understanding")?.takeIf(String::isNotEmpty), added, dropped, answered, root.str("notes").orEmpty(), next)
 }
 
-private fun parseQuestion(o: JsonObject, errors: MutableList<String>): Next.Ask? {
+private fun parseQuestion(o: JsonObject, path: String, errors: MutableList<String>): Question {
     val directionId = o.str("directionId").orEmpty()
     val text = o.str("question").orEmpty()
-    if (directionId.isEmpty()) errors += "next.directionId must not be empty"
-    if (text.isEmpty()) errors += "next.question must not be empty"
+    if (directionId.isEmpty()) errors += "$path.directionId must not be empty"
+    if (text.isEmpty()) errors += "$path.question must not be empty"
     val options =
         o.arr("options").mapNotNull { it.asObjOrNull() }.map { opt ->
             ChoiceOption(
@@ -123,11 +140,11 @@ private fun parseQuestion(o: JsonObject, errors: MutableList<String>): Next.Ask?
                 conclusion = opt.str("conclusion").orEmpty(),
             )
         }
-    if (options.size !in 2..4) errors += "next.options must have 2-4 items"
-    if (options.any { it.id.isEmpty() || it.label.isEmpty() }) errors += "every option needs id and label"
-    if (options.any { it.conclusion.isEmpty() }) errors += "every option needs a non-empty conclusion"
-    if (options.map { it.id }.toSet().size != options.size) errors += "option ids must be unique"
-    return Next.Ask(Question(directionId, text, o.str("reason").orEmpty(), o.str("basis").orEmpty(), options))
+    if (options.size !in 2..4) errors += "$path.options must have 2-4 items"
+    if (options.any { it.id.isEmpty() || it.label.isEmpty() }) errors += "$path: every option needs id and label"
+    if (options.any { it.conclusion.isEmpty() }) errors += "$path: every option needs a non-empty conclusion"
+    if (options.map { it.id }.toSet().size != options.size) errors += "$path: option ids must be unique"
+    return Question(directionId, text, o.str("reason").orEmpty(), o.str("basis").orEmpty(), options)
 }
 
 internal fun parseRequirementResponse(raw: String): String =
