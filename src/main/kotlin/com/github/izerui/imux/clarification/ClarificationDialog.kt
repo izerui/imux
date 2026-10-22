@@ -2,27 +2,17 @@ package com.github.izerui.imux.clarification
 
 import com.github.izerui.imux.ImuxBundle
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.DialogWrapper.IdeModalityType
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.VerticalFlowLayout
-import com.intellij.ui.CollectionListModel
-import com.intellij.ui.ColoredListCellRenderer
-import com.intellij.ui.JBSplitter
-import com.intellij.ui.PopupHandler
-import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -36,34 +26,34 @@ import javax.swing.Action
 import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JComponent
-import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.Timer
 
 /**
- * 需求澄清窗口：只负责显示流程状态并把操作转给 [ClarificationService]。
+ * 需求澄清窗口：单栏布局，只负责显示流程状态并把操作转给 [ClarificationService]。
  * 非模态，打开期间仍可看代码、操作终端；关闭不中断在途一轮。
  */
 internal class ClarificationDialog(
     private val project: Project,
     private val service: ClarificationService,
-    private val flow: ClarificationFlow,
+    private var flow: ClarificationFlow,
     title: String,
 ) : DialogWrapper(project, null, true, IdeModalityType.MODELESS) {
     @Volatile var sessionKey: String = service.currentKeyOf(flow).orEmpty()
 
-    private val directionModel = CollectionListModel<Direction>()
-    private val directionList = JBList(directionModel).apply { cellRenderer = DirectionRenderer() }
-    private val requirementLabel = JBTextArea().apply {
-        isEditable = false
-        lineWrap = true
-        wrapStyleWord = true
-        isOpaque = false
-        border = JBUI.Borders.empty(4)
+    /** 方向清单是否展开，对话框生命期内记住。 */
+    private var listExpanded = false
+    /** [修改] 后带到输入页的旧需求。 */
+    private var restartRequirement: String? = null
+    private val requirementLabel = JBLabel().apply {
+        border = JBUI.Borders.emptyRight(8)
     }
-    private val right = JPanel(BorderLayout())
-    private val roundLabel = JBLabel()
-    /** 右栏当前显示的状态。只有状态变了才重建右栏，否则正在输入的文字、选中的选项会被清掉。 */
+    private val progressLabel = JBLabel()
+    private val toggleLink = ActionLink("") { toggleList() }
+    private val headerPanel = JPanel(VerticalFlowLayout(VerticalFlowLayout.TOP, 0, JBUI.scale(2), true, false))
+    private val listPanel = JPanel(VerticalFlowLayout(VerticalFlowLayout.TOP, 0, JBUI.scale(2), true, false)).apply { isVisible = false }
+    private val center = JPanel(BorderLayout())
+    /** 中间区域当前显示的状态。只有状态变了才重建，否则正在输入的文字、选中的选项会被清掉。 */
     private var renderedState: ClarificationState? = null
     private var elapsedLabel: JBLabel? = null
     private val finishButton = JButton(ImuxBundle.message("clarify.finish")).apply { addActionListener { service.finish(sessionKey) } }
@@ -73,7 +63,6 @@ internal class ClarificationDialog(
     init {
         this.title = ImuxBundle.message("clarify.dialog.title", title)
         setCancelButtonText(ImuxBundle.message("clarify.close"))
-        installDirectionMenu()
         flow.addListener(listener)
         init()
         render()
@@ -83,31 +72,15 @@ internal class ClarificationDialog(
     override fun createActions(): Array<Action> = arrayOf(cancelAction)
 
     override fun createCenterPanel(): JComponent {
-        val addButton = JButton(ImuxBundle.message("clarify.directions.add"), AllIcons.General.Add).apply {
-            addActionListener {
-                val text = Messages.showInputDialog(project, ImuxBundle.message("clarify.directions.add.prompt"), ImuxBundle.message("clarify.directions.add"), null)
-                if (!text.isNullOrBlank()) service.addDirection(sessionKey, text)
-            }
-        }
-        val left = JPanel(BorderLayout()).apply {
-            add(requirementLabel, BorderLayout.NORTH)
-            add(JBScrollPane(directionList), BorderLayout.CENTER)
-            add(addButton, BorderLayout.SOUTH)
-            border = JBUI.Borders.emptyRight(8)
-        }
-        val splitter = JBSplitter(false, 0.35f).apply {
-            firstComponent = left
-            secondComponent = JBScrollPane(right).apply { border = JBUI.Borders.empty() }
-        }
-        val bottom = JPanel(BorderLayout()).apply {
-            add(roundLabel, BorderLayout.WEST)
-            add(finishButton, BorderLayout.EAST)
+        val footer = JPanel(BorderLayout()).apply {
+            add(finishButton, BorderLayout.WEST)
             border = JBUI.Borders.emptyTop(8)
         }
         return JPanel(BorderLayout()).apply {
-            preferredSize = JBUI.size(900, 560)
-            add(splitter, BorderLayout.CENTER)
-            add(bottom, BorderLayout.SOUTH)
+            preferredSize = JBUI.size(700, 520)
+            add(headerPanel, BorderLayout.NORTH)
+            add(JBScrollPane(center).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
+            add(footer, BorderLayout.SOUTH)
         }
     }
 
@@ -118,31 +91,152 @@ internal class ClarificationDialog(
         super.dispose()
     }
 
+    /** 服务重建了流程后让对话框绑到新流程上，回到输入页并预填旧需求。 */
+    internal fun rebind(newFlow: ClarificationFlow) {
+        restartRequirement = flow.ledger.requirement
+        flow.removeListener(listener)
+        flow = newFlow
+        flow.addListener(listener)
+        renderedState = null
+        render()
+    }
+
     private fun render() {
         val ledger = flow.ledger
         val state = flow.state
-        requirementLabel.text = ledger.requirement
-        requirementLabel.isVisible = ledger.requirement.isNotEmpty()
-        directionModel.replaceAll(ledger.directions)
-        roundLabel.text = if (ledger.history.isEmpty() && state is ClarificationState.Input) "" else ImuxBundle.message("clarify.round", ledger.history.size + 1)
+        val isInput = state is ClarificationState.Input
+        renderHeader(ledger, isInput)
+        renderList(ledger)
         finishButton.isEnabled = flow.canFinish
         if (state == renderedState) return
         renderedState = state
         elapsedLabel = null
-        right.removeAll()
-        right.add(
+        center.removeAll()
+        center.add(
             when (state) {
                 ClarificationState.Input -> inputPanel()
                 is ClarificationState.Investigating -> investigatingPanel(state)
-                is ClarificationState.Asking -> askingPanel(state.question, ledger)
+                is ClarificationState.Asking -> askingPanel(state, ledger)
                 is ClarificationState.Result -> resultPanel(state.requirement)
                 is ClarificationState.Sending -> sendingPanel(state)
                 is ClarificationState.Failed -> failedPanel(state)
             },
             BorderLayout.NORTH,
         )
-        right.revalidate()
-        right.repaint()
+        center.revalidate()
+        center.repaint()
+    }
+
+    private fun renderHeader(ledger: Ledger, isInput: Boolean) {
+        headerPanel.removeAll()
+        if (isInput) {
+            headerPanel.isVisible = false
+            listPanel.isVisible = false
+            return
+        }
+        headerPanel.isVisible = true
+        // Line 1: requirement + [修改]
+        val reqText = ledger.requirement.let { if (it.length > 60) it.take(57) + "..." else it }
+        requirementLabel.text = ImuxBundle.message("clarify.header.requirement", reqText)
+        requirementLabel.toolTipText = ledger.requirement
+        val editLink = ActionLink(ImuxBundle.message("clarify.header.edit")) { confirmRestart() }
+        val line1 = JPanel(BorderLayout()).apply {
+            add(requirementLabel, BorderLayout.CENTER)
+            add(editLink, BorderLayout.EAST)
+        }
+        // Line 2: progress + [展开清单 ▾]/[收起清单 ▴]
+        val counts = progressCounts(ledger.directions)
+        val progressText = buildString {
+            append(ImuxBundle.message("clarify.progress", counts.decided, counts.open, counts.defaulted))
+            if (counts.dropped > 0) append(ImuxBundle.message("clarify.progress.dropped", counts.dropped))
+        }
+        progressLabel.text = progressText
+        toggleLink.text = if (listExpanded) ImuxBundle.message("clarify.list.collapse") else ImuxBundle.message("clarify.list.expand")
+        val line2 = JPanel(BorderLayout()).apply {
+            add(progressLabel, BorderLayout.CENTER)
+            add(toggleLink, BorderLayout.EAST)
+        }
+        headerPanel.add(line1)
+        headerPanel.add(line2)
+        headerPanel.add(listPanel)
+        headerPanel.revalidate()
+        headerPanel.repaint()
+    }
+
+    private fun renderList(ledger: Ledger) {
+        listPanel.removeAll()
+        listPanel.isVisible = listExpanded && ledger.directions.isNotEmpty()
+        for (direction in ledger.directions) {
+            listPanel.add(directionRow(direction))
+        }
+        val addLink = ActionLink(ImuxBundle.message("clarify.directions.add")) {
+            val text = Messages.showInputDialog(project, ImuxBundle.message("clarify.directions.add.prompt"), ImuxBundle.message("clarify.directions.add"), null)
+            if (!text.isNullOrBlank()) service.addDirection(sessionKey, text)
+        }
+        listPanel.add(addLink)
+        listPanel.revalidate()
+        listPanel.repaint()
+    }
+
+    private fun directionRow(direction: Direction): JPanel {
+        val statusText = statusLabel(direction.status)
+        val titleLabel = JBLabel(direction.title)
+        val detailLabel = JBLabel()
+        if (direction.status == DirectionStatus.DROPPED) {
+            titleLabel.foreground = UIUtil.getContextHelpForeground()
+            direction.dropReason?.let { detailLabel.text = it; detailLabel.foreground = UIUtil.getContextHelpForeground() }
+        } else {
+            direction.conclusion?.takeIf { direction.status == DirectionStatus.DECIDED || direction.status == DirectionStatus.DEFAULTED }?.let {
+                detailLabel.text = it
+                detailLabel.foreground = UIUtil.getContextHelpForeground()
+            }
+        }
+        val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
+        row.add(statusText)
+        row.add(titleLabel)
+        if (detailLabel.text?.isNotEmpty() == true) row.add(detailLabel)
+        val actions = directionRowActions(direction.status)
+        if (DirectionAction.SKIP in actions) {
+            row.add(ActionLink(ImuxBundle.message("clarify.directions.skip")) { service.skip(sessionKey, direction.id) })
+        }
+        if (DirectionAction.PIN in actions) {
+            row.add(ActionLink(ImuxBundle.message("clarify.directions.pin")) { service.pin(sessionKey, direction.id) })
+        }
+        if (DirectionAction.REOPEN in actions) {
+            row.add(ActionLink(ImuxBundle.message("clarify.directions.reopen")) { service.reopen(sessionKey, direction.id) })
+        }
+        return row
+    }
+
+    private fun statusLabel(status: DirectionStatus): JBLabel {
+        val key = when (status) {
+            DirectionStatus.OPEN -> "clarify.status.open"
+            DirectionStatus.ACTIVE -> "clarify.status.active"
+            DirectionStatus.DECIDED -> "clarify.status.decided"
+            DirectionStatus.DEFAULTED -> "clarify.status.defaulted"
+            DirectionStatus.DROPPED -> "clarify.status.dropped"
+        }
+        return JBLabel(ImuxBundle.message(key)).apply {
+            if (status == DirectionStatus.DROPPED) foreground = UIUtil.getContextHelpForeground()
+        }
+    }
+
+    private fun toggleList() {
+        listExpanded = !listExpanded
+        toggleLink.text = if (listExpanded) ImuxBundle.message("clarify.list.collapse") else ImuxBundle.message("clarify.list.expand")
+        listPanel.isVisible = listExpanded && flow.ledger.directions.isNotEmpty()
+        headerPanel.revalidate()
+        headerPanel.repaint()
+    }
+
+    private fun confirmRestart() {
+        val yes = Messages.showYesNoDialog(
+            project,
+            ImuxBundle.message("clarify.restart.text"),
+            ImuxBundle.message("clarify.restart.title"),
+            Messages.getQuestionIcon(),
+        )
+        if (yes == Messages.YES) service.restart(sessionKey)
     }
 
     private fun updateElapsed() {
@@ -166,8 +260,9 @@ internal class ClarificationDialog(
     private fun button(key: String, onClick: () -> Unit): JButton = JButton(ImuxBundle.message(key)).apply { addActionListener { onClick() } }
 
     private fun inputPanel(): JComponent {
-        val area = JBTextArea(6, 50).apply { lineWrap = true; wrapStyleWord = true }
-        // 是否有会话记录要查文件系统，不在 EDT 上做：先隐藏，查到再显示并默认勾选
+        val prefill = restartRequirement ?: flow.ledger.requirement
+        restartRequirement = null
+        val area = JBTextArea(6, 50).apply { lineWrap = true; wrapStyleWord = true; text = prefill }
         val background = JBCheckBox(ImuxBundle.message("clarify.input.background"), false).apply { isVisible = false }
         service.checkBackground(sessionKey) { has ->
             ApplicationManager.getApplication().invokeLater({
@@ -196,17 +291,25 @@ internal class ClarificationDialog(
         }
     }
 
-    private fun askingPanel(question: Question, ledger: Ledger): JComponent {
+    private fun askingPanel(asking: ClarificationState.Asking, ledger: Ledger): JComponent {
+        val question = asking.question
         val panel = column()
         val correction = JBTextArea(3, 50).apply { lineWrap = true; wrapStyleWord = true; isVisible = false }
-        ledger.understanding?.takeIf { ledger.history.isEmpty() || ledger.corrections.isNotEmpty() }?.let { understanding ->
+        val isFirstBatch = ledger.history.isEmpty() || ledger.corrections.isNotEmpty()
+        ledger.understanding?.takeIf { isFirstBatch }?.let { understanding ->
             panel.add(JBLabel(ImuxBundle.message("clarify.understanding.title")).apply { font = font.deriveFont(java.awt.Font.BOLD) })
             panel.add(wrapped(understanding))
             panel.add(ActionLink(ImuxBundle.message("clarify.understanding.correct")) { correction.isVisible = !correction.isVisible; panel.revalidate() })
             panel.add(correction)
         }
+        // Question header: "问题 i/n"
+        val headerText = questionHeaderText(asking.index, asking.batch.size)
+        panel.add(JBLabel(headerText).apply { font = font.deriveFont(java.awt.Font.BOLD) })
+        if (asking.batch.size > 1) {
+            panel.add(JBLabel(ImuxBundle.message("clarify.question.batch.note")).apply { foreground = UIUtil.getContextHelpForeground() })
+        }
         panel.add(wrapped(question.text, bold = true))
-        if (question.reason.isNotBlank()) panel.add(wrapped(question.reason))
+        if (question.reason.isNotBlank()) panel.add(wrapped(ImuxBundle.message("clarify.question.why", question.reason)))
         if (question.basis.isNotBlank()) panel.add(wrapped(ImuxBundle.message("clarify.question.basis", question.basis)).apply { foreground = UIUtil.getContextHelpForeground() })
 
         val group = ButtonGroup()
@@ -230,9 +333,11 @@ internal class ClarificationDialog(
         panel.add(otherRadio)
         panel.add(otherField)
 
+        val isLast = asking.index >= asking.batch.lastIndex
+        val confirmKey = if (isLast) "clarify.question.confirm" else "clarify.question.confirm.next"
         panel.add(buttons(
             button("clarify.question.skip") { service.skip(sessionKey, question.directionId) },
-            button("clarify.question.confirm") {
+            button(confirmKey) {
                 val picked = radios.indexOfFirst { it.isSelected }
                 val answer = when {
                     otherRadio.isSelected && otherField.text.isNotBlank() -> Answer.OwnWords(otherField.text)
@@ -293,48 +398,35 @@ internal class ClarificationDialog(
         ))
         return panel
     }
-
-    private fun installDirectionMenu() {
-        val group = DefaultActionGroup(
-            menuAction("clarify.directions.skip", { it.status == DirectionStatus.OPEN || it.status == DirectionStatus.ACTIVE }) { service.skip(sessionKey, it.id) },
-            menuAction("clarify.directions.pin", { it.status == DirectionStatus.OPEN }) { service.pin(sessionKey, it.id) },
-            menuAction("clarify.directions.reopen", { it.status == DirectionStatus.DECIDED || it.status == DirectionStatus.DEFAULTED }) { service.reopen(sessionKey, it.id) },
-        )
-        PopupHandler.installPopupMenu(directionList, group, "ClarifyDirections")
-    }
-
-    private fun menuAction(key: String, enabled: (Direction) -> Boolean, perform: (Direction) -> Unit) =
-        object : DumbAwareAction(ImuxBundle.message(key)) {
-            override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-            override fun update(e: AnActionEvent) {
-                e.presentation.isEnabled = directionList.selectedValue?.let(enabled) == true
-            }
-
-            override fun actionPerformed(e: AnActionEvent) {
-                directionList.selectedValue?.let(perform)
-            }
-        }
-
-    private class DirectionRenderer : ColoredListCellRenderer<Direction>() {
-        override fun customizeCellRenderer(list: JList<out Direction>, value: Direction, index: Int, selected: Boolean, hasFocus: Boolean) {
-            icon = when (value.status) {
-                DirectionStatus.OPEN -> AllIcons.RunConfigurations.TestNotRan
-                DirectionStatus.ACTIVE -> AllIcons.Actions.Execute
-                DirectionStatus.DECIDED -> AllIcons.RunConfigurations.TestPassed
-                DirectionStatus.DEFAULTED -> AllIcons.RunConfigurations.TestIgnored
-                DirectionStatus.DROPPED -> AllIcons.Actions.Cancel
-            }
-            if (value.status == DirectionStatus.DROPPED) {
-                // 去掉的方向不藏起来：灰显并附上模型给的理由，用户能看见它为什么不再问
-                append(value.title, SimpleTextAttributes.GRAYED_ATTRIBUTES)
-                value.dropReason?.let { append("  $it", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES) }
-                return
-            }
-            append(value.title)
-            value.conclusion?.takeIf { value.status == DirectionStatus.DECIDED || value.status == DirectionStatus.DEFAULTED }?.let {
-                append("  $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-            }
-        }
-    }
 }
+
+// ---- 纯函数：提取出来方便单测 ----
+
+internal data class ProgressCounts(val decided: Int, val open: Int, val defaulted: Int, val dropped: Int)
+
+/** 统计方向列表中各状态的数量。OPEN 与 ACTIVE 合并为"待定"（pending），因为正在问的方向也还没定。 */
+internal fun progressCounts(directions: List<Direction>): ProgressCounts {
+    var decided = 0; var open = 0; var defaulted = 0; var dropped = 0
+    for (d in directions) when (d.status) {
+        DirectionStatus.DECIDED -> decided++
+        DirectionStatus.OPEN, DirectionStatus.ACTIVE -> open++
+        DirectionStatus.DEFAULTED -> defaulted++
+        DirectionStatus.DROPPED -> dropped++
+    }
+    return ProgressCounts(decided, open, defaulted, dropped)
+}
+
+internal enum class DirectionAction { SKIP, PIN, REOPEN }
+
+/** 每个状态下的方向行可以做哪些操作。 */
+internal fun directionRowActions(status: DirectionStatus): Set<DirectionAction> = when (status) {
+    DirectionStatus.OPEN -> setOf(DirectionAction.SKIP, DirectionAction.PIN)
+    DirectionStatus.ACTIVE -> setOf(DirectionAction.SKIP)
+    DirectionStatus.DECIDED -> setOf(DirectionAction.REOPEN)
+    DirectionStatus.DEFAULTED -> setOf(DirectionAction.REOPEN)
+    DirectionStatus.DROPPED -> setOf(DirectionAction.REOPEN)
+}
+
+/** "问题 i/n" 的标题文本。1-based 的 index 和总数。 */
+internal fun questionHeaderText(index: Int, total: Int): String =
+    ImuxBundle.message("clarify.question.header", index + 1, total)

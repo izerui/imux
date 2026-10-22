@@ -108,6 +108,22 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
+    fun `restart 先作废流程再取消任务`() {
+        val restart = source.bodyAfter("internal fun restart(", '{')
+        val cancelledIdx = restart.indexOf(".cancelled()")
+        val cancelJobIdx = restart.indexOf("?.cancel()")
+        assertTrue("restart() 必须先调 cancelled()", cancelledIdx >= 0 && cancelledIdx < cancelJobIdx)
+        assertTrue("restart() 创建新流程", restart.contains("newFlow("))
+        assertTrue("restart() 让对话框绑定新流程", restart.contains("rebind("))
+    }
+
+    @Test
+    fun `restart 的新流程保存到 flows 映射`() {
+        val restart = source.bodyAfter("internal fun restart(", '{')
+        assertTrue("新流程替换旧流程", restart.contains("flows[sessionKey] = newFlow"))
+    }
+
+    @Test
     fun `通知里的复制使用 CopyPasteManager`() {
         val notify = source.bodyAfter("private fun notifyUndelivered(", '{')
         assertTrue(notify.contains("CopyPasteManager.getInstance().setContents("))
