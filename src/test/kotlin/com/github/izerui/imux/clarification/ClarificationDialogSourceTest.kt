@@ -22,8 +22,14 @@ class ClarificationDialogSourceTest {
     }
 
     @Test
-    fun `方向列表保留去掉的方向并显示理由`() {
-        assertTrue(source.normalized.contains("dropReason"))
+    fun `方向列表保留去掉的方向并原样显示理由`() {
+        // directionRow 在 DROPPED 时把 dropReason 写入 detailLabel，不跳过也不过滤
+        val row = source.bodyAfter("private fun directionRow(", '{')
+        assertTrue("DROPPED 方向的标题标灰", row.contains("DirectionStatus.DROPPED"))
+        assertTrue("drop 理由原样写入标签", row.contains("dropReason"))
+        // renderList 遍历全部 directions，不排除 DROPPED
+        val list = source.bodyAfter("private fun renderList(", '{')
+        assertFalse("列表不过滤掉 DROPPED 方向", list.contains("DirectionStatus.DROPPED"))
     }
 
     @Test
@@ -38,7 +44,7 @@ class ClarificationDialogSourceTest {
     @Test
     fun `中间区域只在状态变化时重建`() {
         val render = source.bodyAfter("private fun render()", '{')
-        assertTrue("状态不变时跳过重建", render.contains("if (state == renderedState) return"))
+        assertTrue("使用 needsCenterRebuild 判断", render.contains("needsCenterRebuild("))
         assertTrue("重建前记住当前状态", render.contains("renderedState = state"))
     }
 
@@ -49,18 +55,35 @@ class ClarificationDialogSourceTest {
     }
 
     @Test
-    fun `restart 先作废流程再通过服务重新绑定`() {
+    fun `rebind 保存旧需求并切换监听`() {
         assertTrue("对话框有 rebind 方法", source.normalized.contains("internal fun rebind(newFlow: ClarificationFlow)"))
         val rebind = source.bodyAfter("internal fun rebind(newFlow: ClarificationFlow)", '{')
         assertTrue("保存旧需求用于预填", rebind.contains("restartRequirement = flow.ledger.requirement"))
-        assertTrue("移除旧监听", rebind.contains("flow.removeListener(listener)"))
-        assertTrue("替换流程", rebind.contains("flow = newFlow"))
-        assertTrue("注册新监听", rebind.contains("flow.addListener(listener)"))
+        val removeIdx = rebind.indexOf("flow.removeListener(listener)")
+        val assignIdx = rebind.indexOf("flow = newFlow")
+        val addIdx = rebind.indexOf("flow.addListener(listener)")
+        assertTrue("移除旧监听 → 替换流程 → 注册新监听", removeIdx >= 0 && assignIdx > removeIdx && addIdx > assignIdx)
     }
 
     @Test
     fun `输入页在 restart 后预填原需求`() {
         val input = source.bodyAfter("private fun inputPanel()", '{')
         assertTrue("优先取 restartRequirement", input.contains("restartRequirement"))
+    }
+
+    @Test
+    fun `我的理解仅在首批第一题且用 JButton 纠正`() {
+        val asking = source.bodyAfter("private fun askingPanel(", '{')
+        assertTrue("纠正理解使用 JButton", asking.contains("JButton(ImuxBundle.message(\"clarify.understanding.correct\"))"))
+        assertFalse("纠正理解不使用 ActionLink", asking.contains("ActionLink(ImuxBundle.message(\"clarify.understanding.correct\"))"))
+        assertTrue("只在 index == 0 时展示理解", asking.contains("asking.index == 0"))
+    }
+
+    @Test
+    fun `对话框弹窗的父组件是 contentPane`() {
+        // Messages.showYesNoDialog / showInputDialog / showInfoMessage 的第一个参数是 contentPane
+        assertTrue("restart 确认弹窗用 contentPane", source.bodyAfter("private fun confirmRestart()", '{').contains("contentPane"))
+        assertTrue("添加方向弹窗用 contentPane", source.bodyAfter("private fun renderList(", '{').contains("contentPane"))
+        assertTrue("查看 Agent 输出弹窗用 contentPane", source.bodyAfter("private fun failedPanel(", '{').contains("contentPane"))
     }
 }

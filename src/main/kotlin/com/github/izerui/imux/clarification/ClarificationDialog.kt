@@ -60,6 +60,11 @@ internal class ClarificationDialog(
     private val elapsedTimer = Timer(1_000) { updateElapsed() }
     private val listener: () -> Unit = { ApplicationManager.getApplication().invokeLater({ render() }, ModalityState.any()) }
 
+    /** 提问页保持的可变组件引用，批次缩短时就地更新而不重建。 */
+    private var askingHeaderLabel: JBLabel? = null
+    private var askingBatchNote: JBLabel? = null
+    private var askingConfirmButton: JButton? = null
+
     init {
         this.title = ImuxBundle.message("clarify.dialog.title", title)
         setCancelButtonText(ImuxBundle.message("clarify.close"))
@@ -106,11 +111,18 @@ internal class ClarificationDialog(
         val state = flow.state
         val isInput = state is ClarificationState.Input
         renderHeader(ledger, isInput)
-        renderList(ledger)
+        renderList(ledger, isInput)
         finishButton.isEnabled = flow.canFinish
-        if (state == renderedState) return
+        if (!needsCenterRebuild(renderedState, state)) {
+            // 批次缩短（跳过后面的方向）：就地更新标题、批注、确认按钮，不重建整个面板
+            if (state is ClarificationState.Asking) updateAskingInPlace(state)
+            return
+        }
         renderedState = state
         elapsedLabel = null
+        askingHeaderLabel = null
+        askingBatchNote = null
+        askingConfirmButton = null
         center.removeAll()
         center.add(
             when (state) {
@@ -127,6 +139,15 @@ internal class ClarificationDialog(
         center.repaint()
     }
 
+    /** 批次缩短时就地更新提问页的可变部件，不重建面板（保留用户的输入状态）。 */
+    private fun updateAskingInPlace(asking: ClarificationState.Asking) {
+        renderedState = asking
+        askingHeaderLabel?.text = questionHeaderText(asking.index, asking.batch.size)
+        askingBatchNote?.isVisible = asking.batch.size > 1
+        val isLast = asking.index >= asking.batch.lastIndex
+        askingConfirmButton?.text = ImuxBundle.message(if (isLast) "clarify.question.confirm" else "clarify.question.confirm.next")
+    }
+
     private fun renderHeader(ledger: Ledger, isInput: Boolean) {
         headerPanel.removeAll()
         if (isInput) {
@@ -136,9 +157,9 @@ internal class ClarificationDialog(
         }
         headerPanel.isVisible = true
         // Line 1: requirement + [修改]
-        val reqText = ledger.requirement.let { if (it.length > 60) it.take(57) + "..." else it }
+        val reqText = ledger.requirement.replace('\n', ' ').replace('\r', ' ')
         requirementLabel.text = ImuxBundle.message("clarify.header.requirement", reqText)
-        requirementLabel.toolTipText = ledger.requirement
+        requirementLabel.toolTipText = requirementTooltip(ledger.requirement)
         val editLink = ActionLink(ImuxBundle.message("clarify.header.edit")) { confirmRestart() }
         val line1 = JPanel(BorderLayout()).apply {
             add(requirementLabel, BorderLayout.CENTER)
@@ -163,14 +184,14 @@ internal class ClarificationDialog(
         headerPanel.repaint()
     }
 
-    private fun renderList(ledger: Ledger) {
+    private fun renderList(ledger: Ledger, isInput: Boolean) {
         listPanel.removeAll()
-        listPanel.isVisible = listExpanded && ledger.directions.isNotEmpty()
+        listPanel.isVisible = listExpanded && !isInput
         for (direction in ledger.directions) {
             listPanel.add(directionRow(direction))
         }
         val addLink = ActionLink(ImuxBundle.message("clarify.directions.add")) {
-            val text = Messages.showInputDialog(project, ImuxBundle.message("clarify.directions.add.prompt"), ImuxBundle.message("clarify.directions.add"), null)
+            val text = Messages.showInputDialog(contentPane, ImuxBundle.message("clarify.directions.add.prompt"), ImuxBundle.message("clarify.directions.add"), null)
             if (!text.isNullOrBlank()) service.addDirection(sessionKey, text)
         }
         listPanel.add(addLink)
@@ -224,14 +245,14 @@ internal class ClarificationDialog(
     private fun toggleList() {
         listExpanded = !listExpanded
         toggleLink.text = if (listExpanded) ImuxBundle.message("clarify.list.collapse") else ImuxBundle.message("clarify.list.expand")
-        listPanel.isVisible = listExpanded && flow.ledger.directions.isNotEmpty()
+        listPanel.isVisible = listExpanded
         headerPanel.revalidate()
         headerPanel.repaint()
     }
 
     private fun confirmRestart() {
         val yes = Messages.showYesNoDialog(
-            project,
+            contentPane,
             ImuxBundle.message("clarify.restart.text"),
             ImuxBundle.message("clarify.restart.title"),
             Messages.getQuestionIcon(),
@@ -295,21 +316,38 @@ internal class ClarificationDialog(
         val question = asking.question
         val panel = column()
         val correction = JBTextArea(3, 50).apply { lineWrap = true; wrapStyleWord = true; isVisible = false }
-        val isFirstBatch = ledger.history.isEmpty() || ledger.corrections.isNotEmpty()
-        ledger.understanding?.takeIf { isFirstBatch }?.let { understanding ->
-            panel.add(JBLabel(ImuxBundle.message("clarify.understanding.title")).apply { font = font.deriveFont(java.awt.Font.BOLD) })
-            panel.add(wrapped(understanding))
-            panel.add(ActionLink(ImuxBundle.message("clarify.understanding.correct")) { correction.isVisible = !correction.isVisible; panel.revalidate() })
-            panel.add(correction)
+        // "我的理解"：首批第一题（或纠正后）可折叠，默认展开；纠正理解用 JButton
+        if (asking.index == 0) {
+            val isFirstBatch = ledger.history.isEmpty() || ledger.corrections.isNotEmpty()
+            ledger.understanding?.takeIf { isFirstBatch }?.let { understanding ->
+                val understandingTitle = JBLabel(ImuxBundle.message("clarify.understanding.title")).apply { font = font.deriveFont(java.awt.Font.BOLD) }
+                val understandingBody = wrapped(understanding)
+                panel.add(understandingTitle)
+                panel.add(understandingBody)
+                val correctButton = JButton(ImuxBundle.message("clarify.understanding.correct"))
+                correctButton.addActionListener {
+                    val nowVisible = !correction.isVisible
+                    correction.isVisible = nowVisible
+                    understandingBody.isVisible = !nowVisible
+                    understandingTitle.isVisible = !nowVisible
+                    panel.revalidate()
+                }
+                panel.add(correctButton)
+                panel.add(correction)
+            }
         }
         // Question header: "问题 i/n"
-        val headerText = questionHeaderText(asking.index, asking.batch.size)
-        panel.add(JBLabel(headerText).apply { font = font.deriveFont(java.awt.Font.BOLD) })
-        if (asking.batch.size > 1) {
-            panel.add(JBLabel(ImuxBundle.message("clarify.question.batch.note")).apply { foreground = UIUtil.getContextHelpForeground() })
+        val headerLabel = JBLabel(questionHeaderText(asking.index, asking.batch.size)).apply { font = font.deriveFont(java.awt.Font.BOLD) }
+        askingHeaderLabel = headerLabel
+        panel.add(headerLabel)
+        val batchNote = JBLabel(ImuxBundle.message("clarify.question.batch.note")).apply {
+            foreground = UIUtil.getContextHelpForeground()
+            isVisible = asking.batch.size > 1
         }
+        askingBatchNote = batchNote
+        panel.add(batchNote)
         panel.add(wrapped(question.text, bold = true))
-        if (question.reason.isNotBlank()) panel.add(wrapped(ImuxBundle.message("clarify.question.why", question.reason)))
+        if (question.reason.isNotBlank()) panel.add(wrapped(ImuxBundle.message("clarify.question.why", question.reason)).apply { foreground = UIUtil.getContextHelpForeground() })
         if (question.basis.isNotBlank()) panel.add(wrapped(ImuxBundle.message("clarify.question.basis", question.basis)).apply { foreground = UIUtil.getContextHelpForeground() })
 
         val group = ButtonGroup()
@@ -335,17 +373,19 @@ internal class ClarificationDialog(
 
         val isLast = asking.index >= asking.batch.lastIndex
         val confirmKey = if (isLast) "clarify.question.confirm" else "clarify.question.confirm.next"
+        val confirmBtn = button(confirmKey) {
+            val picked = radios.indexOfFirst { it.isSelected }
+            val answer = when {
+                otherRadio.isSelected && otherField.text.isNotBlank() -> Answer.OwnWords(otherField.text)
+                picked >= 0 -> Answer.Picked(question.options[picked].id)
+                else -> return@button
+            }
+            service.answer(sessionKey, answer, correction.text.takeIf { correction.isVisible && it.isNotBlank() })
+        }
+        askingConfirmButton = confirmBtn
         panel.add(buttons(
             button("clarify.question.skip") { service.skip(sessionKey, question.directionId) },
-            button(confirmKey) {
-                val picked = radios.indexOfFirst { it.isSelected }
-                val answer = when {
-                    otherRadio.isSelected && otherField.text.isNotBlank() -> Answer.OwnWords(otherField.text)
-                    picked >= 0 -> Answer.Picked(question.options[picked].id)
-                    else -> return@button
-                }
-                service.answer(sessionKey, answer, correction.text.takeIf { correction.isVisible && it.isNotBlank() })
-            },
+            confirmBtn,
         ))
         return panel
     }
@@ -389,7 +429,7 @@ internal class ClarificationDialog(
         panel.add(JBLabel(message, AllIcons.General.Warning, JBLabel.LEADING))
         state.raw?.let { raw ->
             panel.add(ActionLink(ImuxBundle.message("clarify.failed.raw")) {
-                Messages.showInfoMessage(project, raw.take(20_000), ImuxBundle.message("clarify.failed.raw"))
+                Messages.showInfoMessage(contentPane, raw.take(20_000), ImuxBundle.message("clarify.failed.raw"))
             })
         }
         panel.add(buttons(
@@ -427,6 +467,25 @@ internal fun directionRowActions(status: DirectionStatus): Set<DirectionAction> 
     DirectionStatus.DROPPED -> setOf(DirectionAction.REOPEN)
 }
 
-/** "问题 i/n" 的标题文本。1-based 的 index 和总数。 */
+/** "问题 i/n" 的标题文本。0-based 的 index 和总数。 */
 internal fun questionHeaderText(index: Int, total: Int): String =
     ImuxBundle.message("clarify.question.header", index + 1, total)
+
+/**
+ * 判断是否需要重建中间面板。当前题与前一题相同、只是批次缩短（跳过了后面的方向）时不重建，
+ * 否则用户正在输入的文字、选中的选项和纠正文本都会丢失。
+ */
+internal fun needsCenterRebuild(old: ClarificationState?, new: ClarificationState): Boolean {
+    if (old == new) return false
+    if (old is ClarificationState.Asking && new is ClarificationState.Asking) {
+        return old.index != new.index || old.question != new.question
+    }
+    return true
+}
+
+/** 需求文本的 tooltip：换行保留，限 2000 字符，HTML 包裹限宽。 */
+internal fun requirementTooltip(requirement: String): String? {
+    if (requirement.isBlank()) return null
+    val text = requirement.take(2000).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    return "<html><body style='width:400px'>$text</body></html>"
+}
