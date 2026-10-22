@@ -239,12 +239,19 @@ imux 已有的结对编程、单次审查、会话轨迹都作用在**代码写�
 | 项 | 状态 |
 |---|---|
 | 设计文档（本文） | 已完成 |
-| 内嵌指南 `requirement-clarifier.zh.md` / `.en.md`、`NOTICE` | **已写入资源目录，尚未接入**：目前没有任何代码读取它们，单次 Agent 还用不上 |
-| `clarification` 包（模型、协议、状态机、服务、窗口） | 待办 |
-| 横幅入口、右键菜单、`plugin.xml`、多语言文案 | 待办 |
-| 从 `PeerCoordinator` 抽出可复用的会话对话读取函数 | 待办 |
-| 单元测试 | 待办，用例由实现方设计 |
-| `./gradlew test`、`verifyPlugin`、`runIde` 实际走通一次 | 待办 |
+| 内嵌指南 `requirement-clarifier.zh.md` / `.en.md`、`NOTICE` | 已接入（`loadGuidance` 读取） |
+| `ClarificationModels.kt`（台账模型） | 已完成（`130f0a9`） |
+| `ClarificationProtocol.kt`（提示词拼装、JSON 解析校验） | 已完成（`130f0a9`、`c238a94`） |
+| `ClarificationLedger.kt`（台账合并、用户操作优先） | 已完成（`cfa4334`） |
+| `ClarificationFlow.kt`（状态机：逐轮调查、重试、取消、生成结果） | 已完成（`a5fda26`、`c73aaeb`、`1cb3cff`） |
+| `ClarificationService.kt`（项目级服务：单次调用、取消、迁移、关闭清理、发送时机） | 已完成（`2100a35`） |
+| `ClarificationDialog.kt`（非模态窗口） | 已完成（`5de6d6f`） |
+| 横幅入口、右键菜单、`plugin.xml`、多语言文案 | 已完成（`47cf36a`、`5de6d6f`） |
+| 从 `PeerCoordinator` 抽出可复用的会话对话读取函数 | 已完成（`7d2511a`） |
+| 单元测试 | 已完成：1659 个用例，0 失败，0 错误（其中 clarification 包 62 个用例） |
+| `./gradlew test` | 通过：1659 tests, 0 failures, 0 errors, 0 skipped |
+| `./gradlew verifyPlugin` | 通过：IU-262.10315.125 Compatible（279 experimental API, 1 internal API）；IU-263.6800.24 Compatible（2 deprecated API, 279 experimental API, 1 internal API）。无 Compatibility problems，无 Critical findings |
+| `./gradlew runIde` 手动走通 | 待用户验证（未执行）。验证项：(1) 横幅「单次审查」旁出现「需求澄清」，右键菜单也有；(2) 输入需求→调查中进度→首轮同屏显示理解、方向、问题；(3) 选项确认→下一轮→跳过→默认结论；(4) 生成结果→可编辑→交给 Agent→发送时机与结对编程对齐→取消发送；(5) 中途关闭恢复、关标签页从头开始；(6) 横幅"不再提示"与结对编程共存 |
 
 ## 交给执行者决定的事项
 
