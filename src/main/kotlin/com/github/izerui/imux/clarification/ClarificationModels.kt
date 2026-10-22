@@ -1,20 +1,4 @@
-// ClarificationModels.kt
 package com.github.izerui.imux.clarification
-
-/** 方向的状态，见设计文档「方向状态」。 */
-internal enum class DirectionStatus { OPEN, ACTIVE, DECIDED, DEFAULTED, DROPPED }
-
-internal data class Direction(
-    val id: String,
-    val title: String,
-    val why: String,
-    val source: String,
-    /** 用户不回答时的默认处理，事先写明；用户没见过的默认，他也就没法拒绝。 */
-    val fallback: String,
-    val status: DirectionStatus = DirectionStatus.OPEN,
-    val conclusion: String? = null,
-    val openPoints: List<String> = emptyList(),
-)
 
 internal data class ChoiceOption(
     val id: String,
@@ -26,12 +10,15 @@ internal data class ChoiceOption(
 )
 
 internal data class Question(
-    val directionId: String,
+    /** 插件按这一批里的顺序编号（q1～q4），只用来对应草稿与回答。 */
+    val id: String,
     /** 短标签，显示在标签条上。 */
     val header: String,
     val text: String,
     val multiSelect: Boolean,
     val options: List<ChoiceOption>,
+    /** 不回答时按什么处理，事先写明；用户没见过的默认，他也就没法拒绝。 */
+    val fallback: String = "",
 )
 
 internal sealed interface Answer {
@@ -41,38 +28,61 @@ internal sealed interface Answer {
     /** 只写了"其他"的原话。 */
     data class OwnWords(val text: String) : Answer
 
-    /** 没有回答：按方向事先写明的默认处理。 */
+    /** 没有回答：按这一题事先写明的默认处理。 */
     data object Skipped : Answer
 }
 
-/** 一次问答；[recorded] 是记下的方向结论：选中选项的说明（及原话）、用户原话或不回答时的默认处理。 */
+/** 一次问答；[recorded] 是记下的内容：选中选项的说明（及原话）、用户原话或不回答时的默认处理。 */
 internal data class AnswerRecord(
     val question: Question,
     val answer: Answer,
     val recorded: String,
 )
 
-/** 插件持有的台账，每轮完整交给 Agent。 */
-internal data class Ledger(
+/**
+ * 插件这边记下的澄清：原需求、背景快照与用户提交过的全部回答。
+ * 对话的上下文由 Agent 自己记着；这里只用于界面上的已确认列表、失败时的兜底结果，
+ * 以及对话中断（取消、失败）后新开对话时的开场。
+ */
+internal data class ClarificationRecord(
     val requirement: String,
     val background: String?,
-    /** 模型首轮的复述，只作为之后各轮的背景，不在界面上显示。 */
-    val understanding: String? = null,
-    val directions: List<Direction> = emptyList(),
     val history: List<AnswerRecord> = emptyList(),
-    val notes: String = "",
-    /**
-     * 上一批里用户回答了（非不回答）、还等模型交代的方向，按回答顺序；
-     * 下一轮返回必须在 answered 里逐个交代它们，交代完（合并成功）清空。
-     */
-    val awaitingReport: List<String> = emptyList(),
-    val nextDirectionNumber: Int = 1,
 ) {
-    fun direction(id: String): Direction? = directions.firstOrNull { it.id == id }
-
-    fun replace(direction: Direction): Ledger =
-        copy(directions = directions.map { if (it.id == direction.id) direction else it })
+    /** 已确认 = 用户提交过的回答（含不回答时的默认处理），按提交顺序、去重。 */
+    fun confirmed(): List<String> = history.map { it.recorded.trim() }.filter(String::isNotEmpty).distinct()
 }
 
+/**
+ * 记下这一题的回答：选中选项的说明（多选按选项顺序，以"；"连接，再接上"其他"的原话）、
+ * 用户原话，或不回答时的默认处理。回答与题目对不上（选项不存在、单选选了多个、原话为空）时按不回答处理。
+ */
+internal fun answerRecord(question: Question, answer: Answer): AnswerRecord {
+    val text =
+        when (answer) {
+            is Answer.Picked -> {
+                val picked = question.options.filter { it.id in answer.optionIds }
+                val other = answer.other?.trim()?.takeIf(String::isNotEmpty)
+                val valid =
+                    picked.size == answer.optionIds.toSet().size && picked.isNotEmpty() &&
+                        (question.multiSelect || (picked.size == 1 && other == null))
+                if (valid) (picked.map { it.description } + listOfNotNull(other)).joinToString("；") else null
+            }
+            is Answer.OwnWords -> answer.text.trim().takeIf(String::isNotEmpty)
+            Answer.Skipped -> null
+        }
+    return if (text == null) AnswerRecord(question, Answer.Skipped, question.fallback) else AnswerRecord(question, answer, text)
+}
+
+/** 失败页「生成结果」不调用 Agent：原需求后面按顺序列出已确认的回答。 */
+internal fun composeFallback(record: ClarificationRecord): String =
+    buildString {
+        append(record.requirement.trim())
+        val confirmed = record.confirmed()
+        if (confirmed.isNotEmpty()) {
+            append("\n\n")
+            confirmed.forEach { append("- ").append(it).append('\n') }
+        }
+    }.trimEnd()
+
 internal const val MAX_BACKGROUND_CHARS = 8_000
-internal const val MAX_NOTES_CHARS = 6_000

@@ -3,12 +3,9 @@ package com.github.izerui.imux.clarification
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.agent.AgentMcpConfig
 import com.github.izerui.imux.agent.OneShotAgentTimeoutException
-import com.github.izerui.imux.agent.TrackedProcess
 import com.github.izerui.imux.agent.UnexitedProcesses
-import com.github.izerui.imux.agent.cleanupProcesses
-import com.github.izerui.imux.agent.oneShotAgentInvocation
-import com.github.izerui.imux.agent.runOneShotAgent
-import com.github.izerui.imux.agent.runTracked
+import com.github.izerui.imux.agent.agentConversation
+import com.github.izerui.imux.agent.conversationInvocation
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.overview.overviewProgressText
@@ -40,14 +37,13 @@ import java.awt.datatransfer.StringSelection
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicReference
 
 /**
- * 按会话保存需求澄清流程，负责调用单次 Agent、取消、会话 key 迁移、关闭清理与发送。
+ * 按会话保存需求澄清流程，负责开启与澄清 Agent 的对话、取消、会话 key 迁移、结束清理与发送。
  *
- * 任务挂在服务的作用域上：关闭窗口不打断在途一轮，重新打开时接着显示。
- * 关闭清理按标签页身份（tabId），与轨迹相同：`/clear`、`/new` 迁移后旧 key 已不在。
+ * 一次澄清 = 一段对话：点「开始澄清」时开始，关窗、「交给 Agent」发送成功、会话标签页关闭、项目关闭时结束
+ * （终止进程、删除 Codex 的会话文件、清空澄清状态）。不保留、不恢复。
+ * 标签页关闭按标签页身份（tabId）清理，与轨迹相同：`/clear`、`/new` 迁移后旧 key 已不在。
  */
 @Service(Service.Level.PROJECT)
 class ClarificationService(
@@ -86,7 +82,9 @@ class ClarificationService(
         return ClarificationFlow(
             chinese,
             loadGuidance(chinese),
-            runAgent = { prompt, onProgress -> runAgent(agentType, prompt, onProgress) },
+            openConversation = { openConversation(agentType) },
+            // 结束对话要等进程退出（最多几秒）：交给后台线程，关窗、取消不卡 EDT；项目关闭时服务作用域已取消，也照样执行
+            closeConversation = { conversation -> ApplicationManager.getApplication().executeOnPooledThread { conversation.close() } },
             classifyFailure = { e ->
                 if (e is OneShotAgentTimeoutException) FailureReason.TIMEOUT to e.timeoutSeconds.toString()
                 else FailureReason.AGENT_ERROR to (e.message ?: e.javaClass.simpleName)
@@ -107,22 +105,22 @@ class ClarificationService(
         val runId = flow.begin(requirement, null)
         launch(sessionKey, flow) {
             flow.attachBackground(runId, session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
-            flow.advance(runId)
+            flow.run(runId)
         }
     }
 
-    /** 提交这一批回答：一次写进台账，只发起一次调查。 */
+    /** 提交这一批回答：一次记下，在同一段对话里只发起一轮。 */
     internal fun submit(sessionKey: String, answers: Map<String, Answer>) {
         val flow = flows[sessionKey] ?: return
         val runId = flow.submitBatch(answers) ?: return
-        launch(sessionKey, flow) { flow.advance(runId) }
+        launch(sessionKey, flow) { flow.run(runId) }
     }
 
     /** 「够了，生成结果」：提问页里已填写的回答 [answers] 一并记下。 */
     internal fun finish(sessionKey: String, answers: Map<String, Answer>) {
         val flow = flows[sessionKey] ?: return
         val runId = flow.beginResult(answers) ?: return
-        launch(sessionKey, flow) { flow.generateResult(runId) }
+        launch(sessionKey, flow) { flow.run(runId) }
     }
 
     internal fun fallback(sessionKey: String) { flows[sessionKey]?.fallbackResult() }
@@ -130,20 +128,17 @@ class ClarificationService(
     internal fun continueClarifying(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
         val runId = flow.continueClarifying() ?: return
-        launch(sessionKey, flow) { flow.advance(runId) }
+        launch(sessionKey, flow) { flow.run(runId) }
     }
 
     internal fun retry(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
-        val (work, runId) = flow.retry() ?: return
-        when (work) {
-            PendingWork.ROUND -> launch(sessionKey, flow) { flow.advance(runId) }
-            PendingWork.RESULT -> launch(sessionKey, flow) { flow.generateResult(runId) }
-        }
+        val runId = flow.retry() ?: return
+        launch(sessionKey, flow) { flow.run(runId) }
     }
 
     internal fun cancel(sessionKey: String) {
-        // 先让流程作废这一轮，再中断任务：中断后 runAgent 若抛出被包装的异常，也只会被当作过期结果忽略
+        // 先让流程作废这一轮并结束对话，再中断任务：中断后 send 若抛出被包装的异常，也只会被当作过期结果忽略
         flows[sessionKey]?.cancelled()
         jobs.remove(sessionKey)?.cancel()
     }
@@ -168,7 +163,8 @@ class ClarificationService(
         }
     }
 
-    private fun runAgent(agentType: AgentType, prompt: String, onProgress: (String) -> Unit): String {
+    /** 开一段对话（还没启动进程，第一次发消息时才启动）。在 IO 线程调用：读 IDEA MCP 设置、可能写 Pi 的扩展脚本。 */
+    private fun openConversation(agentType: AgentType): ClarificationConversation {
         val projectPath = project.basePath ?: "."
         val shell =
             resolveShell(
@@ -176,23 +172,20 @@ class ClarificationService(
                 isWindows = SystemInfo.isWindows,
                 configuredShell = ApplicationManager.getApplication()?.let { TerminalLocalOptions.getInstance().shellPath },
             )
-        val invocation = oneShotAgentInvocation(shell, agentType, projectPath, AgentMcpConfig.configured(project, projectPath, agentType))
+        val mcp = AgentMcpConfig.configured(project, projectPath, agentType)
         unexited.retry()
-        val running = ConcurrentLinkedQueue<AtomicReference<TrackedProcess?>>()
-        return try {
-            runTracked(running) { processRef ->
-                runOneShotAgent(
-                    agentType,
-                    invocation,
-                    Path.of(projectPath),
-                    prompt,
-                    AGENT_TIMEOUT_SECONDS,
-                    processRef,
-                    onProgress = { event -> overviewProgressText(event)?.let(onProgress) },
-                )
-            }
-        } finally {
-            unexited.addAll(cleanupProcesses(running))
+        val conversation =
+            agentConversation(
+                agentType,
+                { resumeId -> conversationInvocation(shell, agentType, projectPath, mcp, resumeId) },
+                Path.of(projectPath),
+                AGENT_TIMEOUT_SECONDS,
+            )
+        return object : ClarificationConversation {
+            override fun send(message: String, onProgress: (String) -> Unit): String =
+                conversation.send(message) { event -> overviewProgressText(event)?.let(onProgress) }
+
+            override fun close() = unexited.addAll(conversation.close())
         }
     }
 
@@ -252,28 +245,29 @@ class ClarificationService(
         notification.notify(project)
     }
 
-    /** 窗口关闭只摘掉窗口，流程与在途一轮保留，重新打开时恢复。 */
+    /** 窗口关闭即结束澄清：残留的对话以后也用不上（是否确认由窗口在关闭前问过）。 */
     internal fun dialogClosed(sessionKey: String) {
+        // 先摘掉窗口：它正在关闭，discard 不能再去关它一次
         dialogs.remove(sessionKey)
+        discard(sessionKey)
     }
 
-    /** 发送成功：关窗并清空该会话的澄清状态。 */
+    /** 结束该会话的澄清：先作废在途一轮并结束对话，再中断任务、清空状态、关窗。可重复调用。 */
     private fun discard(sessionKey: String) {
+        flows.remove(sessionKey)?.end()
         jobs.remove(sessionKey)?.cancel()
-        flows.remove(sessionKey)
         owners.remove(sessionKey)
         dialogs.remove(sessionKey)?.close(com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE)
     }
 
     /**
-     * 会话标签页真正关闭：取消、清理、丢弃状态。结果页或发送中的需求还没送进终端，
+     * 会话标签页真正关闭：结束对话、丢弃状态。结果页或发送中的需求还没送进终端，
      * 丢弃前先通知并提供复制，否则这段文字就没了。
      */
     internal fun releaseOwner(tabId: String) {
         owners.filterValues { it == tabId }.keys.forEach { key ->
             val flow = flows[key]
             val undelivered = flow?.let { undeliveredRequirement(it.state) }
-            flow?.cancelled()
             discard(key)
             undelivered?.let(::notifyUndelivered)
         }
@@ -293,6 +287,7 @@ class ClarificationService(
     }
 
     override fun dispose() {
+        flows.values.forEach { it.end() }
         jobs.values.forEach { it.cancel() }
         // 项目关闭时窗口不会随之关闭，必须由服务收起
         dialogs.values.toList().forEach { it.close(com.intellij.openapi.ui.DialogWrapper.CANCEL_EXIT_CODE) }

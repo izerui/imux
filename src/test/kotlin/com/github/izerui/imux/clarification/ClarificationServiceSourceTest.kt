@@ -11,10 +11,36 @@ class ClarificationServiceSourceTest {
     private val source = SourceCode("src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt")
 
     @Test
-    fun `单次调用沿用轨迹的调用方式与超时`() {
-        assertTrue(source.normalized.contains("oneShotAgentInvocation("))
-        assertTrue(source.normalized.contains("runOneShotAgent("))
+    fun `澄清用一段持续对话，权限与 IDEA MCP 沿用单次调用的配置，每轮超时 600 秒`() {
+        val open = source.bodyAfter("private fun openConversation(", '{')
+        assertTrue("持续对话的命令", open.contains("conversationInvocation(shell, agentType, projectPath, mcp, resumeId)"))
+        assertTrue("按智能体选对话方式", open.contains("agentConversation("))
+        assertTrue("IDEA MCP 按设置注入", open.contains("AgentMcpConfig.configured(project, projectPath, agentType)"))
         assertTrue(source.normalized.contains("AGENT_TIMEOUT_SECONDS = 600L"))
+        assertFalse("不再每轮新起单次调用", source.normalized.contains("runOneShotAgent("))
+        assertFalse("不再每轮新起单次调用", source.normalized.contains("oneShotAgentInvocation("))
+    }
+
+    @Test
+    fun `结束对话交给后台线程，关窗与取消不在 EDT 上等进程退出`() {
+        val flow = source.bodyAfter("private fun newFlow(", '{')
+        assertTrue(flow.contains("closeConversation = { conversation -> ApplicationManager.getApplication().executeOnPooledThread { conversation.close() } }"))
+    }
+
+    @Test
+    fun `关窗即结束澄清`() {
+        val closed = source.bodyAfter("internal fun dialogClosed(", '{')
+        val remove = closed.indexOf("dialogs.remove(sessionKey)")
+        assertTrue("先摘掉正在关闭的窗口，免得再关它一次", remove >= 0)
+        assertTrue("再结束澄清", closed.indexOf("discard(sessionKey)") > remove)
+    }
+
+    @Test
+    fun `项目关闭时结束全部对话再取消任务`() {
+        val dispose = source.bodyAfter("override fun dispose()", '{')
+        val end = dispose.indexOf("flows.values.forEach { it.end() }")
+        assertTrue("结束全部对话", end >= 0)
+        assertTrue("先结束对话再取消任务", end < dispose.indexOf("jobs.values.forEach { it.cancel() }"))
     }
 
     @Test
@@ -52,16 +78,16 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
-    fun `取消与关闭清理都先作废本轮再取消任务`() {
+    fun `取消与结束澄清都先作废本轮再取消任务`() {
         val cancel = source.bodyAfter("internal fun cancel(", '{')
         val cancelledIdx = cancel.indexOf(".cancelled()")
         val cancelJobIdx = cancel.indexOf("?.cancel()")
         assertTrue("cancel() 必须先调 cancelled()", cancelledIdx >= 0 && cancelledIdx < cancelJobIdx)
 
-        val release = source.bodyAfter("internal fun releaseOwner(", '{')
-        val relCancelledIdx = release.indexOf(".cancelled()")
-        assertTrue("releaseOwner() 必须先调 cancelled()", relCancelledIdx >= 0)
-        // releaseOwner 通过 discard 间接取消任务，自身不含 ?.cancel()
+        val discard = source.bodyAfter("private fun discard(", '{')
+        val endIdx = discard.indexOf("flows.remove(sessionKey)?.end()")
+        assertTrue("discard() 必须先结束流程的对话再取消任务", endIdx >= 0 && endIdx < discard.indexOf("jobs.remove(sessionKey)?.cancel()"))
+        assertTrue("标签页关闭经 discard 清理", source.bodyAfter("internal fun releaseOwner(", '{').contains("discard(key)"))
     }
 
     @Test
@@ -112,12 +138,12 @@ class ClarificationServiceSourceTest {
         val submit = source.bodyAfter("internal fun submit(", '{')
         assertTrue(submit.contains("flow.submitBatch(answers)"))
         assertEquals("只登记一个调查任务", 1, Regex("launch\\(").findAll(submit).count())
-        assertTrue(submit.contains("flow.advance(runId)"))
+        assertTrue(submit.contains("flow.run(runId)"))
     }
 
     @Test
-    fun `删掉的方向操作与重新开始不再出现`() {
-        for (gone in listOf("fun answer(", "fun skip(", "fun pin(", "fun reopen(", "fun addDirection(", "fun restart(", "agentTypes")) {
+    fun `删掉的方向操作、重新开始与每轮单次调用不再出现`() {
+        for (gone in listOf("fun answer(", "fun skip(", "fun pin(", "fun reopen(", "fun addDirection(", "fun restart(", "agentTypes", "runAgent(", "advance(", "generateResult(")) {
             assertFalse("不再有 $gone", source.normalized.contains(gone))
         }
     }

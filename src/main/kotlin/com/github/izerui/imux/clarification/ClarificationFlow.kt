@@ -10,7 +10,7 @@ internal sealed interface ClarificationState {
 
     /**
      * 这一批 1～4 个问题。回答先留在窗口里（草稿），可以来回修改；
-     * 用户提交（[ClarificationFlow.submitBatch]）时一次写进台账，才发起下一次调查。
+     * 用户提交（[ClarificationFlow.submitBatch]）时一次记下，才把回答发给 Agent。
      */
     data class Asking(val batch: List<Question>) : ClarificationState
 
@@ -27,33 +27,51 @@ internal enum class FailureReason { CANCELLED, TIMEOUT, AGENT_ERROR, PROTOCOL }
 internal enum class PendingWork { ROUND, RESULT }
 
 /**
- * 一个会话的澄清流程。状态读写都在 [lock] 内；[advance] 与 [generateResult] 阻塞地调用 Agent，
- * 只在 IO 线程调用。调查期间台账只有 Agent 的返回会改，用户能做的只有取消与「够了，生成结果」。
+ * 与澄清 Agent 的一段持续对话（流程这一侧看到的样子）：[send] 发一条消息并阻塞到这一轮结束，返回回答；
+ * [close] 结束对话（终止进程、清理会话文件）。实现由服务按当前会话的智能体提供。
+ */
+internal interface ClarificationConversation {
+    fun send(message: String, onProgress: (String) -> Unit): String
+
+    fun close()
+}
+
+/**
+ * 一个会话的澄清流程：整个澄清只用一段对话。开始时发开场（指南、规则、需求、背景、格式），
+ * 之后每次只发这一批的回答，Agent 带着已有的上下文接着做；回复不合格式时在同一段对话里把错误发回一次。
  *
- * [generation] 在每次开始调查、取消时递增：Agent 返回时若它已变，说明这一轮已被取消或被新一轮取代，结果丢弃。
+ * 对话中断（取消、失败、调查中点「够了」）时结束它；之后重试、继续或生成结果都新开一段对话，
+ * 以原需求与已确认的问答（[record]）作为开场接着做。
+ *
+ * 状态读写都在 [lock] 内；[run] 阻塞地等 Agent，只在 IO 线程调用。[generation] 在每次开始调查、取消、结束时递增：
+ * Agent 返回时若它已变，说明这一轮已被取消或被新一轮取代，结果丢弃。
  */
 internal class ClarificationFlow(
     private val isChinese: Boolean,
     private val guidance: String,
-    private val runAgent: (prompt: String, onProgress: (String) -> Unit) -> String,
+    private val openConversation: () -> ClarificationConversation,
+    /** 结束一段对话；服务把它交给后台线程，调用方（常在 EDT 上）不等进程退出。 */
+    private val closeConversation: (ClarificationConversation) -> Unit = ClarificationConversation::close,
     private val classifyFailure: (Throwable) -> Pair<FailureReason, String> = { FailureReason.AGENT_ERROR to (it.message ?: it.javaClass.simpleName) },
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val lock = Any()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
-    private var phase = Phase.FIRST
     private var pending = PendingWork.ROUND
     private var generation = 0L
+    private var conversation: ClarificationConversation? = null
 
-    @Volatile var ledger: Ledger = Ledger("", null)
+    /** 下一轮要在现有对话里发的消息；对话为空（还没开始或已中断）时改发开场。 */
+    private var outgoing: String? = null
+
+    @Volatile var record: ClarificationRecord = ClarificationRecord("", null)
         private set
 
     @Volatile var state: ClarificationState = ClarificationState.Input
         private set
 
     /**
-     * 当前这一批还没提交的回答，由窗口（EDT）读写；窗口关了再打开时接着用。
-     * 只是界面状态，不进台账、不通知监听者。
+     * 当前这一批还没提交的回答，由窗口（EDT）读写；只是界面状态，不进记录、不通知监听者。
      */
     @Volatile var drafts: BatchDrafts? = null
 
@@ -63,107 +81,172 @@ internal class ClarificationFlow(
 
     private fun changed() = listeners.forEach { it() }
 
-    private fun investigate(work: PendingWork): Long {
+    private fun investigate(work: PendingWork, message: String?): Long {
         generation++
         pending = work
+        outgoing = message
         state = ClarificationState.Investigating(null, clock(), generation)
         return generation
     }
 
+    /** 摘下当前对话；调用方出锁后交给 [closeConversation]。 */
+    private fun detachLocked(): ClarificationConversation? {
+        val current = conversation
+        conversation = null
+        outgoing = null
+        return current
+    }
+
+    private fun stale(runId: Long) = runId != generation || state !is ClarificationState.Investigating
+
     fun begin(requirement: String, background: String?): Long {
         val runId: Long
+        val old: ClarificationConversation?
         synchronized(lock) {
-            ledger = Ledger(requirement.trim(), background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
-            phase = Phase.FIRST
-            runId = investigate(PendingWork.ROUND)
+            old = detachLocked()
+            record = ClarificationRecord(requirement.trim(), background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
+            runId = investigate(PendingWork.ROUND, null)
         }
+        old?.let(closeConversation)
         changed()
         return runId
     }
 
-    /** 背景快照在 IO 线程读取，读完后、调用 Agent 之前补进台账。忽略已过期的 runId。 */
+    /** 背景快照在 IO 线程读取，读完后、发开场之前补进记录。忽略已过期的 runId。 */
     fun attachBackground(runId: Long, background: String?) {
         synchronized(lock) {
-            if (runId != generation || state !is ClarificationState.Investigating) return
-            ledger = ledger.copy(background = background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
+            if (stale(runId)) return
+            record = record.copy(background = background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
         }
     }
 
     /**
-     * 提交这一批：[answers] 按方向 ID 给出回答，按这一批的顺序一次写进台账，没给出的题按不回答处理；
-     * 然后发起一次调查，返回它的 runId。不在提问页时返回 null。
+     * 提交这一批：[answers] 按题目 ID 给出回答，没给出的题按不回答处理；按这一批的顺序记下，
+     * 然后发起一轮调查（在同一段对话里只发这一批的回答），返回它的 runId。不在提问页时返回 null。
      */
     fun submitBatch(answers: Map<String, Answer>): Long? {
         val runId: Long
         synchronized(lock) {
             val asking = state as? ClarificationState.Asking ?: return null
-            for (question in asking.batch) ledger = ledger.recordAnswer(question, answers[question.directionId] ?: Answer.Skipped)
-            // 草稿随提交作废：之后同一方向出现一模一样的问题时，不能把这次的回答当成新的草稿带回来
+            val batch = asking.batch.map { answerRecord(it, answers[it.id] ?: Answer.Skipped) }
+            record = record.copy(history = record.history + batch)
+            // 草稿随提交作废：之后出现一模一样的问题时，不能把这次的回答当成新的草稿带回来
             drafts = null
-            phase = Phase.ROUND
-            runId = investigate(PendingWork.ROUND)
+            runId = investigate(PendingWork.ROUND, conversation?.let { answersMessage(batch, isChinese) })
         }
         changed()
         return runId
     }
 
-    /** 一轮调查：调用 Agent、合并；返回不符合协议（含问题针对的方向不合规）时附上错误重新调用一次，仍不合格进入失败。 */
-    fun advance(runId: Long) {
-        var feedback = emptyList<String>()
-        var retried = false
+    /**
+     * 一轮：发消息（没有对话时先开一段并发开场），等回复。回复不合协议时在同一段对话里把错误发回重答一次，
+     * 仍不合格进入失败；Agent 出错或超时也进入失败。失败时结束这段对话。
+     */
+    fun run(runId: Long) {
+        var corrected = false
         while (true) {
-            val prompt =
-                synchronized(lock) {
-                    if (runId != generation || state !is ClarificationState.Investigating) return
-                    clarificationPrompt(phase, ledger, isChinese, guidance, feedback)
-                }
-            val raw: String
-            try {
-                raw = runAgent(prompt) { text -> progress(runId, text) }
-            } catch (e: Throwable) {
-                rethrowIfCancellation(e)
-                synchronized(lock) {
-                    if (runId != generation || state !is ClarificationState.Investigating) return
-                    val (reason, detail) = classifyFailure(e)
-                    state = ClarificationState.Failed(reason, detail, null)
-                }
-                changed()
-                return
+            var conv: ClarificationConversation?
+            var message: String?
+            synchronized(lock) {
+                if (stale(runId)) return
+                conv = conversation
+                message = outgoing
             }
-            val again: List<String>? =
+            if (conv == null || message == null) {
+                // 开对话可能要读设置、写扩展脚本：不在锁内做
+                val created =
+                    try {
+                        openConversation()
+                    } catch (e: Throwable) {
+                        rethrowIfCancellation(e)
+                        fail(runId, null, e)
+                        return
+                    }
+                var replaced: ClarificationConversation? = null
+                val opening: String? =
+                    synchronized(lock) {
+                        if (stale(runId)) {
+                            null
+                        } else {
+                            replaced = detachLocked()
+                            conversation = created
+                            openingMessage(record, isChinese, guidance, finishNow = pending == PendingWork.RESULT)
+                        }
+                    }
+                replaced?.let(closeConversation)
+                if (opening == null) {
+                    closeConversation(created)
+                    return
+                }
+                conv = created
+                message = opening
+            }
+            val current = conv
+            val raw =
+                try {
+                    current.send(message) { text -> progress(runId, text) }
+                } catch (e: Throwable) {
+                    rethrowIfCancellation(e)
+                    fail(runId, current, e)
+                    return
+                }
+            var dropped: ClarificationConversation? = null
+            val again: Boolean =
                 synchronized(lock) {
-                    if (runId != generation) return
-                    val outcome =
-                        try {
-                            ledger.merge(parseRoundResponse(raw))
-                        } catch (e: ProtocolException) {
-                            MergeOutcome(ledger, null, e.errors)
-                        }
+                    if (stale(runId)) return
+                    val errors = accept(raw)
                     when {
-                        outcome.errors.isEmpty() -> {
-                            ledger = outcome.ledger
-                            phase = Phase.ROUND
-                            state =
-                                when (val next = outcome.next!!) {
-                                    is MergedNext.Ask -> ClarificationState.Asking(next.questions)
-                                    is MergedNext.Done -> ClarificationState.Result(next.requirement)
-                                }
-                            null
+                        errors.isEmpty() -> false
+                        corrected -> {
+                            state = ClarificationState.Failed(FailureReason.PROTOCOL, errors.joinToString("\n"), raw)
+                            dropped = detachLocked()
+                            false
                         }
-                        retried -> {
-                            state = ClarificationState.Failed(FailureReason.PROTOCOL, outcome.errors.joinToString("\n"), raw)
-                            null
+                        else -> {
+                            outgoing = correctionMessage(errors, isChinese)
+                            true
                         }
-                        else -> outcome.errors
                     }
                 }
-            if (again == null) {
+            if (!again) {
+                dropped?.let(closeConversation)
                 changed()
                 return
             }
-            feedback = again
-            retried = true
+            corrected = true
         }
+    }
+
+    /** 在锁内：解析并接受回复，返回协议错误（空表示已进入提问页或结果页）。 */
+    private fun accept(raw: String): List<String> {
+        val reply =
+            try {
+                parseReply(raw)
+            } catch (e: ProtocolException) {
+                return e.errors
+            }
+        if (pending == PendingWork.RESULT && reply is AgentReply.Ask) {
+            return listOf("the user asked for the result now; reply with {\"type\": \"done\", \"requirement\": \"...\"}")
+        }
+        outgoing = null
+        state =
+            when (reply) {
+                is AgentReply.Ask -> ClarificationState.Asking(reply.questions)
+                is AgentReply.Done -> ClarificationState.Result(reply.requirement)
+            }
+        return emptyList()
+    }
+
+    private fun fail(runId: Long, failed: ClarificationConversation?, error: Throwable) {
+        val dropped: ClarificationConversation?
+        synchronized(lock) {
+            if (stale(runId)) return
+            val (reason, detail) = classifyFailure(error)
+            state = ClarificationState.Failed(reason, detail, null)
+            dropped = if (conversation === failed || failed == null) detachLocked() else null
+        }
+        dropped?.let(closeConversation)
+        changed()
     }
 
     /** 「够了，生成结果」在提问页与一轮调查进行中可用；正在生成结果、输入、结果页、发送中不可用。 */
@@ -178,94 +261,64 @@ internal class ClarificationFlow(
         }
 
     /**
-     * 开始生成结果；不可生成时返回 null。调查进行中调用时，递增的 runId 让在途一轮的返回作废。
-     * 在提问页调用时先记下 [answers]（这一批里已填写的回答），没填写的不记、其方向回到 OPEN，之后仍可被问。
+     * 开始生成结果；不可生成时返回 null。
+     * 在提问页调用时先记下 [answers]（这一批里已填写的回答，没填写的不记），在同一段对话里要求现在给出结果；
+     * 调查进行中调用时，这一轮的回复不再等：结束这段对话，新开一段，以已确认的问答为开场要求直接给出结果。
      */
     fun beginResult(answers: Map<String, Answer> = emptyMap()): Long? {
         val runId: Long
+        var dropped: ClarificationConversation? = null
         synchronized(lock) {
             if (!canFinishLocked()) return null
-            recordFilled(answers)
-            ledger = ledger.releaseUnanswered()
-            runId = investigate(PendingWork.RESULT)
+            val message: String?
+            when (val s = state) {
+                is ClarificationState.Asking -> {
+                    val filled = s.batch.mapNotNull { q -> answers[q.id]?.let { answerRecord(q, it) } }
+                    record = record.copy(history = record.history + filled)
+                    drafts = null
+                    message = conversation?.let { finishMessage(filled, isChinese) }
+                }
+                else -> {
+                    dropped = detachLocked()
+                    message = null
+                }
+            }
+            runId = investigate(PendingWork.RESULT, message)
         }
+        dropped?.let(closeConversation)
         changed()
         return runId
-    }
-
-    fun generateResult(runId: Long) {
-        var feedback = emptyList<String>()
-        repeat(2) { attempt ->
-            val prompt =
-                synchronized(lock) {
-                    if (runId != generation || state !is ClarificationState.Investigating) return
-                    clarificationPrompt(Phase.RESULT, ledger, isChinese, guidance, feedback)
-                }
-            val raw: String
-            try {
-                raw = runAgent(prompt) { text -> progress(runId, text) }
-            } catch (e: Throwable) {
-                rethrowIfCancellation(e)
-                synchronized(lock) {
-                    if (runId != generation || state !is ClarificationState.Investigating) return
-                    val (reason, detail) = classifyFailure(e)
-                    state = ClarificationState.Failed(reason, detail, null)
-                }
-                changed()
-                return
-            }
-            synchronized(lock) {
-                if (runId != generation) return
-                try {
-                    state = ClarificationState.Result(parseRequirementResponse(raw))
-                } catch (e: ProtocolException) {
-                    if (attempt == 1) state = ClarificationState.Failed(FailureReason.PROTOCOL, e.errors.joinToString("\n"), raw)
-                    feedback = e.errors
-                }
-            }
-            if (state !is ClarificationState.Investigating) {
-                changed()
-                return
-            }
-        }
-    }
-
-    private fun recordFilled(answers: Map<String, Answer>) {
-        val asking = state as? ClarificationState.Asking ?: return
-        for (question in asking.batch) answers[question.directionId]?.let { ledger = ledger.recordAnswer(question, it) }
     }
 
     fun fallbackResult() {
         synchronized(lock) {
+            if (state !is ClarificationState.Failed) return
             generation++
-            ledger = ledger.releaseUnanswered()
-            state = ClarificationState.Result(composeFallback(ledger))
+            state = ClarificationState.Result(composeFallback(record))
         }
         changed()
     }
 
+    /** 看过结果后继续：对话还在就在其中接着问，否则（兜底结果）新开一段。 */
     fun continueClarifying(): Long? {
-        val runId: Long?
+        val runId: Long
         synchronized(lock) {
             if (state !is ClarificationState.Result) return null
-            ledger = ledger.releaseUnanswered()
-            phase = Phase.ROUND
-            runId = investigate(PendingWork.ROUND)
+            runId = investigate(PendingWork.ROUND, conversation?.let { continueMessage(isChinese) })
         }
         changed()
         return runId
     }
 
-    /** 从失败状态重试失败的那一步；不在失败状态返回 null。 */
-    fun retry(): Pair<PendingWork, Long>? {
-        val result: Pair<PendingWork, Long>
+    /** 从失败状态重试失败的那一步：对话已在失败时结束，新开一段并以已确认的问答为开场。不在失败状态返回 null。 */
+    fun retry(): Long? {
+        val runId: Long
         synchronized(lock) {
             if (state !is ClarificationState.Failed) return null
-            val runId = investigate(pending)
-            result = pending to runId
+            runId = investigate(pending, null)
         }
         changed()
-        return result
+        return runId
     }
 
     fun progress(runId: Long, text: String) {
@@ -277,14 +330,27 @@ internal class ClarificationFlow(
         changed()
     }
 
-    /** 只在调查进行中生效：刚到的问题或结果不会被一次晚到的取消点击盖掉。 */
+    /** 只在调查进行中生效：刚到的问题或结果不会被一次晚到的取消点击盖掉。结束这段对话，已确认的问答保留。 */
     fun cancelled() {
+        val dropped: ClarificationConversation?
         synchronized(lock) {
             if (state !is ClarificationState.Investigating) return
             generation++
             state = ClarificationState.Failed(FailureReason.CANCELLED, "", null)
+            dropped = detachLocked()
         }
+        dropped?.let(closeConversation)
         changed()
+    }
+
+    /** 澄清结束（关窗、发送成功、标签页或项目关闭）：作废在途一轮并结束对话。 */
+    fun end() {
+        val dropped: ClarificationConversation?
+        synchronized(lock) {
+            generation++
+            dropped = detachLocked()
+        }
+        dropped?.let(closeConversation)
     }
 
     fun editResult(text: String) {

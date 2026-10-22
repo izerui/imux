@@ -24,7 +24,7 @@ import javax.swing.Timer
 /**
  * 需求澄清窗口：内容由 [ClarificationView] 构建，全部按钮放在 DialogWrapper 原生的底部按钮栏，
  * 按 [buttonBar] 只显示与当前状态相关的按钮并切换默认按钮。
- * 非模态，打开期间仍可看代码、操作终端；关闭不中断在途一轮。
+ * 非模态，打开期间仍可看代码、操作终端；关闭即结束这次澄清（已有回答或未发送的结果时先确认一次）。
  *
  * 流程的通知经 [RenderCoalescer] 合并：任意多次通知最多排一次 EDT 渲染。
  */
@@ -46,7 +46,7 @@ internal class ClarificationDialog(
     private var lastBar: ButtonBar? = null
     private var shown: ClarificationState = ClarificationState.Input
     private var shownCanFinish = false
-    private var shownLedger: Ledger = flow.ledger
+    private var shownRecord: ClarificationRecord = flow.record
 
     init {
         this.title = ImuxBundle.message("clarify.dialog.title", title)
@@ -86,6 +86,21 @@ internal class ClarificationDialog(
         return Dimension(width, initialHeight(content, restOfWindow))
     }
 
+    /** 关闭（按钮、Esc、窗口关闭）会结束澄清：已有回答或未发送的结果时先确认一次，以本对话框为父组件。 */
+    override fun doCancelAction() {
+        if (closeNeedsConfirmation(flow.state, flow.record, view.answers().isNotEmpty())) {
+            val choice =
+                Messages.showYesNoDialog(
+                    contentPane,
+                    ImuxBundle.message("clarify.close.confirm"),
+                    ImuxBundle.message("clarify.close.confirm.title"),
+                    Messages.getQuestionIcon(),
+                )
+            if (choice != Messages.YES) return
+        }
+        super.doCancelAction()
+    }
+
     override fun dispose() {
         elapsedTimer.stop()
         flow.removeListener(listener)
@@ -95,10 +110,10 @@ internal class ClarificationDialog(
 
     private fun render() {
         shown = flow.state
-        shownLedger = flow.ledger
+        shownRecord = flow.record
         shownCanFinish = flow.canFinish
         val wasInput = view.isShowingInput()
-        view.render(shown, shownLedger, shownCanFinish, shownLedger.requirement)
+        view.render(shown, shownRecord, shownCanFinish, shownRecord.requirement)
         if (shown is ClarificationState.Input && !wasInput) checkBackground()
         updateButtons()
     }
@@ -112,7 +127,7 @@ internal class ClarificationDialog(
 
     /** 按钮栏只在可见按钮或默认按钮变了时才动。 */
     private fun updateButtons() {
-        val bar = buttonBar(shown, shownCanFinish, shownLedger, view.askingPage())
+        val bar = buttonBar(shown, shownCanFinish, shownRecord, view.askingPage())
         if (bar == lastBar) return
         lastBar = bar
         val visible = (bar.left + bar.right).toSet()
@@ -219,6 +234,10 @@ internal class RenderCoalescer(private val schedule: (Runnable) -> Unit, private
 internal const val MIN_INITIAL_HEIGHT = 360
 internal const val MAX_INITIAL_HEIGHT = 520
 
+/** 关闭会丢掉的东西：提交过的回答、这一批已填写的回答、未发送的结果（结果页或发送中）。 */
+internal fun closeNeedsConfirmation(state: ClarificationState, record: ClarificationRecord, hasFilledAnswers: Boolean): Boolean =
+    record.history.isNotEmpty() || hasFilledAnswers || state is ClarificationState.Result || state is ClarificationState.Sending
+
 /** 初始高度：内容高度加窗口其余部分，限制在 [MIN_INITIAL_HEIGHT]～[MAX_INITIAL_HEIGHT]（缩放后）。 */
 internal fun initialHeight(contentHeight: Int, restOfWindow: Int): Int =
     (contentHeight + restOfWindow).coerceIn(JBUI.scale(MIN_INITIAL_HEIGHT), JBUI.scale(MAX_INITIAL_HEIGHT))
@@ -247,12 +266,12 @@ internal enum class BarButton(val labelKey: String) {
 internal data class ButtonBar(val left: List<BarButton>, val right: List<BarButton>, val default: BarButton?)
 
 /** 状态 → 按钮栏。只给出与当前状态相关的按钮（隐藏而不是禁用）；提问页的主按钮取决于停在哪一页。 */
-internal fun buttonBar(state: ClarificationState, canFinish: Boolean, ledger: Ledger, page: AskingPage?): ButtonBar =
+internal fun buttonBar(state: ClarificationState, canFinish: Boolean, record: ClarificationRecord, page: AskingPage?): ButtonBar =
     when (state) {
         ClarificationState.Input -> ButtonBar(emptyList(), listOf(BarButton.CLOSE, BarButton.START), BarButton.START)
         is ClarificationState.Investigating ->
             ButtonBar(
-                if (investigationKind(canFinish, ledger) == InvestigationKind.ROUND) listOf(BarButton.FINISH) else emptyList(),
+                if (investigationKind(canFinish, record) == InvestigationKind.ROUND) listOf(BarButton.FINISH) else emptyList(),
                 listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION),
                 null,
             )

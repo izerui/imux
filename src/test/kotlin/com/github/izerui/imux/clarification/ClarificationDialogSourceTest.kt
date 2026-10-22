@@ -26,7 +26,7 @@ class ClarificationDialogSourceTest {
     @Test
     fun `按钮栏只在变化时更新，隐藏而不是禁用，并切换默认按钮`() {
         val update = dialog.bodyAfter("private fun updateButtons()", '{')
-        assertTrue("按状态、流程的 canFinish 与提问页所在页决定", update.contains("buttonBar(shown, shownCanFinish, shownLedger, view.askingPage())"))
+        assertTrue("按状态、流程的 canFinish 与提问页所在页决定", update.contains("buttonBar(shown, shownCanFinish, shownRecord, view.askingPage())"))
         assertTrue("没变就不动", update.contains("if (bar == lastBar) return"))
         assertTrue("隐藏而不是禁用", update.contains(".isVisible = button in visible"))
         assertFalse("不靠禁用按钮表达不可用", update.contains("isEnabled"))
@@ -75,7 +75,7 @@ class ClarificationDialogSourceTest {
     }
 
     @Test
-    fun `草稿存在流程上，窗口关了再开仍在`() {
+    fun `草稿存在流程上，重建提问页时接着用`() {
         assertTrue(dialog.normalized.contains("flow.drafts?.takeIf { it.batch == batch } ?: BatchDrafts(batch).also { flow.drafts = it }"))
     }
 
@@ -84,6 +84,16 @@ class ClarificationDialogSourceTest {
         val perform = dialog.bodyAfter("private fun perform(", '{')
         assertTrue(perform.contains("BarButton.SUBMIT -> service.submit(sessionKey, view.answers())"))
         assertTrue(perform.contains("BarButton.FINISH -> service.finish(sessionKey, view.answers())"))
+    }
+
+    @Test
+    fun `关闭前只在会丢掉回答或结果时确认一次，弹窗以对话框为父组件`() {
+        val cancel = dialog.bodyAfter("override fun doCancelAction()", '{')
+        assertTrue("按状态、记录与已填写的回答判断", cancel.contains("closeNeedsConfirmation(flow.state, flow.record, view.answers().isNotEmpty())"))
+        assertTrue("以对话框为父组件", cancel.contains("Messages.showYesNoDialog("))
+        assertTrue("以对话框为父组件", cancel.contains("contentPane,"))
+        assertTrue("不确认就不关", cancel.contains("if (choice != Messages.YES) return"))
+        assertTrue("确认后照常关闭", cancel.contains("super.doCancelAction()"))
     }
 
     @Test

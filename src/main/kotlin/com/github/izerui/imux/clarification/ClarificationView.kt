@@ -87,14 +87,14 @@ internal class DraftAnswer {
 
 /** 一批问题的草稿与当前标签（0..n-1 是各题，n 是提交页）。只在 EDT 上读写。 */
 internal class BatchDrafts(val batch: List<Question>) {
-    val answers: Map<String, DraftAnswer> = batch.associate { it.directionId to DraftAnswer() }
+    val answers: Map<String, DraftAnswer> = batch.associate { it.id to DraftAnswer() }
     var tab = 0
 
-    fun draftOf(question: Question): DraftAnswer = answers.getValue(question.directionId)
+    fun draftOf(question: Question): DraftAnswer = answers.getValue(question.id)
 
-    /** 已填写的回答，按方向 ID；没填写的不在其中。 */
+    /** 已填写的回答，按题目 ID；没填写的不在其中。 */
     fun filled(): Map<String, Answer> =
-        batch.mapNotNull { q -> draftOf(q).toAnswer(q)?.let { q.directionId to it } }.toMap()
+        batch.mapNotNull { q -> draftOf(q).toAnswer(q)?.let { q.id to it } }.toMap()
 
     val page: AskingPage
         get() =
@@ -110,7 +110,7 @@ internal class BatchDrafts(val batch: List<Question>) {
 internal enum class AskingPage { SINGLE, QUESTION, LAST_QUESTION, REVIEW }
 
 /**
- * 需求澄清窗口的内容区：只依据（状态、台账）构建与更新组件，不依赖 Project 与服务，
+ * 需求澄清窗口的内容区：只依据（状态、澄清记录）构建与更新组件，不依赖 Project 与服务，
  * 底部按钮由对话框按 [buttonBar] 显示。
  *
  * 不反复渲染：头部（需求与已确认）只在内容变化时重建；中间区域只在 [needsCenterRebuild] 为真时重建，
@@ -149,7 +149,6 @@ internal class ClarificationView(
 
     private var headerKey: Any? = null
     private var renderedState: ClarificationState? = null
-    private var renderedLedger: Ledger? = null
 
     // ---- 各页保持的组件，供对话框读取输入与就地更新 ----
     private var inputArea: JBTextArea? = null
@@ -188,12 +187,11 @@ internal class ClarificationView(
 
     fun render(
         state: ClarificationState,
-        ledger: Ledger,
+        record: ClarificationRecord,
         canFinish: Boolean,
         inputPrefill: String,
     ) {
-        renderedLedger = ledger
-        renderHeader(state, ledger)
+        renderHeader(state, record)
         val old = renderedState
         renderedState = state
         if (!needsCenterRebuild(old, state)) {
@@ -205,7 +203,7 @@ internal class ClarificationView(
         val page =
             when (state) {
                 ClarificationState.Input -> inputPage(inputPrefill)
-                is ClarificationState.Investigating -> investigatingPage(state, investigationKind(canFinish, ledger))
+                is ClarificationState.Investigating -> investigatingPage(state, investigationKind(canFinish, record))
                 is ClarificationState.Asking -> askingPage(state)
                 is ClarificationState.Result -> resultPage(state.requirement)
                 is ClarificationState.Sending -> sendingPage(state)
@@ -299,15 +297,15 @@ internal class ClarificationView(
 
     // ---- 头部：需求一行 + 已确认 ----
 
-    private fun renderHeader(state: ClarificationState, ledger: Ledger) {
+    private fun renderHeader(state: ClarificationState, record: ClarificationRecord) {
         val shown = state is ClarificationState.Investigating || state is ClarificationState.Asking || state is ClarificationState.Failed
-        val confirmed = if (shown) ledger.confirmedConclusions() else emptyList()
-        val key: Any = if (shown) ledger.requirement to confirmed else Unit
+        val confirmed = if (shown) record.confirmed() else emptyList()
+        val key: Any = if (shown) record.requirement to confirmed else Unit
         if (key == headerKey) return
         headerKey = key
         headerRebuilds++
         header.removeAll()
-        if (shown) header.add(headerPanel(ledger.requirement, confirmed), BorderLayout.CENTER)
+        if (shown) header.add(headerPanel(record.requirement, confirmed), BorderLayout.CENTER)
         header.revalidate()
         header.repaint()
     }
@@ -505,7 +503,7 @@ internal class ClarificationView(
         all.forEachIndexed { i, button -> installOptionKeys(button, all, i, choosesOnEnter = !multi) }
         options = OptionWidgets(buttons, otherButton, otherField)
 
-        val fallback = renderedLedger?.direction(question.directionId)?.fallback.orEmpty()
+        val fallback = question.fallback
         return panel {
             row { text(html(question.text), MAX_LINE_LENGTH_WORD_WRAP).bold().resizableColumn().align(AlignX.FILL) }
             // 单选题放进 UI DSL 的按钮组（互斥由它负责），多选题是独立的复选框
@@ -542,8 +540,7 @@ internal class ClarificationView(
                     if (answer != null) {
                         text(html(answerSummary(q, answer)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL)
                     } else {
-                        val fallback = renderedLedger?.direction(q.directionId)?.fallback.orEmpty()
-                        comment(html(messages.get("clarify.review.unanswered", fallback)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL)
+                        comment(html(messages.get("clarify.review.unanswered", q.fallback)), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL)
                     }
                 }.layout(RowLayout.PARENT_GRID)
             }
@@ -681,11 +678,11 @@ internal class ClarificationView(
 /** 调查的种类：决定进度文案，以及「够了，生成结果」是否出现。 */
 internal enum class InvestigationKind { FIRST_ROUND, ROUND, RESULT }
 
-/** 不可生成结果说明正在生成结果；还没有任何方向与问答说明是第一轮。 */
-internal fun investigationKind(canFinish: Boolean, ledger: Ledger): InvestigationKind =
+/** 不可生成结果说明正在生成结果；用户还没提交过回答说明是第一轮。 */
+internal fun investigationKind(canFinish: Boolean, record: ClarificationRecord): InvestigationKind =
     when {
         !canFinish -> InvestigationKind.RESULT
-        ledger.directions.isEmpty() && ledger.history.isEmpty() -> InvestigationKind.FIRST_ROUND
+        record.history.isEmpty() -> InvestigationKind.FIRST_ROUND
         else -> InvestigationKind.ROUND
     }
 

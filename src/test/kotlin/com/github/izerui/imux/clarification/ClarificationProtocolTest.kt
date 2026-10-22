@@ -9,17 +9,13 @@ import org.junit.Test
 class ClarificationProtocolTest {
     private val question =
         """
-        {"understanding":"理解","directions":{"add":[{"tempId":"new-1","title":"恢复范围","why":"w","source":"s","fallback":"f"}],
-         "drop":[{"id":"d3","reason":"r"}]},
-         "answered":[{"id":"d1","status":"OPEN","conclusion":"c","openPoints":["p"]}],
-         "notes":"n",
-         "next":{"type":"questions","questions":[{"directionId":"new-1","header":"恢复范围","question":"Q","multiSelect":true,
-           "options":[{"id":"a","label":"A","description":"DA","recommended":true},{"id":"b","label":"B","description":"DB","recommended":false}]}]}}
+        {"type":"questions","questions":[{"header":"恢复范围","question":"Q","multiSelect":true,"fallback":"只恢复连接",
+           "options":[{"id":"a","label":"A","description":"DA","recommended":true},{"id":"b","label":"B","description":"DB","recommended":false}]}]}
         """.trimIndent()
 
     private fun errorsOf(raw: String): List<String> =
         try {
-            parseRoundResponse(raw)
+            parseReply(raw)
             fail("应抛 ProtocolException"); emptyList()
         } catch (e: ProtocolException) {
             e.errors
@@ -27,43 +23,40 @@ class ClarificationProtocolTest {
 
     private fun option(id: String, label: String = "L$id") = """{"id":"$id","label":"$label","description":"D$id","recommended":false}"""
 
-    private fun oneQuestion(header: String = "H", options: String = "${option("a")},${option("b")}") =
-        """{"directionId":"d1","header":"$header","question":"Q","options":[$options]}"""
+    private fun oneQuestion(header: String = "H", options: String = "${option("a")},${option("b")}", fallback: String = "F") =
+        """{"header":"$header","question":"Q","fallback":"$fallback","options":[$options]}"""
 
-    private fun batchOf(vararg questions: String) = """{"notes":"","next":{"type":"questions","questions":[${questions.joinToString(",")}]}}"""
+    private fun batchOf(vararg questions: String) = """{"type":"questions","questions":[${questions.joinToString(",")}]}"""
+
+    private fun questionsOf(raw: String) = (parseReply(raw) as AgentReply.Ask).questions
 
     @Test
-    fun `完整的提问返回被解析`() {
-        val r = parseRoundResponse(question)
-        assertEquals("理解", r.understanding)
-        assertEquals(listOf(NewDirection("new-1", "恢复范围", "w", "s", "f")), r.added)
-        assertEquals(listOf("d3"), r.dropped)
-        assertEquals(listOf(AnsweredReport("d1", decided = false, conclusion = "c", openPoints = listOf("p"))), r.answered)
-        val q = (r.next as Next.Ask).questions.single()
-        assertEquals("new-1", q.directionId)
+    fun `完整的提问被解析，题目按顺序编号`() {
+        val q = questionsOf(question).single()
+        assertEquals("q1", q.id)
         assertEquals("恢复范围", q.header)
+        assertEquals("只恢复连接", q.fallback)
         assertTrue("multiSelect 读出", q.multiSelect)
         assertEquals(listOf("DA", "DB"), q.options.map { it.description })
         assertEquals(listOf(true, false), q.options.map { it.recommended })
+        assertEquals(listOf("q1", "q2", "q3"), questionsOf(batchOf(oneQuestion(), oneQuestion(), oneQuestion())).map { it.id })
     }
 
     @Test
     fun `没写 multiSelect 时按单选处理`() {
-        val q = (parseRoundResponse(batchOf(oneQuestion())).next as Next.Ask).questions.single()
+        val q = questionsOf(batchOf(oneQuestion())).single()
         assertFalse(q.multiSelect)
     }
 
     @Test
     fun `JSON 前后有说明文字或代码围栏时仍能解析`() {
-        val r = parseRoundResponse("好的，结果如下：\n```json\n$question\n```\n")
-        assertTrue(r.next is Next.Ask)
+        assertTrue(parseReply("好的，结果如下：\n```json\n$question\n```\n") is AgentReply.Ask)
     }
 
     @Test
-    fun `done 返回带出调整后的需求`() {
-        val r = parseRoundResponse("""{"notes":"","next":{"type":"done","requirement":"调整后的需求"}}""")
-        assertEquals(Next.Done("调整后的需求"), r.next)
-        assertTrue(r.answered.isEmpty())
+    fun `done 带出调整后的需求，需求为空时判为错误`() {
+        assertEquals(AgentReply.Done("调整后的需求"), parseReply("""{"type":"done","requirement":"调整后的需求"}"""))
+        assertTrue(errorsOf("""{"type":"done","requirement":"  "}""").any { it.contains("requirement") })
     }
 
     @Test
@@ -74,8 +67,7 @@ class ClarificationProtocolTest {
     @Test
     fun `一批一到四题都被接受`() {
         for (n in 1..4) {
-            val r = parseRoundResponse(batchOf(*Array(n) { oneQuestion() }))
-            assertEquals("$n 题", n, (r.next as Next.Ask).questions.size)
+            assertEquals("$n 题", n, questionsOf(batchOf(*Array(n) { oneQuestion() })).size)
         }
     }
 
@@ -105,29 +97,22 @@ class ClarificationProtocolTest {
             assertTrue("「$label」", errorsOf(raw).any { it.contains("Other") })
         }
         // 只是以"其他"开头的正常选项不误判
-        parseRoundResponse(batchOf(oneQuestion(options = "${option("a")},${option("b", "其他标签页一起重连")}")))
+        parseReply(batchOf(oneQuestion(options = "${option("a")},${option("b", "其他标签页一起重连")}")))
     }
 
     @Test
     fun `缺少标签或标签过长判为错误`() {
         assertTrue("缺少", errorsOf(batchOf(oneQuestion(header = ""))).any { it.contains("header") })
         assertTrue("过长", errorsOf(batchOf(oneQuestion(header = "一".repeat(MAX_HEADER_CHARS + 1)))).any { it.contains("header") })
-        parseRoundResponse(batchOf(oneQuestion(header = "一".repeat(HEADER_CHARS))))
+        parseReply(batchOf(oneQuestion(header = "一".repeat(HEADER_CHARS))))
     }
 
     @Test
-    fun `answered 状态不是 DECIDED 或 OPEN 时判为错误`() {
-        assertTrue(errorsOf(question.replace("\"status\":\"OPEN\"", "\"status\":\"PAUSED\"")).any { it.contains("answered[0].status") })
-    }
-
-    @Test
-    fun `生成结果阶段只取 requirement`() {
-        assertEquals("需求", parseRequirementResponse("""{"requirement":"需求"}"""))
-        try {
-            parseRequirementResponse("""{"requirement":"  "}""")
-            fail("空 requirement 应报错")
-        } catch (_: ProtocolException) {
-        }
+    fun `每题都要写明不回答时的默认处理`() {
+        val errors = errorsOf(batchOf(oneQuestion(fallback = ""), oneQuestion(), oneQuestion(fallback = "")))
+        assertTrue("第 1 题", errors.any { it.contains("questions[0].fallback") })
+        assertTrue("第 3 题", errors.any { it.contains("questions[2].fallback") })
+        assertTrue("写了的不报", errors.none { it.contains("questions[1]") })
     }
 
     @Test
@@ -137,15 +122,16 @@ class ClarificationProtocolTest {
     }
 
     @Test
-    fun `旧的单题格式不再被接受`() {
-        val old = """{"notes":"","next":{"type":"question","directionId":"d1","question":"Q","options":[]}}"""
-        assertTrue(errorsOf(old).any { it.contains("questions or done") })
+    fun `旧的台账格式与缺少 type 都不再被接受`() {
+        val old = """{"notes":"","next":{"type":"questions","questions":[]}}"""
+        assertTrue("旧格式", errorsOf(old).any { it.contains("questions or done") })
+        assertTrue("type 写错", errorsOf("""{"type":"question"}""").any { it.contains("questions or done") })
     }
 
     @Test
     fun `通过校验的标签在界面上完整显示，截断按码点计数`() {
         val longest = "𠀀".repeat(MAX_HEADER_CHARS)
-        parseRoundResponse(batchOf(oneQuestion(header = longest)))
+        parseReply(batchOf(oneQuestion(header = longest)))
         assertEquals("最长的合法标签不截断", longest, truncateCodePoints(longest, MAX_HEADER_CHARS))
         val tooLong = "𠀀".repeat(MAX_HEADER_CHARS + 1)
         assertTrue("多一个码点就判错", errorsOf(batchOf(oneQuestion(header = tooLong))).any { it.contains("header") })

@@ -101,19 +101,14 @@ class ClarificationViewPreviewTest {
         "给终端增加断线重连：网络抖动或远程主机重启后，会话标签页能自动恢复连接，用户不用手动关掉再开一个新标签页，" +
             "也不会丢掉正在看的输出。"
 
-    private fun direction(id: String, title: String, fallback: String, status: DirectionStatus = DirectionStatus.ACTIVE, conclusion: String? = null) =
-        Direction(id, title, "", "", fallback, status, conclusion)
+    private fun confirmedAnswer(text: String) = AnswerRecord(Question("c", "H", "Q", false, emptyList()), Answer.OwnWords(text), text)
 
-    private val directions =
-        listOf(
-            direction("d1", "重连次数", "", DirectionStatus.DECIDED, "断线后自动重连 3 次，间隔逐次加倍"),
-            direction("d2", "多标签页", "", DirectionStatus.DECIDED, "多个标签页同时断线时逐个重连，不并发"),
-            direction("d3", "失败提示", "失败时只在标签页标题上显示断开状态"),
-            direction("d4", "重连方式", "沿用现有的 SSH 配置直接重连"),
-            direction("d5", "恢复范围", "只恢复连接，不恢复输出与工作目录"),
+    private val record =
+        ClarificationRecord(
+            requirement,
+            null,
+            listOf(confirmedAnswer("断线后自动重连 3 次，间隔逐次加倍"), confirmedAnswer("多个标签页同时断线时逐个重连，不并发")),
         )
-
-    private val ledger = Ledger(requirement, null, directions = directions)
 
     private val longQuestion =
         Question(
@@ -126,6 +121,7 @@ class ClarificationViewPreviewTest {
                 ChoiceOption("b", "只显示断开状态", "标签页标题显示断开，不提供重试入口，用户自己重新打开", false),
                 ChoiceOption("c", "弹出 IDE 通知", "失败时弹出 IDE 通知，点击通知跳到这个标签页并显示重试", false),
             ),
+            "失败时只在标签页标题上显示断开状态",
         )
 
     private val methodQuestion =
@@ -135,6 +131,7 @@ class ClarificationViewPreviewTest {
                 ChoiceOption("a", "沿用 SSH 配置", "直接用标签页原来的 SSH 配置重连，不再询问", true),
                 ChoiceOption("b", "每次询问", "每次重连前弹框确认目标主机与凭据", false),
             ),
+            "沿用现有的 SSH 配置直接重连",
         )
 
     private val scopeQuestion =
@@ -146,6 +143,7 @@ class ClarificationViewPreviewTest {
                 ChoiceOption("c", "最近输出", "保留断线前的输出，接在后面继续显示", false),
                 ChoiceOption("d", "正在运行的命令", "断线前正在运行的命令在重连后重新执行", false),
             ),
+            "只恢复连接，不恢复输出与工作目录",
         )
 
     private val batch = listOf(longQuestion, methodQuestion, scopeQuestion)
@@ -162,8 +160,8 @@ class ClarificationViewPreviewTest {
 
     // ---- 渲染 ----
 
-    private fun barFor(view: ClarificationView, state: ClarificationState, canFinish: Boolean, ledger: Ledger): JPanel {
-        val bar = buttonBar(state, canFinish, ledger, view.askingPage())
+    private fun barFor(view: ClarificationView, state: ClarificationState, canFinish: Boolean, record: ClarificationRecord): JPanel {
+        val bar = buttonBar(state, canFinish, record, view.askingPage())
         fun buttons(list: List<BarButton>) =
             JPanel(FlowLayout(FlowLayout.LEADING, JBUI.scale(8), 0)).apply {
                 isOpaque = false
@@ -179,8 +177,8 @@ class ClarificationViewPreviewTest {
     }
 
     /** 视图 + 按钮栏组成整个窗口内容，按给定尺寸布局；返回根面板。 */
-    private fun window(view: ClarificationView, state: ClarificationState, canFinish: Boolean, ledger: Ledger, width: Int, height: Int): JRootPane {
-        val bar = barFor(view, state, canFinish, ledger)
+    private fun window(view: ClarificationView, state: ClarificationState, canFinish: Boolean, record: ClarificationRecord, width: Int, height: Int): JRootPane {
+        val bar = barFor(view, state, canFinish, record)
         // 与真实窗口一致：内容区直接贴着窗口边缘放，不额外加边框——内边距必须来自视图自己
         val content =
             JPanel(BorderLayout()).apply {
@@ -188,7 +186,7 @@ class ClarificationViewPreviewTest {
                 add(bar, BorderLayout.SOUTH)
             }
         val root = JRootPane().apply { contentPane = content }
-        val default = buttonBar(state, canFinish, ledger, view.askingPage()).default
+        val default = buttonBar(state, canFinish, record, view.askingPage()).default
         root.defaultButton = default?.let { d -> allOf<JButton>(bar).first { it.name == d.name } }
         root.setSize(width, height)
         // 自动换行的文字的首选高度取决于上一次布局给的宽度，布局几遍才稳定；没有窗口 peer 时逐层 doLayout
@@ -303,7 +301,7 @@ class ClarificationViewPreviewTest {
     private fun check(
         name: String,
         state: ClarificationState,
-        ledger: Ledger,
+        record: ClarificationRecord,
         width: Int,
         height: Int,
         canFinish: Boolean = true,
@@ -311,9 +309,9 @@ class ClarificationViewPreviewTest {
         prepare: (ClarificationView) -> Unit = {},
     ): ClarificationView {
         val view = ClarificationView(FakeCallbacks(drafts), zh)
-        view.render(state, ledger, canFinish, "")
+        view.render(state, record, canFinish, "")
         prepare(view)
-        val root = window(view, state, canFinish, ledger, width, height)
+        val root = window(view, state, canFinish, record, width, height)
         val file = png(root, name)
         assertTrue("$name 已写出", file.length() > 0)
         assertTrue("$name：内容区在 JScrollPane 里", view.component is JScrollPane)
@@ -327,7 +325,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `输入页在两种尺寸下渲染且输入框填满剩余高度`() {
         for ((w, h) in listOf(640 to 520, 460 to 380)) {
-            val view = check("input-${w}x$h", ClarificationState.Input, Ledger("", null), w, h, canFinish = false) { v -> v.setBackgroundAvailable(true) }
+            val view = check("input-${w}x$h", ClarificationState.Input, ClarificationRecord("", null), w, h, canFinish = false) { v -> v.setBackgroundAvailable(true) }
             val area = allOf<javax.swing.JTextArea>(view.component).single()
             val viewport = view.component.viewport
             val areaPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, area)!!
@@ -338,7 +336,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `调查中显示进度、秒数与两条已确认`() {
         val state = ClarificationState.Investigating("读取 src/main/kotlin/com/github/izerui/imux/terminal/TerminalSessionReconnector.kt", System.currentTimeMillis() - 42_000, run = 3)
-        val view = check("investigating-640x520", state, ledger, 640, 520)
+        val view = check("investigating-640x520", state, record, 640, 520)
         val texts = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length) }
         assertTrue("显示第一条已确认", texts.any { it.contains("断线后自动重连 3 次") })
         assertTrue("显示第二条已确认", texts.any { it.contains("多个标签页同时断线时逐个重连") })
@@ -347,7 +345,7 @@ class ClarificationViewPreviewTest {
 
     @Test
     fun `只有一题时没有标签条且题目与选项不用滚动`() {
-        val view = check("asking-single-640x520", ClarificationState.Asking(listOf(methodQuestion)), ledger, 640, 520)
+        val view = check("asking-single-640x520", ClarificationState.Asking(listOf(methodQuestion)), record, 640, 520)
         assertEquals("一题没有标签条", null, view.tabs)
         assertEquals("主按钮是提交", AskingPage.SINGLE, view.askingPage())
         assertQuestionFits(view, "asking-single-640x520")
@@ -357,7 +355,7 @@ class ClarificationViewPreviewTest {
     fun `三题一批的长问题在两种尺寸下换行且不截断`() {
         // 第二题已经答过，标签上应有 ✓
         val drafts: (BatchDrafts) -> Unit = { it.draftOf(methodQuestion).picked += "a" }
-        val big = check("asking-batch-640x520", ClarificationState.Asking(batch), ledger, 640, 520, drafts = drafts)
+        val big = check("asking-batch-640x520", ClarificationState.Asking(batch), record, 640, 520, drafts = drafts)
         val strip = big.tabs!!
         assertEquals("标签条：三题加提交页", 4, strip.tabCount)
         for (i in 0 until strip.tabCount) {
@@ -367,13 +365,13 @@ class ClarificationViewPreviewTest {
         }
         assertEquals("tooltip 是完整标签与问句", "失败提示 — " + longQuestion.text, strip.getToolTipTextAt(0))
         assertQuestionFits(big, "asking-batch-640x520")
-        check("asking-batch-460x400", ClarificationState.Asking(batch), ledger, 460, 400, drafts = drafts)
+        check("asking-batch-460x400", ClarificationState.Asking(batch), record, 460, 400, drafts = drafts)
     }
 
     @Test
     fun `多选题渲染为复选框且其他是额外一项`() {
         val view =
-            check("asking-multi-640x520", ClarificationState.Asking(batch), ledger, 640, 520) { v ->
+            check("asking-multi-640x520", ClarificationState.Asking(batch), record, 640, 520) { v ->
                 v.selectTab(2)
                 v.options!!.buttons[0].isSelected = true
                 v.options!!.buttons[2].isSelected = true
@@ -390,7 +388,7 @@ class ClarificationViewPreviewTest {
     fun `提交页逐题列出回答，没答的写明默认处理`() {
         val view =
             check(
-                "asking-review-640x520", ClarificationState.Asking(batch), ledger, 640, 520,
+                "asking-review-640x520", ClarificationState.Asking(batch), record, 640, 520,
                 drafts = { d ->
                     d.draftOf(longQuestion).picked += "a"
                     d.draftOf(scopeQuestion).picked += listOf("a", "c")
@@ -406,7 +404,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `结果页在两种尺寸下渲染且编辑框填满剩余高度`() {
         for ((w, h) in listOf(640 to 520, 460 to 380)) {
-            val view = check("result-${w}x$h", ClarificationState.Result(resultText), ledger, w, h, canFinish = false)
+            val view = check("result-${w}x$h", ClarificationState.Result(resultText), record, w, h, canFinish = false)
             assertEquals(resultText, view.resultText())
             val areaPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, allOf<javax.swing.JTextArea>(view.component).single())!!
             assertTrue("${w}x$h：编辑框占视口大半", areaPane.height * 2 > view.component.viewport.height)
@@ -418,7 +416,7 @@ class ClarificationViewPreviewTest {
         check(
             "failed-640x520",
             ClarificationState.Failed(FailureReason.AGENT_ERROR, "claude 进程以退出码 1 结束：Error: connect ECONNREFUSED 127.0.0.1:443，请检查网络或代理设置后重试", "{\"raw\":true}"),
-            ledger,
+            record,
             640,
             520,
             canFinish = false,
@@ -430,11 +428,11 @@ class ClarificationViewPreviewTest {
     @Test
     fun `一百次进度更新不重建中间区域也不重建头部`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Investigating(null, 1_000L, run = 7), ledger, true, "")
+        view.render(ClarificationState.Investigating(null, 1_000L, run = 7), record, true, "")
         val centers = view.centerRebuilds
         val headers = view.headerRebuilds
         val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text.contains("调查") }
-        repeat(100) { i -> view.render(ClarificationState.Investigating("读取 File$i.kt", 1_000L, run = 7), ledger, true, "") }
+        repeat(100) { i -> view.render(ClarificationState.Investigating("读取 File$i.kt", 1_000L, run = 7), record, true, "") }
         assertEquals("中间区域没有重建", centers, view.centerRebuilds)
         assertEquals("头部没有重建", headers, view.headerRebuilds)
         assertTrue("进度就地更新：${label.text}", label.text.contains("File99.kt"))
@@ -447,7 +445,7 @@ class ClarificationViewPreviewTest {
     fun `换标签只重建题目区域一次，切回来恢复原来的选择与其他文字`() {
         val callbacks = FakeCallbacks()
         val view = ClarificationView(callbacks, zh)
-        view.render(ClarificationState.Asking(batch), ledger, true, "")
+        view.render(ClarificationState.Asking(batch), record, true, "")
         val centers = view.centerRebuilds
         view.options!!.buttons[1].isSelected = true
         val before = view.questionRebuilds
@@ -470,11 +468,11 @@ class ClarificationViewPreviewTest {
     @Test
     fun `已确认内容不变时头部不重建，变了才重建`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), ledger, true, "")
+        view.render(ClarificationState.Asking(batch), record, true, "")
         val headers = view.headerRebuilds
-        view.render(ClarificationState.Investigating(null, 5L, run = 9), ledger.copy(notes = "新的调查笔记"), true, "")
+        view.render(ClarificationState.Investigating(null, 5L, run = 9), record.copy(background = "新的背景"), true, "")
         assertEquals("已确认不变：头部不重建", headers, view.headerRebuilds)
-        val more = ledger.replace(directions[2].copy(status = DirectionStatus.DECIDED, conclusion = "失败时显示错误并提供重试"))
+        val more = record.copy(history = record.history + confirmedAnswer("失败时显示错误并提供重试"))
         view.render(ClarificationState.Investigating(null, 5L, run = 9), more, true, "")
         assertEquals("已确认多了一条：头部重建一次", headers + 1, view.headerRebuilds)
     }
@@ -482,10 +480,10 @@ class ClarificationViewPreviewTest {
     @Test
     fun `同一批问题再次通知不重建提问页`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), ledger, true, "")
+        view.render(ClarificationState.Asking(batch), record, true, "")
         val centers = view.centerRebuilds
         val questions = view.questionRebuilds
-        repeat(10) { view.render(ClarificationState.Asking(batch), ledger, true, "") }
+        repeat(10) { view.render(ClarificationState.Asking(batch), record, true, "") }
         assertEquals(centers, view.centerRebuilds)
         assertEquals(questions, view.questionRebuilds)
     }
@@ -501,7 +499,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `数字键选择选项，最后一个数字是其他`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), ledger, true, "")
+        view.render(ClarificationState.Asking(batch), record, true, "")
         fire(view.component, JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, KeyEvent.VK_2)
         assertTrue("2 选中第二个选项", view.options!!.buttons[1].isSelected)
         fire(view.component, JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, KeyEvent.VK_4)
@@ -519,7 +517,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `选项上的左右键换标签，单选题回车选中焦点所在的选项`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), ledger, true, "")
+        view.render(ClarificationState.Asking(batch), record, true, "")
         val second = view.options!!.buttons[1]
         fire(second, JComponent.WHEN_FOCUSED, KeyEvent.VK_ENTER)
         assertTrue("回车选中焦点所在的选项", second.isSelected)
@@ -548,13 +546,13 @@ class ClarificationViewPreviewTest {
         val heights = mutableMapOf<String, Int>()
         for ((page, state, canFinish) in pages) {
             val view = ClarificationView(FakeCallbacks(), zh)
-            view.render(state, ledger, canFinish, "")
-            val bar = barFor(view, state, canFinish, ledger)
+            view.render(state, record, canFinish, "")
+            val bar = barFor(view, state, canFinish, record)
             // 预览里没有标题栏，窗口其余部分只有按钮栏
             val height = initialHeight(view.preferredContentHeight(width), bar.preferredSize.height)
             heights[page] = height
             assertTrue("$page：高度在 360～520 之间（$height）", height in JBUI.scale(MIN_INITIAL_HEIGHT)..JBUI.scale(MAX_INITIAL_HEIGHT))
-            val root = window(view, state, canFinish, ledger, width, height)
+            val root = window(view, state, canFinish, record, width, height)
             png(root, "default-$page-${width}x$height")
             assertNoHorizontalClipping(view, root, "default-$page")
             assertEdgePadding(view, root, "default-$page")
