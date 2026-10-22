@@ -462,6 +462,23 @@ class PeerConversationTest {
     }
 
     @Test
+    fun `从会话文件读出最近对话并受字数上限约束`() {
+        val session = claudeSession(user("最早的需求"), assistant("最早的回复"), user("最新的需求"))
+        val full = latestConversationOf(session, emptyList(), maxChars = 1_000)
+        assertTrue(full.contains("最新的需求"))
+        assertTrue(full.contains("最早的需求"))
+        val short = latestConversationOf(session, emptyList(), maxChars = 12)
+        assertTrue(short.contains("最新的需求"))
+        assertFalse(short.contains("最早的需求"))
+    }
+
+    @Test
+    fun `会话文件不存在时最近对话为空`() {
+        val session = AgentSession("m", "m", AgentType.CLAUDE, Instant.EPOCH, Instant.EPOCH, Path.of("build", "missing-clarify.jsonl"))
+        assertEquals("", latestConversationOf(session, emptyList(), maxChars = 100))
+    }
+
+    @Test
     fun `PeerCoordinator 通过共享函数选择默认提示词`() {
         val source = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt").normalized
         assertTrue(
