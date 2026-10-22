@@ -56,6 +56,92 @@ class TrailStateStoreTest {
     private fun TrailStateStore.await(key: String) = runBlocking { jobFor(key)?.join() }
 
     @Test
+    fun `首次展开自动生成轨迹，重复刷新不重复生成`() {
+        val calls = AtomicInteger()
+        val edt = QueuedEdt()
+        val store = store(generate = { key, _ -> calls.incrementAndGet(); result(key) }, onEdt = edt.onEdt)
+
+        store.generateIfNeeded("s1", TAB)
+        assertTrue(store.state("s1") is TrailState.Loading)
+        store.generateIfNeeded("s1", TAB)
+        store.await("s1")
+        edt.drain()
+        store.generateIfNeeded("s1", TAB)
+
+        assertEquals("s1", (store.state("s1") as TrailState.Ready).result.nodes.single().text)
+        assertEquals(1, calls.get())
+    }
+
+    @Test
+    fun `展开已有过期轨迹直接展示缓存`() {
+        cache["s1"] = CachedView(result("旧"), stale = true)
+        val calls = AtomicInteger()
+        val store = store(generate = { _, _ -> calls.incrementAndGet(); result("新") })
+
+        store.generateIfNeeded("s1", TAB)
+        store.await("s1")
+
+        assertEquals("旧", (store.state("s1") as TrailState.Ready).result.nodes.single().text)
+        assertEquals(0, calls.get())
+    }
+
+    @Test
+    fun `展开尚未落盘的会话不生成，落盘后自动生成`() {
+        val calls = AtomicInteger()
+        val store = store(generate = { key, _ -> calls.incrementAndGet(); result(key) })
+
+        store.generateIfNeeded("pending-1", TAB)
+        store.await("pending-1")
+        assertEquals(0, calls.get())
+        assertEquals(TrailState.Unavailable, store.state("pending-1"))
+
+        available += "pending-1"
+        store.generateIfNeeded("pending-1", TAB)
+        store.await("pending-1")
+        assertEquals(1, calls.get())
+        assertEquals("pending-1", (store.state("pending-1") as TrailState.Ready).result.nodes.single().text)
+    }
+
+    @Test
+    fun `取消首次生成后刷新不重启，仍可手动生成`() {
+        val edt = QueuedEdt()
+        val calls = AtomicInteger()
+        val store = store(generate = { _, _ -> calls.incrementAndGet(); result("新") }, onEdt = edt.onEdt)
+        store.generateIfNeeded("s1", TAB)
+        store.await("s1")
+        store.cancel("s1")
+        edt.drain()
+
+        store.generateIfNeeded("s1", TAB)
+        store.await("s1")
+        edt.drain()
+        assertEquals(TrailState.Empty, store.state("s1"))
+        assertEquals(1, calls.get())
+
+        store.generate("s1", TAB)
+        store.await("s1")
+        edt.drain()
+        assertEquals(2, calls.get())
+        assertEquals("新", (store.state("s1") as TrailState.Ready).result.nodes.single().text)
+    }
+
+    @Test
+    fun `首次生成失败后刷新不自动重试`() {
+        val calls = AtomicInteger()
+        val edt = QueuedEdt()
+        val store = store(generate = { _, _ -> calls.incrementAndGet(); throw IllegalStateException("boom") }, onEdt = edt.onEdt)
+        store.generateIfNeeded("s1", TAB)
+        store.await("s1")
+        edt.drain()
+
+        store.generateIfNeeded("s1", TAB)
+        store.await("s1")
+        edt.drain()
+        assertEquals(1, calls.get())
+        assertEquals("boom", (store.state("s1") as TrailState.Failed).message)
+    }
+
+    @Test
     fun `初始状态按可用性与缓存派生`() {
         cache["s2"] = CachedView(result("旧"), stale = true)
         val store = store()

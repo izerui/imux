@@ -79,6 +79,11 @@ internal class TrailStateStore(
         return TrailState.Ready(cached.result, cached.stale)
     }
 
+    /** 展开时自动生成首份轨迹；取消后仍保留 owner，避免刷新或重建面板时自动重试。 */
+    fun generateIfNeeded(key: String, owner: String) {
+        if (!owners.containsKey(key) && state(key) is TrailState.Empty) generate(key, owner)
+    }
+
     fun generate(key: String, owner: String) {
         // 不能看 isActive：后台已跑完、finish 的回写还在 EDT 排队时任务已不活动但状态仍是 Loading，
         // 这时放行会把 Loading 记成「生成前状态」，再取消就恢复成没有任务的 Loading。

@@ -38,6 +38,14 @@ class SessionTrailOverlaySourceTest {
     }
 
     @Test
+    fun `面板展开时先触发首次生成再读取显示状态`() {
+        val refresh = overlay.bodyAfter("private fun refresh()", '{')
+        val generate = refresh.indexOf("if (expanded) store.generateIfNeeded(key, virtualFile.tabId)")
+        assertTrue("折叠时不自动生成", generate >= 0)
+        assertTrue("首次展开直接显示生成进度", refresh.indexOf("val state = store.state(key)") > generate)
+    }
+
+    @Test
     fun `面板跟随会话 key 迁移，且状态与任务不存在面板里`() {
         assertTrue(overlay.normalized.contains("addSessionKeyMigratedListener(this)"))
         assertTrue("每次读取当前 key", overlay.normalized.contains("private val key get() = virtualFile.sessionKey"))

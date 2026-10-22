@@ -215,6 +215,7 @@ internal class SessionTrailOverlay(
         if (shownExpanded && !expanded) returnFocusIfInside()
         shownExpanded = expanded
 
+        if (expanded) store.generateIfNeeded(key, virtualFile.tabId)
         val state = store.state(key)
         chipButton.update()
         chipButton.repaint()
