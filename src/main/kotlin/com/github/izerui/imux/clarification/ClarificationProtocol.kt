@@ -16,6 +16,11 @@ internal data class NewDirection(
     val fallback: String,
 )
 
+internal data class DroppedDirection(
+    val id: String,
+    val reason: String,
+)
+
 internal data class Previous(
     val id: String,
     val decided: Boolean,
@@ -32,7 +37,7 @@ internal sealed interface Next {
 internal data class RoundResponse(
     val understanding: String?,
     val added: List<NewDirection>,
-    val dropped: List<String>,
+    val dropped: List<DroppedDirection>,
     val previous: Previous?,
     val notes: String,
     val next: Next,
@@ -73,7 +78,11 @@ internal fun parseRoundResponse(raw: String): RoundResponse {
                 NewDirection(fields.getValue("tempId"), fields.getValue("title"), fields.getValue("why"), fields.getValue("source"), fields.getValue("fallback"))
             }
         }
-    val dropped = (directions?.arr("drop") ?: JsonArray()).mapNotNull { it.asObjOrNull()?.str("id")?.takeIf(String::isNotEmpty) }
+    val dropped =
+        (directions?.arr("drop") ?: JsonArray()).mapNotNull { element ->
+            val o = element.asObjOrNull() ?: return@mapNotNull null
+            o.str("id")?.takeIf(String::isNotEmpty)?.let { DroppedDirection(it, o.str("reason").orEmpty()) }
+        }
 
     val previous =
         root.obj("previous")?.let { p ->

@@ -184,9 +184,28 @@ internal class ClarificationFlow(
         }
     }
 
-    fun beginResult(): Long {
+    /** 「够了，生成结果」在提问页与一轮调查进行中可用；正在生成结果、输入、结果页、发送中不可用。 */
+    val canFinish: Boolean
+        get() = synchronized(lock) { canFinishLocked() }
+
+    private fun canFinishLocked(): Boolean =
+        when (state) {
+            is ClarificationState.Asking -> true
+            is ClarificationState.Investigating -> pending == PendingWork.ROUND
+            else -> false
+        }
+
+    /**
+     * 开始生成结果；不可生成时返回 null。调查进行中调用时，递增的 runId 让在途一轮的返回作废。
+     * 从提问页离开时，被问而未回答的方向回到 OPEN。
+     */
+    fun beginResult(): Long? {
         val runId: Long
-        synchronized(lock) { runId = investigate(PendingWork.RESULT) }
+        synchronized(lock) {
+            if (!canFinishLocked()) return null
+            ledger = ledger.releaseUnanswered()
+            runId = investigate(PendingWork.RESULT)
+        }
         changed()
         return runId
     }
@@ -231,6 +250,7 @@ internal class ClarificationFlow(
     fun fallbackResult() {
         synchronized(lock) {
             generation++
+            ledger = ledger.releaseUnanswered()
             state = ClarificationState.Result(composeFallback(ledger))
         }
         changed()
@@ -240,6 +260,7 @@ internal class ClarificationFlow(
         val runId: Long?
         synchronized(lock) {
             if (state !is ClarificationState.Result) return null
+            ledger = ledger.releaseUnanswered()
             phase = Phase.ROUND
             runId = investigate(PendingWork.ROUND)
         }
@@ -268,8 +289,10 @@ internal class ClarificationFlow(
         changed()
     }
 
+    /** 只在调查进行中生效：刚到的问题或结果不会被一次晚到的取消点击盖掉。 */
     fun cancelled() {
         synchronized(lock) {
+            if (state !is ClarificationState.Investigating) return
             generation++
             state = ClarificationState.Failed(FailureReason.CANCELLED, "", null)
         }
@@ -304,10 +327,11 @@ internal class ClarificationFlow(
 
     companion object {
         private fun rethrowIfCancellation(e: Throwable) {
+            // 平台的取消信号；262 里它恰好继承 CancellationException，这里显式写出，不依赖这一继承关系
+            if (e is com.intellij.openapi.progress.ProcessCanceledException) throw e
+            // kotlin.coroutines.cancellation.CancellationException 是它的别名，无需另判
             if (e is java.util.concurrent.CancellationException) throw e
             if (e is InterruptedException) throw e
-            // kotlin.coroutines.cancellation.CancellationException extends IllegalStateException
-            if (e is kotlin.coroutines.cancellation.CancellationException) throw e
         }
     }
 }

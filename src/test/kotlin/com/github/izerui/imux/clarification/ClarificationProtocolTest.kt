@@ -30,7 +30,7 @@ class ClarificationProtocolTest {
         val r = parseRoundResponse(question)
         assertEquals("理解", r.understanding)
         assertEquals(listOf(NewDirection("new-1", "恢复范围", "w", "s", "f")), r.added)
-        assertEquals(listOf("d3"), r.dropped)
+        assertEquals(listOf(DroppedDirection("d3", "r")), r.dropped)
         assertEquals(Previous("d1", decided = false, conclusion = "c", openPoints = listOf("p")), r.previous)
         val ask = r.next as Next.Ask
         assertEquals("new-1", ask.question.directionId)

@@ -1,9 +1,11 @@
 package com.github.izerui.imux.clarification
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -233,7 +235,7 @@ class ClarificationFlowTest {
         val f = flow(first, """{"requirement":"FINAL"}""")
         val r1 = f.begin("REQ", null)
         f.advance(r1)
-        val r2 = f.beginResult()
+        val r2 = f.beginResult()!!
         f.generateResult(r2)
         assertEquals(ClarificationState.Result("FINAL"), f.state)
         assertTrue(prompts.last().contains("{\"requirement\": \"...\"}"))
@@ -244,7 +246,7 @@ class ClarificationFlowTest {
         val f = flow(first, "x", "y")
         val r1 = f.begin("REQ", null)
         f.advance(r1)
-        val r2 = f.beginResult()
+        val r2 = f.beginResult()!!
         f.generateResult(r2)
         val (work, _) = f.retry()!!
         assertEquals(PendingWork.RESULT, work)
@@ -266,19 +268,129 @@ class ClarificationFlowTest {
 
     @Test
     fun `背景快照补进台账后进入提示词`() {
-        val doneResponse = """{"understanding":"u","notes":"","next":{"type":"done","requirement":"ADJUSTED"}}"""
-        val f = flow(first, doneResponse)
+        val f = flow(first)
         val r1 = f.begin("REQ", null)
-        f.attachBackground(r1, "LATE BACKGROUND")
-        f.advance(r1)
-        assertTrue(prompts[0].contains("LATE BACKGROUND"))
-        // Stale runId's attachBackground must be ignored while a new run is Investigating
         f.cancelled()
         val (_, r2) = f.retry()!!
+        f.attachBackground(r2, "LATE BACKGROUND")
+        // 过期 runId 的背景快照必须被忽略
         f.attachBackground(r1, "STALE-BG-MARK")
-        assertTrue("stale attachBackground must not change ledger", f.ledger.background != "STALE-BG-MARK")
+        assertEquals("LATE BACKGROUND", f.ledger.background)
         f.advance(r2)
-        assertTrue("stale background must not appear in prompt", !prompts.last().contains("STALE-BG-MARK"))
+        assertTrue(prompts[0].contains("LATE BACKGROUND"))
+        assertTrue("stale background must not appear in prompt", !prompts[0].contains("STALE-BG-MARK"))
+    }
+
+    private fun askD1Again() =
+        """{"notes":"n","next":{"type":"question","directionId":"d1","question":"Q1 again","reason":"r","basis":"b",
+             "options":[{"id":"a","label":"A","recommended":true,"conclusion":"CA"},{"id":"b","label":"B","recommended":false,"conclusion":"CB"}]}}"""
+
+    @Test
+    fun `问题页直接生成结果后继续澄清仍能再问同一方向`() {
+        val f = flow(first, """{"requirement":"FINAL"}""", askD1Again())
+        f.advance(f.begin("REQ", null))
+        assertEquals("d1", (f.state as ClarificationState.Asking).question.directionId)
+        f.generateResult(f.beginResult()!!)
+        assertEquals(DirectionStatus.OPEN, f.ledger.direction("d1")!!.status)
+        f.advance(f.continueClarifying()!!)
+        val asking = f.state as ClarificationState.Asking
+        assertEquals("d1", asking.question.directionId)
+        assertEquals("Q1 again", asking.question.text)
+        assertEquals(3, prompts.size)
+    }
+
+    @Test
+    fun `调查中生成结果时在途一轮的返回被丢弃`() {
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = AtomicInteger(0)
+        val f = ClarificationFlow(false, "G", runAgent = { _, _ ->
+            when (calls.incrementAndGet()) {
+                1 -> { started.countDown(); release.await(5, TimeUnit.SECONDS); first }
+                else -> """{"requirement":"FINAL"}"""
+            }
+        })
+        val r1 = f.begin("REQ", null)
+        val worker = thread { f.advance(r1) }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        assertTrue(f.canFinish)
+        val r2 = f.beginResult()!!
+        release.countDown()
+        worker.join(5_000)
+        assertTrue("在途一轮的问题不能盖掉生成结果", f.state is ClarificationState.Investigating)
+        assertTrue("在途一轮的方向不能写进台账", f.ledger.directions.isEmpty())
+        f.generateResult(r2)
+        assertEquals(ClarificationState.Result("FINAL"), f.state)
+    }
+
+    @Test
+    fun `输入页不能生成结果`() {
+        val f = flow()
+        assertFalse(f.canFinish)
+        assertNull(f.beginResult())
+        assertEquals(ClarificationState.Input, f.state)
+    }
+
+    @Test
+    fun `结果页不能再生成结果`() {
+        val f = flow("""{"notes":"","next":{"type":"done","requirement":"ADJUSTED"}}""")
+        f.advance(f.begin("REQ", null))
+        assertFalse(f.canFinish)
+        assertNull(f.beginResult())
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+    }
+
+    @Test
+    fun `正在生成结果时不能再次生成结果`() {
+        val f = flow(first)
+        f.advance(f.begin("REQ", null))
+        assertTrue(f.beginResult() != null)
+        assertFalse(f.canFinish)
+        assertNull(f.beginResult())
+    }
+
+    @Test
+    fun `取消晚于问题到达时不盖掉问题`() {
+        val f = flow(first)
+        f.advance(f.begin("REQ", null))
+        f.cancelled()
+        assertTrue(f.state is ClarificationState.Asking)
+        assertEquals(DirectionStatus.ACTIVE, f.ledger.direction("d1")!!.status)
+    }
+
+    @Test
+    fun `取消晚于结果到达时不盖掉结果`() {
+        val f = flow("""{"notes":"","next":{"type":"done","requirement":"ADJUSTED"}}""")
+        f.advance(f.begin("REQ", null))
+        f.cancelled()
+        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
+    }
+
+    @Test
+    fun `平台取消异常向上抛出而不记为失败`() {
+        val f = ClarificationFlow(false, "G", runAgent = { _, _ -> throw com.intellij.openapi.progress.ProcessCanceledException() })
+        val runId = f.begin("REQ", null)
+        try {
+            f.advance(runId)
+            fail("ProcessCanceledException 应向上抛出")
+        } catch (_: com.intellij.openapi.progress.ProcessCanceledException) {
+        }
+        assertTrue(f.state is ClarificationState.Investigating)
+    }
+
+    @Test
+    fun `指定先问这个后模型返回 done 时附错误重新调用`() {
+        val doneOut = """{"notes":"","next":{"type":"done","requirement":"ADJUSTED"}}"""
+        val askD2Plain =
+            """{"notes":"n","next":{"type":"question","directionId":"d2","question":"Q2","reason":"r","basis":"b",
+                 "options":[{"id":"a","label":"A","recommended":true,"conclusion":"C2A"},{"id":"b","label":"B","recommended":false,"conclusion":"C2B"}]}}"""
+        val f = flow(first, """{"requirement":"FINAL"}""", doneOut, askD2Plain)
+        f.advance(f.begin("REQ", null))
+        f.generateResult(f.beginResult()!!)
+        f.pin("d2")
+        f.advance(f.continueClarifying()!!)
+        assertEquals("d2", (f.state as ClarificationState.Asking).question.directionId)
+        assertTrue(prompts.last().contains("the user asked to discuss d2 next"))
     }
 
     @Test

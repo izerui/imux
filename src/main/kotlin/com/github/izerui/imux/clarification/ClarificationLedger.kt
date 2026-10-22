@@ -41,6 +41,14 @@ internal fun Ledger.reopen(id: String): Ledger {
     return replace(d.copy(status = OPEN, userOwned = true, conclusion = null, openPoints = emptyList()))
 }
 
+/**
+ * 离开提问页却没有回答（直接生成结果、兜底结果、继续澄清）时调用：被问的方向从 ACTIVE 回到 OPEN，
+ * 否则它既不能再被模型提问（只能问 OPEN 的方向），也不能被「先问这个」或「重新打开」。
+ * 用户刚回答、等模型用 previous 交代的方向（[Ledger.lastAsked]）不动。
+ */
+internal fun Ledger.releaseUnanswered(): Ledger =
+    copy(directions = directions.map { if (it.status == ACTIVE && it.id != lastAsked) it.copy(status = OPEN) else it })
+
 internal fun Ledger.addUserDirection(title: String): Pair<Ledger, String> {
     val id = "user-$nextUserNumber"
     val direction = Direction(id, title.trim(), why = "", source = "user", fallback = "", userOwned = true)
@@ -87,13 +95,14 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
         )
     fun resolve(ref: String): String? = idMap[ref] ?: ref.takeIf { merged.direction(it) != null }
 
-    // 2. 去掉：用户的方向（跳过的、添加的、重新打开的）一律不动
-    for (id in response.dropped) {
-        val d = merged.direction(id)
+    // 2. 去掉：用户的方向（跳过的、添加的、重新打开的）、已定的方向、用户刚回答的方向、
+    //    用户「先问这个」的方向一律不动，否则用户的回答或指定会被模型抹掉
+    for (drop in response.dropped) {
+        val d = merged.direction(drop.id)
         when {
-            d == null -> errors += "dropped direction $id does not exist"
-            d.userOwned || d.status == DEFAULTED -> Unit
-            else -> merged = merged.replace(d.copy(status = DROPPED))
+            d == null -> errors += "dropped direction ${drop.id} does not exist"
+            d.userOwned || d.status == DEFAULTED || d.status == DECIDED || d.id == lastAsked || d.id == pinned -> Unit
+            else -> merged = merged.replace(d.copy(status = DROPPED, dropReason = drop.reason.ifBlank { null }))
         }
     }
 
@@ -124,7 +133,19 @@ internal fun Ledger.merge(response: RoundResponse, changedByUser: Set<String>): 
     var touchedByUser = false
     val next: MergedNext? =
         when (val n = response.next) {
-            is Next.Done -> MergedNext.Done(n.requirement)
+            is Next.Done -> {
+                // 用户指定了「先问这个」，或调查期间动过方向（跳过、添加、先问这个、重新打开）时，
+                // done 没有顾及这些操作：前者是模型的错，后者由用户造成，用新台账重新调用即可
+                val pin = merged.pinned
+                if (pin != null || changedByUser.isNotEmpty()) {
+                    if (pin != null) targetProblems += "the user asked to discuss $pin next; ask about it instead of returning done"
+                    if (changedByUser.isNotEmpty()) targetProblems += "the user changed directions ${changedByUser.sorted().joinToString()} during this round"
+                    touchedByUser = changedByUser.isNotEmpty()
+                    null
+                } else {
+                    MergedNext.Done(n.requirement)
+                }
+            }
             is Next.Ask -> {
                 val id = resolve(n.question.directionId)
                 val d = id?.let(merged::direction)

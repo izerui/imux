@@ -1,7 +1,9 @@
 package com.github.izerui.imux.clarification
 
 import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -75,5 +77,56 @@ class ClarificationServiceSourceTest {
     fun `launch 助手在 IO 调度器上运行`() {
         val launchBody = source.bodyAfter("private fun launch(", '{')
         assertTrue(launchBody.contains("Dispatchers.IO"))
+    }
+
+    @Test
+    fun `关闭标签页时结果页与发送中的需求先通知再丢弃`() {
+        val release = source.bodyAfter("internal fun releaseOwner(", '{')
+        val read = release.indexOf("undeliveredRequirement(")
+        val discard = release.indexOf("discard(")
+        val notify = release.indexOf("notifyUndelivered")
+        assertTrue("丢弃之前读出尚未送达的需求", read >= 0 && read < discard)
+        assertTrue("丢弃后通知并提供复制", notify > discard)
+    }
+
+    @Test
+    fun `任务登记在流程当前的 key 下且与迁移同锁`() {
+        val register = source.bodyAfter("private fun register(", '{')
+        assertTrue("取流程当前所在的 key", register.contains("currentKeyOf(flow) ?: sessionKey"))
+        assertTrue("登记与迁移同锁", register.contains("synchronized(jobs)"))
+        val migrate = source.bodyAfter("private fun migrate(", '{')
+        assertTrue("迁移在同一把锁内移动任务", migrate.contains("synchronized(jobs) {") && migrate.substringAfter("synchronized(jobs) {").contains("jobs.remove(from)"))
+        assertTrue("IO 任务经 register 登记", source.bodyAfter("private fun launch(", '{').contains("register(sessionKey, flow)"))
+        assertTrue("发送任务经 register 登记", source.bodyAfter("internal fun send(", '{').contains("register(sessionKey, flow)"))
+    }
+
+    @Test
+    fun `会话记录是否存在在 IO 线程上判断`() {
+        val check = source.bodyAfter("internal fun checkBackground(", '{')
+        assertTrue(check.contains("Dispatchers.IO"))
+        assertTrue(check.indexOf("Files.isRegularFile(") > check.indexOf("Dispatchers.IO"))
+    }
+
+    @Test
+    fun `通知里的复制使用 CopyPasteManager`() {
+        val notify = source.bodyAfter("private fun notifyUndelivered(", '{')
+        assertTrue(notify.contains("CopyPasteManager.getInstance().setContents("))
+        assertFalse(source.normalized.contains("systemClipboard"))
+    }
+
+    @Test
+    fun `结果页的需求尚未送达`() {
+        assertEquals("REQ", undeliveredRequirement(ClarificationState.Result("REQ")))
+    }
+
+    @Test
+    fun `发送中的需求尚未送达`() {
+        assertEquals("REQ", undeliveredRequirement(ClarificationState.Sending("REQ", waitingForTurn = true)))
+    }
+
+    @Test
+    fun `调查中与提问页没有待送达的需求`() {
+        assertNull(undeliveredRequirement(ClarificationState.Investigating(null, 0)))
+        assertNull(undeliveredRequirement(ClarificationState.Asking(Question("d1", "Q", "", "", emptyList()))))
     }
 }

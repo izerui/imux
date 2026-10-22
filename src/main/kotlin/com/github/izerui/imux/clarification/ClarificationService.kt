@@ -25,6 +25,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import kotlinx.coroutines.CoroutineScope
@@ -93,14 +94,18 @@ class ClarificationService(
         )
     }
 
-    internal fun hasBackground(sessionKey: String): Boolean =
-        SessionMonitor.getInstance(project).model.sessionOf(sessionKey)?.let { Files.isRegularFile(it.filePath) } == true
+    /** 会话记录文件是否存在。查文件系统，放在 IO 线程上做，结果交给 [onResult]（仍在 IO 线程）。 */
+    internal fun checkBackground(sessionKey: String, onResult: (Boolean) -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            onResult(SessionMonitor.getInstance(project).model.sessionOf(sessionKey)?.let { Files.isRegularFile(it.filePath) } == true)
+        }
+    }
 
     internal fun start(sessionKey: String, requirement: String, includeBackground: Boolean) {
         val flow = flows[sessionKey] ?: return
         val session = if (includeBackground) SessionMonitor.getInstance(project).model.sessionOf(sessionKey) else null
         val runId = flow.begin(requirement, null)
-        launch(sessionKey) {
+        launch(sessionKey, flow) {
             flow.attachBackground(runId, session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
             flow.advance(runId)
         }
@@ -109,13 +114,13 @@ class ClarificationService(
     internal fun answer(sessionKey: String, answer: Answer, correction: String?) {
         val flow = flows[sessionKey] ?: return
         val runId = flow.answer(answer, correction) ?: return
-        launch(sessionKey) { flow.advance(runId) }
+        launch(sessionKey, flow) { flow.advance(runId) }
     }
 
     internal fun skip(sessionKey: String, id: String) {
         val flow = flows[sessionKey] ?: return
         val runId = flow.skip(id) ?: return
-        launch(sessionKey) { flow.advance(runId) }
+        launch(sessionKey, flow) { flow.advance(runId) }
     }
 
     internal fun pin(sessionKey: String, id: String) { flows[sessionKey]?.pin(id) }
@@ -126,8 +131,8 @@ class ClarificationService(
 
     internal fun finish(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
-        val runId = flow.beginResult()
-        launch(sessionKey) { flow.generateResult(runId) }
+        val runId = flow.beginResult() ?: return
+        launch(sessionKey, flow) { flow.generateResult(runId) }
     }
 
     internal fun fallback(sessionKey: String) { flows[sessionKey]?.fallbackResult() }
@@ -135,15 +140,15 @@ class ClarificationService(
     internal fun continueClarifying(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
         val runId = flow.continueClarifying() ?: return
-        launch(sessionKey) { flow.advance(runId) }
+        launch(sessionKey, flow) { flow.advance(runId) }
     }
 
     internal fun retry(sessionKey: String) {
         val flow = flows[sessionKey] ?: return
         val (work, runId) = flow.retry() ?: return
         when (work) {
-            PendingWork.ROUND -> launch(sessionKey) { flow.advance(runId) }
-            PendingWork.RESULT -> launch(sessionKey) { flow.generateResult(runId) }
+            PendingWork.ROUND -> launch(sessionKey, flow) { flow.advance(runId) }
+            PendingWork.RESULT -> launch(sessionKey, flow) { flow.generateResult(runId) }
         }
     }
 
@@ -157,9 +162,20 @@ class ClarificationService(
      * 在 IO 线程跑一段阻塞的流程调用。Agent 的异常、进度、结果都由流程按调度时拿到的 runId 自己核对，
      * 这里不再处理失败：取消、重试之后才真正启动的旧任务，带着旧 runId，进去就会被忽略。
      */
-    private fun launch(sessionKey: String, body: () -> Unit) {
-        jobs.remove(sessionKey)?.cancel()
-        jobs[sessionKey] = scope.launch(Dispatchers.IO) { runInterruptible { body() } }
+    private fun launch(sessionKey: String, flow: ClarificationFlow, body: () -> Unit) {
+        register(sessionKey, flow) { scope.launch(Dispatchers.IO) { runInterruptible { body() } } }
+    }
+
+    /**
+     * 取消该流程的旧任务并登记新任务。key 取流程当前所在的 key（[sessionKey] 只作后备），
+     * 与 [migrate] 同锁：迁移不会插在取消旧任务与登记新任务之间，把新任务留在旧 key 下。
+     */
+    private fun register(sessionKey: String, flow: ClarificationFlow, start: () -> Job) {
+        synchronized(jobs) {
+            val key = currentKeyOf(flow) ?: sessionKey
+            jobs.remove(key)?.cancel()
+            jobs[key] = start()
+        }
     }
 
     private fun runAgent(agentType: AgentType, prompt: String, onProgress: (String) -> Unit): String {
@@ -199,9 +215,8 @@ class ClarificationService(
      */
     internal fun send(sessionKey: String, text: String) {
         val flow = flows[sessionKey] ?: return
-        jobs.remove(sessionKey)?.cancel()
         flow.sending(waitingForTurn = isMainSessionBusy(sessionKey))
-        jobs[sessionKey] =
+        register(sessionKey, flow) {
             scope.launch(Dispatchers.EDT) {
                 while (isActive) {
                     val key = currentKeyOf(flow) ?: return@launch
@@ -220,6 +235,7 @@ class ClarificationService(
                     delay(if (busy) BUSY_POLL_MILLIS else SEND_RETRY_MILLIS)
                 }
             }
+        }
     }
 
     internal fun cancelSend(sessionKey: String) {
@@ -240,7 +256,7 @@ class ClarificationService(
                 .createNotification(ImuxBundle.message("clarify.notify.title"), ImuxBundle.message("clarify.notify.closed"), NotificationType.WARNING)
         notification.addAction(
             NotificationAction.createSimpleExpiring(ImuxBundle.message("clarify.notify.copy")) {
-                java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+                CopyPasteManager.getInstance().setContents(StringSelection(text))
             },
         )
         notification.notify(project)
@@ -259,19 +275,27 @@ class ClarificationService(
         dialogs.remove(sessionKey)?.close(com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE)
     }
 
-    /** 会话标签页真正关闭：取消、清理、丢弃状态。 */
+    /**
+     * 会话标签页真正关闭：取消、清理、丢弃状态。结果页或发送中的需求还没送进终端，
+     * 丢弃前先通知并提供复制，否则这段文字就没了。
+     */
     internal fun releaseOwner(tabId: String) {
         owners.filterValues { it == tabId }.keys.forEach { key ->
-            flows[key]?.cancelled()
+            val flow = flows[key]
+            val undelivered = flow?.let { undeliveredRequirement(it.state) }
+            flow?.cancelled()
             discard(key)
+            undelivered?.let(::notifyUndelivered)
         }
     }
 
     private fun migrate(from: String, to: String) {
         if (from == to) return
-        flows.remove(from)?.let { flows[to] = it }
-        owners.remove(from)?.let { owners[to] = it }
-        jobs.remove(from)?.let { jobs[to] = it }
+        synchronized(jobs) {
+            flows.remove(from)?.let { flows[to] = it }
+            owners.remove(from)?.let { owners[to] = it }
+            jobs.remove(from)?.let { jobs[to] = it }
+        }
         dialogs.remove(from)?.let {
             dialogs[to] = it
             it.sessionKey = to
@@ -294,6 +318,14 @@ class ClarificationService(
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"
     }
 }
+
+/** 结果页或发送中的需求尚未送达终端，关闭标签页时需要交给用户；其余状态没有可交付的文字。 */
+internal fun undeliveredRequirement(state: ClarificationState): String? =
+    when (state) {
+        is ClarificationState.Result -> state.requirement
+        is ClarificationState.Sending -> state.requirement
+        else -> null
+    }
 
 /** 主会话正在执行或停在确认框上（只有 Claude 有这个信号）。纯函数，便于单测。 */
 internal fun mainSessionBusy(running: Set<String>, waiting: Set<String>, sessionKey: String): Boolean =

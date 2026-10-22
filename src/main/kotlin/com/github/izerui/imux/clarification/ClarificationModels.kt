@@ -16,6 +16,8 @@ internal data class Direction(
     val userOwned: Boolean = false,
     val conclusion: String? = null,
     val openPoints: List<String> = emptyList(),
+    /** 模型去掉该方向时给的理由；界面在去掉的方向旁原样显示。 */
+    val dropReason: String? = null,
 )
 
 internal data class ChoiceOption(

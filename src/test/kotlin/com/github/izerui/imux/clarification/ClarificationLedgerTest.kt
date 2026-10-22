@@ -18,7 +18,7 @@ class ClarificationLedgerTest {
     private fun response(
         next: Next,
         added: List<NewDirection> = emptyList(),
-        dropped: List<String> = emptyList(),
+        dropped: List<DroppedDirection> = emptyList(),
         previous: Previous? = null,
         notes: String = "",
     ) = RoundResponse(null, added, dropped, previous, notes, next)
@@ -63,7 +63,7 @@ class ClarificationLedgerTest {
     @Test
     fun `模型去掉跳过的方向与用户添加的方向都被丢弃`() {
         val ledger = base.copy(directions = listOf(dir("d1", DirectionStatus.DEFAULTED), dir("user-1", userOwned = true), dir("d2")))
-        val out = ledger.merge(response(ask("d2"), dropped = listOf("d1", "user-1")), emptySet())
+        val out = ledger.merge(response(ask("d2"), dropped = listOf(DroppedDirection("d1", "r"), DroppedDirection("user-1", "r"))), emptySet())
         assertTrue(out.errors.isEmpty())
         assertEquals(DirectionStatus.DEFAULTED, out.ledger.direction("d1")!!.status)
         assertEquals(DirectionStatus.OPEN, out.ledger.direction("user-1")!!.status)
@@ -185,5 +185,73 @@ class ClarificationLedgerTest {
         assertTrue(text.contains("已定结论"))
         assertTrue(text.contains("默认结论"))
         assertFalse(text.contains("未定结论"))
+    }
+
+    @Test
+    fun `模型去掉已定的方向被忽略`() {
+        val ledger = base.copy(directions = listOf(dir("d1", DirectionStatus.DECIDED).copy(conclusion = "已定结论"), dir("d2")))
+        val out = ledger.merge(response(ask("d2"), dropped = listOf(DroppedDirection("d1", "不需要了"))), emptySet())
+        assertTrue(out.errors.isEmpty())
+        assertEquals(DirectionStatus.DECIDED, out.ledger.direction("d1")!!.status)
+        assertEquals("已定结论", out.ledger.direction("d1")!!.conclusion)
+    }
+
+    @Test
+    fun `模型去掉用户刚回答的方向被忽略且结论仍取用户的回答`() {
+        val ledger = base.recordAnswer(ask("d1").question, Answer.Picked("b"), null)
+        val out = ledger.merge(
+            response(ask("d2"), dropped = listOf(DroppedDirection("d1", "不需要了")), previous = Previous("d1", decided = true, conclusion = "转述", openPoints = emptyList())),
+            emptySet(),
+        )
+        assertTrue(out.errors.isEmpty())
+        assertEquals(DirectionStatus.DECIDED, out.ledger.direction("d1")!!.status)
+        assertEquals("conclusion-b", out.ledger.direction("d1")!!.conclusion)
+    }
+
+    @Test
+    fun `模型去掉先问这个的方向被忽略`() {
+        val out = base.pin("d2").merge(response(ask("d2"), dropped = listOf(DroppedDirection("d2", "不需要了"))), emptySet())
+        assertTrue(out.errors.isEmpty())
+        assertEquals(DirectionStatus.ACTIVE, out.ledger.direction("d2")!!.status)
+    }
+
+    @Test
+    fun `模型去掉的方向记下理由`() {
+        val out = base.merge(response(ask("d1"), dropped = listOf(DroppedDirection("d2", "已由回答覆盖"))), emptySet())
+        assertTrue(out.errors.isEmpty())
+        assertEquals(DirectionStatus.DROPPED, out.ledger.direction("d2")!!.status)
+        assertEquals("已由回答覆盖", out.ledger.direction("d2")!!.dropReason)
+    }
+
+    @Test
+    fun `指定先问这个后模型返回 done 判为错误`() {
+        val ledger = base.pin("d2")
+        val out = ledger.merge(response(Next.Done("REQ")), emptySet())
+        assertTrue(out.errors.any { it.contains("d2") })
+        assertFalse(out.invalidatedByUser)
+        assertNull(out.next)
+        assertEquals(ledger, out.ledger)
+    }
+
+    @Test
+    fun `调查期间用户改过方向时模型返回 done 标为用户造成`() {
+        val (ledger, id) = base.addUserDirection("我的方向")
+        val out = ledger.merge(response(Next.Done("REQ")), changedByUser = setOf(id))
+        assertTrue(out.invalidatedByUser)
+        assertNull(out.next)
+        assertEquals(ledger, out.ledger)
+    }
+
+    @Test
+    fun `离开问题页时被问而未回答的方向回到待确认`() {
+        val asked = base.merge(response(ask("d1")), emptySet()).ledger
+        assertEquals(DirectionStatus.ACTIVE, asked.direction("d1")!!.status)
+        assertEquals(DirectionStatus.OPEN, asked.releaseUnanswered().direction("d1")!!.status)
+    }
+
+    @Test
+    fun `离开时用户刚回答待交代的方向保持当前`() {
+        val answered = base.recordAnswer(ask("d1").question, Answer.Picked("a"), null)
+        assertEquals(DirectionStatus.ACTIVE, answered.releaseUnanswered().direction("d1")!!.status)
     }
 }

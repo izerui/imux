@@ -123,9 +123,9 @@ internal class ClarificationDialog(
         val state = flow.state
         requirementLabel.text = ledger.requirement
         requirementLabel.isVisible = ledger.requirement.isNotEmpty()
-        directionModel.replaceAll(ledger.directions.filter { it.status != DirectionStatus.DROPPED })
+        directionModel.replaceAll(ledger.directions)
         roundLabel.text = if (ledger.history.isEmpty() && state is ClarificationState.Input) "" else ImuxBundle.message("clarify.round", ledger.history.size + 1)
-        finishButton.isEnabled = state is ClarificationState.Asking
+        finishButton.isEnabled = flow.canFinish
         if (state == renderedState) return
         renderedState = state
         elapsedLabel = null
@@ -167,14 +167,20 @@ internal class ClarificationDialog(
 
     private fun inputPanel(): JComponent {
         val area = JBTextArea(6, 50).apply { lineWrap = true; wrapStyleWord = true }
-        val hasBackground = service.hasBackground(sessionKey)
-        val background = JBCheckBox(ImuxBundle.message("clarify.input.background"), hasBackground).apply { isVisible = hasBackground }
+        // 是否有会话记录要查文件系统，不在 EDT 上做：先隐藏，查到再显示并默认勾选
+        val background = JBCheckBox(ImuxBundle.message("clarify.input.background"), false).apply { isVisible = false }
+        service.checkBackground(sessionKey) { has ->
+            ApplicationManager.getApplication().invokeLater({
+                background.isVisible = has
+                background.isSelected = has
+            }, ModalityState.any())
+        }
         return column().apply {
             add(JBLabel(ImuxBundle.message("clarify.input.label")))
             add(JBScrollPane(area))
             add(background)
             add(buttons(button("clarify.input.start") {
-                if (area.text.isNotBlank()) service.start(sessionKey, area.text, background.isSelected && hasBackground)
+                if (area.text.isNotBlank()) service.start(sessionKey, area.text, background.isVisible && background.isSelected)
             }))
         }
     }
@@ -289,7 +295,6 @@ internal class ClarificationDialog(
     }
 
     private fun installDirectionMenu() {
-        fun selected(): Direction? = directionList.selectedValue
         val group = DefaultActionGroup(
             menuAction("clarify.directions.skip", { it.status == DirectionStatus.OPEN || it.status == DirectionStatus.ACTIVE }) { service.skip(sessionKey, it.id) },
             menuAction("clarify.directions.pin", { it.status == DirectionStatus.OPEN }) { service.pin(sessionKey, it.id) },
@@ -319,6 +324,12 @@ internal class ClarificationDialog(
                 DirectionStatus.DECIDED -> AllIcons.RunConfigurations.TestPassed
                 DirectionStatus.DEFAULTED -> AllIcons.RunConfigurations.TestIgnored
                 DirectionStatus.DROPPED -> AllIcons.Actions.Cancel
+            }
+            if (value.status == DirectionStatus.DROPPED) {
+                // 去掉的方向不藏起来：灰显并附上模型给的理由，用户能看见它为什么不再问
+                append(value.title, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                value.dropReason?.let { append("  $it", SimpleTextAttributes.GRAYED_ITALIC_ATTRIBUTES) }
+                return
             }
             append(value.title)
             value.conclusion?.takeIf { value.status == DirectionStatus.DECIDED || value.status == DirectionStatus.DEFAULTED }?.let {
