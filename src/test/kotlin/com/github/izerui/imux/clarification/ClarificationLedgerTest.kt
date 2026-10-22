@@ -297,15 +297,17 @@ class ClarificationLedgerTest {
         assertEquals(DirectionStatus.OPEN, merged.ledger.direction("d1")!!.status)
         val confirmed = merged.ledger.confirmedConclusions()
         assertTrue("OPEN answered should be included", confirmed.contains("conclusion-b"))
+        assertFalse("model's partial conclusion must not appear", confirmed.contains("partial"))
     }
 
     @Test
     fun `confirmedConclusions 不包含从未回答的方向`() {
         val ledger = base.copy(
-            directions = listOf(dir("d1", DirectionStatus.OPEN).copy(conclusion = null, fallback = "UNANSWERED-FB")),
+            directions = listOf(dir("d1", DirectionStatus.OPEN).copy(conclusion = "PARTIAL-X", fallback = "UNANSWERED-FB")),
         )
         val confirmed = ledger.confirmedConclusions()
-        assertFalse("never-answered direction must not appear", confirmed.contains("UNANSWERED-FB"))
+        assertFalse("never-answered direction's fallback must not appear", confirmed.contains("UNANSWERED-FB"))
+        assertFalse("never-answered direction's model conclusion must not appear", confirmed.contains("PARTIAL-X"))
         assertTrue("never-answered direction: empty confirmed", confirmed.isEmpty())
     }
 
