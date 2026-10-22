@@ -156,4 +156,122 @@ class ClarificationDialogHelpersTest {
         // 2000 个 x + HTML 标签
         assertFalse("不含第 2001 个字符之后的内容", tip.contains("x".repeat(2001)))
     }
+
+    // ---- needsCenterRebuild：就地更新的另外两种情况 ----
+
+    @Test
+    fun `同一次调查只是进度变化不重建`() {
+        val old = ClarificationState.Investigating(null, 100)
+        assertFalse("startedAt 相同、进度变了 → 不重建", needsCenterRebuild(old, ClarificationState.Investigating("读取文件", 100)))
+        assertTrue("startedAt 变了（新一轮）→ 重建", needsCenterRebuild(old, ClarificationState.Investigating(null, 200)))
+    }
+
+    @Test
+    fun `同一次发送只是等待原因变化不重建`() {
+        val old = ClarificationState.Sending("需求", waitingForTurn = true)
+        assertFalse("等待原因变了 → 不重建", needsCenterRebuild(old, ClarificationState.Sending("需求", waitingForTurn = false)))
+        assertTrue("需求文字变了 → 重建", needsCenterRebuild(old, ClarificationState.Sending("另一段", waitingForTurn = true)))
+    }
+
+    // ---- investigationKind ----
+
+    private val direction = Direction("d1", "A", "", "", "")
+
+    @Test
+    fun `调查种类按能否生成结果与台账区分三种`() {
+        assertEquals("不能生成结果 → 正在生成结果", InvestigationKind.RESULT, investigationKind(false, Ledger("r", null, directions = listOf(direction))))
+        assertEquals("没有方向也没有问答 → 第一轮", InvestigationKind.FIRST_ROUND, investigationKind(true, Ledger("r", null)))
+        assertEquals("已有方向 → 后续一轮", InvestigationKind.ROUND, investigationKind(true, Ledger("r", null, directions = listOf(direction))))
+    }
+
+    // ---- buttonBar ----
+
+    private val laterLedger = Ledger("r", null, directions = listOf(direction))
+
+    @Test
+    fun `输入页只有关闭与开始澄清，开始澄清是默认按钮`() {
+        val bar = buttonBar(ClarificationState.Input, false, Ledger("", null))
+        assertEquals(emptyList<BarButton>(), bar.left)
+        assertEquals(listOf(BarButton.CLOSE, BarButton.START), bar.right)
+        assertEquals(BarButton.START, bar.default)
+    }
+
+    @Test
+    fun `调查中第一轮不出现够了生成结果，后续一轮出现在左侧`() {
+        val investigating = ClarificationState.Investigating(null, 0)
+        val first = buttonBar(investigating, true, Ledger("r", null))
+        assertEquals("第一轮左侧为空", emptyList<BarButton>(), first.left)
+        assertEquals(listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION), first.right)
+        assertEquals(BarButton.CANCEL_INVESTIGATION, first.default)
+        val later = buttonBar(investigating, true, laterLedger)
+        assertEquals("后续一轮左侧是够了生成结果", listOf(BarButton.FINISH_LEFT), later.left)
+        val generating = buttonBar(investigating, false, laterLedger)
+        assertEquals("正在生成结果时不再出现", emptyList<BarButton>(), generating.left)
+        assertEquals(BarButton.CANCEL_INVESTIGATION, generating.default)
+    }
+
+    @Test
+    fun `提问页最后一题是确认，前面的题是确认下一题`() {
+        val notLast = buttonBar(ClarificationState.Asking(listOf(q1, q2), 0), true, laterLedger)
+        assertEquals(listOf(BarButton.SKIP_QUESTION), notLast.left)
+        assertEquals(listOf(BarButton.FINISH, BarButton.CONFIRM_NEXT), notLast.right)
+        assertEquals(BarButton.CONFIRM_NEXT, notLast.default)
+        val last = buttonBar(ClarificationState.Asking(listOf(q1, q2), 1), true, laterLedger)
+        assertEquals(listOf(BarButton.FINISH, BarButton.CONFIRM), last.right)
+        assertEquals(BarButton.CONFIRM, last.default)
+    }
+
+    @Test
+    fun `结果页、发送中、失败页各自的按钮栏`() {
+        val result = buttonBar(ClarificationState.Result("x"), false, laterLedger)
+        assertEquals(listOf(BarButton.CONTINUE, BarButton.COPY), result.left)
+        assertEquals(listOf(BarButton.CLOSE, BarButton.SEND), result.right)
+        assertEquals(BarButton.SEND, result.default)
+
+        val sending = buttonBar(ClarificationState.Sending("x", true), false, laterLedger)
+        assertEquals(emptyList<BarButton>(), sending.left)
+        assertEquals(listOf(BarButton.CANCEL_SEND), sending.right)
+        assertEquals(BarButton.CANCEL_SEND, sending.default)
+
+        val failed = buttonBar(ClarificationState.Failed(FailureReason.TIMEOUT, "600", null), false, laterLedger)
+        assertEquals(listOf(BarButton.FALLBACK), failed.left)
+        assertEquals(listOf(BarButton.CLOSE, BarButton.RETRY), failed.right)
+        assertEquals(BarButton.RETRY, failed.default)
+    }
+
+    @Test
+    fun `每个状态的默认按钮都在右侧最后`() {
+        val states =
+            listOf(
+                ClarificationState.Input,
+                ClarificationState.Investigating(null, 0),
+                ClarificationState.Asking(listOf(q1, q2), 0),
+                ClarificationState.Asking(listOf(q1, q2), 1),
+                ClarificationState.Result("x"),
+                ClarificationState.Sending("x", false),
+                ClarificationState.Failed(FailureReason.CANCELLED, "", null),
+            )
+        for (state in states) {
+            val bar = buttonBar(state, true, laterLedger)
+            assertEquals("$state 的默认按钮在右侧最后", bar.right.last(), bar.default)
+        }
+    }
+
+    // ---- 文案 ----
+
+    private val echo = ViewMessages { key, params -> key + params.joinToString(",", "[", "]") }
+
+    @Test
+    fun `题号说明只在一批多于一题时接上批次说明`() {
+        assertEquals("clarify.question.header[1,1]", questionHeaderLine(0, 1, echo))
+        assertEquals("clarify.question.header[2,3] · clarify.question.batch.note[]", questionHeaderLine(1, 3, echo))
+    }
+
+    @Test
+    fun `清单标题只在有去掉的方向时附上去掉的数量`() {
+        val kept = listOf(direction.copy(status = DirectionStatus.DECIDED))
+        assertEquals("clarify.list.title[clarify.progress[1,0,0]]", listTitle(kept, echo))
+        val withDropped = kept + direction.copy(id = "d2", status = DirectionStatus.DROPPED)
+        assertEquals("clarify.list.title[clarify.progress[1,0,0] · clarify.progress.dropped[1]]", listTitle(withDropped, echo))
+    }
 }
