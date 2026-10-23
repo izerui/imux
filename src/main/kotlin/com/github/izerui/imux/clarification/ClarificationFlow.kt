@@ -24,8 +24,6 @@ internal sealed interface ClarificationState {
 
 internal enum class FailureReason { CANCELLED, TIMEOUT, AGENT_ERROR, PROTOCOL }
 
-internal enum class PendingWork { ROUND, RESULT }
-
 /**
  * 与澄清 Agent 的一段持续对话（流程这一侧看到的样子）：[send] 发一条消息并阻塞到这一轮结束，返回回答；
  * [close] 结束对话（终止进程、清理会话文件）。实现由服务按当前会话的智能体提供。
@@ -40,8 +38,10 @@ internal interface ClarificationConversation {
  * 一个会话的澄清流程：整个澄清只用一段对话。开始时发开场（指南、规则、需求、背景、格式），
  * 之后每次只发这一批的回答，Agent 带着已有的上下文接着做；回复不合格式时在同一段对话里把错误发回一次。
  *
- * 对话中断（取消、失败、调查中点「够了」）时结束它；之后重试、继续或生成结果都新开一段对话，
- * 以原需求与已确认的问答（[record]）作为开场接着做。
+ * 什么时候问够了由 Agent 判断（返回 done）；用户不想继续时直接关窗。
+ * 对话中断（取消、失败）时结束它；之后重试或继续都新开一段对话，以原需求与已确认的问答（[record]）作为开场接着做。
+ *
+ * 一个流程只对应一次澄清：[end] 之后不再复用，服务会丢掉它，下次打开窗口新建一个。
  *
  * 状态读写都在 [lock] 内；[run] 阻塞地等 Agent，只在 IO 线程调用。[generation] 在每次开始调查、取消、结束时递增：
  * Agent 返回时若它已变，说明这一轮已被取消或被新一轮取代，结果丢弃。
@@ -57,7 +57,6 @@ internal class ClarificationFlow(
 ) {
     private val lock = Any()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
-    private var pending = PendingWork.ROUND
     private var generation = 0L
     private var conversation: ClarificationConversation? = null
 
@@ -81,9 +80,8 @@ internal class ClarificationFlow(
 
     private fun changed() = listeners.forEach { it() }
 
-    private fun investigate(work: PendingWork, message: String?): Long {
+    private fun investigate(message: String?): Long {
         generation++
-        pending = work
         outgoing = message
         state = ClarificationState.Investigating(null, clock(), generation)
         return generation
@@ -105,7 +103,7 @@ internal class ClarificationFlow(
         synchronized(lock) {
             old = detachLocked()
             record = ClarificationRecord(requirement.trim(), background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
-            runId = investigate(PendingWork.ROUND, null)
+            runId = investigate(null)
         }
         old?.let(closeConversation)
         changed()
@@ -132,7 +130,7 @@ internal class ClarificationFlow(
             record = record.copy(history = record.history + batch)
             // 草稿随提交作废：之后出现一模一样的问题时，不能把这次的回答当成新的草稿带回来
             drafts = null
-            runId = investigate(PendingWork.ROUND, conversation?.let { answersMessage(batch, isChinese) })
+            runId = investigate(conversation?.let { answersMessage(batch, isChinese) })
         }
         changed()
         return runId
@@ -170,7 +168,7 @@ internal class ClarificationFlow(
                         } else {
                             replaced = detachLocked()
                             conversation = created
-                            openingMessage(record, isChinese, guidance, finishNow = pending == PendingWork.RESULT)
+                            openingMessage(record, isChinese, guidance)
                         }
                     }
                 replaced?.let(closeConversation)
@@ -225,9 +223,6 @@ internal class ClarificationFlow(
             } catch (e: ProtocolException) {
                 return e.errors
             }
-        if (pending == PendingWork.RESULT && reply is AgentReply.Ask) {
-            return listOf("the user asked for the result now; reply with {\"type\": \"done\", \"requirement\": \"...\"}")
-        }
         outgoing = null
         state =
             when (reply) {
@@ -249,47 +244,6 @@ internal class ClarificationFlow(
         changed()
     }
 
-    /** 「够了，生成结果」在提问页与一轮调查进行中可用；正在生成结果、输入、结果页、发送中不可用。 */
-    val canFinish: Boolean
-        get() = synchronized(lock) { canFinishLocked() }
-
-    private fun canFinishLocked(): Boolean =
-        when (state) {
-            is ClarificationState.Asking -> true
-            is ClarificationState.Investigating -> pending == PendingWork.ROUND
-            else -> false
-        }
-
-    /**
-     * 开始生成结果；不可生成时返回 null。
-     * 在提问页调用时先记下 [answers]（这一批里已填写的回答，没填写的不记），在同一段对话里要求现在给出结果；
-     * 调查进行中调用时，这一轮的回复不再等：结束这段对话，新开一段，以已确认的问答为开场要求直接给出结果。
-     */
-    fun beginResult(answers: Map<String, Answer> = emptyMap()): Long? {
-        val runId: Long
-        var dropped: ClarificationConversation? = null
-        synchronized(lock) {
-            if (!canFinishLocked()) return null
-            val message: String?
-            when (val s = state) {
-                is ClarificationState.Asking -> {
-                    val filled = s.batch.mapNotNull { q -> answers[q.id]?.let { answerRecord(q, it) } }
-                    record = record.copy(history = record.history + filled)
-                    drafts = null
-                    message = conversation?.let { finishMessage(filled, isChinese) }
-                }
-                else -> {
-                    dropped = detachLocked()
-                    message = null
-                }
-            }
-            runId = investigate(PendingWork.RESULT, message)
-        }
-        dropped?.let(closeConversation)
-        changed()
-        return runId
-    }
-
     fun fallbackResult() {
         synchronized(lock) {
             if (state !is ClarificationState.Failed) return
@@ -304,18 +258,18 @@ internal class ClarificationFlow(
         val runId: Long
         synchronized(lock) {
             if (state !is ClarificationState.Result) return null
-            runId = investigate(PendingWork.ROUND, conversation?.let { continueMessage(isChinese) })
+            runId = investigate(conversation?.let { continueMessage(isChinese) })
         }
         changed()
         return runId
     }
 
-    /** 从失败状态重试失败的那一步：对话已在失败时结束，新开一段并以已确认的问答为开场。不在失败状态返回 null。 */
+    /** 从失败状态重试：对话已在失败时结束，新开一段并以已确认的问答为开场。不在失败状态返回 null。 */
     fun retry(): Long? {
         val runId: Long
         synchronized(lock) {
             if (state !is ClarificationState.Failed) return null
-            runId = investigate(pending, null)
+            runId = investigate(null)
         }
         changed()
         return runId
@@ -343,7 +297,7 @@ internal class ClarificationFlow(
         changed()
     }
 
-    /** 澄清结束（关窗、发送成功、标签页或项目关闭）：作废在途一轮并结束对话。 */
+    /** 澄清结束（关窗、发送成功、标签页或项目关闭）：作废在途一轮并结束对话。之后这个流程不再使用。 */
     fun end() {
         val dropped: ClarificationConversation?
         synchronized(lock) {

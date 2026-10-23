@@ -221,63 +221,6 @@ class ClarificationFlowTest {
     }
 
     @Test
-    fun `够了：在同一段对话里附上已填写的回答并要求现在给出结果`() {
-        val f = started(ask("H1", "H2"), done("FINAL"))
-        f.run(f.beginResult(mapOf("q1" to Answer.Picked(listOf("a"))))!!)
-
-        assertEquals(ClarificationState.Result("FINAL"), f.state)
-        assertEquals(1, conversations.size)
-        val finish = conversations.single().sent[1]
-        assertTrue("附上已填写的回答", finish.contains("A-H1") && finish.contains("D-H1-a"))
-        assertFalse("没填写的不附", finish.contains("H2"))
-        assertTrue("要求现在给出结果", finish.contains("asked for the result now"))
-        assertEquals("只记下已填写的回答", listOf("D-H1-a"), f.record.confirmed())
-    }
-
-    @Test
-    fun `要结果时 Agent 仍给出问题算作格式错误，在同一段对话里纠正`() {
-        val f = started(ask("H1"), ask("H2"), done("FINAL"))
-        f.run(f.beginResult()!!)
-        assertEquals(ClarificationState.Result("FINAL"), f.state)
-        val sent = conversations.single().sent
-        assertEquals(3, sent.size)
-        assertTrue(sent[2].contains("the user asked for the result now"))
-    }
-
-    @Test
-    fun `调查中点够了：在途一轮作废并结束对话，新开对话直接要求结果`() {
-        val gate = CountDownLatch(1)
-        val f = flow(gate, ask("H1"), done("FINAL"))
-        val r1 = f.begin("REQ-MARK", null)
-        val worker = thread { f.run(r1) }
-        assertTrue(sendStarted.await(5, TimeUnit.SECONDS))
-        assertTrue(f.canFinish)
-
-        val r2 = f.beginResult()!!
-        assertTrue("在途一轮的对话结束", conversations[0].closed)
-        gate.countDown()
-        worker.join(5_000)
-        assertTrue("在途一轮的问题不能盖掉生成结果", f.state is ClarificationState.Investigating)
-
-        f.run(r2)
-        assertEquals(ClarificationState.Result("FINAL"), f.state)
-        assertEquals(2, conversations.size)
-        val opening = conversations[1].sent.single()
-        assertTrue(opening.contains("REQ-MARK") && opening.contains("asked for the result now"))
-    }
-
-    @Test
-    fun `生成结果失败后重试新开对话并仍要求直接给出结果`() {
-        val f = started(ask("H1"), RuntimeException("x"), done("FINAL"))
-        f.run(f.beginResult()!!)
-        assertTrue(f.state is ClarificationState.Failed)
-        f.run(f.retry()!!)
-        assertEquals(ClarificationState.Result("FINAL"), f.state)
-        assertEquals(2, conversations.size)
-        assertTrue(conversations[1].sent.single().contains("asked for the result now"))
-    }
-
-    @Test
     fun `看过结果后继续澄清在同一段对话里接着问`() {
         val f = started(done(), ask("H1"))
         f.run(f.continueClarifying()!!)
@@ -324,30 +267,6 @@ class ClarificationFlowTest {
         assertFalse(conversations.single().closed)
         f.end()
         assertTrue(conversations.single().closed)
-    }
-
-    @Test
-    fun `输入页不能生成结果`() {
-        val f = flow()
-        assertFalse(f.canFinish)
-        assertNull(f.beginResult())
-        assertEquals(ClarificationState.Input, f.state)
-    }
-
-    @Test
-    fun `结果页不能再生成结果`() {
-        val f = started(done())
-        assertFalse(f.canFinish)
-        assertNull(f.beginResult())
-        assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
-    }
-
-    @Test
-    fun `正在生成结果时不能再次生成结果`() {
-        val f = started(ask("H1"))
-        assertNotNull(f.beginResult())
-        assertFalse(f.canFinish)
-        assertNull(f.beginResult())
     }
 
     @Test
@@ -416,14 +335,6 @@ class ClarificationFlowTest {
     fun `不在提问页时提交无效`() {
         val f = started(done())
         assertNull(f.submitBatch(mapOf("q1" to Answer.Picked(listOf("a")))))
-    }
-
-    @Test
-    fun `调查中够了不记录任何回答`() {
-        val f = flow(ask("H1"))
-        f.begin("REQ", null)
-        assertNotNull(f.beginResult(mapOf("q1" to Answer.Picked(listOf("a")))))
-        assertTrue(f.record.history.isEmpty())
     }
 
     @Test

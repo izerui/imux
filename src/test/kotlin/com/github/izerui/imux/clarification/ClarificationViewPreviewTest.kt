@@ -160,8 +160,8 @@ class ClarificationViewPreviewTest {
 
     // ---- 渲染 ----
 
-    private fun barFor(view: ClarificationView, state: ClarificationState, canFinish: Boolean, record: ClarificationRecord): JPanel {
-        val bar = buttonBar(state, canFinish, record, view.askingPage())
+    private fun barFor(view: ClarificationView, state: ClarificationState): JPanel {
+        val bar = buttonBar(state, view.askingPage())
         fun buttons(list: List<BarButton>) =
             JPanel(FlowLayout(FlowLayout.LEADING, JBUI.scale(8), 0)).apply {
                 isOpaque = false
@@ -177,8 +177,8 @@ class ClarificationViewPreviewTest {
     }
 
     /** 视图 + 按钮栏组成整个窗口内容，按给定尺寸布局；返回根面板。 */
-    private fun window(view: ClarificationView, state: ClarificationState, canFinish: Boolean, record: ClarificationRecord, width: Int, height: Int): JRootPane {
-        val bar = barFor(view, state, canFinish, record)
+    private fun window(view: ClarificationView, state: ClarificationState, width: Int, height: Int): JRootPane {
+        val bar = barFor(view, state)
         // 与真实窗口一致：内容区直接贴着窗口边缘放，不额外加边框——内边距必须来自视图自己
         val content =
             JPanel(BorderLayout()).apply {
@@ -186,7 +186,7 @@ class ClarificationViewPreviewTest {
                 add(bar, BorderLayout.SOUTH)
             }
         val root = JRootPane().apply { contentPane = content }
-        val default = buttonBar(state, canFinish, record, view.askingPage()).default
+        val default = buttonBar(state, view.askingPage()).default
         root.defaultButton = default?.let { d -> allOf<JButton>(bar).first { it.name == d.name } }
         root.setSize(width, height)
         // 自动换行的文字的首选高度取决于上一次布局给的宽度，布局几遍才稳定；没有窗口 peer 时逐层 doLayout
@@ -304,14 +304,13 @@ class ClarificationViewPreviewTest {
         record: ClarificationRecord,
         width: Int,
         height: Int,
-        canFinish: Boolean = true,
         drafts: (BatchDrafts) -> Unit = {},
         prepare: (ClarificationView) -> Unit = {},
     ): ClarificationView {
         val view = ClarificationView(FakeCallbacks(drafts), zh)
-        view.render(state, record, canFinish, "")
+        view.render(state, record, "")
         prepare(view)
-        val root = window(view, state, canFinish, record, width, height)
+        val root = window(view, state, width, height)
         val file = png(root, name)
         assertTrue("$name 已写出", file.length() > 0)
         assertTrue("$name：内容区在 JScrollPane 里", view.component is JScrollPane)
@@ -325,7 +324,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `输入页在两种尺寸下渲染且输入框填满剩余高度`() {
         for ((w, h) in listOf(640 to 520, 460 to 380)) {
-            val view = check("input-${w}x$h", ClarificationState.Input, ClarificationRecord("", null), w, h, canFinish = false) { v -> v.setBackgroundAvailable(true) }
+            val view = check("input-${w}x$h", ClarificationState.Input, ClarificationRecord("", null), w, h) { v -> v.setBackgroundAvailable(true) }
             val area = allOf<javax.swing.JTextArea>(view.component).single()
             val viewport = view.component.viewport
             val areaPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, area)!!
@@ -404,7 +403,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `结果页在两种尺寸下渲染且编辑框填满剩余高度`() {
         for ((w, h) in listOf(640 to 520, 460 to 380)) {
-            val view = check("result-${w}x$h", ClarificationState.Result(resultText), record, w, h, canFinish = false)
+            val view = check("result-${w}x$h", ClarificationState.Result(resultText), record, w, h)
             assertEquals(resultText, view.resultText())
             val areaPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, allOf<javax.swing.JTextArea>(view.component).single())!!
             assertTrue("${w}x$h：编辑框占视口大半", areaPane.height * 2 > view.component.viewport.height)
@@ -419,7 +418,6 @@ class ClarificationViewPreviewTest {
             record,
             640,
             520,
-            canFinish = false,
         )
     }
 
@@ -428,11 +426,11 @@ class ClarificationViewPreviewTest {
     @Test
     fun `一百次进度更新不重建中间区域也不重建头部`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Investigating(null, 1_000L, run = 7), record, true, "")
+        view.render(ClarificationState.Investigating(null, 1_000L, run = 7), record, "")
         val centers = view.centerRebuilds
         val headers = view.headerRebuilds
         val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text.contains("调查") }
-        repeat(100) { i -> view.render(ClarificationState.Investigating("读取 File$i.kt", 1_000L, run = 7), record, true, "") }
+        repeat(100) { i -> view.render(ClarificationState.Investigating("读取 File$i.kt", 1_000L, run = 7), record, "") }
         assertEquals("中间区域没有重建", centers, view.centerRebuilds)
         assertEquals("头部没有重建", headers, view.headerRebuilds)
         assertTrue("进度就地更新：${label.text}", label.text.contains("File99.kt"))
@@ -445,7 +443,7 @@ class ClarificationViewPreviewTest {
     fun `换标签只重建题目区域一次，切回来恢复原来的选择与其他文字`() {
         val callbacks = FakeCallbacks()
         val view = ClarificationView(callbacks, zh)
-        view.render(ClarificationState.Asking(batch), record, true, "")
+        view.render(ClarificationState.Asking(batch), record, "")
         val centers = view.centerRebuilds
         view.options!!.buttons[1].isSelected = true
         val before = view.questionRebuilds
@@ -468,22 +466,22 @@ class ClarificationViewPreviewTest {
     @Test
     fun `已确认内容不变时头部不重建，变了才重建`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), record, true, "")
+        view.render(ClarificationState.Asking(batch), record, "")
         val headers = view.headerRebuilds
-        view.render(ClarificationState.Investigating(null, 5L, run = 9), record.copy(background = "新的背景"), true, "")
+        view.render(ClarificationState.Investigating(null, 5L, run = 9), record.copy(background = "新的背景"), "")
         assertEquals("已确认不变：头部不重建", headers, view.headerRebuilds)
         val more = record.copy(history = record.history + confirmedAnswer("失败时显示错误并提供重试"))
-        view.render(ClarificationState.Investigating(null, 5L, run = 9), more, true, "")
+        view.render(ClarificationState.Investigating(null, 5L, run = 9), more, "")
         assertEquals("已确认多了一条：头部重建一次", headers + 1, view.headerRebuilds)
     }
 
     @Test
     fun `同一批问题再次通知不重建提问页`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), record, true, "")
+        view.render(ClarificationState.Asking(batch), record, "")
         val centers = view.centerRebuilds
         val questions = view.questionRebuilds
-        repeat(10) { view.render(ClarificationState.Asking(batch), record, true, "") }
+        repeat(10) { view.render(ClarificationState.Asking(batch), record, "") }
         assertEquals(centers, view.centerRebuilds)
         assertEquals(questions, view.questionRebuilds)
     }
@@ -499,7 +497,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `数字键选择选项，最后一个数字是其他`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), record, true, "")
+        view.render(ClarificationState.Asking(batch), record, "")
         fire(view.component, JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, KeyEvent.VK_2)
         assertTrue("2 选中第二个选项", view.options!!.buttons[1].isSelected)
         fire(view.component, JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT, KeyEvent.VK_4)
@@ -517,7 +515,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `选项上的左右键换标签，单选题回车选中焦点所在的选项`() {
         val view = ClarificationView(FakeCallbacks(), zh)
-        view.render(ClarificationState.Asking(batch), record, true, "")
+        view.render(ClarificationState.Asking(batch), record, "")
         val second = view.options!!.buttons[1]
         fire(second, JComponent.WHEN_FOCUSED, KeyEvent.VK_ENTER)
         assertTrue("回车选中焦点所在的选项", second.isSelected)
@@ -535,24 +533,24 @@ class ClarificationViewPreviewTest {
         val asking = listOf(methodQuestion)
         val pages =
             listOf(
-                Triple("input", ClarificationState.Input, false),
-                Triple("investigating", ClarificationState.Investigating("读取 src/main/kotlin/com/github/izerui/imux/terminal/TerminalSessionReconnector.kt", System.currentTimeMillis() - 42_000, run = 3), true),
-                Triple("asking-single", ClarificationState.Asking(asking), true),
-                Triple("asking-batch", ClarificationState.Asking(batch), true),
-                Triple("result", ClarificationState.Result(resultText), false),
-                Triple("failed", ClarificationState.Failed(FailureReason.TIMEOUT, "600", null), false),
+                Pair("input", ClarificationState.Input),
+                Pair("investigating", ClarificationState.Investigating("读取 src/main/kotlin/com/github/izerui/imux/terminal/TerminalSessionReconnector.kt", System.currentTimeMillis() - 42_000, run = 3)),
+                Pair("asking-single", ClarificationState.Asking(asking)),
+                Pair("asking-batch", ClarificationState.Asking(batch)),
+                Pair("result", ClarificationState.Result(resultText)),
+                Pair("failed", ClarificationState.Failed(FailureReason.TIMEOUT, "600", null)),
             )
         val width = JBUI.scale(ClarificationDialog.INITIAL_WIDTH)
         val heights = mutableMapOf<String, Int>()
-        for ((page, state, canFinish) in pages) {
+        for ((page, state) in pages) {
             val view = ClarificationView(FakeCallbacks(), zh)
-            view.render(state, record, canFinish, "")
-            val bar = barFor(view, state, canFinish, record)
+            view.render(state, record, "")
+            val bar = barFor(view, state)
             // 预览里没有标题栏，窗口其余部分只有按钮栏
             val height = initialHeight(view.preferredContentHeight(width), bar.preferredSize.height)
             heights[page] = height
             assertTrue("$page：高度在 360～520 之间（$height）", height in JBUI.scale(MIN_INITIAL_HEIGHT)..JBUI.scale(MAX_INITIAL_HEIGHT))
-            val root = window(view, state, canFinish, record, width, height)
+            val root = window(view, state, width, height)
             png(root, "default-$page-${width}x$height")
             assertNoHorizontalClipping(view, root, "default-$page")
             assertEdgePadding(view, root, "default-$page")

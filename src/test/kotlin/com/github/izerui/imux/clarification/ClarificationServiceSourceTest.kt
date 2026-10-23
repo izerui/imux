@@ -91,15 +91,6 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
-    fun `生成结果不先行取消在途任务`() {
-        val finish = source.bodyAfter("internal fun finish(", '{')
-        assertTrue("finish() 必须调用 beginResult(", finish.contains("beginResult("))
-        val beginIdx = finish.indexOf("beginResult(")
-        val cancelIdx = finish.indexOf("?.cancel()")
-        assertTrue("finish() 在 beginResult 之前不能有 ?.cancel()", cancelIdx < 0 || cancelIdx > beginIdx)
-    }
-
-    @Test
     fun `launch 助手在 IO 调度器上运行`() {
         val launchBody = source.bodyAfter("private fun launch(", '{')
         assertTrue(launchBody.contains("Dispatchers.IO"))
@@ -142,8 +133,8 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
-    fun `删掉的方向操作、重新开始与每轮单次调用不再出现`() {
-        for (gone in listOf("fun answer(", "fun skip(", "fun pin(", "fun reopen(", "fun addDirection(", "fun restart(", "agentTypes", "runAgent(", "advance(", "generateResult(")) {
+    fun `删掉的方向操作、重新开始、够了与每轮单次调用不再出现`() {
+        for (gone in listOf("fun answer(", "fun skip(", "fun pin(", "fun reopen(", "fun addDirection(", "fun restart(", "agentTypes", "runAgent(", "advance(", "generateResult(", "fun finish(", "beginResult(")) {
             assertFalse("不再有 $gone", source.normalized.contains(gone))
         }
     }

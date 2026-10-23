@@ -116,13 +116,6 @@ class ClarificationService(
         launch(sessionKey, flow) { flow.run(runId) }
     }
 
-    /** 「够了，生成结果」：提问页里已填写的回答 [answers] 一并记下。 */
-    internal fun finish(sessionKey: String, answers: Map<String, Answer>) {
-        val flow = flows[sessionKey] ?: return
-        val runId = flow.beginResult(answers) ?: return
-        launch(sessionKey, flow) { flow.run(runId) }
-    }
-
     internal fun fallback(sessionKey: String) { flows[sessionKey]?.fallbackResult() }
 
     internal fun continueClarifying(sessionKey: String) {

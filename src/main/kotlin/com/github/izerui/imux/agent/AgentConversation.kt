@@ -50,8 +50,9 @@ internal fun agentConversation(
  * - Claude（`--input-format stream-json`）：写 `{"type":"user","message":{"role":"user","content":[{"type":"text","text":…}]}}`，
  *   读到 `{"type":"result",…}` 为止。
  * - Pi（`--mode rpc`）：写 `{"id":"imux-<轮次>","type":"prompt","message":…}`，读到 `{"type":"agent_settled"}` 为止；
- *   同 id 的 `response` 为 `success:false` 时这一轮失败；扩展弹出的对话框（select/confirm/input/editor）一律回复取消，
- *   否则 Pi 会一直等。
+ *   同 id 的 `response` 为 `success:false` 时这一轮失败；扩展发来的请求除了已知不需要回复的（notify、setStatus 等），
+ *   一律回复取消——对话框（select/confirm/input/editor）不回复 Pi 会一直等，不认识的请求也按对话框处理。
+ * - stderr 只留最后 [MAX_STDERR_CHARS] 个字符：常驻进程跑了很多轮之后报错时，看到的是最近的错误，而不是 shell 启动时的输出。
  */
 internal class LiveAgentConversation(
     private val agentType: AgentType,
@@ -154,10 +155,7 @@ internal class LiveAgentConversation(
                         while (true) {
                             val count = reader.read(buffer)
                             if (count < 0) break
-                            synchronized(stderr) {
-                                val room = MAX_STDERR_CHARS - stderr.length
-                                if (room > 0) stderr.appendRange(buffer, 0, minOf(room, count))
-                            }
+                            synchronized(stderr) { appendTail(stderr, buffer, count) }
                         }
                     }
                 }
@@ -203,7 +201,11 @@ internal class LiveAgentConversation(
                 return false
             }
             "extension_ui_request" -> {
-                if (root.text("method") in PI_DIALOG_METHODS) root.text("id")?.let { writeLine(writer, piCancelDialog(it)) }
+                val method = root.text("method")
+                if (method !in PI_NO_REPLY_METHODS) {
+                    if (method !in PI_DIALOG_METHODS) LOG.info("需求澄清：Pi 发来不认识的扩展请求 $method，按对话框回复取消")
+                    root.text("id")?.let { writeLine(writer, piCancelDialog(it)) }
+                }
                 return false
             }
             "agent_settled" -> {
@@ -235,6 +237,9 @@ internal class LiveAgentConversation(
     private companion object {
         val POLL_NANOS: Long = TimeUnit.MILLISECONDS.toNanos(200)
         val PI_DIALOG_METHODS = setOf("select", "confirm", "input", "editor")
+
+        /** Pi 文档列出的 fire-and-forget 请求：不需要、也不应该回复。 */
+        val PI_NO_REPLY_METHODS = setOf("notify", "setStatus", "setWidget", "setTitle", "set_editor_text")
 
         fun piTurnId(turnId: Int) = "imux-$turnId"
     }
@@ -276,7 +281,11 @@ internal class CodexConversation(
                     onStarted = { if (closed) it.destroyForcibly() },
                     onProgress = onProgress,
                     descendantPollMillis = descendantPollMillis,
-                    onCodexThread = { id -> if (threadId == null) threadId = id },
+                    onCodexThread = { id ->
+                        if (threadId == null) threadId = id
+                        // 关闭之后才到的会话 ID：close 时还不知道它，文件此刻已经写下，立即删掉
+                        if (closed) deleteRollout()
+                    },
                     start = start,
                 )
             }
@@ -321,6 +330,12 @@ internal fun deleteCodexRollout(sessionsRoot: Path, threadId: String): List<Path
         }
     }.onFailure { LOG.warn("需求澄清：扫描 Codex 会话目录失败", it) }
     return removed
+}
+
+/** 追加到 [tail]，只保留最后 [max] 个字符。 */
+internal fun appendTail(tail: StringBuilder, buffer: CharArray, count: Int, max: Int = MAX_STDERR_CHARS) {
+    tail.appendRange(buffer, 0, count)
+    if (tail.length > max) tail.delete(0, tail.length - max)
 }
 
 internal fun claudeUserMessage(text: String): String {

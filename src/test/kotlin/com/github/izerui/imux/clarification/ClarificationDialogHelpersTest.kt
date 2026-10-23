@@ -70,59 +70,54 @@ class ClarificationDialogHelpersTest {
     // ---- investigationKind ----
 
     @Test
-    fun `调查种类按能否生成结果与是否提交过回答区分三种`() {
-        assertEquals("不能生成结果 → 正在生成结果", InvestigationKind.RESULT, investigationKind(false, laterRecord))
-        assertEquals("还没提交过回答 → 第一轮", InvestigationKind.FIRST_ROUND, investigationKind(true, firstRecord))
-        assertEquals("提交过回答 → 后续一轮", InvestigationKind.ROUND, investigationKind(true, laterRecord))
+    fun `调查种类按是否提交过回答区分第一轮与后续一轮`() {
+        assertEquals("还没提交过回答 → 第一轮", InvestigationKind.FIRST_ROUND, investigationKind(firstRecord))
+        assertEquals("提交过回答 → 后续一轮", InvestigationKind.ROUND, investigationKind(laterRecord))
     }
 
     // ---- buttonBar ----
 
     @Test
     fun `输入页只有关闭与开始澄清，开始澄清是默认按钮`() {
-        val bar = buttonBar(ClarificationState.Input, false, ClarificationRecord("", null), null)
+        val bar = buttonBar(ClarificationState.Input, null)
         assertEquals(emptyList<BarButton>(), bar.left)
         assertEquals(listOf(BarButton.CLOSE, BarButton.START), bar.right)
         assertEquals(BarButton.START, bar.default)
     }
 
     @Test
-    fun `调查中第一轮不出现够了生成结果，后续一轮出现在左侧`() {
-        val first = buttonBar(ClarificationState.Investigating(null, 0), true, firstRecord, null)
-        assertEquals(emptyList<BarButton>(), first.left)
-        val later = buttonBar(ClarificationState.Investigating(null, 0), true, laterRecord, null)
-        assertEquals(listOf(BarButton.FINISH), later.left)
-        assertEquals(listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION), later.right)
-        val result = buttonBar(ClarificationState.Investigating(null, 0), false, laterRecord, null)
-        assertEquals("正在生成结果时没有够了", emptyList<BarButton>(), result.left)
+    fun `调查中左侧没有按钮，右侧是关闭与取消`() {
+        val bar = buttonBar(ClarificationState.Investigating(null, 0), null)
+        assertEquals("没有够了", emptyList<BarButton>(), bar.left)
+        assertEquals(listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION), bar.right)
     }
 
     @Test
     fun `提问页的主按钮按所在页分四种`() {
         val asking = ClarificationState.Asking(listOf(q("d1")))
-        fun bar(page: AskingPage) = buttonBar(asking, true, laterRecord, page)
+        fun bar(page: AskingPage) = buttonBar(asking, page)
         assertEquals("只有一题：提交", BarButton.SUBMIT, bar(AskingPage.SINGLE).default)
         assertEquals("中间的题：下一题", BarButton.NEXT, bar(AskingPage.QUESTION).default)
         assertEquals("最后一题：查看并提交", BarButton.REVIEW, bar(AskingPage.LAST_QUESTION).default)
         assertEquals("提交页：提交", BarButton.SUBMIT, bar(AskingPage.REVIEW).default)
         for (page in AskingPage.entries) {
-            assertEquals("$page：左侧是够了", listOf(BarButton.FINISH), bar(page).left)
+            assertEquals("$page：左侧没有按钮", emptyList<BarButton>(), bar(page).left)
             assertEquals("$page：右侧是关闭与主按钮", listOf(BarButton.CLOSE, bar(page).default), bar(page).right)
         }
     }
 
     @Test
     fun `结果页、发送中、失败页各自的按钮栏`() {
-        val result = buttonBar(ClarificationState.Result("x"), false, laterRecord, null)
+        val result = buttonBar(ClarificationState.Result("x"), null)
         assertEquals(listOf(BarButton.CONTINUE, BarButton.COPY), result.left)
         assertEquals(listOf(BarButton.CLOSE, BarButton.SEND), result.right)
         assertEquals(BarButton.SEND, result.default)
 
-        val sending = buttonBar(ClarificationState.Sending("x", true), false, laterRecord, null)
+        val sending = buttonBar(ClarificationState.Sending("x", true), null)
         assertEquals(emptyList<BarButton>(), sending.left)
         assertEquals(listOf(BarButton.CANCEL_SEND), sending.right)
 
-        val failed = buttonBar(ClarificationState.Failed(FailureReason.TIMEOUT, "600", null), false, laterRecord, null)
+        val failed = buttonBar(ClarificationState.Failed(FailureReason.TIMEOUT, "600", null), null)
         assertEquals(listOf(BarButton.FALLBACK), failed.left)
         assertEquals(listOf(BarButton.CLOSE, BarButton.RETRY), failed.right)
         assertEquals(BarButton.RETRY, failed.default)
@@ -138,7 +133,7 @@ class ClarificationDialogHelpersTest {
                 ClarificationState.Failed(FailureReason.CANCELLED, "", null),
             )
         for (state in states) {
-            val bar = buttonBar(state, true, laterRecord, AskingPage.QUESTION)
+            val bar = buttonBar(state, AskingPage.QUESTION)
             assertNotNull("$state 有默认按钮", bar.default)
             assertEquals("$state", bar.default, bar.right.last())
         }
@@ -146,10 +141,10 @@ class ClarificationDialogHelpersTest {
 
     @Test
     fun `调查中与发送中没有默认按钮，取消只能点按钮`() {
-        val investigating = buttonBar(ClarificationState.Investigating(null, 0), true, laterRecord, null)
+        val investigating = buttonBar(ClarificationState.Investigating(null, 0), null)
         assertNull("调查中：提交后多按一次回车不能取消刚开始的调查", investigating.default)
         assertTrue("调查中仍可点取消", BarButton.CANCEL_INVESTIGATION in investigating.right)
-        val sending = buttonBar(ClarificationState.Sending("x", false), false, laterRecord, null)
+        val sending = buttonBar(ClarificationState.Sending("x", false), null)
         assertNull("发送中：回车不能取消发送", sending.default)
         assertTrue("发送中仍可点取消发送", BarButton.CANCEL_SEND in sending.right)
     }

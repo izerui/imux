@@ -188,7 +188,6 @@ internal class ClarificationView(
     fun render(
         state: ClarificationState,
         record: ClarificationRecord,
-        canFinish: Boolean,
         inputPrefill: String,
     ) {
         renderHeader(state, record)
@@ -203,7 +202,7 @@ internal class ClarificationView(
         val page =
             when (state) {
                 ClarificationState.Input -> inputPage(inputPrefill)
-                is ClarificationState.Investigating -> investigatingPage(state, investigationKind(canFinish, record))
+                is ClarificationState.Investigating -> investigatingPage(state, investigationKind(record))
                 is ClarificationState.Asking -> askingPage(state)
                 is ClarificationState.Result -> resultPage(state.requirement)
                 is ClarificationState.Sending -> sendingPage(state)
@@ -364,8 +363,7 @@ internal class ClarificationView(
 
     /** 当前一步只占一行：长路径从中间省略，整行放不下再从末尾省略，完整内容看 tooltip。 */
     private fun setProgress(label: JBLabel, progress: String?) {
-        val key = if (investigationKind == InvestigationKind.RESULT) "clarify.investigating.result" else "clarify.investigating"
-        label.text = messages.get(key, shortenPaths(progress.orEmpty())).trim()
+        label.text = messages.get("clarify.investigating", shortenPaths(progress.orEmpty())).trim()
         label.toolTipText = progress?.takeIf { it.isNotBlank() }
     }
 
@@ -375,7 +373,6 @@ internal class ClarificationView(
             when (investigationKind) {
                 InvestigationKind.FIRST_ROUND -> "clarify.elapsed.first"
                 InvestigationKind.ROUND -> "clarify.elapsed.round"
-                InvestigationKind.RESULT -> "clarify.elapsed.result"
             }
         return messages.get(key, seconds)
     }
@@ -675,13 +672,12 @@ internal class ClarificationView(
     }
 }
 
-/** 调查的种类：决定进度文案，以及「够了，生成结果」是否出现。 */
-internal enum class InvestigationKind { FIRST_ROUND, ROUND, RESULT }
+/** 调查的种类：决定已用时间后面的说明。 */
+internal enum class InvestigationKind { FIRST_ROUND, ROUND }
 
-/** 不可生成结果说明正在生成结果；用户还没提交过回答说明是第一轮。 */
-internal fun investigationKind(canFinish: Boolean, record: ClarificationRecord): InvestigationKind =
+/** 用户还没提交过回答说明是第一轮。 */
+internal fun investigationKind(record: ClarificationRecord): InvestigationKind =
     when {
-        !canFinish -> InvestigationKind.RESULT
         record.history.isEmpty() -> InvestigationKind.FIRST_ROUND
         else -> InvestigationKind.ROUND
     }

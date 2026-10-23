@@ -1,7 +1,6 @@
 package com.github.izerui.imux.agent
 
 import java.io.BufferedReader
-import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PipedInputStream
@@ -14,15 +13,19 @@ import kotlin.concurrent.thread
 /**
  * 内存里的假 CLI 进程：[script] 在自己的线程上读 stdin、写 stdout，模拟多轮协议。
  * 脚本返回即进程退出（退出码 [exitCode]）；[destroyForcibly] 让它立刻退出并关掉管道。
+ * [stubborn] 为 true 时结束不了（模拟截止时间内没退出的进程），只有 [release] 能让它退出。
  */
 internal class FakeAgentProcess(
     private val exitCode: Int = 0,
+    private val stubborn: Boolean = false,
     private val script: FakeAgentProcess.(stdin: BufferedReader) -> Unit,
 ) : Process() {
     private val stdinOut = PipedOutputStream()
     private val stdinIn = PipedInputStream(stdinOut, 1 shl 20)
     private val stdoutIn = PipedInputStream(1 shl 20)
     private val stdoutOut = PipedOutputStream(stdoutIn)
+    private val stderrIn = PipedInputStream(1 shl 20)
+    private val stderrOut = PipedOutputStream(stderrIn)
     private val exited = CountDownLatch(1)
 
     /** 脚本读到的 stdin 行，按顺序。 */
@@ -39,6 +42,7 @@ internal class FakeAgentProcess(
                 // 被结束时管道断开
             } finally {
                 runCatching { stdoutOut.close() }
+                runCatching { stderrOut.close() }
                 exited.countDown()
             }
         }
@@ -47,6 +51,11 @@ internal class FakeAgentProcess(
     fun out(line: String) {
         stdoutOut.write((line + "\n").toByteArray())
         stdoutOut.flush()
+    }
+
+    fun err(text: String) {
+        stderrOut.write(text.toByteArray())
+        stderrOut.flush()
     }
 
     /** 读一行 stdin 并记下；stdin 关闭时返回 null。 */
@@ -61,7 +70,7 @@ internal class FakeAgentProcess(
 
     override fun getInputStream(): InputStream = stdoutIn
 
-    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getErrorStream(): InputStream = stderrIn
 
     override fun waitFor(): Int {
         exited.await()
@@ -77,6 +86,10 @@ internal class FakeAgentProcess(
 
     override fun destroy() {
         destroyed = true
+        if (!stubborn) release()
+    }
+
+    fun release() {
         runCatching { stdinIn.close() }
         runCatching { stdoutOut.close() }
         exited.countDown()

@@ -135,6 +135,23 @@ class AgentConversationTest {
     }
 
     @Test
+    fun `Pi 发来不认识的带 id 请求时也回复取消，不让它一直等`() {
+        val conversation =
+            live(AgentType.PI, timeoutSeconds = 3) { stdin ->
+                out(AGENT_OUTPUT_MARKER)
+                stdin.next()
+                out("""{"type":"extension_ui_request","id":"pick-1","method":"pickColor"}""")
+                val reply = JsonParser.parseString(stdin.next()!!).asJsonObject
+                check(reply["id"].asString == "pick-1" && reply["cancelled"].asBoolean)
+                out("""{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}""")
+                out("""{"type":"agent_settled","aborted":false}""")
+                hang()
+            }
+        assertEquals("done", conversation.send("x"))
+        conversation.close()
+    }
+
+    @Test
     fun `Pi 拒绝 prompt 时这一轮失败并带上原因`() {
         val conversation =
             live(AgentType.PI) { stdin ->
@@ -209,6 +226,29 @@ class AgentConversationTest {
         val error = runCatching { conversation.send("x") }.exceptionOrNull()
         assertTrue("$error", error is OneShotAgentException && error !is ConversationClosedException && error.message!!.contains("CLI exited"))
         conversation.close()
+    }
+
+    @Test
+    fun `stderr 很多时报错带上的是最近的输出`() {
+        val conversation =
+            live(AgentType.CLAUDE) { stdin ->
+                err("shell rc noise ".repeat(1_000))
+                out(AGENT_OUTPUT_MARKER)
+                stdin.next()
+                err("REAL-ERROR-MARK")
+                Thread.sleep(200)
+            }
+        val error = runCatching { conversation.send("x") }.exceptionOrNull()
+        assertTrue("$error", error is OneShotAgentException && error.message!!.contains("REAL-ERROR-MARK"))
+        conversation.close()
+    }
+
+    @Test
+    fun `stderr 只留最后的字符`() {
+        val tail = StringBuilder()
+        appendTail(tail, CharArray(10) { 'a' }, 10, max = 8)
+        appendTail(tail, "XYZ".toCharArray(), 3, max = 8)
+        assertEquals("aaaaaXYZ", tail.toString())
     }
 
     @Test
@@ -311,6 +351,43 @@ class AgentConversationTest {
         assertTrue("进程被结束", started.single().destroyed)
         assertTrue("这一轮报已关闭：${error.get()}", error.get() is ConversationClosedException)
         assertFalse("会话文件已删除", Files.exists(mine))
+    }
+
+    @Test
+    fun `Codex 关闭之后才到的会话 ID 立即删除它的会话文件`() {
+        val sessions = tmp.newFolder("sessions").toPath()
+        val mine = rollout(sessions, threadId)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val conversation =
+            CodexConversation(
+                { invocation }, cwd, 60, sessionsDir = { sessions },
+                // 截止时间内结束不了的进程：关闭之后它还在输出
+                start = ProcessStarter { _, _ ->
+                    FakeAgentProcess(stubborn = true) { stdin ->
+                        stdin.readText()
+                        out(AGENT_OUTPUT_MARKER)
+                        gate.await()
+                        out("""{"type":"thread.started","thread_id":"$threadId"}""")
+                        hang()
+                    }.also { started += it }
+                },
+                descendantPollMillis = 50,
+                exitTimeoutNanos = TimeUnit.MILLISECONDS.toNanos(100),
+            )
+        val worker = thread { runCatching { conversation.send("x") } }
+        try {
+            while (started.isEmpty()) Thread.sleep(10)
+            Thread.sleep(200)
+            assertEquals("进程没在截止时间内退出", 1, conversation.close().size)
+            gate.countDown()
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (Files.exists(mine) && System.nanoTime() < deadline) Thread.sleep(20)
+            assertFalse("关闭后才到的会话 ID，文件立即删除，不等这一轮结束", Files.exists(mine))
+            assertTrue("这一轮仍在等进程", worker.isAlive)
+        } finally {
+            started.forEach { it.release() }
+            worker.join(10_000)
+        }
     }
 
     @Test

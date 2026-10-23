@@ -43,7 +43,7 @@ class ClarificationPromptTest {
 
     @Test
     fun `开场带指南、规则、需求、背景与输出格式`() {
-        val opening = openingMessage(fresh, isChinese = true, guidance = "指南正文", finishNow = false)
+        val opening = openingMessage(fresh, isChinese = true, guidance = "指南正文")
         assertTrue(opening.startsWith("指南正文"))
         assertTrue("需求", opening.contains("给终端增加断线重连"))
         assertTrue("背景", opening.contains("User: 之前的对话"))
@@ -56,19 +56,12 @@ class ClarificationPromptTest {
 
     @Test
     fun `对话中断后的开场带上已确认的问答并接着做`() {
-        val opening = openingMessage(answered, isChinese = false, guidance = "g", finishNow = false)
+        val opening = openingMessage(answered, isChinese = false, guidance = "g")
         assertTrue(opening.contains("Answers the User Has Already Given"))
         assertTrue("选中的选项与原话", opening.contains("只恢复连接 (DA); 连同滚动缓冲 (DB); Other: OWN"))
         assertTrue("不回答的写明默认处理", opening.contains("Not answered; use the default: 只恢复连接"))
         assertTrue("接着问下一批", opening.contains("ask the next batch"))
         assertTrue(opening.trimEnd().endsWith(JSON_ONLY_EN))
-    }
-
-    @Test
-    fun `要求直接给出结果的开场只要 done`() {
-        val opening = openingMessage(answered, isChinese = false, guidance = "g", finishNow = true)
-        assertTrue(opening.contains("asked for the result now"))
-        assertFalse(opening.contains("ask the next batch"))
     }
 
     @Test
@@ -89,16 +82,6 @@ class ClarificationPromptTest {
     }
 
     @Test
-    fun `够了的消息附上已填写的回答，没有时只要求结果`() {
-        val with = finishMessage(listOf(answerRecord(question, Answer.Picked(listOf("b")))), isChinese = true)
-        assertTrue(with.contains("连同滚动缓冲（DB）"))
-        assertTrue(with.contains("用户要求现在生成结果"))
-        val without = finishMessage(emptyList(), isChinese = true)
-        assertFalse(without.contains("已经填写的回答"))
-        assertTrue(without.startsWith("用户要求现在生成结果"))
-    }
-
-    @Test
     fun `纠错消息列出错误并重申格式`() {
         val message = correctionMessage(listOf("questions[0].options must have 2-4 items"), isChinese = false)
         assertTrue(message.contains("- questions[0].options must have 2-4 items"))
@@ -109,7 +92,7 @@ class ClarificationPromptTest {
     @Test
     fun `开场的中英提问规则都写明每批一到四题、短标签、默认处理、说明即记录、不给其他`() {
         for (chinese in listOf(true, false)) {
-            val prompt = openingMessage(fresh, chinese, "g", finishNow = false)
+            val prompt = openingMessage(fresh, chinese, "g")
             val name = if (chinese) "zh" else "en"
             assertTrue("$name：1～4 题", prompt.contains(if (chinese) "1～$MAX_QUESTIONS_PER_ROUND" else "1-$MAX_QUESTIONS_PER_ROUND"))
             assertTrue("$name：header 字数", prompt.contains("header") && prompt.contains("$HEADER_CHARS"))

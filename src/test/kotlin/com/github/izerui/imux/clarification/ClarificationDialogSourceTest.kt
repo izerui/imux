@@ -26,7 +26,7 @@ class ClarificationDialogSourceTest {
     @Test
     fun `按钮栏只在变化时更新，隐藏而不是禁用，并切换默认按钮`() {
         val update = dialog.bodyAfter("private fun updateButtons()", '{')
-        assertTrue("按状态、流程的 canFinish 与提问页所在页决定", update.contains("buttonBar(shown, shownCanFinish, shownRecord, view.askingPage())"))
+        assertTrue("按状态与提问页所在页决定", update.contains("buttonBar(shown, view.askingPage())"))
         assertTrue("没变就不动", update.contains("if (bar == lastBar) return"))
         assertTrue("隐藏而不是禁用", update.contains(".isVisible = button in visible"))
         assertFalse("不靠禁用按钮表达不可用", update.contains("isEnabled"))
@@ -44,7 +44,7 @@ class ClarificationDialogSourceTest {
     @Test
     fun `删掉的功能在视图与对话框里都不再出现`() {
         for ((name, source) in listOf("ClarificationDialog" to dialog, "ClarificationView" to view)) {
-            for (gone in listOf("collapsibleGroup", "WrappingRadioButton", "pinDirection", "reopenDirection", "addDirection", "skipDirection", "editRequirement", "rebind(", "correction", "understanding.title")) {
+            for (gone in listOf("collapsibleGroup", "WrappingRadioButton", "pinDirection", "reopenDirection", "addDirection", "skipDirection", "editRequirement", "rebind(", "correction", "understanding.title", "FINISH", "canFinish", "clarify.finish")) {
                 assertFalse("$name：不再有 $gone", source.normalized.contains(gone))
             }
         }
@@ -80,10 +80,10 @@ class ClarificationDialogSourceTest {
     }
 
     @Test
-    fun `提交与够了都带上视图里已填写的回答`() {
+    fun `提交带上视图里已填写的回答，没有够了生成结果`() {
         val perform = dialog.bodyAfter("private fun perform(", '{')
         assertTrue(perform.contains("BarButton.SUBMIT -> service.submit(sessionKey, view.answers())"))
-        assertTrue(perform.contains("BarButton.FINISH -> service.finish(sessionKey, view.answers())"))
+        assertFalse("没有够了，生成结果", perform.contains("FINISH"))
     }
 
     @Test

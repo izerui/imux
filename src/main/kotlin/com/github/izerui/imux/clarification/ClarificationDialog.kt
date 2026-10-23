@@ -45,7 +45,6 @@ internal class ClarificationDialog(
     private val buttonPanels = mutableListOf<JPanel>()
     private var lastBar: ButtonBar? = null
     private var shown: ClarificationState = ClarificationState.Input
-    private var shownCanFinish = false
     private var shownRecord: ClarificationRecord = flow.record
 
     init {
@@ -111,9 +110,8 @@ internal class ClarificationDialog(
     private fun render() {
         shown = flow.state
         shownRecord = flow.record
-        shownCanFinish = flow.canFinish
         val wasInput = view.isShowingInput()
-        view.render(shown, shownRecord, shownCanFinish, shownRecord.requirement)
+        view.render(shown, shownRecord, shownRecord.requirement)
         if (shown is ClarificationState.Input && !wasInput) checkBackground()
         updateButtons()
     }
@@ -127,7 +125,7 @@ internal class ClarificationDialog(
 
     /** 按钮栏只在可见按钮或默认按钮变了时才动。 */
     private fun updateButtons() {
-        val bar = buttonBar(shown, shownCanFinish, shownRecord, view.askingPage())
+        val bar = buttonBar(shown, view.askingPage())
         if (bar == lastBar) return
         lastBar = bar
         val visible = (bar.left + bar.right).toSet()
@@ -144,7 +142,6 @@ internal class ClarificationDialog(
             BarButton.CLOSE -> doCancelAction()
             BarButton.START -> view.inputText().takeIf { it.isNotBlank() }?.let { service.start(sessionKey, it, view.includeBackground()) }
             BarButton.CANCEL_INVESTIGATION -> service.cancel(sessionKey)
-            BarButton.FINISH -> service.finish(sessionKey, view.answers())
             BarButton.NEXT, BarButton.REVIEW -> view.nextTab()
             BarButton.SUBMIT -> service.submit(sessionKey, view.answers())
             BarButton.CONTINUE -> service.continueClarifying(sessionKey)
@@ -192,7 +189,7 @@ internal class ClarificationDialog(
                 BarButton.START, BarButton.CANCEL_INVESTIGATION, BarButton.NEXT, BarButton.REVIEW, BarButton.SUBMIT,
                 BarButton.SEND, BarButton.CANCEL_SEND, BarButton.RETRY, BarButton.CLOSE,
             )
-        private val LEFT_ORDER = listOf(BarButton.FINISH, BarButton.CONTINUE, BarButton.COPY, BarButton.FALLBACK)
+        private val LEFT_ORDER = listOf(BarButton.CONTINUE, BarButton.COPY, BarButton.FALLBACK)
 
         /**
          * 平台按钮面板在相邻按钮之间各放一个固定间隔；按钮隐藏后间隔还在，会留下空隙。
@@ -247,7 +244,6 @@ internal enum class BarButton(val labelKey: String) {
     CLOSE("clarify.close"),
     START("clarify.input.start"),
     CANCEL_INVESTIGATION("clarify.cancel"),
-    FINISH("clarify.finish"),
     NEXT("clarify.question.next"),
     REVIEW("clarify.question.review"),
     SUBMIT("clarify.question.submit"),
@@ -266,15 +262,11 @@ internal enum class BarButton(val labelKey: String) {
 internal data class ButtonBar(val left: List<BarButton>, val right: List<BarButton>, val default: BarButton?)
 
 /** 状态 → 按钮栏。只给出与当前状态相关的按钮（隐藏而不是禁用）；提问页的主按钮取决于停在哪一页。 */
-internal fun buttonBar(state: ClarificationState, canFinish: Boolean, record: ClarificationRecord, page: AskingPage?): ButtonBar =
+internal fun buttonBar(state: ClarificationState, page: AskingPage?): ButtonBar =
     when (state) {
         ClarificationState.Input -> ButtonBar(emptyList(), listOf(BarButton.CLOSE, BarButton.START), BarButton.START)
         is ClarificationState.Investigating ->
-            ButtonBar(
-                if (investigationKind(canFinish, record) == InvestigationKind.ROUND) listOf(BarButton.FINISH) else emptyList(),
-                listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION),
-                null,
-            )
+            ButtonBar(emptyList(), listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION), null)
         is ClarificationState.Asking -> {
             val primary =
                 when (page) {
@@ -282,7 +274,7 @@ internal fun buttonBar(state: ClarificationState, canFinish: Boolean, record: Cl
                     AskingPage.LAST_QUESTION -> BarButton.REVIEW
                     AskingPage.SINGLE, AskingPage.REVIEW, null -> BarButton.SUBMIT
                 }
-            ButtonBar(if (canFinish) listOf(BarButton.FINISH) else emptyList(), listOf(BarButton.CLOSE, primary), primary)
+            ButtonBar(emptyList(), listOf(BarButton.CLOSE, primary), primary)
         }
         is ClarificationState.Result -> ButtonBar(listOf(BarButton.CONTINUE, BarButton.COPY), listOf(BarButton.CLOSE, BarButton.SEND), BarButton.SEND)
         is ClarificationState.Sending -> ButtonBar(emptyList(), listOf(BarButton.CANCEL_SEND), null)

@@ -23,10 +23,9 @@ internal fun stripFrontMatter(text: String): String {
 
 /**
  * 一段对话的第一条消息：内嵌指南 + 提问规则 + 原需求 + 背景快照 + 输出格式。
- * 之前的对话中断过（取消、失败）时，[record] 里已有的问答一并带上，让新对话接着做；
- * [finishNow] 为 true 时要求直接给出调整后的需求（「够了，生成结果」时对话已中断）。
+ * 之前的对话中断过（取消、失败）时，[record] 里已有的问答一并带上，让新对话接着做。
  */
-internal fun openingMessage(record: ClarificationRecord, isChinese: Boolean, guidance: String, finishNow: Boolean): String =
+internal fun openingMessage(record: ClarificationRecord, isChinese: Boolean, guidance: String): String =
     buildString {
         append(guidance.trim()).append("\n\n")
         append(if (isChinese) "## 提问规则\n\n" else "## Rules for Asking\n\n")
@@ -48,7 +47,6 @@ internal fun openingMessage(record: ClarificationRecord, isChinese: Boolean, gui
         append(if (isChinese) "## 现在\n\n" else "## Now\n\n")
         append(
             when {
-                finishNow -> finishInstruction(isChinese)
                 record.history.isNotEmpty() ->
                     if (isChinese) "带着这些回答继续调查，给出下一批问题；没有需要用户拍板的方向了就给出调整后的需求。"
                     else "Continue investigating with these answers and ask the next batch; when no direction needs the user's call, give the adjusted requirement."
@@ -71,17 +69,6 @@ internal fun answersMessage(records: List<AnswerRecord>, isChinese: Boolean): St
             if (isChinese) "带着这些回答继续：给出下一批问题，或在没有需要用户拍板的方向时给出调整后的需求。"
             else "Continue with these answers: ask the next batch, or give the adjusted requirement when no direction needs the user's call.",
         ).append(' ')
-        append(formatReminder(isChinese))
-    }
-
-/** 「够了，生成结果」：这一批里已填写的回答（可能没有）+ 要求现在给出调整后的需求。 */
-internal fun finishMessage(records: List<AnswerRecord>, isChinese: Boolean): String =
-    buildString {
-        if (records.isNotEmpty()) {
-            append(if (isChinese) "用户对这一批问题已经填写的回答：\n\n" else "The answers the user filled in for this batch:\n\n")
-            append(answerLines(records, isChinese)).append("\n\n")
-        }
-        append(finishInstruction(isChinese)).append(' ')
         append(formatReminder(isChinese))
     }
 
@@ -120,10 +107,6 @@ internal fun answerLines(records: List<AnswerRecord>, isChinese: Boolean): Strin
     }
 
 private fun otherWords(text: String, isChinese: Boolean) = (if (isChinese) "其他：" else "Other: ") + text
-
-private fun finishInstruction(isChinese: Boolean): String =
-    if (isChinese) "用户要求现在生成结果。把原需求与用户已确认的回答融合成调整后的需求：精炼，只到方向层，不附带任何说明、依据、未决事项或标记；没定的方向不要写成已定。只返回 {\"type\": \"done\", \"requirement\": \"...\"}。"
-    else "The user asked for the result now. Merge the original requirement with the answers the user confirmed into the adjusted requirement: concise, at the level of direction, with no explanations, evidence, open items or markers; never write an unsettled direction as settled. Return only {\"type\": \"done\", \"requirement\": \"...\"}."
 
 private fun formatReminder(isChinese: Boolean): String =
     if (isChinese) "回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。"
