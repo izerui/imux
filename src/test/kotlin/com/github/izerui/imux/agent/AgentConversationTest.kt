@@ -74,6 +74,40 @@ class AgentConversationTest {
     }
 
     @Test
+    fun `Claude 不读取大消息时写入也受每轮超时限制`() {
+        assertBlockedWriteTimesOut(AgentType.CLAUDE)
+    }
+
+    @Test
+    fun `Pi 不读取大消息时写入也受每轮超时限制`() {
+        assertBlockedWriteTimesOut(AgentType.PI)
+    }
+
+    private fun assertBlockedWriteTimesOut(type: AgentType) {
+        val conversation = live(type, timeoutSeconds = 1) {
+            out(AGENT_OUTPUT_MARKER)
+            hang()
+        }
+        val error = AtomicReference<Throwable>()
+        val worker = thread(isDaemon = true) {
+            try {
+                conversation.send("x".repeat(2 shl 20))
+            } catch (e: Throwable) {
+                error.set(e)
+            }
+        }
+        try {
+            worker.join(4_000)
+            assertFalse("管道写满后应按时返回", worker.isAlive)
+            assertTrue("应为超时而非管道错误：${error.get()}", error.get() is OneShotAgentTimeoutException)
+        } finally {
+            conversation.close()
+            worker.join(2_000)
+        }
+        assertTrue("结束对话清理阻塞的进程", started.single().destroyed)
+    }
+
+    @Test
     fun `Claude 消息里的换行与引号原样送达`() {
         val conversation = live(AgentType.CLAUDE, script = claudeEcho())
         val message = "第一行\n第二行 \"引号\" \\ 反斜杠"

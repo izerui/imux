@@ -85,6 +85,9 @@ class ClarificationViewPreviewTest {
     private class FakeCallbacks(private val preset: (BatchDrafts) -> Unit = {}) : ClarificationViewCallbacks {
         val drafts = mutableMapOf<List<Question>, BatchDrafts>()
         var pageChanges = 0
+        var editedResult: String? = null
+
+        override fun resultEdited(text: String) { editedResult = text }
 
         override fun draftsFor(batch: List<Question>): BatchDrafts = drafts.getOrPut(batch) { BatchDrafts(batch).also(preset) }
 
@@ -106,7 +109,6 @@ class ClarificationViewPreviewTest {
     private val record =
         ClarificationRecord(
             requirement,
-            null,
             listOf(confirmedAnswer("断线后自动重连 3 次，间隔逐次加倍"), confirmedAnswer("多个标签页同时断线时逐个重连，不并发")),
         )
 
@@ -147,6 +149,12 @@ class ClarificationViewPreviewTest {
         )
 
     private val batch = listOf(longQuestion, methodQuestion, scopeQuestion)
+    private val openQuestion =
+        Question(
+            "open1", "实际体验", "最近一次等待让你困扰时，发生了什么？",
+            false, emptyList(), "暂不推断你的经历", QuestionKind.OPEN,
+            "我目前猜测，困扰可能来自等待中的不确定性，而不只是耗时。这个理解也可能不符合你的实际体验。",
+        )
 
     private val resultText =
         """
@@ -324,7 +332,7 @@ class ClarificationViewPreviewTest {
     @Test
     fun `输入页在两种尺寸下渲染且输入框填满剩余高度`() {
         for ((w, h) in listOf(640 to 520, 460 to 380)) {
-            val view = check("input-${w}x$h", ClarificationState.Input, ClarificationRecord("", null), w, h) { v -> v.setBackgroundAvailable(true) }
+            val view = check("input-${w}x$h", ClarificationState.Input, ClarificationRecord(""), w, h)
             val area = allOf<javax.swing.JTextArea>(view.component).single()
             val viewport = view.component.viewport
             val areaPane = SwingUtilities.getAncestorOfClass(JScrollPane::class.java, area)!!
@@ -347,6 +355,78 @@ class ClarificationViewPreviewTest {
         assertEquals("一题没有标签条", null, view.tabs)
         assertEquals("主按钮是好接着聊", AskingPage.SINGLE, view.askingPage())
         assertQuestionFits(view, "asking-single-640x520")
+    }
+
+    @Test
+    fun `开放题在常规与窄窗口显示看法和多行输入而不出现其他选项`() {
+        for ((w, h) in listOf(640 to 520, 460 to 400)) {
+            val view = check("asking-open-${w}x$h", ClarificationState.Asking(listOf(openQuestion)), record, w, h)
+            assertEquals("$w：没有选择按钮组", null, view.options)
+            assertTrue("$w：没有其他单选按钮", allOf<javax.swing.JToggleButton>(view.component).isEmpty())
+            val area = allOf<javax.swing.JTextArea>(view.component).single()
+            assertEquals("$w：输入框有问题作为无障碍名称", openQuestion.text, area.accessibleContext.accessibleName)
+            assertTrue("$w：输入框可写多行", area.rows >= 4)
+            val texts = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length) }
+            assertTrue("$w：显示对话者看法", texts.any { it.contains(openQuestion.context) })
+            assertTrue("$w：显示完整问题", texts.any { it.contains(openQuestion.text) })
+            area.text = "上周等待构建时。\n我其实不确定它是否还在运行。"
+            assertEquals("$w：直接记录原话", Answer.OwnWords(area.text), view.answers()[openQuestion.id])
+        }
+    }
+
+    @Test
+    fun `开放单选多选混合批次切换保留草稿并正确汇总`() {
+        val mixed = listOf(openQuestion, methodQuestion, scopeQuestion)
+        val state = ClarificationState.Asking(mixed)
+        val view = ClarificationView(FakeCallbacks(), zh)
+        view.render(state, record, "")
+        val blankIcon = view.tabs!!.getIconAt(0)
+        val text = "我不认同。\n问题是打断正在做的事。"
+        allOf<javax.swing.JTextArea>(view.component).single().text = text
+        assertTrue("开放题标为已答", blankIcon !== view.tabs!!.getIconAt(0))
+        view.selectTab(1)
+        view.options!!.buttons[0].isSelected = true
+        view.selectTab(2)
+        view.options!!.buttons[0].isSelected = true
+        view.options!!.buttons[2].isSelected = true
+        view.selectTab(0)
+        assertEquals("切回后开放回答不丢失", text, allOf<javax.swing.JTextArea>(view.component).single().text)
+        assertEquals("开放回答", Answer.OwnWords(text), view.answers()[openQuestion.id])
+        assertEquals("单选回答", Answer.Picked(listOf("a")), view.answers()[methodQuestion.id])
+        assertEquals("多选回答", Answer.Picked(listOf("a", "c")), view.answers()[scopeQuestion.id])
+        view.selectTab(3)
+        val root = window(view, state, 640, 520)
+        png(root, "asking-mixed-review-640x520")
+        assertNoHorizontalClipping(view, root, "mixed-review")
+        val review = allOf<javax.swing.JEditorPane>(view.component).joinToString("\n") { it.document.getText(0, it.document.length) }
+        assertTrue("汇总显示开放回答", review.contains("我不认同。") && review.contains("问题是打断正在做的事。"))
+        assertFalse("开放回答不是其他", review.contains("其他：我不认同"))
+        view.selectTab(0)
+        allOf<javax.swing.JTextArea>(view.component).single().text = " \n "
+        assertFalse("清空后不再是已填回答", view.answers().containsKey(openQuestion.id))
+        assertEquals("清空后标签恢复未答", blankIcon, view.tabs!!.getIconAt(0))
+    }
+
+    @Test
+    fun `开放输入沿用左右编辑键且回车换行不提交`() {
+        SwingUtilities.invokeAndWait {
+            val state = ClarificationState.Asking(listOf(openQuestion, methodQuestion))
+            val view = ClarificationView(FakeCallbacks(), zh)
+            view.render(state, record, "")
+            val area = allOf<javax.swing.JTextArea>(view.component).single()
+            area.text = "一个例子"
+            val root = window(view, state, 640, 520)
+            var submissions = 0
+            root.defaultButton.addActionListener { submissions++ }
+            // 离屏组件没有真实焦点，Darcula 的光标几何位置不可靠；验证优先于祖先切题键的原生编辑绑定。
+            val focused = area.getInputMap(JComponent.WHEN_FOCUSED)
+            assertEquals("左键是文本编辑", javax.swing.text.DefaultEditorKit.backwardAction, focused.get(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0)))
+            assertEquals("右键是文本编辑", javax.swing.text.DefaultEditorKit.forwardAction, focused.get(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0)))
+            area.caretPosition = area.document.length
+            fire(area, JComponent.WHEN_FOCUSED, KeyEvent.VK_ENTER)
+            assertEquals("回车输入换行", "一个例子\n", area.text)
+            assertEquals("不触发提交", 0, submissions)
+        }
     }
 
     @Test
@@ -423,6 +503,27 @@ class ClarificationViewPreviewTest {
     // ---- 不反复渲染 ----
 
     @Test
+    fun `仅启用 Codex 时没有下拉框也返回 Codex`() {
+        val view = ClarificationView(FakeCallbacks(), zh)
+        val enabled = listOf(com.github.izerui.imux.model.AgentType.CODEX)
+        view.setAgentTypes(enabled, defaultAgentSelection(enabled, com.github.izerui.imux.model.AgentType.CLAUDE))
+        view.render(ClarificationState.Input, record, "")
+        assertTrue(allOf<javax.swing.JComboBox<*>>(view.component).isEmpty())
+        assertEquals(com.github.izerui.imux.model.AgentType.CODEX, view.selectedAgentType())
+    }
+
+    @Test
+    fun `编辑结果立即通知流程且不等待发送`() {
+        val callbacks = FakeCallbacks()
+        val view = ClarificationView(callbacks, zh)
+        view.render(ClarificationState.Result("使用 MySQL"), record, "")
+        val editor = allOf<javax.swing.JTextArea>(view.component).single { it.isEditable }
+        editor.text = "使用 PostgreSQL"
+        assertEquals("使用 PostgreSQL", callbacks.editedResult)
+        assertEquals("使用 PostgreSQL", view.resultText())
+    }
+
+    @Test
     fun `一百次进度更新不重建中间区域也不重建头部`() {
         val view = ClarificationView(FakeCallbacks(), zh)
         view.render(ClarificationState.Investigating(null, 1_000L, run = 7), record, "")
@@ -467,7 +568,7 @@ class ClarificationViewPreviewTest {
         val view = ClarificationView(FakeCallbacks(), zh)
         view.render(ClarificationState.Asking(batch), record, "")
         val headers = view.headerRebuilds
-        view.render(ClarificationState.Investigating(null, 5L, run = 9), record.copy(background = "新的背景"), "")
+        view.render(ClarificationState.Investigating(null, 5L, run = 9), record, "")
         assertEquals("目标不变：头部不重建", headers, view.headerRebuilds)
         val more = record.copy(history = record.history + confirmedAnswer("失败时显示错误并提供重试"))
         view.render(ClarificationState.Investigating(null, 5L, run = 9), more, "")
@@ -536,6 +637,7 @@ class ClarificationViewPreviewTest {
                 Pair("investigating", ClarificationState.Investigating("读取 src/main/kotlin/com/github/izerui/imux/terminal/TerminalSessionReconnector.kt", System.currentTimeMillis() - 42_000, run = 3)),
                 Pair("asking-single", ClarificationState.Asking(asking)),
                 Pair("asking-batch", ClarificationState.Asking(batch)),
+                Pair("asking-open", ClarificationState.Asking(listOf(openQuestion))),
                 Pair("result", ClarificationState.Result(resultText)),
                 Pair("failed", ClarificationState.Failed(FailureReason.TIMEOUT, "600", null)),
             )

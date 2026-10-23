@@ -816,7 +816,7 @@ internal fun latestConversation(
     return selected.joinToString("\n\n")
 }
 
-/** 读会话文件末尾的最近对话；结对编程与需求澄清共用。文件不存在返回空串。 */
+/** 读会话文件末尾的最近对话，供结对编程使用。文件不存在返回空串。 */
 internal fun latestConversationOf(
     session: AgentSession,
     sentFeedback: List<String>,

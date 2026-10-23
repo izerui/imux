@@ -83,12 +83,33 @@ private fun parseQuestion(o: JsonObject, index: Int, errors: MutableList<String>
     val header = o.str("header").orEmpty()
     val text = o.str("question").orEmpty()
     val fallback = o.str("fallback").orEmpty()
+    for (field in listOf("kind", "context")) {
+        o.get(field)?.let {
+            if (!it.isJsonPrimitive || !it.asJsonPrimitive.isString) errors += "$path.$field must be a string"
+        }
+    }
+    val kind = when (o.str("kind")) {
+        null, "choice" -> QuestionKind.CHOICE
+        "open" -> QuestionKind.OPEN
+        else -> {
+            errors += "$path.kind must be choice or open"
+            QuestionKind.CHOICE
+        }
+    }
+    val context = o.str("context").orEmpty()
     if (header.isEmpty()) errors += "$path.header must not be empty"
     if (codePoints(header) > MAX_HEADER_CHARS) errors += "$path.header must be at most $HEADER_CHARS characters"
     if (text.isEmpty()) errors += "$path.question must not be empty"
     if (fallback.isEmpty()) errors += "$path.fallback must not be empty"
+    if (o.has("options") && !o.get("options").isJsonArray) errors += "$path.options must be an array"
+    val optionItems = o.arr("options")
     val options =
-        o.arr("options").mapNotNull { it.asObjOrNull() }.map { opt ->
+        optionItems.mapIndexedNotNull { i, item ->
+            val opt = item.asObjOrNull()
+            if (opt == null) {
+                errors += "$path.options[$i] must be an object"
+                return@mapIndexedNotNull null
+            }
             ChoiceOption(
                 id = opt.str("id").orEmpty(),
                 label = opt.str("label").orEmpty(),
@@ -96,13 +117,18 @@ private fun parseQuestion(o: JsonObject, index: Int, errors: MutableList<String>
                 recommended = opt.get("recommended")?.takeIf { it.isJsonPrimitive }?.asBoolean == true,
             )
         }
-    if (options.size !in 2..4) errors += "$path.options must have 2-4 items"
+    val multiSelect = o.get("multiSelect")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+    if (kind == QuestionKind.OPEN) {
+        if (optionItems.size() != 0) errors += "$path: open questions must not have options"
+        if (multiSelect) errors += "$path: open questions must not enable multiSelect"
+    } else if (options.size !in 2..4) {
+        errors += "$path.options must have 2-4 items"
+    }
     if (options.any { it.id.isEmpty() || it.label.isEmpty() }) errors += "$path: every option needs id and label"
     if (options.any { it.description.isEmpty() }) errors += "$path: every option needs a non-empty description"
     if (options.map { it.id }.toSet().size != options.size) errors += "$path: option ids must be unique"
     if (options.any { isOtherLabel(it.label) }) errors += "$path: do not include an \"Other\" option; the plugin adds it"
-    val multiSelect = o.get("multiSelect")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
-    return Question("q${index + 1}", header, text, multiSelect, options, fallback)
+    return Question("q${index + 1}", header, text, multiSelect, options, fallback, kind, context)
 }
 
 /** 模型自己加的"其他"选项：插件会追加带输入框的"其他"，模型再加一个就重复了。 */

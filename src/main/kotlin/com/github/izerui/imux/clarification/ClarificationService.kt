@@ -9,7 +9,6 @@ import com.github.izerui.imux.agent.conversationInvocation
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.overview.overviewProgressText
-import com.github.izerui.imux.peer.latestConversationOf
 import com.github.izerui.imux.peer.trySendPeerFeedback
 import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.TerminalHost
@@ -34,7 +33,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import org.jetbrains.plugins.terminal.settings.TerminalLocalOptions
 import java.awt.datatransfer.StringSelection
-import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 
@@ -92,21 +90,10 @@ class ClarificationService(
         )
     }
 
-    /** 会话记录文件是否存在。查文件系统，放在 IO 线程上做，结果交给 [onResult]（仍在 IO 线程）。 */
-    internal fun checkBackground(sessionKey: String, onResult: (Boolean) -> Unit) {
-        scope.launch(Dispatchers.IO) {
-            onResult(SessionMonitor.getInstance(project).model.sessionOf(sessionKey)?.let { Files.isRegularFile(it.filePath) } == true)
-        }
-    }
-
-    internal fun start(sessionKey: String, requirement: String, includeBackground: Boolean, agentType: AgentType) {
+    internal fun start(sessionKey: String, requirement: String, agentType: AgentType) {
         val flow = flows[sessionKey] ?: return
-        val session = if (includeBackground) SessionMonitor.getInstance(project).model.sessionOf(sessionKey) else null
-        val runId = flow.begin(requirement, null, agentType)
-        launch(sessionKey, flow) {
-            flow.attachBackground(runId, session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
-            flow.run(runId)
-        }
+        val runId = flow.begin(requirement, agentType)
+        launch(sessionKey, flow) { flow.run(runId) }
     }
 
     /** 提交这一批回答：一次记下，在同一段对话里只发起一轮。 */
@@ -254,13 +241,13 @@ class ClarificationService(
     }
 
     /**
-     * 会话标签页真正关闭：结束对话、丢弃状态。结果页或发送中的需求还没送进终端，
+     * 会话标签页真正关闭：结束对话、丢弃状态。结果页、发送中或继续讨论时保留的方案还没送进终端，
      * 丢弃前先通知并提供复制，否则这段文字就没了。
      */
     internal fun releaseOwner(tabId: String) {
         owners.filterValues { it == tabId }.keys.forEach { key ->
             val flow = flows[key]
-            val undelivered = flow?.let { undeliveredRequirement(it.state) }
+            val undelivered = flow?.undeliveredPlan()
             discard(key)
             undelivered?.let(::notifyUndelivered)
         }

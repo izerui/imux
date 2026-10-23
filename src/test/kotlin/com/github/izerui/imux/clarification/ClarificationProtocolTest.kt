@@ -31,6 +31,57 @@ class ClarificationProtocolTest {
     private fun questionsOf(raw: String) = (parseReply(raw) as AgentReply.Ask).questions
 
     @Test
+    fun `开放题不需要选项且保留对话者的看法`() {
+        val q = questionsOf(batchOf(
+            """{"kind":"open","header":"具体经历","context":"问题可能在等待的不确定性。","question":"哪次等待最让你困扰？","fallback":"暂不推断经历"}""",
+        )).single()
+        assertEquals(QuestionKind.OPEN, q.kind)
+        assertEquals("问题可能在等待的不确定性。", q.context)
+        assertTrue("开放题没有选项", q.options.isEmpty())
+        assertFalse("开放题不启用多选", q.multiSelect)
+        assertEquals("暂不推断经历", q.fallback)
+    }
+
+    @Test
+    fun `混合批次分别解析开放题与选择题`() {
+        val questions = questionsOf(batchOf(
+            """{"kind":"open","header":"经历","question":"什么让你困扰？","fallback":"待定","options":[]}""",
+            oneQuestion(),
+        ))
+        assertEquals("开放题", QuestionKind.OPEN, questions[0].kind)
+        assertEquals("未指定类型的选择题沿用旧协议", QuestionKind.CHOICE, questions[1].kind)
+        assertEquals("选择题选项保留", listOf("a", "b"), questions[1].options.map { it.id })
+    }
+
+    @Test
+    fun `开放题携带选项或多选标记时拒绝而非静默丢弃`() {
+        val withOptions = """{"kind":"open","header":"H","question":"Q","fallback":"F","options":[${option("a")}]}"""
+        val withMulti = """{"kind":"open","header":"H","question":"Q","fallback":"F","multiSelect":true}"""
+        assertTrue("携带选项", errorsOf(batchOf(withOptions)).any { it.contains("must not have options") })
+        assertTrue("开启多选", errorsOf(batchOf(withMulti)).any { it.contains("must not enable multiSelect") })
+    }
+
+    @Test
+    fun `未知题型不能退化为选择题`() {
+        val raw = """{"kind":"essay","header":"H","question":"Q","fallback":"F","options":[${option("a")},${option("b")}]}"""
+        assertTrue(errorsOf(batchOf(raw)).any { it.contains("kind") })
+    }
+
+    @Test
+    fun `题型和看法字段类型错误时交给协议纠错`() {
+        assertTrue("题型不能为数组", errorsOf(batchOf("""{"kind":[],"header":"H","question":"Q","fallback":"F"}""")).any { it.contains(".kind") })
+        assertTrue("看法不能为对象", errorsOf(batchOf("""{"kind":"open","context":{},"header":"H","question":"Q","fallback":"F"}""")).any { it.contains(".context") })
+    }
+
+    @Test
+    fun `开放题仍要求完整问句与未回答的处理`() {
+        val raw = """{"kind":"open","header":"H","question":"","fallback":""}"""
+        val errors = errorsOf(batchOf(raw))
+        assertTrue("不能展示空问题", errors.any { it.contains(".question") })
+        assertTrue("不能静默推断未回答内容", errors.any { it.contains(".fallback") })
+    }
+
+    @Test
     fun `完整的提问被解析，题目按顺序编号`() {
         val q = questionsOf(question).single()
         assertEquals("q1", q.id)

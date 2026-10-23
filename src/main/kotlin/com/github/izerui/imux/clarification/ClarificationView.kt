@@ -3,11 +3,14 @@ package com.github.izerui.imux.clarification
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.DocumentAdapter
+import com.intellij.ui.PopupHandler
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
@@ -66,6 +69,8 @@ internal interface ClarificationViewCallbacks {
     fun askingPageChanged()
 
     fun showAgentOutput(raw: String)
+
+    fun resultEdited(text: String)
 }
 
 /** 一题还没提交的回答。 */
@@ -73,9 +78,11 @@ internal class DraftAnswer {
     val picked = linkedSetOf<String>()
     var other = false
     var otherText = ""
+    var text = ""
 
     /** 填写完整时的回答；什么都没选、或选了"其他"却没写字时为 null（提交时按不回答处理）。 */
     fun toAnswer(question: Question): Answer? {
+        if (question.kind == QuestionKind.OPEN) return text.trim().takeIf(String::isNotEmpty)?.let(Answer::OwnWords)
         val own = otherText.trim().takeIf { other && it.isNotEmpty() }
         val ids = question.options.map { it.id }.filter { it in picked }
         return when {
@@ -154,9 +161,6 @@ internal class ClarificationView(
 
     // ---- 各页保持的组件，供对话框读取输入与就地更新 ----
     private var inputArea: JBTextArea? = null
-    private var backgroundCheck: JBCheckBox? = null
-    private var backgroundRow: Row? = null
-    private var backgroundAvailable = false
     private var agentCombo: ComboBox<AgentType>? = null
     private var enabledAgentTypes: List<AgentType> = emptyList()
     private var defaultAgentType: AgentType? = null
@@ -175,6 +179,7 @@ internal class ClarificationView(
     private val unansweredIcon by lazy { EmptyIcon.create(AllIcons.General.GreenCheckmark) }
     internal var options: OptionWidgets? = null
         private set
+    private var openAnswerArea: JBTextArea? = null
 
     /** 当前题目的选项按钮与"其他"。 */
     internal class OptionWidgets(val buttons: List<JToggleButton>, val otherButton: JToggleButton, val otherField: JBTextField)
@@ -237,25 +242,15 @@ internal class ClarificationView(
         }
     }
 
-    fun isShowingInput(): Boolean = renderedState is ClarificationState.Input
-
     /** 已用秒数：由对话框的计时器每秒调用，只改这一行文字。 */
     fun tick(nowMillis: Long) {
         elapsedComment?.text = elapsedText(nowMillis)
     }
 
-    fun setBackgroundAvailable(available: Boolean) {
-        backgroundAvailable = available
-        backgroundRow?.visible(available)
-        backgroundCheck?.isSelected = available
-    }
-
     fun inputText(): String = inputArea?.text.orEmpty()
 
-    fun includeBackground(): Boolean = backgroundAvailable && backgroundCheck?.isSelected == true
-
     /** 用户在输入页选的 Agent 类型；没有 combo（只有一种）或不在输入页时为 null。 */
-    fun selectedAgentType(): AgentType? = agentCombo?.selectedItem as? AgentType
+    fun selectedAgentType(): AgentType? = (agentCombo?.selectedItem as? AgentType) ?: defaultAgentType
 
     /** 设置可用的 Agent 类型和默认选中项；由对话框在创建视图后调用。 */
     fun setAgentTypes(enabled: List<AgentType>, default: AgentType) {
@@ -287,9 +282,6 @@ internal class ClarificationView(
 
     private fun clearWidgets() {
         inputArea = null
-        backgroundCheck = null
-        backgroundRow = null
-        backgroundAvailable = false
         progressLabel = null
         elapsedComment = null
         sendingLabel = null
@@ -297,6 +289,7 @@ internal class ClarificationView(
         drafts = null
         tabs = null
         options = null
+        openAnswerArea = null
         questionArea.removeAll()
     }
 
@@ -336,8 +329,6 @@ internal class ClarificationView(
     // ---- 各状态的中间区域 ----
 
     private fun inputPage(prefill: String): DialogPanel {
-        val check = JBCheckBox(messages.get("clarify.input.background"), false)
-        backgroundCheck = check
         val combo =
             if (enabledAgentTypes.size > 1) {
                 ComboBox(enabledAgentTypes.toTypedArray()).apply {
@@ -364,7 +355,6 @@ internal class ClarificationView(
                     cell(combo)
                 }
             }
-            backgroundRow = row { cell(check) }.visible(false)
         }
     }
 
@@ -465,6 +455,7 @@ internal class ClarificationView(
         val d = drafts ?: return
         questionRebuilds++
         options = null
+        openAnswerArea = null
         questionArea.removeAll()
         val panel = if (d.tab >= d.batch.size) reviewPanel(d) else questionPanel(d, d.batch[d.tab])
         questionArea.add(panel, BorderLayout.CENTER)
@@ -473,6 +464,7 @@ internal class ClarificationView(
     }
 
     private fun questionPanel(d: BatchDrafts, question: Question): DialogPanel {
+        if (question.kind == QuestionKind.OPEN) return openQuestionPanel(d, question)
         val draft = d.draftOf(question)
         val multi = question.multiSelect
         fun toggle(text: String): JToggleButton = if (multi) JBCheckBox(text) else JBRadioButton(text)
@@ -528,7 +520,7 @@ internal class ClarificationView(
 
         val fallback = question.fallback
         return panel {
-            row { text(html(question.text), MAX_LINE_LENGTH_WORD_WRAP).bold().resizableColumn().align(AlignX.FILL) }
+            questionHeading(question)
             // 单选题放进 UI DSL 的按钮组（互斥由它负责），多选题是独立的复选框
             val optionRows: Panel.() -> Unit = {
                 question.options.forEachIndexed { i, option ->
@@ -547,6 +539,36 @@ internal class ClarificationView(
             }
         }
     }
+
+    private fun Panel.questionHeading(question: Question) {
+        if (question.context.isNotBlank()) {
+            row { text(html(question.context), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
+        }
+        row { text(html(question.text), MAX_LINE_LENGTH_WORD_WRAP).bold().resizableColumn().align(AlignX.FILL) }
+    }
+
+    private fun openQuestionPanel(d: BatchDrafts, question: Question): DialogPanel =
+        panel {
+            questionHeading(question)
+            val draft = d.draftOf(question)
+            row {
+                openAnswerArea = multiline(draft.text, 6).component.apply {
+                    accessibleContext.accessibleName = question.text
+                    document.addDocumentListener(object : DocumentAdapter() {
+                        override fun textChanged(e: DocumentEvent) {
+                            draft.text = text
+                            tabs?.let { updateTabMark(it, d, d.tab) }
+                        }
+                    })
+                }
+            }.resizableRow().topGap(TopGap.SMALL)
+            if (question.fallback.isNotBlank()) {
+                row {
+                    comment(html(messages.get("clarify.question.unanswered", question.fallback)), MAX_LINE_LENGTH_WORD_WRAP)
+                        .resizableColumn().align(AlignX.FILL)
+                }
+            }
+        }
 
     /** 提交页：逐题列出回答，点标签回到那一题修改。 */
     private fun reviewPanel(d: BatchDrafts): DialogPanel =
@@ -574,12 +596,16 @@ internal class ClarificationView(
             is Answer.Picked ->
                 (question.options.filter { it.id in answer.optionIds }.map { it.label } + listOfNotNull(answer.other?.let { messages.get("clarify.review.other", it) }))
                     .joinToString(" · ")
-            is Answer.OwnWords -> messages.get("clarify.review.other", answer.text)
+            is Answer.OwnWords -> if (question.kind == QuestionKind.OPEN) answer.text else messages.get("clarify.review.other", answer.text)
             Answer.Skipped -> ""
         }
 
     /** 焦点落在当前题选中的选项上（没选就是第一个）；提交页落在标签条上，回车即提交。 */
     private fun focusCurrent() {
+        openAnswerArea?.let {
+            it.requestFocusInWindow()
+            return
+        }
         val w = options
         if (w == null) {
             tabs?.requestFocusInWindow()
@@ -651,12 +677,19 @@ internal class ClarificationView(
                 wrapStyleWord = true
                 this.text = text
                 caretPosition = 0
+                PopupHandler.installPopupMenu(this, IdeActions.GROUP_CUT_COPY_PASTE, ActionPlaces.POPUP)
             }
 
     private fun resultPage(requirement: String): DialogPanel =
         panel {
             row { label(messages.get("clarify.result.title")).bold() }
-            row { resultArea = multiline(requirement, 8).component }.resizableRow()
+            row {
+                resultArea = multiline(requirement, 8).component.apply {
+                    document.addDocumentListener(object : DocumentAdapter() {
+                        override fun textChanged(e: DocumentEvent) = callbacks.resultEdited(text)
+                    })
+                }
+            }.resizableRow()
         }
 
     private fun sendingPage(state: ClarificationState.Sending): DialogPanel =

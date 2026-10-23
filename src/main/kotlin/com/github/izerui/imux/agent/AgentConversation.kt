@@ -13,6 +13,9 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeoutException
 
 private val LOG = logger<AgentConversation>()
 
@@ -75,9 +78,13 @@ internal class LiveAgentConversation(
     private val lines = LinkedBlockingQueue<Any>()
     private val stderr = StringBuilder()
     private var turn = 0
+    private val writes = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "imux-agent-conversation-writer").apply { isDaemon = true }
+    }
     @Volatile private var claudeSessionId: String? = null
 
     override fun send(message: String, onProgress: (AgentProgressEvent) -> Unit): String {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(turnTimeoutSeconds)
         val writer = ensureStarted()
         val turnId = ++turn
         val parser =
@@ -87,8 +94,7 @@ internal class LiveAgentConversation(
                 }
                 onProgress(event)
             })
-        writeLine(writer, userLine(message, turnId))
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(turnTimeoutSeconds)
+        writeBeforeDeadline(writer, userLine(message, turnId), deadline)
         while (true) {
             if (closed) throw ConversationClosedException()
             val remaining = deadline - System.nanoTime()
@@ -101,7 +107,7 @@ internal class LiveAgentConversation(
             val ended =
                 when (agentType) {
                     AgentType.CLAUDE -> acceptClaude(line as String, parser)
-                    else -> acceptPi(line as String, parser, turnId, writer)
+                    else -> acceptPi(line as String, parser, turnId, writer, deadline)
                 }
             if (ended) return turnAnswer(parser)
         }
@@ -114,6 +120,7 @@ internal class LiveAgentConversation(
                 tracked.also { tracked = null }
             }
         lines.offer(EndOfOutput)
+        writes.shutdownNow()
         val survivors = process?.let { if (destroyAndAwait(it, exitTimeoutNanos)) emptyList() else listOf(it) }.orEmpty()
         if (agentType == AgentType.CLAUDE) {
             claudeSessionId?.let { id -> claudeHome()?.let { removeClaudeScratchDirs(it, id) } }
@@ -180,6 +187,31 @@ internal class LiveAgentConversation(
         }
     }
 
+    /** 管道可能被尚未读取 stdin 的 CLI 填满，写入与等待回复共用本轮截止时间。 */
+    private fun writeBeforeDeadline(writer: Writer, line: String, deadline: Long) {
+        val task = synchronized(lock) {
+            if (closed) throw ConversationClosedException()
+            writes.submit { writeLine(writer, line) }
+        }
+        try {
+            while (true) {
+                if (closed) throw ConversationClosedException()
+                val remaining = deadline - System.nanoTime()
+                if (remaining <= 0) throw OneShotAgentTimeoutException(turnTimeoutSeconds)
+                try {
+                    task.get(minOf(remaining, POLL_NANOS), TimeUnit.NANOSECONDS)
+                    return
+                } catch (_: TimeoutException) {
+                    // 定期检查关闭状态，不必等到整轮超时。
+                } catch (e: ExecutionException) {
+                    throw e.cause ?: e
+                }
+            }
+        } finally {
+            task.cancel(true)
+        }
+    }
+
     /** 返回 true 表示这一轮结束。 */
     private fun acceptClaude(line: String, parser: AgentJsonEventParser): Boolean {
         val root = jsonObject(line) ?: return false
@@ -188,7 +220,7 @@ internal class LiveAgentConversation(
         return root.text("type") == "result"
     }
 
-    private fun acceptPi(line: String, parser: AgentJsonEventParser, turnId: Int, writer: Writer): Boolean {
+    private fun acceptPi(line: String, parser: AgentJsonEventParser, turnId: Int, writer: Writer, deadline: Long): Boolean {
         val root = jsonObject(line) ?: return false
         when (root.text("type")) {
             "response" -> {
@@ -204,7 +236,7 @@ internal class LiveAgentConversation(
                 val method = root.text("method")
                 if (method !in PI_NO_REPLY_METHODS) {
                     if (method !in PI_DIALOG_METHODS) LOG.info("需求澄清：Pi 发来不认识的扩展请求 $method，按对话框回复取消")
-                    root.text("id")?.let { writeLine(writer, piCancelDialog(it)) }
+                    root.text("id")?.let { writeBeforeDeadline(writer, piCancelDialog(it), deadline) }
                 }
                 return false
             }

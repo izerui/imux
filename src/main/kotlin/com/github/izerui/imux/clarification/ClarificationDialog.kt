@@ -88,7 +88,7 @@ internal class ClarificationDialog(
 
     /** 关闭（按钮、Esc、窗口关闭）会结束澄清：已有回答或未发送的结果时先确认一次，以本对话框为父组件。 */
     override fun doCancelAction() {
-        if (closeNeedsConfirmation(flow.state, flow.record, view.answers().isNotEmpty())) {
+        if (closeNeedsConfirmation(flow.state, flow.record, view.answers().isNotEmpty(), flow.hasRetainedPlan())) {
             val choice =
                 Messages.showYesNoDialog(
                     contentPane,
@@ -111,9 +111,7 @@ internal class ClarificationDialog(
     private fun render() {
         shown = flow.state
         shownRecord = flow.record
-        val wasInput = view.isShowingInput()
         view.render(shown, shownRecord, shownRecord.requirement)
-        if (shown is ClarificationState.Input && !wasInput) checkBackground()
         updateButtons()
         updateTitle()
     }
@@ -122,13 +120,6 @@ internal class ClarificationDialog(
         val goal = shownRecord.requirement.takeIf { shown !is ClarificationState.Input }
         val chosenType = flow.chosenAgentType()
         title = dialogTitle(goal, chosenType, defaultAgentType)
-    }
-
-    /** 会话记录文件是否存在要查文件系统，交给服务在 IO 线程上查，结果回到 EDT 再改复选框。 */
-    private fun checkBackground() {
-        service.checkBackground(sessionKey) { has ->
-            ApplicationManager.getApplication().invokeLater({ view.setBackgroundAvailable(has) }, ModalityState.any())
-        }
     }
 
     /** 按钮栏只在可见按钮或默认按钮变了时才动。 */
@@ -147,7 +138,7 @@ internal class ClarificationDialog(
 
     private fun perform(button: BarButton) {
         when (button) {
-            BarButton.START -> view.inputText().takeIf { it.isNotBlank() }?.let { service.start(sessionKey, it, view.includeBackground(), view.selectedAgentType() ?: defaultAgentType) }
+            BarButton.START -> view.inputText().takeIf { it.isNotBlank() }?.let { service.start(sessionKey, it, view.selectedAgentType() ?: defaultAgentType) }
             BarButton.CANCEL_INVESTIGATION -> service.cancel(sessionKey)
             BarButton.NEXT, BarButton.REVIEW -> view.nextTab()
             BarButton.SUBMIT -> service.submit(sessionKey, view.answers())
@@ -178,6 +169,8 @@ internal class ClarificationDialog(
             flow.drafts?.takeIf { it.batch == batch } ?: BatchDrafts(batch).also { flow.drafts = it }
 
         override fun askingPageChanged() = updateButtons()
+
+        override fun resultEdited(text: String) = flow.editResult(text)
 
         // 弹窗以本对话框为父组件
         override fun showAgentOutput(raw: String) = Messages.showInfoMessage(contentPane, raw.take(20_000), ImuxBundle.message("clarify.failed.raw"))
@@ -239,8 +232,13 @@ internal const val MIN_INITIAL_HEIGHT = 420
 internal const val MAX_INITIAL_HEIGHT = 640
 
 /** 关闭会丢掉的东西：提交过的回答、这一批已填写的回答、未发送的结果（结果页或发送中）。 */
-internal fun closeNeedsConfirmation(state: ClarificationState, record: ClarificationRecord, hasFilledAnswers: Boolean): Boolean =
-    record.history.isNotEmpty() || hasFilledAnswers || state is ClarificationState.Result || state is ClarificationState.Sending
+internal fun closeNeedsConfirmation(
+    state: ClarificationState,
+    record: ClarificationRecord,
+    hasFilledAnswers: Boolean,
+    hasRetainedPlan: Boolean = false,
+): Boolean =
+    hasRetainedPlan || record.history.isNotEmpty() || hasFilledAnswers || state is ClarificationState.Result || state is ClarificationState.Sending
 
 /** 初始高度：内容高度加窗口其余部分，限制在 [MIN_INITIAL_HEIGHT]～[MAX_INITIAL_HEIGHT]（缩放后）。 */
 internal fun initialHeight(contentHeight: Int, restOfWindow: Int): Int =

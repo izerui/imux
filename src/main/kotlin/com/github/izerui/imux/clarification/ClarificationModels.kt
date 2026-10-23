@@ -9,6 +9,8 @@ internal data class ChoiceOption(
     val recommended: Boolean,
 )
 
+internal enum class QuestionKind { CHOICE, OPEN }
+
 internal data class Question(
     /** 插件按这一批里的顺序编号（q1～q4），只用来对应草稿与回答。 */
     val id: String,
@@ -19,13 +21,16 @@ internal data class Question(
     val options: List<ChoiceOption>,
     /** 不回答时按什么处理，事先写明；用户没见过的默认，他也就没法拒绝。 */
     val fallback: String = "",
+    val kind: QuestionKind = QuestionKind.CHOICE,
+    /** 对话者的看法、发现或必要背景，与邀请用户回应的问题分开呈现。 */
+    val context: String = "",
 )
 
 internal sealed interface Answer {
     /** 选中的选项（单选恰好一个）；多选题还可以同时写下"其他"的原话 [other]。 */
     data class Picked(val optionIds: List<String>, val other: String? = null) : Answer
 
-    /** 只写了"其他"的原话。 */
+    /** 开放题的回答，或选择题中"其他"的原话。 */
     data class OwnWords(val text: String) : Answer
 
     /** 没有回答：按这一题事先写明的默认处理。 */
@@ -40,13 +45,12 @@ internal data class AnswerRecord(
 )
 
 /**
- * 插件这边记下的澄清：原需求、背景快照与用户提交过的全部回答。
+ * 插件这边记下的澄清：原需求与用户提交过的全部回答。
  * 对话的上下文由 Agent 自己记着；这里只用于界面上的已确认列表、失败时的兜底结果，
  * 以及对话中断（取消、失败）后新开对话时的开场。
  */
 internal data class ClarificationRecord(
     val requirement: String,
-    val background: String?,
     val history: List<AnswerRecord> = emptyList(),
 ) {
     /** 已确认 = 用户提交过的回答（含不回答时的默认处理），按提交顺序、去重。 */
@@ -64,7 +68,7 @@ internal fun answerRecord(question: Question, answer: Answer): AnswerRecord {
                 val picked = question.options.filter { it.id in answer.optionIds }
                 val other = answer.other?.trim()?.takeIf(String::isNotEmpty)
                 val valid =
-                    picked.size == answer.optionIds.toSet().size && picked.isNotEmpty() &&
+                    question.kind == QuestionKind.CHOICE && picked.size == answer.optionIds.toSet().size && picked.isNotEmpty() &&
                         (question.multiSelect || (picked.size == 1 && other == null))
                 if (valid) (picked.map { it.description } + listOfNotNull(other)).joinToString("；") else null
             }
@@ -78,11 +82,14 @@ internal fun answerRecord(question: Question, answer: Answer): AnswerRecord {
 internal fun composeFallback(record: ClarificationRecord): String =
     buildString {
         append(record.requirement.trim())
-        val confirmed = record.confirmed()
+        // 开放回答可能只有“上周那次”或“不认同”：离开问题与对方看法就无法独立理解。
+        val confirmed = record.history.filter { it.recorded.isNotBlank() }.map { r ->
+            if (r.question.kind == QuestionKind.OPEN || r.question.context.isNotBlank()) {
+                listOf(r.question.context, r.question.text, r.recorded).filter(String::isNotBlank).joinToString("\n")
+            } else r.recorded.trim()
+        }.distinct()
         if (confirmed.isNotEmpty()) {
             append("\n\n")
-            confirmed.forEach { append("- ").append(it).append('\n') }
+            confirmed.forEach { append("- ").append(it.replace("\n", "\n  ")).append('\n') }
         }
     }.trimEnd()
-
-internal const val MAX_BACKGROUND_CHARS = 8_000

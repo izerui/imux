@@ -57,11 +57,12 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
-    fun `背景快照在后台线程读取`() {
+    fun `开始澄清直接使用输入需求而不读取主会话记录`() {
         val start = source.bodyAfter("internal fun start(", '{')
-        val launch = start.indexOf("launch(")
-        val read = start.indexOf("latestConversationOf(")
-        assertTrue("背景快照必须在 launch 的 IO 任务里读取", launch >= 0 && read > launch)
+        assertTrue(start.contains("flow.begin(requirement, agentType)"))
+        assertTrue(start.contains("launch(sessionKey, flow) { flow.run(runId) }"))
+        assertFalse("不读取主会话对话", source.normalized.contains("latestConversationOf"))
+        assertFalse("不再检查会话记录文件", source.normalized.contains("checkBackground"))
     }
 
     @Test
@@ -99,7 +100,7 @@ class ClarificationServiceSourceTest {
     @Test
     fun `关闭标签页时结果页与发送中的需求先通知再丢弃`() {
         val release = source.bodyAfter("internal fun releaseOwner(", '{')
-        val read = release.indexOf("undeliveredRequirement(")
+        val read = release.indexOf("flow?.undeliveredPlan()")
         val discard = release.indexOf("discard(")
         val notify = release.indexOf("notifyUndelivered")
         assertTrue("丢弃之前读出尚未送达的需求", read >= 0 && read < discard)
@@ -115,13 +116,6 @@ class ClarificationServiceSourceTest {
         assertTrue("迁移在同一把锁内移动任务", migrate.contains("synchronized(jobs) {") && migrate.substringAfter("synchronized(jobs) {").contains("jobs.remove(from)"))
         assertTrue("IO 任务经 register 登记", source.bodyAfter("private fun launch(", '{').contains("register(sessionKey, flow)"))
         assertTrue("发送任务经 register 登记", source.bodyAfter("internal fun send(", '{').contains("register(sessionKey, flow)"))
-    }
-
-    @Test
-    fun `会话记录是否存在在 IO 线程上判断`() {
-        val check = source.bodyAfter("internal fun checkBackground(", '{')
-        assertTrue(check.contains("Dispatchers.IO"))
-        assertTrue(check.indexOf("Files.isRegularFile(") > check.indexOf("Dispatchers.IO"))
     }
 
     @Test

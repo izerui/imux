@@ -8,7 +8,7 @@ import org.junit.Test
 class ClarificationPromptTest {
     private val question =
         Question("q1", "恢复范围", "断线后恢复哪些内容？", true, listOf(ChoiceOption("a", "只恢复连接", "DA", true), ChoiceOption("b", "连同滚动缓冲", "DB", false)), "只恢复连接")
-    private val fresh = ClarificationRecord("给终端增加断线重连", "User: 之前的对话")
+    private val fresh = ClarificationRecord("给终端增加断线重连")
     private val answered = fresh.copy(history = listOf(answerRecord(question, Answer.Picked(listOf("a", "b"), "OWN")), answerRecord(question, Answer.Skipped)))
 
     private fun rawResource(name: String): String =
@@ -42,24 +42,31 @@ class ClarificationPromptTest {
     }
 
     @Test
-    fun `中英两套指南都提到网络知识与执行方案`() {
-        val zh = loadGuidance(true)
-        val en = loadGuidance(false)
-        assertTrue("zh：提到网络知识", zh.contains("网络知识"))
-        assertTrue("zh：输出是执行方案", zh.contains("执行方案"))
-        assertTrue("en：提到 web knowledge", en.contains("web knowledge"))
-        assertTrue("en：输出是 execution plan", en.contains("execution plan"))
+    fun `中英文开场将只读边界与核心指南分开`() {
+        for (chinese in listOf(true, false)) {
+            val guidance = loadGuidance(chinese)
+            val opening = openingMessage(fresh, chinese, guidance)
+            val boundary = if (chinese) "不修改文件、不运行构建或测试" else "do not modify files, run builds or tests"
+            val boundaryHeader = if (chinese) "## 运行边界" else "## Operating Boundaries"
+            assertFalse("$chinese：核心指南不承担运行限制", guidance.contains(boundary))
+            assertTrue("$chinese：开场仍有只读限制", opening.contains(boundary))
+            assertTrue("$chinese：边界在核心指南之后", opening.indexOf(boundaryHeader) > guidance.lastIndex)
+            assertTrue(
+                "$chinese：三种形式同等可用",
+                opening.contains(if (chinese) "开放、单选、多选同等可用" else "Open, single-choice and multiple-choice forms are equally available"),
+            )
+        }
     }
 
     @Test
-    fun `开场带指南、规则、需求、背景与输出格式`() {
+    fun `开场带指南、规则、需求与输出格式`() {
         val opening = openingMessage(fresh, isChinese = true, guidance = "指南正文")
         assertTrue(opening.startsWith("指南正文"))
         assertTrue("需求", opening.contains("给终端增加断线重连"))
-        assertTrue("背景", opening.contains("User: 之前的对话"))
         assertTrue("规则", opening.contains("1～$MAX_QUESTIONS_PER_ROUND"))
         assertTrue("格式", opening.contains("\"type\": \"questions\"") && opening.contains("\"fallback\""))
-        assertTrue("首次开场要求先调查", opening.contains("先调查项目"))
+        assertTrue("不要求先提问", opening.contains("不要求先提问或产出实施方案"))
+        assertFalse("没有额外的开场思考流程", opening.contains("## 现在"))
         assertFalse("首次开场没有已给出的回答", opening.contains("用户已经给出的回答"))
         assertTrue(opening.trimEnd().endsWith(JSON_ONLY_ZH))
     }
@@ -70,7 +77,8 @@ class ClarificationPromptTest {
         assertTrue(opening.contains("Answers the User Has Already Given"))
         assertTrue("选中的选项与原话", opening.contains("只恢复连接 (DA); 连同滚动缓冲 (DB); Other: OWN"))
         assertTrue("不回答的写明默认处理", opening.contains("Not answered; use the default: 只恢复连接"))
-        assertTrue("接着问下一批", opening.contains("ask the next batch"))
+        assertTrue("恢复时说明历史顺序", opening.contains("in chronological order"))
+        assertTrue("缺失调查不冒充已知", opening.contains("Missing investigation findings are not established facts"))
         assertTrue(opening.trimEnd().endsWith(JSON_ONLY_EN))
     }
 
@@ -82,13 +90,69 @@ class ClarificationPromptTest {
             "用户对这一批问题的回答：\n\n" +
                 "- 恢复范围（断线后恢复哪些内容？） → 其他：我的想法\n" +
                 "- 恢复范围（断线后恢复哪些内容？） → 没有回答，按默认处理：只恢复连接\n\n" +
-                "带着这些回答继续：给出下一批问题，或在没有需要用户拍板的方向时给出执行方案。 回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。",
+                "回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。",
             zh,
         )
         val en = answersMessage(records, isChinese = false)
-        assertTrue("英文：原话", en.contains("- 恢复范围 (断线后恢复哪些内容？) → Other: 我的想法"))
-        assertTrue("英文：默认处理", en.contains("→ Not answered; use the default: 只恢复连接"))
-        assertTrue("英文：格式提醒", en.endsWith("Reply with the agreed JSON only: {\"type\": \"questions\", ...} or {\"type\": \"done\", ...}."))
+        assertEquals(
+            "The user's answers to this batch:\n\n" +
+                "- 恢复范围 (断线后恢复哪些内容？) → Other: 我的想法\n" +
+                "- 恢复范围 (断线后恢复哪些内容？) → Not answered; use the default: 只恢复连接\n\n" +
+                "Reply with the agreed JSON only: {\"type\": \"questions\", ...} or {\"type\": \"done\", ...}.",
+            en,
+        )
+    }
+
+    @Test
+    fun `修订后重开对话的中英文提示明确后续回答优先`() {
+        val history =
+            listOf(
+                answerRecord(question, Answer.OwnWords("OLD-CHOICE")),
+                answerRecord(question, Answer.OwnWords("NEW-CHOICE")),
+            )
+        for (chinese in listOf(true, false)) {
+            val message = openingMessage(fresh.copy(history = history), chinese, "GUIDE", "PLAN", 1)
+            assertFalse("$chinese：不重新确认旧决定", message.contains("OLD-CHOICE"))
+            assertTrue("$chinese：方案在新回答前", message.indexOf("PLAN") < message.indexOf("NEW-CHOICE"))
+            assertTrue("$chinese：新回答存在", message.contains("NEW-CHOICE"))
+            assertTrue(
+                "$chinese：明确优先级",
+                message.contains(if (chinese) "若与方案冲突，以后续回答为准" else "if they conflict with the plan, the later answers take precedence"),
+            )
+        }
+    }
+
+    @Test
+    fun `中英文继续聊仅发送意图修订文本和协议提醒`() {
+        val plan = "保留当前交互，只探索内部机制，不承诺实施任何候选方案。"
+        val zh = continueMessage(true, plan)
+        val en = continueMessage(false, plan)
+        assertEquals(
+            "用户希望在以下当前成果的基础上继续探讨。这份文本取代修订前的决定。\n\n" +
+                plan + "\n\n回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。",
+            zh,
+        )
+        assertEquals(
+            "The user wants to continue the discussion from the current outcome below. This text replaces decisions made before the revision.\n\n" +
+                plan + "\n\nReply with the agreed JSON only: {\"type\": \"questions\", ...} or {\"type\": \"done\", ...}.",
+            en,
+        )
+    }
+
+    @Test
+    fun `开放回答续聊与恢复都保留看法和原话且不称为其他`() {
+        val open = Question("q1", "体验", "你怎么看？", false, emptyList(), "暂不推断", QuestionKind.OPEN, "我的看法可能不成立。")
+        val records = listOf(answerRecord(open, Answer.OwnWords("我不认同。\n困扰来自打断。")))
+        for (chinese in listOf(true, false)) {
+            val followup = answersMessage(records, chinese)
+            val reopening = openingMessage(fresh.copy(history = records), chinese, "GUIDE")
+            for ((phase, message) in listOf("续聊" to followup, "恢复" to reopening)) {
+                assertTrue("$chinese $phase：保留被回应的看法", message.contains("我的看法可能不成立。"))
+                assertTrue("$chinese $phase：保留问题", message.contains("你怎么看？"))
+                assertTrue("$chinese $phase：原话保留换行", message.contains("→ 我不认同。\n困扰来自打断。"))
+                assertFalse("$chinese $phase：不是选择题的其他", message.contains("Other: 我不认同") || message.contains("其他：我不认同"))
+            }
+        }
     }
 
     @Test

@@ -136,7 +136,7 @@ class ImuxBundleTest {
         assertEquals("好，接着聊", zh("clarify.question.submit"))
         assertEquals("接着说", zh("clarify.question.next"))
         assertEquals("我的回答", zh("clarify.review.title"))
-        assertEquals("执行方案（可修改）", zh("clarify.result.title"))
+        assertEquals("讨论成果（可修改）", zh("clarify.result.title"))
         assertEquals("继续聊", zh("clarify.result.back"))
         assertEquals("发给 Agent 执行", zh("clarify.result.send"))
         assertEquals("直接生成方案", zh("clarify.failed.fallback"))

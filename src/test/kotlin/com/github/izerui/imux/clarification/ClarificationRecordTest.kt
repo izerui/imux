@@ -28,6 +28,22 @@ class ClarificationRecordTest {
     }
 
     @Test
+    fun `开放回答保留段落且空白只采用披露的处理`() {
+        val open = q().copy(kind = QuestionKind.OPEN, options = emptyList(), fallback = "暂不推断")
+        assertEquals("第一段\n第二段", answerRecord(open, Answer.OwnWords(" 第一段\n第二段 ")).recorded)
+        val blank = answerRecord(open, Answer.OwnWords("\n "))
+        assertEquals(Answer.Skipped, blank.answer)
+        assertEquals("暂不推断", blank.recorded)
+    }
+
+    @Test
+    fun `开放题兜底保留问题与看法避免回答脱离语境`() {
+        val open = q().copy(kind = QuestionKind.OPEN, options = emptyList(), context = "可能是等待的问题。", text = "你认同吗？")
+        val record = ClarificationRecord("目标", listOf(answerRecord(open, Answer.OwnWords("不认同。\n问题是打断。"))))
+        assertEquals("目标\n\n- 可能是等待的问题。\n  你认同吗？\n  不认同。\n  问题是打断。", composeFallback(record))
+    }
+
+    @Test
     fun `不回答时记下这一题的默认处理`() {
         val record = answerRecord(q(), Answer.Skipped)
         assertEquals(Answer.Skipped, record.answer)
@@ -48,7 +64,6 @@ class ClarificationRecordTest {
         val record =
             ClarificationRecord(
                 "需求",
-                null,
                 listOf(
                     answerRecord(q(), Answer.Picked(listOf("a"))),
                     answerRecord(q(), Answer.Skipped),
@@ -60,14 +75,14 @@ class ClarificationRecordTest {
 
     @Test
     fun `默认处理为空的不回答不算已确认`() {
-        val record = ClarificationRecord("需求", null, listOf(answerRecord(q().copy(fallback = ""), Answer.Skipped)))
+        val record = ClarificationRecord("需求", listOf(answerRecord(q().copy(fallback = ""), Answer.Skipped)))
         assertTrue(record.confirmed().isEmpty())
     }
 
     @Test
     fun `兜底结果是原需求后接已确认的回答`() {
-        val record = ClarificationRecord("  需求  ", null, listOf(answerRecord(q(), Answer.Picked(listOf("b")))))
+        val record = ClarificationRecord("  需求  ", listOf(answerRecord(q(), Answer.Picked(listOf("b")))))
         assertEquals("需求\n\n- description-b", composeFallback(record))
-        assertEquals("没有回答时只有原需求", "需求", composeFallback(ClarificationRecord("需求", null)))
+        assertEquals("没有回答时只有原需求", "需求", composeFallback(ClarificationRecord("需求")))
     }
 }

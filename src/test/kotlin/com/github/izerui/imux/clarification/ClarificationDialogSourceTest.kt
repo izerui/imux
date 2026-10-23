@@ -10,11 +10,9 @@ class ClarificationDialogSourceTest {
     private val view = SourceCode("src/main/kotlin/com/github/izerui/imux/clarification/ClarificationView.kt")
 
     @Test
-    fun `输入页不在 EDT 上查会话记录文件`() {
-        val check = dialog.bodyAfter("private fun checkBackground()", '{')
-        assertTrue("交给服务在 IO 线程查", check.contains("service.checkBackground(sessionKey)"))
-        assertTrue("结果回到 EDT 再改复选框", check.contains("invokeLater("))
-        assertTrue("进入输入页时才查", dialog.bodyAfter("private fun render()", '{').contains("checkBackground()"))
+    fun `输入页不再提供附带最近对话的选项`() {
+        assertFalse("不再检查背景记录", dialog.normalized.contains("checkBackground"))
+        assertFalse("不再显示背景复选框", view.normalized.contains("clarify.input.background"))
     }
 
     @Test
@@ -89,7 +87,7 @@ class ClarificationDialogSourceTest {
     @Test
     fun `关闭前只在会丢掉回答或结果时确认一次，弹窗以对话框为父组件`() {
         val cancel = dialog.bodyAfter("override fun doCancelAction()", '{')
-        assertTrue("按状态、记录与已填写的回答判断", cancel.contains("closeNeedsConfirmation(flow.state, flow.record, view.answers().isNotEmpty())"))
+        assertTrue("按状态、记录、已填写回答与保留方案判断", cancel.contains("closeNeedsConfirmation(flow.state, flow.record, view.answers().isNotEmpty(), flow.hasRetainedPlan())"))
         assertTrue("以对话框为父组件", cancel.contains("Messages.showYesNoDialog("))
         assertTrue("以对话框为父组件", cancel.contains("contentPane,"))
         assertTrue("不确认就不关", cancel.contains("if (choice != Messages.YES) return"))

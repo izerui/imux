@@ -8,8 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ClarificationDialogHelpersTest {
-    private val firstRecord = ClarificationRecord("r", null)
-    private val laterRecord = ClarificationRecord("r", null, listOf(AnswerRecord(Question("q1", "H", "Q", false, emptyList(), "F"), Answer.Skipped, "F")))
+    private val firstRecord = ClarificationRecord("r")
+    private val laterRecord = ClarificationRecord("r", listOf(AnswerRecord(Question("q1", "H", "Q", false, emptyList(), "F"), Answer.Skipped, "F")))
 
     private fun q(id: String, multi: Boolean = false) =
         Question(id, "H$id", "Q$id", multi, listOf(ChoiceOption("a", "A", "DA", true), ChoiceOption("b", "B", "DB", false)))

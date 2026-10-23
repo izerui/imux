@@ -36,7 +36,7 @@ internal interface ClarificationConversation {
 }
 
 /**
- * 一个会话的澄清流程：整个澄清只用一段对话。开始时发开场（指南、规则、需求、背景、格式），
+ * 一个会话的澄清流程：整个澄清只用一段对话。开始时发开场（指南、规则、需求、格式），
  * 之后每次只发这一批的回答，Agent 带着已有的上下文接着做；回复不合格式时在同一段对话里把错误发回一次。
  *
  * 什么时候问够了由 Agent 判断（返回 done）；用户不想继续时直接关窗。
@@ -64,10 +64,14 @@ internal class ClarificationFlow(
     /** 下一轮要在现有对话里发的消息；对话为空（还没开始或已中断）时改发开场。 */
     private var outgoing: String? = null
 
+    /** 重开对话时也保留用户最后一次继续讨论的方案。 */
+    private var continuedPlan: String? = null
+    private var continuedPlanHistorySize = 0
+
     /** 用户在输入页选择的智能体类型；在 [begin] 时设置，打开对话时使用。 */
     private var agentType: AgentType? = null
 
-    @Volatile var record: ClarificationRecord = ClarificationRecord("", null)
+    @Volatile var record: ClarificationRecord = ClarificationRecord("")
         private set
 
     @Volatile var state: ClarificationState = ClarificationState.Input
@@ -80,6 +84,19 @@ internal class ClarificationFlow(
 
     /** 开始后用户选的智能体类型；还没开始时为 null。 */
     fun chosenAgentType(): AgentType? = agentType
+
+    fun hasRetainedPlan(): Boolean = synchronized(lock) { continuedPlan != null }
+
+    /** 关闭主会话前取得待交付文本；读取快照，不改变当前状态或发起调查。 */
+    fun undeliveredPlan(): String? =
+        synchronized(lock) { undeliveredRequirement(state) ?: retainedPlanLocked() }
+
+    private fun retainedPlanLocked(): String? {
+        val plan = continuedPlan ?: return null
+        // 修订前的回答已由用户在方案中取舍；只补入继续聊之后新提交的回答。
+        val laterAnswers = record.history.drop(continuedPlanHistorySize)
+        return if (laterAnswers.isEmpty()) plan else composeFallback(ClarificationRecord(plan, laterAnswers))
+    }
 
     fun addListener(listener: () -> Unit) { listeners += listener }
 
@@ -104,26 +121,20 @@ internal class ClarificationFlow(
 
     private fun stale(runId: Long) = runId != generation || state !is ClarificationState.Investigating
 
-    fun begin(requirement: String, background: String?, agentType: AgentType): Long {
+    fun begin(requirement: String, agentType: AgentType): Long {
         val runId: Long
         val old: ClarificationConversation?
         synchronized(lock) {
             old = detachLocked()
             this.agentType = agentType
-            record = ClarificationRecord(requirement.trim(), background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
+            record = ClarificationRecord(requirement.trim())
+            continuedPlan = null
+            continuedPlanHistorySize = 0
             runId = investigate(null)
         }
         old?.let(closeConversation)
         changed()
         return runId
-    }
-
-    /** 背景快照在 IO 线程读取，读完后、发开场之前补进记录。忽略已过期的 runId。 */
-    fun attachBackground(runId: Long, background: String?) {
-        synchronized(lock) {
-            if (stale(runId)) return
-            record = record.copy(background = background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
-        }
     }
 
     /**
@@ -176,7 +187,7 @@ internal class ClarificationFlow(
                         } else {
                             replaced = detachLocked()
                             conversation = created
-                            openingMessage(record, isChinese, guidance)
+                            openingMessage(record, isChinese, guidance, continuedPlan, continuedPlanHistorySize)
                         }
                     }
                 replaced?.let(closeConversation)
@@ -256,7 +267,7 @@ internal class ClarificationFlow(
         synchronized(lock) {
             if (state !is ClarificationState.Failed) return
             generation++
-            state = ClarificationState.Result(composeFallback(record))
+            state = ClarificationState.Result(retainedPlanLocked() ?: composeFallback(record))
         }
         changed()
     }
@@ -265,8 +276,10 @@ internal class ClarificationFlow(
     fun continueClarifying(): Long? {
         val runId: Long
         synchronized(lock) {
-            if (state !is ClarificationState.Result) return null
-            runId = investigate(conversation?.let { continueMessage(isChinese) })
+            val result = state as? ClarificationState.Result ?: return null
+            continuedPlan = result.requirement
+            continuedPlanHistorySize = record.history.size
+            runId = investigate(conversation?.let { continueMessage(isChinese, result.requirement) })
         }
         changed()
         return runId
