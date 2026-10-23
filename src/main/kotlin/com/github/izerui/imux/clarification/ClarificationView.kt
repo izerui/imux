@@ -294,35 +294,27 @@ internal class ClarificationView(
         }
     }
 
-    // ---- 头部：需求一行 + 已确认 ----
+    // ---- 头部：目标一行 ----
 
     private fun renderHeader(state: ClarificationState, record: ClarificationRecord) {
         val shown = state is ClarificationState.Investigating || state is ClarificationState.Asking || state is ClarificationState.Failed
-        val confirmed = if (shown) record.confirmed() else emptyList()
-        val key: Any = if (shown) record.requirement to confirmed else Unit
+        val key: Any = if (shown) record.requirement else Unit
         if (key == headerKey) return
         headerKey = key
         headerRebuilds++
         header.removeAll()
-        if (shown) header.add(headerPanel(record.requirement, confirmed), BorderLayout.CENTER)
+        if (shown) header.add(headerPanel(record.requirement), BorderLayout.CENTER)
         header.revalidate()
         header.repaint()
     }
 
-    private fun headerPanel(requirement: String, confirmed: List<String>): DialogPanel =
+    private fun headerPanel(requirement: String): DialogPanel =
         panel {
             row {
                 cell(EllipsisLabel(messages.get("clarify.header.requirement", requirement.replace(Regex("\\s+"), " ").trim())))
                     .applyToComponent { toolTipText = requirementTooltip(requirement) }
                     .resizableColumn()
                     .align(AlignX.FILL)
-            }
-            if (confirmed.isNotEmpty()) {
-                row {
-                    text(confirmed.joinToString(CONFIRMED_GAP) { "$CHECK_ICON&nbsp;" + html(it) }, MAX_LINE_LENGTH_WORD_WRAP)
-                        .resizableColumn()
-                        .align(AlignX.FILL)
-                }
             }
             separator()
         }
@@ -403,7 +395,7 @@ internal class ClarificationView(
             strip.addTab(truncateCodePoints(q.header, MAX_HEADER_CHARS), unansweredIcon, emptyTab(), headerTooltip(q))
         }
         // 提交页也占同样的图标位，各标签间距一致
-        strip.addTab(messages.get("clarify.question.submit"), unansweredIcon, emptyTab(), null)
+        strip.addTab(messages.get("clarify.question.review.tab"), unansweredIcon, emptyTab(), null)
         d.batch.indices.forEach { updateTabMark(strip, d, it) }
         d.tab = d.tab.coerceIn(0, d.batch.size)
         strip.selectedIndex = d.tab
@@ -696,8 +688,6 @@ private const val MAX_PATH_CHARS = 48
 /** 内容区的内边距（未缩放）：与原生对话框按钮栏的左右留白一致。 */
 internal const val CONTENT_PADDING_H = 16
 internal const val CONTENT_PADDING_V = 10
-private const val CHECK_ICON = "<icon src='AllIcons.General.GreenCheckmark'>"
-private const val CONFIRMED_GAP = "&nbsp;&nbsp;&nbsp; "
 
 /** 交给 UI DSL 的文字按 HTML 显示：转义并保留换行。 */
 private fun html(text: String): String = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")

@@ -8,7 +8,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.terminal.frontend.view.TerminalView
 
-/** 终端正文右键菜单的「需求澄清」，在 plugin.xml 注册。 */
+/** 终端正文右键菜单的「先聊再做」，在 plugin.xml 注册。 */
 class ClarifyRequirementAction : DumbAwareAction() {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 

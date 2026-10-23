@@ -40,7 +40,7 @@ import javax.swing.UIManager
 import javax.swing.text.JTextComponent
 
 /**
- * 以实际渲染验收需求澄清窗口：在 Darcula 下构建 [ClarificationView]，配上按 [buttonBar] 画出的按钮栏，
+ * 以实际渲染验收先聊再做窗口：在 Darcula 下构建 [ClarificationView]，配上按 [buttonBar] 画出的按钮栏，
  * 写出 build/ui-preview/ 下的 PNG，并检查文字没有被横向截断、内容在滚动面板里、
  * 640×520 下题目与全部选项不用滚动就能看到；同时用重建计数验收"不反复渲染"。
  */
@@ -333,12 +333,11 @@ class ClarificationViewPreviewTest {
     }
 
     @Test
-    fun `调查中显示进度、秒数与两条已确认`() {
+    fun `想下一步时显示进度与秒数但不显示已确认内容`() {
         val state = ClarificationState.Investigating("读取 src/main/kotlin/com/github/izerui/imux/terminal/TerminalSessionReconnector.kt", System.currentTimeMillis() - 42_000, run = 3)
         val view = check("investigating-640x520", state, record, 640, 520)
         val texts = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length) }
-        assertTrue("显示第一条已确认", texts.any { it.contains("断线后自动重连 3 次") })
-        assertTrue("显示第二条已确认", texts.any { it.contains("多个标签页同时断线时逐个重连") })
+        assertFalse("已确认内容不在界面上", texts.any { it.contains("断线后自动重连 3 次") })
         assertTrue("显示已用秒数", texts.any { it.contains("42") })
     }
 
@@ -346,7 +345,7 @@ class ClarificationViewPreviewTest {
     fun `只有一题时没有标签条且题目与选项不用滚动`() {
         val view = check("asking-single-640x520", ClarificationState.Asking(listOf(methodQuestion)), record, 640, 520)
         assertEquals("一题没有标签条", null, view.tabs)
-        assertEquals("主按钮是提交", AskingPage.SINGLE, view.askingPage())
+        assertEquals("主按钮是好接着聊", AskingPage.SINGLE, view.askingPage())
         assertQuestionFits(view, "asking-single-640x520")
     }
 
@@ -356,7 +355,7 @@ class ClarificationViewPreviewTest {
         val drafts: (BatchDrafts) -> Unit = { it.draftOf(methodQuestion).picked += "a" }
         val big = check("asking-batch-640x520", ClarificationState.Asking(batch), record, 640, 520, drafts = drafts)
         val strip = big.tabs!!
-        assertEquals("标签条：三题加提交页", 4, strip.tabCount)
+        assertEquals("标签条：三题加我的回答页", 4, strip.tabCount)
         for (i in 0 until strip.tabCount) {
             val icon = (strip.getTabComponentAt(i) as JLabel).icon
             assertNotNull("第 ${i + 1} 个标签有图标位", icon)
@@ -384,7 +383,7 @@ class ClarificationViewPreviewTest {
     }
 
     @Test
-    fun `提交页逐题列出回答，没答的写明默认处理`() {
+    fun `我的回答页逐题列出回答，没答的写明默认处理`() {
         val view =
             check(
                 "asking-review-640x520", ClarificationState.Asking(batch), record, 640, 520,
@@ -429,7 +428,7 @@ class ClarificationViewPreviewTest {
         view.render(ClarificationState.Investigating(null, 1_000L, run = 7), record, "")
         val centers = view.centerRebuilds
         val headers = view.headerRebuilds
-        val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text.contains("调查") }
+        val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text.contains("想下一步") }
         repeat(100) { i -> view.render(ClarificationState.Investigating("读取 File$i.kt", 1_000L, run = 7), record, "") }
         assertEquals("中间区域没有重建", centers, view.centerRebuilds)
         assertEquals("头部没有重建", headers, view.headerRebuilds)
@@ -464,15 +463,15 @@ class ClarificationViewPreviewTest {
     }
 
     @Test
-    fun `已确认内容不变时头部不重建，变了才重建`() {
+    fun `目标不变时头部不重建，增加已确认也不重建`() {
         val view = ClarificationView(FakeCallbacks(), zh)
         view.render(ClarificationState.Asking(batch), record, "")
         val headers = view.headerRebuilds
         view.render(ClarificationState.Investigating(null, 5L, run = 9), record.copy(background = "新的背景"), "")
-        assertEquals("已确认不变：头部不重建", headers, view.headerRebuilds)
+        assertEquals("目标不变：头部不重建", headers, view.headerRebuilds)
         val more = record.copy(history = record.history + confirmedAnswer("失败时显示错误并提供重试"))
         view.render(ClarificationState.Investigating(null, 5L, run = 9), more, "")
-        assertEquals("已确认多了一条：头部重建一次", headers + 1, view.headerRebuilds)
+        assertEquals("已确认多了一条但头部不再显示它：头部不重建", headers, view.headerRebuilds)
     }
 
     @Test

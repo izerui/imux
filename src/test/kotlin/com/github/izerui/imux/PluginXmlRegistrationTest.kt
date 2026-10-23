@@ -247,9 +247,9 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
-    fun `注册了需求澄清的终端右键菜单入口`() {
+    fun `注册了先聊再做的终端右键菜单入口`() {
         assertTrue(
-            "plugin.xml 未注册 ClarifyRequirementAction，终端右键菜单里不会出现「需求澄清」",
+            "plugin.xml 未注册 ClarifyRequirementAction，终端右键菜单里不会出现「先聊再做」",
             pluginXml.contains("com.github.izerui.imux.terminal.ClarifyRequirementAction"),
         )
     }

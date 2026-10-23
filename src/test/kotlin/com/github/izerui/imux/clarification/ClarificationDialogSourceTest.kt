@@ -80,7 +80,7 @@ class ClarificationDialogSourceTest {
     }
 
     @Test
-    fun `提交带上视图里已填写的回答，没有够了生成结果`() {
+    fun `答好了继续带上视图里已填写的回答`() {
         val perform = dialog.bodyAfter("private fun perform(", '{')
         assertTrue(perform.contains("BarButton.SUBMIT -> service.submit(sessionKey, view.answers())"))
         assertFalse("没有够了，生成结果", perform.contains("FINISH"))

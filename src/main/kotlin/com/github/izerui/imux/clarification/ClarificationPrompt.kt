@@ -30,7 +30,7 @@ internal fun openingMessage(record: ClarificationRecord, isChinese: Boolean, gui
         append(guidance.trim()).append("\n\n")
         append(if (isChinese) "## 提问规则\n\n" else "## Rules for Asking\n\n")
         append(if (isChinese) "$BATCH_RULE_ZH $QUESTION_RULE_ZH" else "$BATCH_RULE_EN $QUESTION_RULE_EN").append("\n\n")
-        append(if (isChinese) "## 需求\n\n" else "## Requirement\n\n")
+        append(if (isChinese) "## 目标\n\n" else "## Goal\n\n")
         append(record.requirement.trim()).append("\n\n")
         record.background?.let {
             append(if (isChinese) "## 背景：主会话最近的对话\n\n" else "## Background: Recent Conversation in the Main Session\n\n")
@@ -39,8 +39,8 @@ internal fun openingMessage(record: ClarificationRecord, isChinese: Boolean, gui
         if (record.history.isNotEmpty()) {
             append(if (isChinese) "## 用户已经给出的回答\n\n" else "## Answers the User Has Already Given\n\n")
             append(
-                if (isChinese) "之前的澄清对话中断了，下面是用户在其中已经给出的回答，都算已确认，不要再问。\n\n"
-                else "An earlier clarification conversation was interrupted; these are the answers the user gave in it. They are confirmed; do not ask them again.\n\n",
+                if (isChinese) "之前的对话中断了，下面是用户在其中已经给出的回答，都算已确认，不要再问。\n\n"
+                else "An earlier conversation was interrupted; these are the answers the user gave in it. They are confirmed; do not ask them again.\n\n",
             )
             append(answerLines(record.history, isChinese)).append("\n\n")
         }
@@ -48,11 +48,11 @@ internal fun openingMessage(record: ClarificationRecord, isChinese: Boolean, gui
         append(
             when {
                 record.history.isNotEmpty() ->
-                    if (isChinese) "带着这些回答继续调查，给出下一批问题；没有需要用户拍板的方向了就给出调整后的需求。"
-                    else "Continue investigating with these answers and ask the next batch; when no direction needs the user's call, give the adjusted requirement."
+                    if (isChinese) "带着这些回答继续调查，给出下一批问题；没有需要用户拍板的方向了就给出执行方案。"
+                    else "Continue investigating with these answers and ask the next batch; when no direction needs the user's call, give the execution plan."
                 else ->
-                    if (isChinese) "先调查项目，再给出第一批问题；没有需要用户拍板的方向时直接给出调整后的需求。"
-                    else "Investigate the project first, then ask the first batch; if nothing needs the user's call, give the adjusted requirement right away."
+                    if (isChinese) "先调查项目，再给出第一批问题；没有需要用户拍板的方向时直接给出执行方案。"
+                    else "Investigate the project first, then ask the first batch; if nothing needs the user's call, give the execution plan right away."
             },
         ).append("\n\n")
         append(if (isChinese) "## 输出格式\n\n" else "## Output Format\n\n")
@@ -66,17 +66,17 @@ internal fun answersMessage(records: List<AnswerRecord>, isChinese: Boolean): St
         append(if (isChinese) "用户对这一批问题的回答：\n\n" else "The user's answers to this batch:\n\n")
         append(answerLines(records, isChinese)).append("\n\n")
         append(
-            if (isChinese) "带着这些回答继续：给出下一批问题，或在没有需要用户拍板的方向时给出调整后的需求。"
-            else "Continue with these answers: ask the next batch, or give the adjusted requirement when no direction needs the user's call.",
+            if (isChinese) "带着这些回答继续：给出下一批问题，或在没有需要用户拍板的方向时给出执行方案。"
+            else "Continue with these answers: ask the next batch, or give the execution plan when no direction needs the user's call.",
         ).append(' ')
         append(formatReminder(isChinese))
     }
 
-/** 看过结果后要求继续澄清。 */
+/** 看过结果后要求继续聊。 */
 internal fun continueMessage(isChinese: Boolean): String =
     (
-        if (isChinese) "用户看过这份需求后要求继续澄清：再想想还有没有需要用户拍板的方向，有就给出下一批问题，没有就再给出调整后的需求。"
-        else "The user read this requirement and wants to keep clarifying: consider whether any direction still needs their call; if so ask the next batch, otherwise give the adjusted requirement again."
+        if (isChinese) "用户看过这份执行方案后要求继续聊：再想想还有没有需要用户拍板的方向，有就给出下一批问题，没有就再给出执行方案。"
+        else "The user read this execution plan and wants to keep talking: consider whether any direction still needs their call; if so ask the next batch, otherwise give the execution plan again."
         ) + " " + formatReminder(isChinese)
 
 /** 回复不合协议：在同一段对话里把错误发回，要求按格式重答。 */

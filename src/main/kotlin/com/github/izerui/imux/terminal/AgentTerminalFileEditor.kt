@@ -413,7 +413,7 @@ class AgentTerminalFileEditor(
             peerLabel.isVisible = false
             peerCancelButton.isVisible = false
             peerCloseButton.isVisible = false
-            // 横幅始终在：需求澄清不随结对编程的「不再提示」消失；不再提示只收起结对编程自己的内容
+            // 横幅始终在：先聊再做不随结对编程的「不再提示」消失；不再提示只收起结对编程自己的内容
             peerBanner.isVisible = true
             peerIcon.isVisible = !virtualFile.peerBannerDismissed
             peerEnableLink.isVisible = !virtualFile.peerBannerDismissed

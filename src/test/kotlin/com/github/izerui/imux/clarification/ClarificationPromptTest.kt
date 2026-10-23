@@ -42,6 +42,16 @@ class ClarificationPromptTest {
     }
 
     @Test
+    fun `中英两套指南都提到网络知识与执行方案`() {
+        val zh = loadGuidance(true)
+        val en = loadGuidance(false)
+        assertTrue("zh：提到网络知识", zh.contains("网络知识"))
+        assertTrue("zh：输出是执行方案", zh.contains("执行方案"))
+        assertTrue("en：提到 web knowledge", en.contains("web knowledge"))
+        assertTrue("en：输出是 execution plan", en.contains("execution plan"))
+    }
+
+    @Test
     fun `开场带指南、规则、需求、背景与输出格式`() {
         val opening = openingMessage(fresh, isChinese = true, guidance = "指南正文")
         assertTrue(opening.startsWith("指南正文"))
@@ -72,7 +82,7 @@ class ClarificationPromptTest {
             "用户对这一批问题的回答：\n\n" +
                 "- 恢复范围（断线后恢复哪些内容？） → 其他：我的想法\n" +
                 "- 恢复范围（断线后恢复哪些内容？） → 没有回答，按默认处理：只恢复连接\n\n" +
-                "带着这些回答继续：给出下一批问题，或在没有需要用户拍板的方向时给出调整后的需求。 回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。",
+                "带着这些回答继续：给出下一批问题，或在没有需要用户拍板的方向时给出执行方案。 回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。",
             zh,
         )
         val en = answersMessage(records, isChinese = false)

@@ -178,8 +178,8 @@
         <action
                 id="imux.ClarifyRequirement"
                 class="com.github.izerui.imux.terminal.ClarifyRequirementAction"
-                text="Clarify Requirement"
-                description="Before the agent starts, find unconsidered directions with the project's code"
+                text="Talk First"
+                description="Before starting, talk it through with the agent: it combines the project's code and web knowledge to ask you step by step, fills in directions you haven't considered, and delivers an execution plan"
                 icon="AllIcons.Actions.IntentionBulb">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </action>
