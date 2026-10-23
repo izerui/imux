@@ -22,7 +22,7 @@ class ClarifyRequirementAction : DumbAwareAction() {
     override fun actionPerformed(event: AnActionEvent) {
         val project = event.project ?: return
         val file = fileOf(event) ?: return
-        ClarificationService.getInstance(project).open(file.sessionKey, file.tabId, file.agentType, file.tabTitle)
+        ClarificationService.getInstance(project).open(file.sessionKey, file.tabId, file.agentType)
     }
 
     private fun fileOf(event: AnActionEvent): AgentTerminalVirtualFile? {

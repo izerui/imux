@@ -1,5 +1,6 @@
 package com.github.izerui.imux.clarification
 
+import com.github.izerui.imux.model.AgentType
 import java.util.concurrent.CopyOnWriteArrayList
 
 internal sealed interface ClarificationState {
@@ -49,7 +50,7 @@ internal interface ClarificationConversation {
 internal class ClarificationFlow(
     private val isChinese: Boolean,
     private val guidance: String,
-    private val openConversation: () -> ClarificationConversation,
+    private val openConversation: (AgentType) -> ClarificationConversation,
     /** 结束一段对话；服务把它交给后台线程，调用方（常在 EDT 上）不等进程退出。 */
     private val closeConversation: (ClarificationConversation) -> Unit = ClarificationConversation::close,
     private val classifyFailure: (Throwable) -> Pair<FailureReason, String> = { FailureReason.AGENT_ERROR to (it.message ?: it.javaClass.simpleName) },
@@ -63,6 +64,9 @@ internal class ClarificationFlow(
     /** 下一轮要在现有对话里发的消息；对话为空（还没开始或已中断）时改发开场。 */
     private var outgoing: String? = null
 
+    /** 用户在输入页选择的智能体类型；在 [begin] 时设置，打开对话时使用。 */
+    private var agentType: AgentType? = null
+
     @Volatile var record: ClarificationRecord = ClarificationRecord("", null)
         private set
 
@@ -73,6 +77,9 @@ internal class ClarificationFlow(
      * 当前这一批还没提交的回答，由窗口（EDT）读写；只是界面状态，不进记录、不通知监听者。
      */
     @Volatile var drafts: BatchDrafts? = null
+
+    /** 开始后用户选的智能体类型；还没开始时为 null。 */
+    fun chosenAgentType(): AgentType? = agentType
 
     fun addListener(listener: () -> Unit) { listeners += listener }
 
@@ -97,11 +104,12 @@ internal class ClarificationFlow(
 
     private fun stale(runId: Long) = runId != generation || state !is ClarificationState.Investigating
 
-    fun begin(requirement: String, background: String?): Long {
+    fun begin(requirement: String, background: String?, agentType: AgentType): Long {
         val runId: Long
         val old: ClarificationConversation?
         synchronized(lock) {
             old = detachLocked()
+            this.agentType = agentType
             record = ClarificationRecord(requirement.trim(), background?.take(MAX_BACKGROUND_CHARS)?.ifBlank { null })
             runId = investigate(null)
         }
@@ -154,7 +162,7 @@ internal class ClarificationFlow(
                 // 开对话可能要读设置、写扩展脚本：不在锁内做
                 val created =
                     try {
-                        openConversation()
+                        openConversation(agentType ?: error("agentType must be set before run"))
                     } catch (e: Throwable) {
                         rethrowIfCancellation(e)
                         fail(runId, null, e)

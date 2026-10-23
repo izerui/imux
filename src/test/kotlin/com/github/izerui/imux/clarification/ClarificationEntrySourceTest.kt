@@ -9,7 +9,7 @@ class ClarificationEntrySourceTest {
 
     @Test
     fun `横幅里的先聊再做入口打开当前会话的窗口`() {
-        assertTrue(editor.normalized.contains("ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType, virtualFile.tabTitle)"))
+        assertTrue(editor.normalized.contains("ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType)"))
     }
 
     @Test

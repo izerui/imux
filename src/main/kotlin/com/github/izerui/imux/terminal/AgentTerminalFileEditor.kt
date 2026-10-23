@@ -201,7 +201,7 @@ class AgentTerminalFileEditor(
         }
     private val clarifyLink: ActionLink =
         ActionLink(ImuxBundle.message("clarify.action.text")) {
-            ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType, virtualFile.tabTitle)
+            ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType)
         }.apply {
             isFocusable = false
             border = JBUI.Borders.emptyLeft(12)

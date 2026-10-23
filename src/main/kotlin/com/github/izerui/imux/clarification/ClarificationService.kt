@@ -65,24 +65,24 @@ class ClarificationService(
     internal fun currentKeyOf(flow: ClarificationFlow): String? = flows.entries.firstOrNull { it.value === flow }?.key
 
     /** 打开或聚焦该会话的窗口；第一次打开时创建流程。 */
-    internal fun open(sessionKey: String, tabId: String, agentType: AgentType, title: String) {
+    internal fun open(sessionKey: String, tabId: String, defaultAgentType: AgentType) {
         dialogs[sessionKey]?.let {
             it.toFront()
             return
         }
         owners[sessionKey] = tabId
-        val flow = flows.getOrPut(sessionKey) { newFlow(agentType) }
-        val dialog = ClarificationDialog(project, this, flow, title)
+        val flow = flows.getOrPut(sessionKey) { newFlow() }
+        val dialog = ClarificationDialog(project, this, flow, defaultAgentType)
         dialogs[sessionKey] = dialog
         dialog.show()
     }
 
-    private fun newFlow(agentType: AgentType): ClarificationFlow {
+    private fun newFlow(): ClarificationFlow {
         val chinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
         return ClarificationFlow(
             chinese,
             loadGuidance(chinese),
-            openConversation = { openConversation(agentType) },
+            openConversation = { type -> openConversation(type) },
             // 结束对话要等进程退出（最多几秒）：交给后台线程，关窗、取消不卡 EDT；项目关闭时服务作用域已取消，也照样执行
             closeConversation = { conversation -> ApplicationManager.getApplication().executeOnPooledThread { conversation.close() } },
             classifyFailure = { e ->
@@ -99,10 +99,10 @@ class ClarificationService(
         }
     }
 
-    internal fun start(sessionKey: String, requirement: String, includeBackground: Boolean) {
+    internal fun start(sessionKey: String, requirement: String, includeBackground: Boolean, agentType: AgentType) {
         val flow = flows[sessionKey] ?: return
         val session = if (includeBackground) SessionMonitor.getInstance(project).model.sessionOf(sessionKey) else null
-        val runId = flow.begin(requirement, null)
+        val runId = flow.begin(requirement, null, agentType)
         launch(sessionKey, flow) {
             flow.attachBackground(runId, session?.let { s -> latestConversationOf(s, emptyList(), MAX_BACKGROUND_CHARS) })
             flow.run(runId)

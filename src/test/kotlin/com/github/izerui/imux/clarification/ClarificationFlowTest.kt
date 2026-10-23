@@ -1,5 +1,6 @@
 package com.github.izerui.imux.clarification
 
+import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -69,7 +70,7 @@ class ClarificationFlowTest {
     private fun started(vararg outputs: Any): ClarificationFlow =
         flow(*outputs).also {
             flowUnderTest = it
-            it.run(it.begin("REQ-MARK", "BG-MARK"))
+            it.run(it.begin("REQ-MARK", "BG-MARK", AgentType.CLAUDE))
         }
 
     @Test
@@ -157,7 +158,7 @@ class ClarificationFlowTest {
     @Test
     fun `开对话就失败时进入失败`() {
         val f = ClarificationFlow(false, "G", openConversation = { throw IllegalStateException("no shell") })
-        f.run(f.begin("REQ", null))
+        f.run(f.begin("REQ", null, AgentType.CLAUDE))
         assertEquals(ClarificationState.Failed(FailureReason.AGENT_ERROR, "no shell", null), f.state)
     }
 
@@ -190,7 +191,7 @@ class ClarificationFlowTest {
     fun `新一轮开始后旧轮的进度与异常不改变新轮状态`() {
         val gateA = CountDownLatch(1)
         val f = flow(gateA, RuntimeException("run A error"), done())
-        val r1 = f.begin("REQ", null)
+        val r1 = f.begin("REQ", null, AgentType.CLAUDE)
         val workerA = thread { f.run(r1) }
         assertTrue(sendStarted.await(5, TimeUnit.SECONDS))
         f.cancelled()
@@ -210,7 +211,7 @@ class ClarificationFlowTest {
     @Test
     fun `过期的 runId 调用 run 不会开对话也不会发消息`() {
         val f = flow(done())
-        val r1 = f.begin("REQ", null)
+        val r1 = f.begin("REQ", null, AgentType.CLAUDE)
         f.cancelled()
         val r2 = f.retry()!!
         f.run(r1)
@@ -250,7 +251,7 @@ class ClarificationFlowTest {
     fun `结束澄清时作废在途一轮并结束对话`() {
         val gate = CountDownLatch(1)
         val f = flow(gate, ask("H1"))
-        val r1 = f.begin("REQ", null)
+        val r1 = f.begin("REQ", null, AgentType.CLAUDE)
         val worker = thread { f.run(r1) }
         assertTrue(sendStarted.await(5, TimeUnit.SECONDS))
 
@@ -287,7 +288,7 @@ class ClarificationFlowTest {
     @Test
     fun `平台取消异常向上抛出而不记为失败`() {
         val f = flow(com.intellij.openapi.progress.ProcessCanceledException())
-        val runId = f.begin("REQ", null)
+        val runId = f.begin("REQ", null, AgentType.CLAUDE)
         try {
             f.run(runId)
             fail("ProcessCanceledException 应向上抛出")
@@ -310,7 +311,7 @@ class ClarificationFlowTest {
     @Test
     fun `背景快照补进记录后进入开场，过期的快照被忽略`() {
         val f = flow(ask("H1"))
-        val r1 = f.begin("REQ", null)
+        val r1 = f.begin("REQ", null, AgentType.CLAUDE)
         f.cancelled()
         val r2 = f.retry()!!
         f.attachBackground(r2, "LATE BACKGROUND")
@@ -346,5 +347,19 @@ class ClarificationFlowTest {
         f.run(f.submitBatch(drafts.filled())!!)
         assertEquals("下一批与上一批完全相同", batch, asking)
         assertNull("草稿已随提交清空，不会被当成新一批的草稿", f.drafts)
+    }
+
+    @Test
+    fun `begin 时传入的 Agent 类型被记住并传给对话工厂`() {
+        val capturedTypes = mutableListOf<AgentType>()
+        replies += done()
+        val f = ClarificationFlow(
+            isChinese = false,
+            guidance = "G",
+            openConversation = { type -> capturedTypes += type; FakeConversation().also { conversations += it } },
+        )
+        f.run(f.begin("REQ", null, AgentType.CODEX))
+        assertEquals("开场时传入 Codex", listOf(AgentType.CODEX), capturedTypes)
+        assertEquals("chosenAgentType 返回 Codex", AgentType.CODEX, f.chosenAgentType())
     }
 }

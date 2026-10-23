@@ -1,6 +1,8 @@
 package com.github.izerui.imux.clarification
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.ide.CopyPasteManager
@@ -32,11 +34,12 @@ internal class ClarificationDialog(
     project: Project,
     private val service: ClarificationService,
     private val flow: ClarificationFlow,
-    title: String,
+    internal val defaultAgentType: AgentType,
 ) : DialogWrapper(project, null, true, IdeModalityType.MODELESS) {
     @Volatile var sessionKey: String = service.currentKeyOf(flow).orEmpty()
 
-    private val view = ClarificationView(ViewCallbacks())
+    private val enabledTypes = ImuxSettings.getInstance().enabledAgentTypes.ifEmpty { listOf(defaultAgentType) }
+    private val view = ClarificationView(ViewCallbacks()).apply { setAgentTypes(enabledTypes, defaultAgentSelection(enabledTypes, defaultAgentType)) }
     private val elapsedTimer = Timer(1_000) { view.tick(System.currentTimeMillis()) }
     private val coalescer = RenderCoalescer({ ApplicationManager.getApplication().invokeLater(it, ModalityState.any()) }) { render() }
     private val listener: () -> Unit = coalescer::request
@@ -48,7 +51,7 @@ internal class ClarificationDialog(
     private var shownRecord: ClarificationRecord = flow.record
 
     init {
-        this.title = ImuxBundle.message("clarify.dialog.title", title)
+        this.title = dialogTitle(null, null, defaultAgentType)
         setCancelButtonText(ImuxBundle.message("clarify.close"))
         flow.addListener(listener)
         init()
@@ -114,6 +117,13 @@ internal class ClarificationDialog(
         view.render(shown, shownRecord, shownRecord.requirement)
         if (shown is ClarificationState.Input && !wasInput) checkBackground()
         updateButtons()
+        updateTitle()
+    }
+
+    private fun updateTitle() {
+        val goal = shownRecord.requirement.takeIf { shown !is ClarificationState.Input }
+        val chosenType = flow.chosenAgentType()
+        title = dialogTitle(goal, chosenType, defaultAgentType)
     }
 
     /** 会话记录文件是否存在要查文件系统，交给服务在 IO 线程上查，结果回到 EDT 再改复选框。 */
@@ -140,7 +150,7 @@ internal class ClarificationDialog(
     private fun perform(button: BarButton) {
         when (button) {
             BarButton.CLOSE -> doCancelAction()
-            BarButton.START -> view.inputText().takeIf { it.isNotBlank() }?.let { service.start(sessionKey, it, view.includeBackground()) }
+            BarButton.START -> view.inputText().takeIf { it.isNotBlank() }?.let { service.start(sessionKey, it, view.includeBackground(), view.selectedAgentType() ?: defaultAgentType) }
             BarButton.CANCEL_INVESTIGATION -> service.cancel(sessionKey)
             BarButton.NEXT, BarButton.REVIEW -> view.nextTab()
             BarButton.SUBMIT -> service.submit(sessionKey, view.answers())
@@ -293,6 +303,24 @@ internal fun needsCenterRebuild(old: ClarificationState?, new: ClarificationStat
         old is ClarificationState.Sending && new is ClarificationState.Sending -> old.requirement != new.requirement
         else -> true
     }
+}
+
+private const val GOAL_MAX_CHARS = 30
+
+/** 默认选中的 Agent 类型：当前会话的类型（如果已启用），否则第一个已启用的。 */
+internal fun defaultAgentSelection(enabledTypes: List<AgentType>, sessionType: AgentType): AgentType =
+    if (sessionType in enabledTypes) sessionType else enabledTypes.first()
+
+/**
+ * 窗口标题。开始前只显示「先聊再做」；开始后变为「先聊再做 · <目标>」（目标截断到 [GOAL_MAX_CHARS]）；
+ * 如果选的 Agent 类型不同于当前会话的类型，追加「 · <Agent 显示名>」。
+ */
+internal fun dialogTitle(goal: String?, chosenType: AgentType?, defaultType: AgentType): String {
+    val base = ImuxBundle.message("clarify.action.text")
+    if (goal.isNullOrBlank()) return base
+    val short = goal.replace(Regex("\\s+"), " ").trim().let { if (it.length > GOAL_MAX_CHARS) it.take(GOAL_MAX_CHARS - 2) + "…" else it }
+    val suffix = if (chosenType != null && chosenType != defaultType) " · ${chosenType.displayName}" else ""
+    return "$base · $short$suffix"
 }
 
 /** 需求文本的 tooltip：换行保留，限 2000 字符，HTML 包裹限宽。 */

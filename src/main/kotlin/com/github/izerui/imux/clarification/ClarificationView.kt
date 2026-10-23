@@ -1,7 +1,9 @@
 package com.github.izerui.imux.clarification
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.model.AgentType
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.AnimatedIcon
@@ -155,6 +157,9 @@ internal class ClarificationView(
     private var backgroundCheck: JBCheckBox? = null
     private var backgroundRow: Row? = null
     private var backgroundAvailable = false
+    private var agentCombo: ComboBox<AgentType>? = null
+    private var enabledAgentTypes: List<AgentType> = emptyList()
+    private var defaultAgentType: AgentType? = null
     private var progressLabel: JBLabel? = null
     private var elapsedComment: JEditorPane? = null
     private var investigationKind = InvestigationKind.ROUND
@@ -249,6 +254,15 @@ internal class ClarificationView(
 
     fun includeBackground(): Boolean = backgroundAvailable && backgroundCheck?.isSelected == true
 
+    /** 用户在输入页选的 Agent 类型；没有 combo（只有一种）或不在输入页时为 null。 */
+    fun selectedAgentType(): AgentType? = agentCombo?.selectedItem as? AgentType
+
+    /** 设置可用的 Agent 类型和默认选中项；由对话框在创建视图后调用。 */
+    fun setAgentTypes(enabled: List<AgentType>, default: AgentType) {
+        enabledAgentTypes = enabled
+        defaultAgentType = default
+    }
+
     fun resultText(): String = resultArea?.text.orEmpty()
 
     /** 提问页停在哪；不在提问页时为 null。 */
@@ -324,12 +338,32 @@ internal class ClarificationView(
     private fun inputPage(prefill: String): DialogPanel {
         val check = JBCheckBox(messages.get("clarify.input.background"), false)
         backgroundCheck = check
+        val combo =
+            if (enabledAgentTypes.size > 1) {
+                ComboBox(enabledAgentTypes.toTypedArray()).apply {
+                    renderer = javax.swing.DefaultListCellRenderer().let { base ->
+                        javax.swing.ListCellRenderer<Any?> { list, value, index, sel, focus ->
+                            base.getListCellRendererComponent(list, value, index, sel, focus).also {
+                                if (value is AgentType) (it as? JLabel)?.text = value.displayName
+                            }
+                        }
+                    }
+                    selectedItem = defaultAgentType ?: enabledAgentTypes.first()
+                }
+            } else null
+        agentCombo = combo
         return panel {
             row { label(messages.get("clarify.input.title")).bold() }
             row { comment(messages.get("clarify.input.comment"), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
             row { inputArea = multiline(prefill, 5).applyToComponent { emptyText.text = messages.get("clarify.input.placeholder") }.component }
                 .resizableRow()
                 .topGap(TopGap.SMALL)
+            if (combo != null) {
+                row {
+                    label(messages.get("clarify.input.agent.label"))
+                    cell(combo)
+                }
+            }
             backgroundRow = row { cell(check) }.visible(false)
         }
     }
