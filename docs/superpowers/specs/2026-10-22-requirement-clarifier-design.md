@@ -298,18 +298,19 @@ imux 已有的结对编程、单次审查、会话轨迹都作用在**代码写�
 
 **总体：代码实现完成，人工验收（`runIde` 走查）待执行；完成走查前不建议合并。**
 
-以下验证均针对 `ee0adef`（照 Claude Code 提问过程重做之后的 HEAD）。
+以下验证均针对 `cf481cd`（同一个 Agent 连续对话、去掉「够了」之后的 HEAD）。
 
 | 项 | 状态 |
 |---|---|
 | 设计文档（本文） | 已完成 |
-| 内嵌指南 `requirement-clarifier.zh.md` / `.en.md`、`NOTICE` | 已接入（`loadGuidance` 读取），已改为 1～4 问一批的规则 |
-| 台账、协议、提示词、状态机、服务 | 已完成；照 Claude Code 提问过程重做：`07c5061`、`ee0adef` |
-| 窗口（`ClarificationView` + `ClarificationDialog`） | 已完成：标签条与提交页、原生按钮栏、合并渲染（`07c5061`、`ee0adef`） |
+| 内嵌指南 `requirement-clarifier.zh.md` / `.en.md`、`NOTICE` | 已接入（作为对话开场的一部分） |
+| 连续对话适配 `agent/AgentConversation.kt` | 已完成（`392a67a`、`cf481cd`）：Claude stream-json 常驻、Pi RPC 常驻、Codex 按会话 ID 续接；三种 CLI 已在本机经插件的登录 shell 实跑两轮验证，无残留进程 |
+| 澄清流程、协议、提示词、服务 | 已完成（`82d2555`、`cf481cd`）：开场之后每轮只发这一批回答；格式错误在同一对话里纠正一次；关窗即结束对话 |
+| 窗口（`ClarificationView` + `ClarificationDialog`） | 已完成：标签条与提交页、原生按钮栏、合并渲染、内容区边距与按内容计算的初始尺寸（`07c5061`、`ee0adef`、`ff6b2d9`、`cf481cd`） |
 | 横幅入口、右键菜单、`plugin.xml`、多语言文案 | 已完成 |
-| 渲染截图验收（离屏 Darcula 渲染，11 张） | 已完成并逐张查看：输入、调查中、单题、一批三题（640/460 宽）、多选、提交页、结果（640/460 宽）、失败 |
-| `./gradlew test` | 通过（`ee0adef`）：1747 tests, 0 failures, 0 errors |
-| `./gradlew verifyPlugin` | 通过（`ee0adef`）：IU-262.10315.125、IU-263.6800.24 均 Compatible，无 Compatibility problems；唯一 internal API 为既有 `IdeaMcpPort`，非本功能引入 |
+| 渲染截图验收（离屏 Darcula 渲染） | 已完成并逐张查看 |
+| `./gradlew test` | 通过（`cf481cd`）：1750 tests, 0 failures, 0 errors |
+| `./gradlew verifyPlugin` | 通过（`cf481cd`）：IU-262.10315.125、IU-263.6800.24 均 Compatible，无 Compatibility problems；唯一 internal API 为既有 `IdeaMcpPort`，非本功能引入 |
 | `./gradlew runIde` 人工走查 | **待执行**。验证项：(1) 横幅「单次审查」旁与右键菜单有「需求澄清」；(2) 输入需求 → 调查中只刷新一行步骤与秒数、窗口不卡；(3) 一批多题：标签条、←/→ 切换、数字键选择、回车下一题、提交页可回改、提交后才继续调查；单题直接提交；(4) 多选题勾选多个 +「其他」；(5) 提交后连按回车不会取消调查；(6) Claude、Codex、Pi 会话里各完整跑一次多轮澄清：提交回答后 Agent 接着上一轮的上下文继续（不重新从头调查），能再问、也能自己结束给出需求；(7) 结果可编辑 →「交给 Agent」：主会话执行中等这一轮结束、Claude 停在确认框时不误答、可取消发送；(8) Claude、Codex、Pi 各发一段约 6,000 字的需求，确认完整收到；(9) 发送中关闭标签页弹出可复制的通知；(10) 关闭窗口即结束：进程退出、无残留（`ps` 查不到澄清用的 claude/pi/codex 进程，Codex 会话文件已删除），再打开从输入页开始；有回答时关闭会先确认；(11) 窗口缩小后文字换行不截断、按钮栏始终可见 |
 
 ## 交给执行者决定的事项
