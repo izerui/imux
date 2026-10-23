@@ -178,7 +178,7 @@ internal class ClarificationDialog(
 
     companion object {
         private const val MAC_ORDER_PRIMARY = 100
-        internal const val INITIAL_WIDTH = 560
+        internal const val INITIAL_WIDTH = 680
 
         /** 量不到窗口其余部分时（没有 pack）按标题栏 + 按钮栏的常见高度估计。 */
         private const val REST_OF_WINDOW_ESTIMATE = 90
@@ -228,8 +228,8 @@ internal class RenderCoalescer(private val schedule: (Runnable) -> Unit, private
 
 // ---- 纯函数：提取出来方便单测 ----
 
-internal const val MIN_INITIAL_HEIGHT = 360
-internal const val MAX_INITIAL_HEIGHT = 520
+internal const val MIN_INITIAL_HEIGHT = 420
+internal const val MAX_INITIAL_HEIGHT = 640
 
 /** 关闭会丢掉的东西：提交过的回答、这一批已填写的回答、未发送的结果（结果页或发送中）。 */
 internal fun closeNeedsConfirmation(state: ClarificationState, record: ClarificationRecord, hasFilledAnswers: Boolean): Boolean =

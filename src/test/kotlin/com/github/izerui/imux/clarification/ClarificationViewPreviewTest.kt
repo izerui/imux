@@ -528,7 +528,7 @@ class ClarificationViewPreviewTest {
     // ---- 默认尺寸 ----
 
     @Test
-    fun `各页按打开时的默认尺寸渲染：宽 560、高按内容限制在 360～520`() {
+    fun `各页按打开时的默认尺寸渲染：宽 680、高按内容限制在 420～640`() {
         val asking = listOf(methodQuestion)
         val pages =
             listOf(
