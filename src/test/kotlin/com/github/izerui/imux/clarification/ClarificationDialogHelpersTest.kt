@@ -78,18 +78,18 @@ class ClarificationDialogHelpersTest {
     // ---- buttonBar ----
 
     @Test
-    fun `输入页只有关闭与开始聊，开始聊是默认按钮`() {
+    fun `输入页只有开始聊且是默认按钮`() {
         val bar = buttonBar(ClarificationState.Input, null)
         assertEquals(emptyList<BarButton>(), bar.left)
-        assertEquals(listOf(BarButton.CLOSE, BarButton.START), bar.right)
+        assertEquals(listOf(BarButton.START), bar.right)
         assertEquals(BarButton.START, bar.default)
     }
 
     @Test
-    fun `调查中左侧没有按钮，右侧是关闭与取消`() {
+    fun `调查中左侧没有按钮，右侧是取消`() {
         val bar = buttonBar(ClarificationState.Investigating(null, 0), null)
         assertEquals("左侧没有按钮", emptyList<BarButton>(), bar.left)
-        assertEquals(listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION), bar.right)
+        assertEquals(listOf(BarButton.CANCEL_INVESTIGATION), bar.right)
     }
 
     @Test
@@ -102,7 +102,7 @@ class ClarificationDialogHelpersTest {
         assertEquals("我的回答页：好接着聊", BarButton.SUBMIT, bar(AskingPage.REVIEW).default)
         for (page in AskingPage.entries) {
             assertEquals("$page：左侧没有按钮", emptyList<BarButton>(), bar(page).left)
-            assertEquals("$page：右侧是关闭与主按钮", listOf(BarButton.CLOSE, bar(page).default), bar(page).right)
+            assertEquals("$page：右侧只有主按钮", listOf(bar(page).default), bar(page).right)
         }
     }
 
@@ -110,7 +110,7 @@ class ClarificationDialogHelpersTest {
     fun `结果页、发送中、失败页各自的按钮栏`() {
         val result = buttonBar(ClarificationState.Result("x"), null)
         assertEquals(listOf(BarButton.CONTINUE, BarButton.COPY), result.left)
-        assertEquals(listOf(BarButton.CLOSE, BarButton.SEND), result.right)
+        assertEquals(listOf(BarButton.SEND), result.right)
         assertEquals(BarButton.SEND, result.default)
 
         val sending = buttonBar(ClarificationState.Sending("x", true), null)
@@ -119,7 +119,7 @@ class ClarificationDialogHelpersTest {
 
         val failed = buttonBar(ClarificationState.Failed(FailureReason.TIMEOUT, "600", null), null)
         assertEquals(listOf(BarButton.FALLBACK), failed.left)
-        assertEquals(listOf(BarButton.CLOSE, BarButton.RETRY), failed.right)
+        assertEquals(listOf(BarButton.RETRY), failed.right)
         assertEquals(BarButton.RETRY, failed.default)
     }
 

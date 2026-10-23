@@ -44,7 +44,7 @@ internal class ClarificationDialog(
     private val coalescer = RenderCoalescer({ ApplicationManager.getApplication().invokeLater(it, ModalityState.any()) }) { render() }
     private val listener: () -> Unit = coalescer::request
 
-    private val actions: Map<BarButton, BarAction> = (LEFT_ORDER + RIGHT_ORDER - BarButton.CLOSE).associateWith { BarAction(it) }
+    private val actions: Map<BarButton, BarAction> = (LEFT_ORDER + RIGHT_ORDER).associateWith { BarAction(it) }
     private val buttonPanels = mutableListOf<JPanel>()
     private var lastBar: ButtonBar? = null
     private var shown: ClarificationState = ClarificationState.Input
@@ -52,7 +52,6 @@ internal class ClarificationDialog(
 
     init {
         this.title = dialogTitle(null, null, defaultAgentType)
-        setCancelButtonText(ImuxBundle.message("clarify.close"))
         flow.addListener(listener)
         init()
         window?.minimumSize = JBUI.size(420, 320)
@@ -60,9 +59,8 @@ internal class ClarificationDialog(
         elapsedTimer.start()
     }
 
-    // 按钮栏：左右两侧各放全部候选按钮，按状态切换显隐。顺序是 Windows 的顺序（主操作在前），
-    // macOS 上 DialogWrapper 按 MAC_ACTION_ORDER 排序，关闭排在主操作左边。
-    override fun createActions(): Array<Action> = RIGHT_ORDER.map { if (it == BarButton.CLOSE) cancelAction else actions.getValue(it) }.toTypedArray()
+    // 按钮栏：左右两侧各放全部候选按钮，按状态切换显隐。关闭使用窗口自身的关闭控件。
+    override fun createActions(): Array<Action> = RIGHT_ORDER.map { actions.getValue(it) }.toTypedArray()
 
     override fun createLeftSideActions(): Array<Action> = LEFT_ORDER.map { actions.getValue(it) }.toTypedArray()
 
@@ -145,11 +143,10 @@ internal class ClarificationDialog(
         buttonPanels.forEach(::syncButtonGaps)
     }
 
-    private fun buttonOf(button: BarButton): JButton? = getButton(if (button == BarButton.CLOSE) cancelAction else actions.getValue(button))
+    private fun buttonOf(button: BarButton): JButton? = getButton(actions.getValue(button))
 
     private fun perform(button: BarButton) {
         when (button) {
-            BarButton.CLOSE -> doCancelAction()
             BarButton.START -> view.inputText().takeIf { it.isNotBlank() }?.let { service.start(sessionKey, it, view.includeBackground(), view.selectedAgentType() ?: defaultAgentType) }
             BarButton.CANCEL_INVESTIGATION -> service.cancel(sessionKey)
             BarButton.NEXT, BarButton.REVIEW -> view.nextTab()
@@ -193,11 +190,11 @@ internal class ClarificationDialog(
         /** 量不到窗口其余部分时（没有 pack）按标题栏 + 按钮栏的常见高度估计。 */
         private const val REST_OF_WINDOW_ESTIMATE = 90
 
-        /** 右侧候选按钮（Windows 顺序，主操作在前，关闭在最后）。 */
+        /** 右侧候选按钮（Windows 顺序，主操作在前）。 */
         private val RIGHT_ORDER =
             listOf(
                 BarButton.START, BarButton.CANCEL_INVESTIGATION, BarButton.NEXT, BarButton.REVIEW, BarButton.SUBMIT,
-                BarButton.SEND, BarButton.CANCEL_SEND, BarButton.RETRY, BarButton.CLOSE,
+                BarButton.SEND, BarButton.CANCEL_SEND, BarButton.RETRY,
             )
         private val LEFT_ORDER = listOf(BarButton.CONTINUE, BarButton.COPY, BarButton.FALLBACK)
 
@@ -251,7 +248,6 @@ internal fun initialHeight(contentHeight: Int, restOfWindow: Int): Int =
 
 /** 底部按钮栏的按钮。 */
 internal enum class BarButton(val labelKey: String) {
-    CLOSE("clarify.close"),
     START("clarify.input.start"),
     CANCEL_INVESTIGATION("clarify.cancel"),
     NEXT("clarify.question.next"),
@@ -274,9 +270,9 @@ internal data class ButtonBar(val left: List<BarButton>, val right: List<BarButt
 /** 状态 → 按钮栏。只给出与当前状态相关的按钮（隐藏而不是禁用）；提问页的主按钮取决于停在哪一页。 */
 internal fun buttonBar(state: ClarificationState, page: AskingPage?): ButtonBar =
     when (state) {
-        ClarificationState.Input -> ButtonBar(emptyList(), listOf(BarButton.CLOSE, BarButton.START), BarButton.START)
+        ClarificationState.Input -> ButtonBar(emptyList(), listOf(BarButton.START), BarButton.START)
         is ClarificationState.Investigating ->
-            ButtonBar(emptyList(), listOf(BarButton.CLOSE, BarButton.CANCEL_INVESTIGATION), null)
+            ButtonBar(emptyList(), listOf(BarButton.CANCEL_INVESTIGATION), null)
         is ClarificationState.Asking -> {
             val primary =
                 when (page) {
@@ -284,11 +280,11 @@ internal fun buttonBar(state: ClarificationState, page: AskingPage?): ButtonBar 
                     AskingPage.LAST_QUESTION -> BarButton.REVIEW
                     AskingPage.SINGLE, AskingPage.REVIEW, null -> BarButton.SUBMIT
                 }
-            ButtonBar(emptyList(), listOf(BarButton.CLOSE, primary), primary)
+            ButtonBar(emptyList(), listOf(primary), primary)
         }
-        is ClarificationState.Result -> ButtonBar(listOf(BarButton.CONTINUE, BarButton.COPY), listOf(BarButton.CLOSE, BarButton.SEND), BarButton.SEND)
+        is ClarificationState.Result -> ButtonBar(listOf(BarButton.CONTINUE, BarButton.COPY), listOf(BarButton.SEND), BarButton.SEND)
         is ClarificationState.Sending -> ButtonBar(emptyList(), listOf(BarButton.CANCEL_SEND), null)
-        is ClarificationState.Failed -> ButtonBar(listOf(BarButton.FALLBACK), listOf(BarButton.CLOSE, BarButton.RETRY), BarButton.RETRY)
+        is ClarificationState.Failed -> ButtonBar(listOf(BarButton.FALLBACK), listOf(BarButton.RETRY), BarButton.RETRY)
     }
 
 /**
