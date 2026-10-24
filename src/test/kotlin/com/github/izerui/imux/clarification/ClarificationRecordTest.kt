@@ -40,7 +40,11 @@ class ClarificationRecordTest {
     fun `开放题兜底保留问题与看法避免回答脱离语境`() {
         val open = q().copy(kind = QuestionKind.OPEN, options = emptyList(), context = "可能是等待的问题。", text = "你认同吗？")
         val record = ClarificationRecord("目标", listOf(answerRecord(open, Answer.OwnWords("不认同。\n问题是打断。"))))
-        assertEquals("目标\n\n- 可能是等待的问题。\n  你认同吗？\n  不认同。\n  问题是打断。", composeFallback(record))
+        assertEquals(
+            "待整理的讨论记录，尚未形成最终任务。\n\n原始目标：\n目标\n\n" +
+                "模型提问与用户回答：\n- H（Agent 看法：可能是等待的问题。\n你认同吗？） → 不认同。\n问题是打断。",
+            composeFallback(record),
+        )
     }
 
     @Test
@@ -82,7 +86,27 @@ class ClarificationRecordTest {
     @Test
     fun `兜底结果是原需求后接已确认的回答`() {
         val record = ClarificationRecord("  需求  ", listOf(answerRecord(q(), Answer.Picked(listOf("b")))))
-        assertEquals("需求\n\n- description-b", composeFallback(record))
-        assertEquals("没有回答时只有原需求", "需求", composeFallback(ClarificationRecord("需求")))
+        assertEquals(
+            "待整理的讨论记录，尚未形成最终任务。\n\n原始目标：\n需求\n\n" +
+                "模型提问与用户回答：\n- H（Q） → label-b（description-b）",
+            composeFallback(record),
+        )
+        assertEquals("没有回答时也说明材料性质", "待整理的讨论记录，尚未形成最终任务。\n\n原始目标：\n需求", composeFallback(ClarificationRecord("需求")))
+    }
+
+    @Test
+    fun `重复回答保留问题来源且默认处理不冒充主动选择`() {
+        val record = ClarificationRecord(
+            "目标",
+            listOf(
+                answerRecord(q().copy(text = "操作员看什么？"), Answer.OwnWords("仅查看")),
+                answerRecord(q().copy(text = "管理员看什么？"), Answer.OwnWords("仅查看")),
+                answerRecord(q().copy(fallback = "保留现状"), Answer.Skipped),
+            ),
+        )
+        val text = composeFallback(record)
+        assertTrue(text.contains("操作员看什么？） → 其他：仅查看"))
+        assertTrue(text.contains("管理员看什么？） → 其他：仅查看"))
+        assertTrue(text.contains("没有回答，按默认处理：保留现状"))
     }
 }

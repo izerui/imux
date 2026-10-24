@@ -142,7 +142,7 @@ internal class ClarificationDialog(
             BarButton.CANCEL_INVESTIGATION -> service.cancel(sessionKey)
             BarButton.NEXT, BarButton.REVIEW -> view.nextTab()
             BarButton.SUBMIT -> service.submit(sessionKey, view.answers())
-            BarButton.CONTINUE -> service.continueClarifying(sessionKey)
+            BarButton.CONTINUE, BarButton.REFINE -> service.continueClarifying(sessionKey)
             BarButton.COPY -> CopyPasteManager.getInstance().setContents(StringSelection(view.resultText()))
             BarButton.SEND -> {
                 val text = view.resultText()
@@ -170,7 +170,11 @@ internal class ClarificationDialog(
 
         override fun askingPageChanged() = updateButtons()
 
-        override fun resultEdited(text: String) = flow.editResult(text)
+        override fun resultEdited(text: String) {
+            flow.editResult(text)
+            shown = flow.state
+            updateButtons()
+        }
 
         // 弹窗以本对话框为父组件
         override fun showAgentOutput(raw: String) = Messages.showInfoMessage(contentPane, raw.take(20_000), ImuxBundle.message("clarify.failed.raw"))
@@ -186,7 +190,7 @@ internal class ClarificationDialog(
         /** 右侧候选按钮（Windows 顺序，主操作在前）。 */
         private val RIGHT_ORDER =
             listOf(
-                BarButton.START, BarButton.CANCEL_INVESTIGATION, BarButton.NEXT, BarButton.REVIEW, BarButton.SUBMIT,
+                BarButton.START, BarButton.CANCEL_INVESTIGATION, BarButton.NEXT, BarButton.REVIEW, BarButton.SUBMIT, BarButton.REFINE,
                 BarButton.SEND, BarButton.CANCEL_SEND, BarButton.RETRY,
             )
         private val LEFT_ORDER = listOf(BarButton.CONTINUE, BarButton.COPY, BarButton.FALLBACK)
@@ -252,6 +256,7 @@ internal enum class BarButton(val labelKey: String) {
     REVIEW("clarify.question.review"),
     SUBMIT("clarify.question.submit"),
     CONTINUE("clarify.result.back"),
+    REFINE("clarify.notes.refine"),
     COPY("clarify.result.copy"),
     SEND("clarify.result.send"),
     CANCEL_SEND("clarify.sending.cancel"),
@@ -280,7 +285,12 @@ internal fun buttonBar(state: ClarificationState, page: AskingPage?): ButtonBar 
                 }
             ButtonBar(emptyList(), listOf(primary), primary)
         }
-        is ClarificationState.Result -> ButtonBar(listOf(BarButton.CONTINUE, BarButton.COPY), listOf(BarButton.SEND), BarButton.SEND)
+        is ClarificationState.Result ->
+            if (state.origin == ContentOrigin.NOTES && !state.canSend) {
+                ButtonBar(listOf(BarButton.COPY), listOf(BarButton.REFINE), BarButton.REFINE)
+            } else {
+                ButtonBar(listOf(BarButton.CONTINUE, BarButton.COPY), listOf(BarButton.SEND), BarButton.SEND)
+            }
         is ClarificationState.Sending -> ButtonBar(emptyList(), listOf(BarButton.CANCEL_SEND), null)
         is ClarificationState.Failed -> ButtonBar(listOf(BarButton.FALLBACK), listOf(BarButton.RETRY), BarButton.RETRY)
     }

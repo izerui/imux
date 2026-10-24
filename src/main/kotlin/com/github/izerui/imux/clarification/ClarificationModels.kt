@@ -44,6 +44,28 @@ internal data class AnswerRecord(
     val recorded: String,
 )
 
+internal enum class ContentOrigin { AGENT, NOTES }
+
+/** 模型草稿保留前后文本；整理材料只保存差异，不能把已展开的历史重新嵌套进历史。 */
+@ConsistentCopyVisibility
+internal data class ReviewedDraft private constructor(
+    val text: String,
+    val originalText: String,
+    val origin: ContentOrigin,
+    val answerCount: Int,
+    val notesChanges: List<NotesEdit>,
+) {
+    constructor(text: String, originalText: String, origin: ContentOrigin, answerCount: Int) : this(
+        if (origin == ContentOrigin.AGENT) text else "",
+        if (origin == ContentOrigin.AGENT) originalText else "",
+        origin,
+        answerCount,
+        if (origin == ContentOrigin.NOTES) notesEdits(originalText, text) else emptyList(),
+    )
+
+    val edited: Boolean get() = if (origin == ContentOrigin.NOTES) notesChanges.isNotEmpty() else text != originalText
+}
+
 /**
  * 插件这边记下的澄清：原需求与用户提交过的全部回答。
  * 对话的上下文由 Agent 自己记着；这里只用于失败时整理已有内容，
@@ -52,6 +74,7 @@ internal data class AnswerRecord(
 internal data class ClarificationRecord(
     val requirement: String,
     val history: List<AnswerRecord> = emptyList(),
+    val reviewedDrafts: List<ReviewedDraft> = emptyList(),
 ) {
     /** 用户提交过的回答（含未回答时披露的处理），按提交顺序去重；不代表实施决定。 */
     fun confirmed(): List<String> = history.map { it.recorded.trim() }.filter(String::isNotEmpty).distinct()
@@ -79,17 +102,10 @@ internal fun answerRecord(question: Question, answer: Answer): AnswerRecord {
 }
 
 /** 失败页「整理已有内容」不调用 Agent：原始输入后附已记录的问答，不声称生成了新方案。 */
-internal fun composeFallback(record: ClarificationRecord): String =
+internal fun composeFallback(record: ClarificationRecord, isChinese: Boolean = true): String =
     buildString {
+        append(if (isChinese) "待整理的讨论记录，尚未形成最终任务。\n\n原始目标：\n" else "Discussion notes, not a finalized task.\n\nOriginal goal:\n")
         append(record.requirement.trim())
-        // 开放回答可能只有“上周那次”或“不认同”：离开问题与对方看法就无法独立理解。
-        val confirmed = record.history.filter { it.recorded.isNotBlank() }.map { r ->
-            if (r.question.kind == QuestionKind.OPEN || r.question.context.isNotBlank()) {
-                listOf(r.question.context, r.question.text, r.recorded).filter(String::isNotBlank).joinToString("\n")
-            } else r.recorded.trim()
-        }.distinct()
-        if (confirmed.isNotEmpty()) {
-            append("\n\n")
-            confirmed.forEach { append("- ").append(it.replace("\n", "\n  ")).append('\n') }
-        }
+        val discussion = discussionHistory(record, isChinese)
+        if (discussion.isNotBlank()) append("\n\n").append(discussion)
     }.trimEnd()

@@ -33,6 +33,14 @@ class ClarificationDialogSourceTest {
     }
 
     @Test
+    fun `编辑结果立即刷新发送能力但不重建输入框`() {
+        val edited = dialog.bodyAfter("override fun resultEdited(", '{')
+        assertTrue(edited.contains("flow.editResult(text)"))
+        assertTrue(edited.contains("shown = flow.state"))
+        assertTrue(edited.contains("updateButtons()"))
+        assertFalse("保留光标和输入焦点", edited.contains("render("))
+    }
+    @Test
     fun `全部按钮放在原生按钮栏，内容区里没有按钮栏`() {
         assertTrue("右侧按钮来自 createActions", dialog.normalized.contains("override fun createActions(): Array<Action>"))
         assertTrue("左侧按钮来自 createLeftSideActions", dialog.normalized.contains("override fun createLeftSideActions(): Array<Action>"))

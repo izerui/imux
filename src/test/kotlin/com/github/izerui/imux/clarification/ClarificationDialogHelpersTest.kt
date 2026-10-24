@@ -124,6 +124,17 @@ class ClarificationDialogHelpersTest {
     }
 
     @Test
+    fun `原始讨论材料主操作为整理而用户编辑后可发送`() {
+        val notes = ClarificationState.Result("材料", ContentOrigin.NOTES)
+        val rawBar = buttonBar(notes, null)
+        assertEquals(listOf(BarButton.COPY), rawBar.left)
+        assertEquals(listOf(BarButton.REFINE), rawBar.right)
+        assertEquals(BarButton.REFINE, rawBar.default)
+        val editedBar = buttonBar(notes.copy(requirement = "编辑后的任务"), null)
+        assertEquals(listOf(BarButton.CONTINUE, BarButton.COPY), editedBar.left)
+        assertEquals(listOf(BarButton.SEND), editedBar.right)
+    }
+    @Test
     fun `有主操作的状态默认按钮在右侧最后`() {
         val states =
             listOf(

@@ -4,7 +4,6 @@ import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -158,7 +157,10 @@ class ClarificationFlowTest {
         val f = started(ask("H1", "H2"), ask("H3"))
         f.run(f.submitBatch(mapOf("q1" to Answer.Picked(listOf("b"))))!!)
         assertEquals(listOf("D-H1-b", "F-H2"), f.record.confirmed())
-        assertEquals("兜底结果列出已确认的回答", "REQ-MARK\n\n- D-H1-b\n- F-H2", composeFallback(f.record))
+        val notes = composeFallback(f.record)
+        assertTrue("兜底明确材料性质", notes.startsWith("待整理的讨论记录，尚未形成最终任务。"))
+        assertTrue("保留用户选择", notes.contains("B-H1（D-H1-b）"))
+        assertTrue("未回答不冒充用户决定", notes.contains("没有回答，按默认处理：F-H2"))
     }
 
     @Test
@@ -263,7 +265,63 @@ class ClarificationFlowTest {
         f.run(f.continueClarifying()!!)
         assertEquals("H1", asking.single().header)
         assertEquals(1, conversations.size)
-        assertEquals(continueMessage(isChinese = false, plan = "ADJUSTED"), conversations.single().sent[1])
+        assertEquals(continueMessage(false, ReviewedDraft("ADJUSTED", "ADJUSTED", ContentOrigin.AGENT, 0)), conversations.single().sent[1])
+        assertFalse("点击继续不算用户编辑", f.record.reviewedDrafts.single().edited)
+    }
+
+    @Test
+    fun `未编辑的模型草稿遗漏要求时继续和重试不丢原始要求`() {
+        val f = started(ask("通知"), done("仅提供来源查询"), IllegalStateException("offline"), ask("H2"))
+        f.run(f.submitBatch(mapOf("q1" to Answer.OwnWords("必须能够通知用户核实异常")))!!)
+        f.run(f.continueClarifying()!!)
+        assertTrue("普通继续没有确认模型草稿", conversations[0].sent.last().contains("not user approval"))
+        f.run(f.retry()!!)
+        val opening = conversations[1].sent.single()
+        assertTrue("最初输入仍然存在", opening.contains("REQ-MARK"))
+        assertTrue("被草稿漏掉的用户要求仍然存在", opening.contains("必须能够通知用户核实异常"))
+        assertTrue("草稿注明非用户确认", opening.contains("Agent candidate task (not user approval):\n仅提供来源查询"))
+        assertTrue("不以未提及取消旧要求", opening.contains("Requirements omitted from a draft or edit are not automatically cancelled"))
+    }
+
+    @Test
+    fun `第二份模型草稿不能抹去第一份草稿中的用户修订`() {
+        val f = started(done("第一份模型草稿"), done("第二份遗漏通知功能的草稿"), IllegalStateException("offline"), ask("H"))
+        f.editResult("必须支持通知用户")
+        f.run(f.continueClarifying()!!)
+        f.run(f.continueClarifying()!!)
+        f.run(f.retry()!!)
+        val opening = conversations[1].sent.single()
+        assertTrue("第一份修订来源保留", opening.contains("User-edited text:\n必须支持通知用户"))
+        assertTrue("第二份仍是未确认草稿", opening.contains("Agent candidate task (not user approval):\n第二份遗漏通知功能的草稿"))
+        assertTrue("修订在第二份草稿之前", opening.indexOf("必须支持通知用户") < opening.indexOf("第二份遗漏通知功能的草稿"))
+        assertEquals("保留两次讨论快照", 2, f.record.reviewedDrafts.size)
+    }
+
+    @Test
+    fun `编辑后恢复原文不被记为用户修订`() {
+        val f = started(done("模型草稿"), ask("H"))
+        f.editResult("临时修改")
+        f.editResult("模型草稿")
+        f.run(f.continueClarifying()!!)
+        assertFalse(f.record.reviewedDrafts.single().edited)
+        assertFalse(conversations.single().sent.last().contains("User-edited text"))
+    }
+
+    @Test
+    fun `未经编辑的兜底材料无法发送而编辑后可发送且取消保留来源`() {
+        val f = started(IllegalStateException("offline"))
+        f.fallbackResult()
+        val original = f.state as ClarificationState.Result
+        assertFalse("材料不能直接发", f.sending(false))
+        assertEquals("拒绝发送不改变状态", original, f.state)
+        f.editResult("为管理员增加来源查询，保留现有日志统计口径。")
+        val edited = f.state as ClarificationState.Result
+        assertTrue("用户编辑后可发", f.sending(false))
+        f.sendCancelled()
+        assertEquals("取消发送保留编辑及原始来源", edited, f.state)
+        f.editResult(original.requirement)
+        assertFalse("恢复原文后不能误认为仍已编辑", f.sending(false))
+        assertEquals(original, f.state)
     }
 
     @Test
@@ -274,7 +332,8 @@ class ClarificationFlowTest {
         f.run(f.continueClarifying()!!)
         assertEquals(1, conversations.size)
         assertTrue(conversations.single().sent[1].contains("使用 PostgreSQL"))
-        assertFalse(conversations.single().sent[1].contains("ADJUSTED"))
+        assertTrue("保留修改前文本供比较", conversations.single().sent[1].contains("ADJUSTED"))
+        assertTrue(f.record.reviewedDrafts.single().edited)
     }
 
     @Test
@@ -286,7 +345,10 @@ class ClarificationFlowTest {
         assertTrue(f.state is ClarificationState.Failed)
         val sentBefore = conversations.sumOf { it.sent.size }
         f.fallbackResult()
-        assertEquals(ClarificationState.Result(edited), f.state)
+        val notes = f.state as ClarificationState.Result
+        assertEquals(ContentOrigin.NOTES, notes.origin)
+        assertTrue(notes.requirement.contains("User-edited text:\n$edited"))
+        assertFalse("未编辑材料不直接发送", notes.canSend)
         assertEquals("兜底不调用 Agent", sentBefore, conversations.sumOf { it.sent.size })
         f.run(f.continueClarifying()!!)
         assertEquals(2, conversations.size)
@@ -300,25 +362,97 @@ class ClarificationFlowTest {
         f.continueClarifying()
         f.cancelled()
         f.fallbackResult()
-        assertEquals(ClarificationState.Result("用户修改的执行方案"), f.state)
+        assertTrue((f.state as ClarificationState.Result).requirement.contains("User-edited text:\n用户修改的执行方案"))
+        assertEquals(ContentOrigin.NOTES, (f.state as ClarificationState.Result).origin)
         assertTrue(conversations.single().closed)
     }
 
     @Test
-    fun `修订方案兜底只追加后续回答且重复兜底不重复追加`() {
+    fun `修订后兜底保留历史顺序且重复整理不嵌套记录`() {
         val f = started(ask("H1"), done(), ask("H2"), IllegalStateException("offline"), IllegalStateException("offline again"))
         f.run(f.submitBatch(mapOf("q1" to Answer.OwnWords("使用 MySQL")))!!)
         f.editResult("使用 PostgreSQL")
         f.run(f.continueClarifying()!!)
         f.run(f.submitBatch(mapOf("q1" to Answer.OwnWords("需要迁移脚本")))!!)
         f.fallbackResult()
-        val expected = "使用 PostgreSQL\n\n- 需要迁移脚本"
-        assertEquals("不把修订前的 MySQL 回答加回来", ClarificationState.Result(expected), f.state)
+        val first = f.state as ClarificationState.Result
+        val text = first.requirement
+        assertTrue("旧回答在修订之前", text.indexOf("使用 MySQL") in 0 until text.indexOf("使用 PostgreSQL"))
+        assertTrue("新回答在修订之后", text.indexOf("需要迁移脚本") > text.indexOf("使用 PostgreSQL"))
+        assertTrue("明确修订来源", text.contains("User-edited text:\n使用 PostgreSQL"))
         f.run(f.continueClarifying()!!)
         f.fallbackResult()
-        assertEquals("第二次失败不会重复追加迁移脚本", ClarificationState.Result(expected), f.state)
+        assertEquals("未编辑材料继续后不嵌套复制记录", first, f.state)
     }
 
+    @Test
+    fun `连续八次编辑兜底材料再失败的记录按新增内容增长`() {
+        val f = started(*Array<Any>(9) { IllegalStateException("offline-$it") })
+        f.fallbackResult()
+        val markers = mutableListOf<String>()
+        repeat(8) { round ->
+            val before = (f.state as ClarificationState.Result).requirement
+            val marker = "USER-ADDITION-${round + 1}"
+            markers += marker
+            f.editResult("$before\n$marker")
+            f.run(f.continueClarifying()!!)
+            assertTrue("第 ${round + 1} 次实际进入失败", f.state is ClarificationState.Failed)
+            val retained = f.record.reviewedDrafts.last()
+            assertEquals("不保存展开前副本", "", retained.originalText)
+            assertEquals("不保存展开后副本", "", retained.text)
+            assertEquals("只保存本轮新增的原话", "\n$marker", retained.notesChanges.joinToString("") { it.insertedText })
+            f.fallbackResult()
+            val after = (f.state as ClarificationState.Result).requirement
+            assertTrue("第 ${round + 1} 次增加的只是差异与标识：${before.length} → ${after.length}", after.length <= before.length + 1200)
+            assertTrue("原始目标保留", after.contains("REQ-MARK"))
+            markers.forEach { assertTrue("保留之前的用户补充 $it", after.contains(it)) }
+            assertEquals("按轮次保留差异", round + 1, f.record.reviewedDrafts.size)
+        }
+        assertTrue("重开对话也没有发送嵌套大文本", conversations.last().sent.single().length < 20_000)
+        println("八轮编辑并失败后的材料长度：${(f.state as ClarificationState.Result).requirement.length}")
+    }
+
+    @Test
+    fun `连续替换整份兜底材料不会复制删除的历史`() {
+        val f = started(*Array<Any>(9) { IllegalStateException("offline-$it") })
+        f.fallbackResult()
+        repeat(8) { round ->
+            val before = (f.state as ClarificationState.Result).requirement
+            f.editResult("USER-TASK-${round + 1}")
+            f.run(f.continueClarifying()!!)
+            f.fallbackResult()
+            val after = (f.state as ClarificationState.Result).requirement
+            assertTrue("第 ${round + 1} 次整份替换仍有固定增长上限", after.length <= before.length + 1400)
+            assertTrue(after.contains("USER-TASK-${round + 1}"))
+        }
+    }
+
+    @Test
+    fun `比较过于复杂时保留编辑文本和记录且不启动对话`() {
+        var refuse = true
+        var opened = 0
+        val f = ClarificationFlow(
+            false, "G",
+            openConversation = { opened++; throw IllegalStateException("offline") },
+            captureDraft = { result, count ->
+                if (refuse) throw com.intellij.util.diff.FilesTooBigForDiffException()
+                ReviewedDraft(result.requirement, result.originalText, result.origin, count)
+            },
+        )
+        f.run(f.begin("目标", AgentType.CLAUDE))
+        f.fallbackResult()
+        f.editResult("用户的编辑不能丢失")
+        val record = f.record
+        assertNull(f.continueClarifying())
+        assertEquals(1, opened)
+        assertEquals("失败不污染历史", record, f.record)
+        assertEquals("用户的编辑不能丢失", (f.state as ClarificationState.Result).requirement)
+        assertTrue((f.state as ClarificationState.Result).comparisonFailed)
+        refuse = false
+        assertTrue("之后仍可重新继续", f.continueClarifying() != null)
+        assertTrue(f.state is ClarificationState.Investigating)
+        assertEquals(1, f.record.reviewedDrafts.size)
+    }
     @Test
     fun `修订后提交新回答再失败重试按方案和后续回答恢复上下文`() {
         val f = started(ask("H1"), done(), ask("H2"), IllegalStateException("offline"), ask("H3"))
@@ -328,11 +462,11 @@ class ClarificationFlowTest {
         f.run(f.submitBatch(mapOf("q1" to Answer.OwnWords("LATEST-ANSWER")))!!)
         f.run(f.retry()!!)
         val opening = conversations[1].sent.single()
-        assertFalse("不重新确认修订前的决定", opening.contains("OLD-DECISION"))
+        assertTrue("保留旧决定以检查未涉及的要求", opening.contains("OLD-DECISION"))
         assertTrue("携带修订方案", opening.contains("REVISED-PLAN"))
         assertTrue("携带之后的新回答", opening.contains("LATEST-ANSWER"))
         assertTrue("新回答在方案之后", opening.indexOf("LATEST-ANSWER") > opening.indexOf("REVISED-PLAN"))
-        assertTrue("新回答冲突时优先", opening.contains("the later answers take precedence"))
+        assertTrue("只覆盖明确改变的要求", opening.contains("only for requirements actually changed"))
         assertFalse("不能在结尾又要求以旧方案为准", opening.contains("Use the user's current edited outcome:"))
     }
 
@@ -372,11 +506,11 @@ class ClarificationFlowTest {
         f.editResult("使用 PostgreSQL")
         val run = f.continueClarifying()!!
         val investigating = f.state
-        assertEquals("调查页可复制修订", "使用 PostgreSQL", f.undeliveredPlan())
+        assertTrue("调查页可复制修订及来源", f.undeliveredPlan()!!.contains("User-edited text:\n使用 PostgreSQL"))
         assertEquals("读取不改变调查状态", investigating, f.state)
         f.run(run)
         val askingState = f.state
-        assertEquals("提问页可复制修订", "使用 PostgreSQL", f.undeliveredPlan())
+        assertTrue("提问页可复制修订及来源", f.undeliveredPlan()!!.contains("User-edited text:\n使用 PostgreSQL"))
         assertEquals("读取不改变提问状态", askingState, f.state)
         assertEquals("读取没有增加 Agent 调用", 2, conversations.single().sent.size)
     }
@@ -388,13 +522,15 @@ class ClarificationFlowTest {
         f.editResult("使用 PostgreSQL")
         f.run(f.continueClarifying()!!)
         val run = f.submitBatch(mapOf("q1" to Answer.OwnWords("补充迁移脚本")))!!
-        val expected = "使用 PostgreSQL\n\n- 补充迁移脚本"
-        assertEquals("调查中保留后续回答而不恢复旧决定", expected, f.undeliveredPlan())
+        val expected = f.undeliveredPlan()!!
+        assertTrue("原始回答保留为历史", expected.contains("使用 MySQL"))
+        assertTrue("修订优先于旧记录但不抹去历史", expected.indexOf("使用 PostgreSQL") > expected.indexOf("使用 MySQL"))
+        assertTrue("保留后续回答", expected.indexOf("补充迁移脚本") > expected.indexOf("使用 PostgreSQL"))
         f.run(run)
         assertTrue(f.state is ClarificationState.Failed)
         assertEquals("失败页也提供完整文本", expected, f.undeliveredPlan())
         f.fallbackResult()
-        assertEquals(ClarificationState.Result(expected), f.state)
+        assertEquals(ClarificationState.Result(expected, ContentOrigin.NOTES), f.state)
     }
 
     @Test
@@ -442,7 +578,10 @@ class ClarificationFlowTest {
         val sentBefore = conversations.sumOf { it.sent.size }
 
         f.fallbackResult()
-        assertEquals(ClarificationState.Result("REQ-MARK\n\n- D-H1-b"), f.state)
+        val notes = f.state as ClarificationState.Result
+        assertEquals(ContentOrigin.NOTES, notes.origin)
+        assertTrue(notes.requirement.contains("Original goal:\nREQ-MARK"))
+        assertTrue(notes.requirement.contains("B-H1 (D-H1-b)"))
         assertEquals("兜底不发消息", sentBefore, conversations.sumOf { it.sent.size })
 
         f.run(f.continueClarifying()!!)

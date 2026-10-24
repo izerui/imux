@@ -358,6 +358,33 @@ class ClarificationViewPreviewTest {
     }
 
     @Test
+    fun `待整理材料显示来源提示且编辑前主操作为整理任务`() {
+        val state = ClarificationState.Result(
+            "原始目标：增加用户来源查询\n\nAgent 看法：可能需要通知。\n用户回答：先只做查询。",
+            ContentOrigin.NOTES,
+        )
+        for ((width, height) in listOf(640 to 520, 460 to 400)) {
+            val view = check("notes-${width}x$height", state, record, width, height)
+            assertTrue("$width：标题明确不是最终任务", allOf<JLabel>(view.component).any { it.text == "待整理的讨论记录（可修改）" })
+            val hints = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length) }
+            assertTrue("$width：解释整理或编辑后发送", hints.any { it.contains("尚未形成最终任务") })
+            val bar = buttonBar(state, null)
+            assertEquals("$width：主操作为整理", BarButton.REFINE, bar.default)
+            assertFalse("$width：不显示发送", BarButton.SEND in bar.left + bar.right)
+        }
+    }
+
+    @Test
+    fun `材料差异无法计算时显示提示并保留编辑内容`() {
+        val state = ClarificationState.Result(
+            "用户修订的任务内容", ContentOrigin.NOTES, "原始材料", comparisonFailed = true,
+        )
+        val view = check("notes-comparison-failed-460x400", state, record, 460, 400)
+        val texts = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length) }
+        assertTrue("解释比较失败", texts.any { it.contains("这次修改过于复杂") })
+        assertEquals("用户修改未丢失", "用户修订的任务内容", view.resultText())
+    }
+    @Test
     fun `开放题在常规与窄窗口显示看法和多行输入而不出现其他选项`() {
         for ((w, h) in listOf(640 to 520, 460 to 400)) {
             val view = check("asking-open-${w}x$h", ClarificationState.Asking(listOf(openQuestion)), record, w, h)

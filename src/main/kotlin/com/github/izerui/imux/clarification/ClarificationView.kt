@@ -214,7 +214,7 @@ internal class ClarificationView(
                 ClarificationState.Input -> inputPage(inputPrefill)
                 is ClarificationState.Investigating -> investigatingPage(state, investigationKind(record))
                 is ClarificationState.Asking -> askingPage(state)
-                is ClarificationState.Result -> resultPage(state.requirement)
+                is ClarificationState.Result -> resultPage(state)
                 is ClarificationState.Sending -> sendingPage(state)
                 is ClarificationState.Failed -> failedPage(state)
             }
@@ -680,11 +680,17 @@ internal class ClarificationView(
                 PopupHandler.installPopupMenu(this, IdeActions.GROUP_CUT_COPY_PASTE, ActionPlaces.POPUP)
             }
 
-    private fun resultPage(requirement: String): DialogPanel =
+    private fun resultPage(state: ClarificationState.Result): DialogPanel =
         panel {
-            row { label(messages.get("clarify.result.title")).bold() }
+            row { label(messages.get(if (state.origin == ContentOrigin.NOTES) "clarify.notes.title" else "clarify.result.title")).bold() }
+            if (state.origin == ContentOrigin.NOTES) {
+                row { comment(messages.get("clarify.notes.hint"), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
+            }
+            if (state.comparisonFailed) {
+                row { comment(messages.get("clarify.notes.compare.failed"), MAX_LINE_LENGTH_WORD_WRAP).resizableColumn().align(AlignX.FILL) }
+            }
             row {
-                resultArea = multiline(requirement, 8).component.apply {
+                resultArea = multiline(state.requirement, 8).component.apply {
                     document.addDocumentListener(object : DocumentAdapter() {
                         override fun textChanged(e: DocumentEvent) = callbacks.resultEdited(text)
                     })

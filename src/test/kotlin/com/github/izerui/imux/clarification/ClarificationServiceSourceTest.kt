@@ -57,6 +57,13 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
+    fun `发送在启动后台投递前核对文本并经过流程的可发送判定`() {
+        val send = source.bodyAfter("internal fun send(", '{')
+        val guard = send.indexOf("if (text != result.requirement || !flow.sending(")
+        assertTrue("调用方绕过界面也不能发送原始材料", guard >= 0)
+        assertTrue("校验在登记投递任务之前", guard < send.indexOf("register("))
+    }
+    @Test
     fun `发送时机读取运行集合与 Claude 等待确认状态`() {
         val busy = source.bodyAfter("private fun isMainSessionBusy(", '{')
         assertTrue(busy.contains("runningIds"))

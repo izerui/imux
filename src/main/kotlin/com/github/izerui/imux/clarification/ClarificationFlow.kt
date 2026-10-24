@@ -1,6 +1,7 @@
 package com.github.izerui.imux.clarification
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.util.diff.FilesTooBigForDiffException
 import java.util.concurrent.CopyOnWriteArrayList
 
 internal sealed interface ClarificationState {
@@ -15,10 +16,23 @@ internal sealed interface ClarificationState {
      */
     data class Asking(val batch: List<Question>) : ClarificationState
 
-    data class Result(val requirement: String) : ClarificationState
+    data class Result(
+        val requirement: String,
+        val origin: ContentOrigin = ContentOrigin.AGENT,
+        val originalText: String = requirement,
+        val comparisonFailed: Boolean = false,
+    ) : ClarificationState {
+        val edited: Boolean get() = requirement != originalText
+        val canSend: Boolean get() = requirement.isNotBlank() && (origin == ContentOrigin.AGENT || edited)
+    }
 
     /** 正在发送：[waitingForTurn] 为 true 时在等主会话这一轮结束，否则在等终端可以接收。 */
-    data class Sending(val requirement: String, val waitingForTurn: Boolean) : ClarificationState
+    data class Sending(
+        val requirement: String,
+        val waitingForTurn: Boolean,
+        val origin: ContentOrigin = ContentOrigin.AGENT,
+        val originalText: String = requirement,
+    ) : ClarificationState
 
     data class Failed(val reason: FailureReason, val detail: String, val raw: String?) : ClarificationState
 }
@@ -55,6 +69,9 @@ internal class ClarificationFlow(
     private val closeConversation: (ClarificationConversation) -> Unit = ClarificationConversation::close,
     private val classifyFailure: (Throwable) -> Pair<FailureReason, String> = { FailureReason.AGENT_ERROR to (it.message ?: it.javaClass.simpleName) },
     private val clock: () -> Long = System::currentTimeMillis,
+    private val captureDraft: (ClarificationState.Result, Int) -> ReviewedDraft = { result, count ->
+        ReviewedDraft(result.requirement, result.originalText, result.origin, count)
+    },
 ) {
     private val lock = Any()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
@@ -63,10 +80,6 @@ internal class ClarificationFlow(
 
     /** 下一轮要在现有对话里发的消息；对话为空（还没开始或已中断）时改发开场。 */
     private var outgoing: String? = null
-
-    /** 重开对话时也保留用户最后一次继续讨论的方案。 */
-    private var continuedPlan: String? = null
-    private var continuedPlanHistorySize = 0
 
     /** 用户在输入页选择的智能体类型；在 [begin] 时设置，打开对话时使用。 */
     private var agentType: AgentType? = null
@@ -85,17 +98,15 @@ internal class ClarificationFlow(
     /** 开始后用户选的智能体类型；还没开始时为 null。 */
     fun chosenAgentType(): AgentType? = agentType
 
-    fun hasRetainedPlan(): Boolean = synchronized(lock) { continuedPlan != null }
+    fun hasRetainedPlan(): Boolean = synchronized(lock) { record.reviewedDrafts.isNotEmpty() }
 
     /** 关闭主会话前取得待交付文本；读取快照，不改变当前状态或发起调查。 */
     fun undeliveredPlan(): String? =
         synchronized(lock) { undeliveredRequirement(state) ?: retainedPlanLocked() }
 
     private fun retainedPlanLocked(): String? {
-        val plan = continuedPlan ?: return null
-        // 修订前的回答已由用户在方案中取舍；只补入继续聊之后新提交的回答。
-        val laterAnswers = record.history.drop(continuedPlanHistorySize)
-        return if (laterAnswers.isEmpty()) plan else composeFallback(ClarificationRecord(plan, laterAnswers))
+        if (record.reviewedDrafts.isEmpty()) return null
+        return composeFallback(record, isChinese)
     }
 
     fun addListener(listener: () -> Unit) { listeners += listener }
@@ -128,8 +139,6 @@ internal class ClarificationFlow(
             old = detachLocked()
             this.agentType = agentType
             record = ClarificationRecord(requirement.trim())
-            continuedPlan = null
-            continuedPlanHistorySize = 0
             runId = investigate(null)
         }
         old?.let(closeConversation)
@@ -187,7 +196,7 @@ internal class ClarificationFlow(
                         } else {
                             replaced = detachLocked()
                             conversation = created
-                            openingMessage(record, isChinese, guidance, continuedPlan, continuedPlanHistorySize)
+                            openingMessage(record, isChinese, guidance)
                         }
                     }
                 replaced?.let(closeConversation)
@@ -267,19 +276,31 @@ internal class ClarificationFlow(
         synchronized(lock) {
             if (state !is ClarificationState.Failed) return
             generation++
-            state = ClarificationState.Result(retainedPlanLocked() ?: composeFallback(record))
+            state = ClarificationState.Result(composeFallback(record, isChinese), ContentOrigin.NOTES)
         }
         changed()
     }
 
     /** 看过结果后继续：对话还在就在其中接着问，否则（兜底结果）新开一段。 */
     fun continueClarifying(): Long? {
-        val runId: Long
+        val runId: Long?
         synchronized(lock) {
             val result = state as? ClarificationState.Result ?: return null
-            continuedPlan = result.requirement
-            continuedPlanHistorySize = record.history.size
-            runId = investigate(conversation?.let { continueMessage(isChinese, result.requirement) })
+            val draft = try {
+                captureDraft(result, record.history.size)
+            } catch (_: FilesTooBigForDiffException) {
+                null
+            }
+            if (draft == null) {
+                // 平台拒绝过复杂的差异时保留编辑器内容，不退回保存整份材料，也不丢掉用户修改。
+                state = result.copy(comparisonFailed = true)
+                runId = null
+            } else {
+                if ((draft.origin == ContentOrigin.AGENT || draft.edited) && record.reviewedDrafts.lastOrNull() != draft) {
+                    record = record.copy(reviewedDrafts = record.reviewedDrafts + draft)
+                }
+                runId = investigate(conversation?.let { continueMessage(isChinese, draft) })
+            }
         }
         changed()
         return runId
@@ -329,28 +350,35 @@ internal class ClarificationFlow(
     }
 
     fun editResult(text: String) {
-        synchronized(lock) { if (state is ClarificationState.Result) state = ClarificationState.Result(text) }
+        synchronized(lock) { (state as? ClarificationState.Result)?.let { state = it.copy(requirement = text, comparisonFailed = false) } }
     }
 
     /** 从结果页进入发送，或在发送中切换"等这一轮结束 / 等终端接收"。状态不变时不通知。 */
-    fun sending(waitingForTurn: Boolean) {
+    fun sending(waitingForTurn: Boolean): Boolean {
         val changedNow =
             synchronized(lock) {
-                val requirement =
+                val next =
                     when (val s = state) {
-                        is ClarificationState.Result -> s.requirement
-                        is ClarificationState.Sending -> if (s.waitingForTurn == waitingForTurn) return else s.requirement
-                        else -> return
+                        is ClarificationState.Result -> {
+                            if (!s.canSend) return false
+                            ClarificationState.Sending(s.requirement, waitingForTurn, s.origin, s.originalText)
+                        }
+                        is ClarificationState.Sending -> {
+                            if (s.waitingForTurn == waitingForTurn) return true
+                            s.copy(waitingForTurn = waitingForTurn)
+                        }
+                        else -> return false
                     }
-                state = ClarificationState.Sending(requirement, waitingForTurn)
+                state = next
                 true
             }
         if (changedNow) changed()
+        return true
     }
 
     /** 取消发送或发送失败：回到结果页，文本保留。 */
     fun sendCancelled() {
-        synchronized(lock) { (state as? ClarificationState.Sending)?.let { state = ClarificationState.Result(it.requirement) } }
+        synchronized(lock) { (state as? ClarificationState.Sending)?.let { state = ClarificationState.Result(it.requirement, it.origin, it.originalText) } }
         changed()
     }
 

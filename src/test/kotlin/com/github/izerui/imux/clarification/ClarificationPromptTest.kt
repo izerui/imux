@@ -59,13 +59,83 @@ class ClarificationPromptTest {
     }
 
     @Test
+    fun `中英文实际开场要求先查项目再给具体建议`() {
+        for (chinese in listOf(true, false)) {
+            val opening = openingMessage(fresh, chinese, loadGuidance(chinese))
+            assertTrue(
+                "$chinese：具体建议前主动用工具调查",
+                opening.contains(
+                    if (chinese) "在提出具体判断和建议前，\n主动用工具查阅"
+                    else "actively use tools to inspect enough relevant code, documents and conventions before offering concrete judgments or recommendations",
+                ),
+            )
+            assertTrue(
+                "$chinese：无需用户催促",
+                opening.contains(if (chinese) "不等用户提醒或多次要求继续聊才调查" else "Do not wait for reminders or repeated requests to continue"),
+            )
+            assertTrue(
+                "$chinese：缺乏证据不能冒充事实",
+                opening.contains(if (chinese) "无法查证的判断明确作为假设" else "label unverified judgments as assumptions"),
+            )
+        }
+    }
+
+    @Test
+    fun `中英文开场恢复与纠错协议要求交付任务正文`() {
+        for (chinese in listOf(true, false)) {
+            val messages = listOf(
+                "开场" to openingMessage(fresh, chinese, loadGuidance(chinese)),
+                "恢复" to openingMessage(
+                    answered.copy(reviewedDrafts = listOf(ReviewedDraft("修订后的目标", "候选任务", ContentOrigin.AGENT, 1))),
+                    chinese, loadGuidance(chinese),
+                ),
+                "纠错" to correctionMessage(listOf("invalid JSON"), chinese),
+            )
+            for ((phase, message) in messages) {
+                assertTrue(
+                    "$chinese $phase：回到原始目标和确认的修订",
+                    message.contains(if (chinese) "以用户原始目标和已确认的修订为准" else "grounded in the user's original goal and confirmed revisions"),
+                )
+                assertTrue(
+                    "$chinese $phase：交付任务而不是调查报告",
+                    message.contains(if (chinese) "直接输出用户完善后的需求正文，不输出调查报告" else "Output the user's refined request itself, not an investigation report"),
+                )
+                assertTrue(
+                    "$chinese $phase：保留用户表达角度",
+                    message.contains(if (chinese) "沿用用户原来的人称、语气和表达角度" else "Preserve the user's original grammatical person, tone and perspective"),
+                )
+                assertTrue(
+                    "$chinese $phase：不强制第一人称",
+                    message.contains(if (chinese) "不机械统一成第一人称或固定模板" else "Do not copy verbal repetitions, force first-person phrasing or impose a template"),
+                )
+                assertTrue(
+                    "$chinese $phase：不把候选建议写成决定",
+                    message.contains(if (chinese) "涉及目标、范围、关键体验或重要代价的未确认取舍不得写成决定" else "do not settle unconfirmed tradeoffs about goals, scope, key experience or significant costs"),
+                )
+                assertTrue(
+                    "$chinese $phase：保留探索任务的性质",
+                    message.contains(if (chinese) "探索目标不得擅自改成实施任务" else "or turn exploratory goals into implementation tasks"),
+                )
+                assertTrue(
+                    "$chinese $phase：合理细化不逐项审批",
+                    message.contains(if (chinese) "不逐项要求用户批准" else "without asking for approval of each one"),
+                )
+                assertFalse(
+                    "$chinese $phase：不再保留旧的泛化成果规则",
+                    message.contains(if (chinese) "requirement 承载当前讨论成果" else "requirement holds the current outcome"),
+                )
+            }
+        }
+    }
+
+    @Test
     fun `开场带指南、规则、需求与输出格式`() {
         val opening = openingMessage(fresh, isChinese = true, guidance = "指南正文")
         assertTrue(opening.startsWith("指南正文"))
         assertTrue("需求", opening.contains("给终端增加断线重连"))
         assertTrue("规则", opening.contains("1～$MAX_QUESTIONS_PER_ROUND"))
         assertTrue("格式", opening.contains("\"type\": \"questions\"") && opening.contains("\"fallback\""))
-        assertTrue("不要求先提问", opening.contains("不要求先提问或产出实施方案"))
+        assertTrue("清楚的任务不要求先提问", opening.contains("任务已清楚时可直接返回 type=done，不要求先提问"))
         assertFalse("没有额外的开场思考流程", opening.contains("## 现在"))
         assertFalse("首次开场没有已给出的回答", opening.contains("用户已经给出的回答"))
         assertTrue(opening.trimEnd().endsWith(JSON_ONLY_ZH))
@@ -74,7 +144,7 @@ class ClarificationPromptTest {
     @Test
     fun `对话中断后的开场带上已确认的问答并接着做`() {
         val opening = openingMessage(answered, isChinese = false, guidance = "g")
-        assertTrue(opening.contains("Answers the User Has Already Given"))
+        assertTrue(opening.contains("Retained Discussion"))
         assertTrue("选中的选项与原话", opening.contains("只恢复连接 (DA); 连同滚动缓冲 (DB); Other: OWN"))
         assertTrue("不回答的写明默认处理", opening.contains("Not answered; use the default: 只恢复连接"))
         assertTrue("恢复时说明历史顺序", opening.contains("in chronological order"))
@@ -111,32 +181,35 @@ class ClarificationPromptTest {
                 answerRecord(question, Answer.OwnWords("NEW-CHOICE")),
             )
         for (chinese in listOf(true, false)) {
-            val message = openingMessage(fresh.copy(history = history), chinese, "GUIDE", "PLAN", 1)
-            assertFalse("$chinese：不重新确认旧决定", message.contains("OLD-CHOICE"))
+            val message = openingMessage(
+                fresh.copy(history = history, reviewedDrafts = listOf(ReviewedDraft("PLAN", "DRAFT", ContentOrigin.AGENT, 1))),
+                chinese, "GUIDE",
+            )
+            assertTrue("$chinese：旧决定仍有历史来源", message.indexOf("OLD-CHOICE") in 0 until message.indexOf("DRAFT"))
             assertTrue("$chinese：方案在新回答前", message.indexOf("PLAN") < message.indexOf("NEW-CHOICE"))
             assertTrue("$chinese：新回答存在", message.contains("NEW-CHOICE"))
             assertTrue(
                 "$chinese：明确优先级",
-                message.contains(if (chinese) "若与成果冲突，以后续回答为准" else "if they conflict with the outcome, the later answers take precedence"),
+                message.contains(if (chinese) "用户最新明确修订优先，但只覆盖实际改变的要求" else "the user's latest explicit revision takes precedence only for requirements actually changed"),
             )
+            assertFalse("$chinese：不再整体覆盖旧决定", message.contains(if (chinese) "取代修订前的决定" else "replaces decisions made before the revision"))
         }
     }
 
     @Test
-    fun `中英文继续聊仅发送意图修订文本和协议提醒`() {
+    fun `中英文继续聊区分模型草稿和用户编辑`() {
         val plan = "保留当前交互，只探索内部机制，不承诺实施任何候选方案。"
-        val zh = continueMessage(true, plan)
-        val en = continueMessage(false, plan)
-        assertEquals(
-            "用户希望在以下当前成果的基础上继续探讨。这份文本取代修订前的决定。\n\n" +
-                plan + "\n\n回复仍只用约定的 JSON：{\"type\": \"questions\", ...} 或 {\"type\": \"done\", ...}。",
-            zh,
-        )
-        assertEquals(
-            "The user wants to continue the discussion from the current outcome below. This text replaces decisions made before the revision.\n\n" +
-                plan + "\n\nReply with the agreed JSON only: {\"type\": \"questions\", ...} or {\"type\": \"done\", ...}.",
-            en,
-        )
+        for (chinese in listOf(true, false)) {
+            val untouched = continueMessage(chinese, ReviewedDraft(plan, plan, ContentOrigin.AGENT, 0))
+            assertTrue("$chinese：模型草稿不等于确认", untouched.contains(if (chinese) "Agent 候选任务（不代表用户确认）" else "Agent candidate task (not user approval)"))
+            assertFalse("$chinese：未编辑不能声称用户修订", untouched.contains(if (chinese) "用户编辑后的文本" else "User-edited text"))
+            val edited = continueMessage(chinese, ReviewedDraft("EDITED", plan, ContentOrigin.AGENT, 0))
+            assertTrue("$chinese：编辑前原文保留", edited.contains(plan))
+            assertTrue("$chinese：明确编辑后的文字", edited.contains(if (chinese) "用户编辑后的文本：\nEDITED" else "User-edited text:\nEDITED"))
+            val notes = continueMessage(chinese, ReviewedDraft("NOTES", "NOTES", ContentOrigin.NOTES, 0))
+            assertTrue("$chinese：材料不被当作批准的计划", notes.contains(if (chinese) "不能直接当作已确认方案" else "not an approved plan"))
+            assertFalse("$chinese：材料不声称由用户编辑", notes.contains(if (chinese) "用户编辑后的文本" else "User-edited text"))
+        }
     }
 
     @Test

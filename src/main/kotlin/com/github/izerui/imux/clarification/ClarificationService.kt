@@ -177,7 +177,8 @@ class ClarificationService(
      */
     internal fun send(sessionKey: String, text: String) {
         val flow = flows[sessionKey] ?: return
-        flow.sending(waitingForTurn = isMainSessionBusy(sessionKey))
+        val result = flow.state as? ClarificationState.Result ?: return
+        if (text != result.requirement || !flow.sending(waitingForTurn = isMainSessionBusy(sessionKey))) return
         register(sessionKey, flow) {
             scope.launch(Dispatchers.EDT) {
                 while (isActive) {
