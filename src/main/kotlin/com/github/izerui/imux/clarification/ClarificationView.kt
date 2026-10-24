@@ -379,7 +379,7 @@ internal class ClarificationView(
 
     /** 当前一步只占一行：长路径从中间省略，整行放不下再从末尾省略，完整内容看 tooltip。 */
     private fun setProgress(label: JBLabel, progress: String?) {
-        label.text = messages.get("clarify.investigating", shortenPaths(progress.orEmpty())).trim()
+        label.text = progress?.takeIf(String::isNotBlank)?.let(::shortenPaths) ?: messages.get("clarify.progress.thinking")
         label.toolTipText = progress?.takeIf { it.isNotBlank() }
     }
 

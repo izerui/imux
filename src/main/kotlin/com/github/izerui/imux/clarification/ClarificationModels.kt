@@ -46,14 +46,14 @@ internal data class AnswerRecord(
 
 /**
  * 插件这边记下的澄清：原需求与用户提交过的全部回答。
- * 对话的上下文由 Agent 自己记着；这里只用于界面上的已确认列表、失败时的兜底结果，
+ * 对话的上下文由 Agent 自己记着；这里只用于失败时整理已有内容，
  * 以及对话中断（取消、失败）后新开对话时的开场。
  */
 internal data class ClarificationRecord(
     val requirement: String,
     val history: List<AnswerRecord> = emptyList(),
 ) {
-    /** 已确认 = 用户提交过的回答（含不回答时的默认处理），按提交顺序、去重。 */
+    /** 用户提交过的回答（含未回答时披露的处理），按提交顺序去重；不代表实施决定。 */
     fun confirmed(): List<String> = history.map { it.recorded.trim() }.filter(String::isNotEmpty).distinct()
 }
 
@@ -78,7 +78,7 @@ internal fun answerRecord(question: Question, answer: Answer): AnswerRecord {
     return if (text == null) AnswerRecord(question, Answer.Skipped, question.fallback) else AnswerRecord(question, answer, text)
 }
 
-/** 失败页「生成结果」不调用 Agent：原需求后面按顺序列出已确认的回答。 */
+/** 失败页「整理已有内容」不调用 Agent：原始输入后附已记录的问答，不声称生成了新方案。 */
 internal fun composeFallback(record: ClarificationRecord): String =
     buildString {
         append(record.requirement.trim())

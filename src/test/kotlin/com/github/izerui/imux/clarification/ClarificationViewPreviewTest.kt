@@ -529,7 +529,7 @@ class ClarificationViewPreviewTest {
         view.render(ClarificationState.Investigating(null, 1_000L, run = 7), record, "")
         val centers = view.centerRebuilds
         val headers = view.headerRebuilds
-        val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text.contains("想下一步") }
+        val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text == "正在思考…" }
         repeat(100) { i -> view.render(ClarificationState.Investigating("读取 File$i.kt", 1_000L, run = 7), record, "") }
         assertEquals("中间区域没有重建", centers, view.centerRebuilds)
         assertEquals("头部没有重建", headers, view.headerRebuilds)
@@ -537,6 +537,20 @@ class ClarificationViewPreviewTest {
         view.tick(1_000L + 65_000)
         val elapsed = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length) }
         assertTrue("已用秒数就地更新", elapsed.any { it.contains("65") })
+    }
+
+    @Test
+    fun `回复进度独立显示且耗时不预测后续问题或完成时间`() {
+        val startedAt = System.currentTimeMillis() - 174_000L
+        val state = ClarificationState.Investigating("正在回复…", startedAt, run = 7)
+        val view = check("responding-640x520", state, record, 640, 520)
+        val label = allOf<JLabel>(view.component).single { it.javaClass.simpleName == "EllipsisLabel" && it.text == "正在回复…" }
+        assertEquals("不叠加思考前缀", "正在回复…", label.text)
+        view.tick(startedAt + 174_000L)
+        val texts = allOf<javax.swing.JEditorPane>(view.component).map { it.document.getText(0, it.document.length).trim() }
+        assertTrue("仅显示实际耗时", texts.contains("已用 174 秒"))
+        assertFalse("不承诺下一批问题", texts.any { it.contains("下一批") })
+        assertFalse("不宣称通常两分钟", texts.any { it.contains("2 分钟") })
     }
 
     @Test

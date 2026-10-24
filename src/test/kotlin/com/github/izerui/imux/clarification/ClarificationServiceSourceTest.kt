@@ -11,6 +11,13 @@ class ClarificationServiceSourceTest {
     private val source = SourceCode("src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt")
 
     @Test
+    fun `对话进度接到独立文案而非时间线进度`() {
+        val open = source.bodyAfter("private fun openConversation(", '{')
+        assertTrue(open.contains("conversation.send(message) { event -> clarificationProgressText(event)?.let(onProgress) }"))
+        assertFalse(source.normalized.contains("overviewProgressText"))
+    }
+
+    @Test
     fun `澄清用一段持续对话，权限与 IDEA MCP 沿用单次调用的配置，每轮超时 600 秒`() {
         val open = source.bodyAfter("private fun openConversation(", '{')
         assertTrue("持续对话的命令", open.contains("conversationInvocation(shell, agentType, projectPath, mcp, resumeId)"))

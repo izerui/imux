@@ -43,8 +43,8 @@ internal fun openingMessage(
             append(if (isChinese) "## 用户修订的讨论成果\n\n" else "## User-Revised Outcome\n\n")
             append(plan).append("\n\n")
             append(
-                if (isChinese) "这份方案取代修订前的决定。下方回答是在修订之后提交的；若与方案冲突，以后续回答为准。\n\n"
-                else "This plan replaces decisions made before the revision. The answers below were submitted after the revision; if they conflict with the plan, the later answers take precedence.\n\n",
+                if (isChinese) "这份成果取代修订前的决定。下方回答是在修订之后提交的；若与成果冲突，以后续回答为准。\n\n"
+                else "This outcome replaces decisions made before the revision. The answers below were submitted after the revision; if they conflict with the outcome, the later answers take precedence.\n\n",
             )
         }
         if (answers.isNotEmpty()) {

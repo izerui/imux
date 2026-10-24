@@ -117,7 +117,7 @@ class ClarificationPromptTest {
             assertTrue("$chinese：新回答存在", message.contains("NEW-CHOICE"))
             assertTrue(
                 "$chinese：明确优先级",
-                message.contains(if (chinese) "若与方案冲突，以后续回答为准" else "if they conflict with the plan, the later answers take precedence"),
+                message.contains(if (chinese) "若与成果冲突，以后续回答为准" else "if they conflict with the outcome, the later answers take precedence"),
             )
         }
     }

@@ -8,7 +8,6 @@ import com.github.izerui.imux.agent.agentConversation
 import com.github.izerui.imux.agent.conversationInvocation
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
-import com.github.izerui.imux.overview.overviewProgressText
 import com.github.izerui.imux.peer.trySendPeerFeedback
 import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.TerminalHost
@@ -163,7 +162,7 @@ class ClarificationService(
             )
         return object : ClarificationConversation {
             override fun send(message: String, onProgress: (String) -> Unit): String =
-                conversation.send(message) { event -> overviewProgressText(event)?.let(onProgress) }
+                conversation.send(message) { event -> clarificationProgressText(event)?.let(onProgress) }
 
             override fun close() = unexited.addAll(conversation.close())
         }
