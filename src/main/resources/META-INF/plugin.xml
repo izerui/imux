@@ -132,6 +132,10 @@
         <postStartupActivity
                 implementation="com.github.izerui.imux.monitor.ImuxStartupActivity"/>
 
+        <!-- 终端会话通讯桥接：仅在开关打开时启动，见 docs/terminal-channel-bridge-feasibility.md -->
+        <postStartupActivity
+                implementation="com.github.izerui.imux.bridge.BridgeStartupActivity"/>
+
         <!--
           接收 pi 扩展的会话上报。pi 的会话切换（/new、/resume、/fork）无法从进程外
           观测，只能由它自己上报，见 PiSessionReportHandler 的说明。
