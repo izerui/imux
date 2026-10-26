@@ -5,9 +5,11 @@ import com.github.izerui.imux.bridge.core.SessionEventKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermission
@@ -84,12 +86,16 @@ class TranscriptTailTest {
     fun `读取期间文件消失不抛异常`() {
         // 模拟 TOCTOU：attributes() 成功（同 inode、同 size）但 FileChannel.open 抛 IOException。
         // 方法：移除文件读权限——attributes() 仍能读取元数据，FileChannel.open 抛 AccessDeniedException。
+        // 依赖 POSIX 权限：Windows 等不支持的平台跳过
+        Assume.assumeTrue(FileSystems.getDefault().supportedFileAttributeViews().contains("posix"))
         val file = temp.newFile("vanish.jsonl").toPath()
         Files.writeString(file, "line\n")
         val tail = TranscriptTail(file, echo).apply { startAtEnd() }
         append(file, "more\n".toByteArray())
         Files.setPosixFilePermissions(file, setOf(PosixFilePermission.OWNER_WRITE))
         try {
+            // root 运行时移除读权限不生效，跳过而不是误判失败
+            Assume.assumeFalse(Files.isReadable(file))
             val poll = tail.poll()
             assertTrue(poll.events.isEmpty())
             assertFalse(poll.restarted)
