@@ -1,0 +1,38 @@
+package com.github.izerui.imux.bridge
+
+import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * 桥接是旁路扩展：只能是新代码依赖现有代码，现有代码不能反过来依赖桥接。
+ * 这条测试失败，说明有人把桥接逻辑写进了原有功能里。
+ */
+class BridgeIsolationSourceTest {
+    private val root = File("src/main/kotlin/com/github/izerui/imux")
+
+    @Test
+    fun `bridge 以外的源码不引用 bridge 包`() {
+        val offenders =
+            root.walkTopDown()
+                .filter { it.isFile && it.extension == "kt" }
+                .filterNot { it.path.contains("${File.separator}bridge${File.separator}") }
+                .filter { SourceCode(it.path).normalized.contains("com.github.izerui.imux.bridge") }
+                .map { it.path }
+                .toList()
+        assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test
+    fun `渠道与路由内核不依赖 Agent 类型和平台终端`() {
+        val core = File(root, "bridge/core")
+        core.listFiles { f -> f.extension == "kt" && f.name != "BridgeModels.kt" }!!.forEach { file ->
+            val code = SourceCode(file.path).normalized
+            assertTrue("${file.name} 引用了 AgentType", !code.contains("AgentType"))
+            assertTrue("${file.name} 引用了终端平台 API", !code.contains("org.jetbrains.plugins.terminal"))
+            assertTrue("${file.name} 引用了 intellij API", !code.contains("com.intellij"))
+        }
+    }
+}
