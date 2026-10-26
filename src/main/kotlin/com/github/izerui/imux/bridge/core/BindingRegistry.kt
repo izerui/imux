@@ -64,13 +64,16 @@ class BindingRegistry {
         return current.copy(target = current.target.copy(sessionId = sessionId)).also { byRobot[current.robotId] = it }
     }
 
-    /** 项目重开后同一原生会话以新标签恢复。 */
+    /** 项目重开后同一原生会话以新标签恢复。若该标签已被其他机器人持有则拒绝，返回 null。 */
     @Synchronized
     fun reattach(
         robotId: RobotId,
         tabId: String,
     ): Binding? {
         val current = byRobot[robotId] ?: return null
+        byRobot.values
+            .firstOrNull { it.target.tabId == tabId && it.robotId != robotId }
+            ?.let { return null }
         return current.copy(target = current.target.copy(tabId = tabId)).also { byRobot[robotId] = it }
     }
 

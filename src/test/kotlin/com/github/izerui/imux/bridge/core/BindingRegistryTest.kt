@@ -55,4 +55,21 @@ class BindingRegistryTest {
         assertFalse(registry.isCurrent(a, bound.epoch))
         assertTrue(registry.snapshot().isEmpty())
     }
+
+    @Test
+    fun `重新挂接到已被其他机器人持有的标签返回 null 且双方绑定不变`() {
+        val registry = BindingRegistry()
+        registry.bind(a, target("t1"))
+        registry.bind(b, target("t2"))
+        assertNull(registry.reattach(a, "t2"))
+        assertEquals("t1", registry.bindingOf(a)!!.target.tabId)
+        assertEquals(b, registry.bindingForTab("t2")!!.robotId)
+    }
+
+    @Test
+    fun `未知机器人重新挂接和未知标签会话迁移返回 null`() {
+        val registry = BindingRegistry()
+        assertNull(registry.reattach(a, "t1"))
+        assertNull(registry.migrateSession("t1", "s-new"))
+    }
 }
