@@ -1,0 +1,193 @@
+package com.github.izerui.imux.bridge.channel.wecom
+
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
+import com.github.izerui.imux.bridge.channel.FrameListener
+import com.github.izerui.imux.bridge.channel.FrameTransport
+import com.github.izerui.imux.bridge.channel.SlidingWindowLimiter
+import com.github.izerui.imux.bridge.core.DeliveryResult
+import com.github.izerui.imux.bridge.core.InboundMessage
+import com.github.izerui.imux.bridge.core.InboundSink
+import com.github.izerui.imux.bridge.core.OutboundMessage
+import com.github.izerui.imux.bridge.core.RobotId
+import com.google.gson.JsonParser
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.Random
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
+
+class WecomConnectionTest {
+    /** 假传输：记录发出的帧；按 [acker] 决定是否确认、errcode 多少。 */
+    private class FakeTransport(
+        private val opens: AtomicInteger,
+        private val acker: (cmd: String) -> Int?,
+    ) : FrameTransport {
+        val sent = CopyOnWriteArrayList<String>()
+        var listener: FrameListener? = null
+
+        override suspend fun open(
+            url: String,
+            listener: FrameListener,
+        ) {
+            opens.incrementAndGet()
+            this.listener = listener
+        }
+
+        override suspend fun send(text: String) {
+            sent += text
+            val frame = JsonParser.parseString(text).asJsonObject
+            val cmd = frame["cmd"].asString
+            val reqId = frame["headers"].asJsonObject["req_id"].asString
+            val errcode = acker(cmd) ?: return
+            listener?.onText("""{"headers":{"req_id":"$reqId"},"errcode":$errcode,"errmsg":"e"}""")
+        }
+
+        override fun close() {
+            listener?.onClosed("closed")
+            listener = null
+        }
+
+        fun emit(text: String) = listener!!.onText(text)
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val statuses = CopyOnWriteArrayList<ConnectionStatus>()
+    private val received = CopyOnWriteArrayList<InboundMessage>()
+    private val opens = AtomicInteger()
+    private val transports = CopyOnWriteArrayList<FakeTransport>()
+
+    @After
+    fun tearDown() = scope.cancel()
+
+    private fun connection(
+        heartbeatMillis: Long = 60_000,
+        limiter: SlidingWindowLimiter = SlidingWindowLimiter(30, 60_000),
+        acker: (String) -> Int? = { 0 },
+    ) = WecomConnection(
+        robotId = RobotId("r"),
+        botId = "B",
+        secret = "S",
+        scope = scope,
+        transportFactory = { FakeTransport(opens, acker).also { transports += it } },
+        random = Random(7),
+        heartbeatMillis = heartbeatMillis,
+        ackTimeoutMillis = 200,
+        backoff = { 0L },
+        limiter = limiter,
+        maxRateWaitMillis = 50,
+    )
+
+    private fun startAndAwaitOnline(conn: WecomConnection) =
+        runBlocking {
+            conn.start(InboundSink { received += it }) { statuses += it }
+            withTimeout(2_000) { while (ConnectionStatus.Online !in statuses) delay(5) }
+        }
+
+    private fun singleText(
+        msgId: String,
+        user: String,
+        text: String,
+        chat: String = "single",
+    ) = """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"$msgId","chattype":"$chat","from":{"userid":"$user"},"msgtype":"text","text":{"content":"$text"}}}"""
+
+    @Test
+    fun `连接后订阅并上线`() {
+        startAndAwaitOnline(connection())
+        val subscribe = JsonParser.parseString(transports.first().sent.first()).asJsonObject
+        assertEquals("aibot_subscribe", subscribe["cmd"].asString)
+        assertEquals("B", subscribe["body"].asJsonObject["bot_id"].asString)
+    }
+
+    @Test
+    fun `只转交单聊文本并按 msgid 去重`() {
+        startAndAwaitOnline(connection())
+        val t = transports.first()
+        t.emit(singleText("m1", "u1", "跑一下单测"))
+        t.emit(singleText("m1", "u1", "跑一下单测"))
+        t.emit(singleText("m2", "u2", "群里的话", chat = "group"))
+        assertEquals(listOf(InboundMessage(RobotId("r"), "m1", "u1", "u1", "跑一下单测")), received.toList())
+    }
+
+    @Test
+    fun `被踢后不再重连`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            transports.first().emit("""{"cmd":"aibot_event_callback","headers":{"req_id":"R"},"body":{"msgtype":"event","event":{"eventtype":"disconnected_event"}}}""")
+            withTimeout(2_000) { while (ConnectionStatus.Kicked !in statuses) delay(5) }
+            delay(100)
+            assertEquals(1, opens.get())
+        }
+
+    @Test
+    fun `认证连续失败 5 次后停止`() =
+        runBlocking {
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_subscribe") 40001 else 0 })
+            conn.start(InboundSink { }) { statuses += it }
+            withTimeout(3_000) { while (statuses.none { it is ConnectionStatus.Failed }) delay(5) }
+            assertEquals(5, opens.get())
+        }
+
+    @Test
+    fun `心跳连续两次未确认则重连`() =
+        runBlocking {
+            val conn = connection(heartbeatMillis = 20, acker = { cmd -> if (cmd == "ping") null else 0 })
+            startAndAwaitOnline(conn)
+            withTimeout(3_000) { while (opens.get() < 2) delay(5) }
+        }
+
+    @Test
+    fun `主动推送单聊 markdown 并按确认结果返回`() =
+        runBlocking {
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") 846607 else 0 })
+            startAndAwaitOnline(conn)
+            val result = conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi"))
+            assertEquals(DeliveryResult.Rejected("846607 e"), result)
+            val frame = JsonParser.parseString(transports.first().sent.last()).asJsonObject
+            assertEquals(1, frame["body"].asJsonObject["chat_type"].asInt)
+            assertEquals("u1", frame["body"].asJsonObject["chatid"].asString)
+        }
+
+    @Test
+    fun `确认成功返回 Accepted，离线返回 Rejected`() =
+        runBlocking {
+            val conn = connection()
+            assertEquals(DeliveryResult.Rejected("offline"), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi")))
+            startAndAwaitOnline(conn)
+            assertEquals(DeliveryResult.Accepted(null), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi")))
+        }
+
+    @Test
+    fun `超出限流等待上限时拒绝`() =
+        runBlocking {
+            val conn = connection(limiter = SlidingWindowLimiter(1, 60_000))
+            startAndAwaitOnline(conn)
+            assertEquals(DeliveryResult.Accepted(null), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "a")))
+            assertEquals(DeliveryResult.Rejected("rate limited"), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "b")))
+        }
+
+    @Test
+    fun `停止后状态为 Stopped`() =
+        runBlocking {
+            val conn = connection()
+            startAndAwaitOnline(conn)
+            conn.stop()
+            withTimeout(2_000) { while (ConnectionStatus.Stopped !in statuses) delay(5) }
+            assertTrue(opens.get() >= 1)
+        }
+
+    @Test
+    fun `退避从 1 秒翻倍到 30 秒封顶`() {
+        assertEquals(1_000L, wecomBackoffMillis(1))
+        assertEquals(2_000L, wecomBackoffMillis(2))
+        assertEquals(30_000L, wecomBackoffMillis(10))
+    }
+}
