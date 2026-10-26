@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.core
 
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.cancellation.CancellationException
@@ -9,6 +10,7 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * 入站：校验本人 → 平台消息去重 → 找绑定 → 交给终端端口。不判断 Agent 忙闲，
  * 排队还是插入由 CLI 自己决定；这里只保证按到达顺序逐条提交。
+ * 终端未就绪时在提交锁内有限重试，每次尝试前都复核绑定，换绑或解绑后立即停止。
  * 出站：助手文本原文转发；电脑端输入带标签转发；远程输入在记录中再次出现时不回显；
  * 工具调用只计数，在轮次完成时汇总，避免逐条通知触发平台限频。
  */
@@ -19,6 +21,8 @@ class BridgeRouter(
     private val channelOf: (RobotId) -> ChannelAdapter?,
     private val texts: BridgeTexts,
     private val onDelivery: (OutboundMessage, DeliveryResult) -> Unit = { _, _ -> },
+    /** 终端未就绪时两次尝试之间的间隔；测试传 0。 */
+    private val notReadyRetryDelayMs: Long = 300,
 ) {
     private val submitLock = Mutex()
     private val lock = Any()
@@ -56,11 +60,15 @@ class BridgeRouter(
                 if (current == null) return@withLock SubmitPhase.BindingGone
                 if (current.epoch != binding.epoch) return@withLock SubmitPhase.BindingChanged
 
+                // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
                 rememberRemote(tabId, text)
                 try {
-                    SubmitPhase.Done(sessionPort.submit(current.target, text))
+                    val phase = submitWithRetry(message.robotId, current, text)
+                    // 未提交成功，清除回显登记
+                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) forgetRemote(tabId, text)
+                    phase
                 } catch (e: CancellationException) {
                     forgetRemote(tabId, text)
                     unmarkSeen(message.robotId, message.externalMessageId)
@@ -82,20 +90,33 @@ class BridgeRouter(
             is SubmitPhase.Done -> when (phase.result) {
                 SubmitResult.SUBMITTED_TO_TERMINAL -> InboundOutcome.SUBMITTED_TO_TERMINAL
                 SubmitResult.NOT_READY -> {
-                    // 提交失败，清除回显登记
-                    val tabId = bindings.bindingOf(message.robotId)?.target?.tabId ?: binding.target.tabId
-                    forgetRemote(tabId, text)
                     reply(message.robotId, owner, texts.notReady())
                     InboundOutcome.NOT_READY
                 }
                 SubmitResult.OFFLINE -> {
-                    val tabId = bindings.bindingOf(message.robotId)?.target?.tabId ?: binding.target.tabId
-                    forgetRemote(tabId, text)
                     reply(message.robotId, owner, texts.offline())
                     InboundOutcome.OFFLINE
                 }
             }
         }
+    }
+
+    /**
+     * 须在 submitLock 内调用。终端未就绪时最多尝试 [NOT_READY_ATTEMPTS] 次；
+     * 每次尝试前复核绑定代次，等待期间换绑或解绑则不再提交，按绑定已变处理。
+     */
+    private suspend fun submitWithRetry(
+        robotId: RobotId,
+        binding: Binding,
+        text: String,
+    ): SubmitPhase {
+        repeat(NOT_READY_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(notReadyRetryDelayMs)
+            if (!bindings.isCurrent(robotId, binding.epoch)) return SubmitPhase.BindingChanged
+            val result = sessionPort.submit(binding.target, text)
+            if (result != SubmitResult.NOT_READY) return SubmitPhase.Done(result)
+        }
+        return SubmitPhase.Done(SubmitResult.NOT_READY)
     }
 
     suspend fun onSessionEvents(
@@ -230,5 +251,6 @@ class BridgeRouter(
     private companion object {
         const val SEEN_CAPACITY = 1000
         const val ECHO_CAPACITY = 20
+        const val NOT_READY_ATTEMPTS = 3
     }
 }

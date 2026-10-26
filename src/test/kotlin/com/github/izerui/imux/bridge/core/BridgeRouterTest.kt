@@ -64,7 +64,43 @@ class BridgeRouterTest {
     private val registry = BindingRegistry()
     private val port = FakePort()
     private val channel = FakeChannel(robot)
-    private val router = BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) channel else null }, Texts)
+    private val router =
+        BridgeRouter(
+            registry,
+            { if (it == robot) owner else null },
+            port,
+            { if (it == robot) channel else null },
+            Texts,
+            notReadyRetryDelayMs = 0,
+        )
+
+    /** 按脚本逐次返回结果；每次调用前执行 beforeCall（第几次调用，从 0 开始）。 */
+    private class ScriptedPort(
+        private val results: List<SubmitResult>,
+        private val beforeCall: (Int) -> Unit = {},
+    ) : TerminalSessionPort {
+        val submitted = mutableListOf<Pair<String, String>>()
+
+        override suspend fun submit(
+            target: SessionTarget,
+            text: String,
+        ): SubmitResult {
+            val call = submitted.size
+            submitted += target.tabId to text
+            beforeCall(call)
+            return results[minOf(call, results.lastIndex)]
+        }
+    }
+
+    private fun routerWith(p: TerminalSessionPort) =
+        BridgeRouter(
+            registry,
+            { if (it == robot) owner else null },
+            p,
+            { if (it == robot) channel else null },
+            Texts,
+            notReadyRetryDelayMs = 0,
+        )
 
     private fun inbound(
         id: String,
@@ -287,5 +323,57 @@ class BridgeRouterTest {
             assertEquals(listOf("tab-1" to "先到"), suspendingPort.submitted)
             // OFFLINE 回复已发送
             assertTrue(channel.sent.any { it.text == "OFFLINE" })
+        }
+
+    @Test
+    fun `终端未就绪时由路由有限重试，就绪后提交成功`() =
+        runBlocking {
+            val scripted = ScriptedPort(listOf(SubmitResult.NOT_READY, SubmitResult.NOT_READY, SubmitResult.SUBMITTED_TO_TERMINAL))
+            val r = routerWith(scripted)
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "稍等就绪")))
+            assertEquals(List(3) { "tab-1" to "稍等就绪" }, scripted.submitted)
+            assertTrue(channel.sent.isEmpty())
+        }
+
+    @Test
+    fun `终端一直未就绪时重试三次后回复未就绪`() =
+        runBlocking {
+            val scripted = ScriptedPort(listOf(SubmitResult.NOT_READY))
+            val r = routerWith(scripted)
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.NOT_READY, r.onInbound(inbound("1", "a")))
+            assertEquals(3, scripted.submitted.size)
+            assertEquals(listOf("NOT_READY"), sentTexts())
+        }
+
+    @Test
+    fun `未就绪重试期间换绑，不再提交到旧终端`() =
+        runBlocking {
+            val scripted =
+                ScriptedPort(listOf(SubmitResult.NOT_READY)) { call ->
+                    if (call == 0) registry.bind(robot, target.copy(tabId = "tab-2"))
+                }
+            val r = routerWith(scripted)
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "换绑了")))
+            assertEquals(listOf("tab-1" to "换绑了"), scripted.submitted)
+            assertEquals(listOf("OFFLINE"), sentTexts())
+        }
+
+    @Test
+    fun `提交失败时清除的是提交目标标签上的回显登记`() =
+        runBlocking {
+            // 提交期间换绑到 tab-2，再失败：必须清 tab-1 上的登记，而不是 tab-2
+            val scripted =
+                ScriptedPort(listOf(SubmitResult.OFFLINE)) { registry.bind(robot, target.copy(tabId = "tab-2")) }
+            val r = routerWith(scripted)
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "同一句")))
+            // 换回 tab-1 后，电脑上输入的同样文本应带标签转发，不被残留登记吞掉
+            registry.bind(robot, target)
+            channel.sent.clear()
+            r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "同一句")))
+            assertEquals(listOf("LOCAL:\n同一句"), sentTexts())
         }
 }
