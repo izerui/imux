@@ -13,6 +13,7 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -182,6 +183,39 @@ class WecomConnectionTest {
             conn.stop()
             withTimeout(2_000) { while (ConnectionStatus.Stopped !in statuses) delay(5) }
             assertTrue(opens.get() >= 1)
+        }
+
+    @Test
+    fun `会话断开时进行中的发送返回 Unknown`() =
+        runBlocking {
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") null else 0 })
+            startAndAwaitOnline(conn)
+            val result = async(Dispatchers.Default) {
+                conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi"))
+            }
+            delay(30)
+            transports.first().close()
+            assertEquals(DeliveryResult.Unknown, result.await())
+        }
+
+    @Test
+    fun `停止后重新启动产生独立的新运行`() =
+        runBlocking {
+            val statuses1 = CopyOnWriteArrayList<ConnectionStatus>()
+            val statuses2 = CopyOnWriteArrayList<ConnectionStatus>()
+            val conn = connection()
+            conn.start(InboundSink { }) { statuses1 += it }
+            withTimeout(2_000) { while (ConnectionStatus.Online !in statuses1) delay(5) }
+            conn.stop()
+            withTimeout(2_000) { while (ConnectionStatus.Stopped !in statuses1) delay(5) }
+            val stoppedIdx = statuses1.indexOfLast { it == ConnectionStatus.Stopped }
+            delay(50)
+            assertEquals(stoppedIdx, statuses1.lastIndex)
+            conn.start(InboundSink { }) { statuses2 += it }
+            withTimeout(2_000) { while (ConnectionStatus.Online !in statuses2) delay(5) }
+            delay(50)
+            assertEquals(stoppedIdx, statuses1.lastIndex)
+            assertTrue(ConnectionStatus.Online in statuses2)
         }
 
     @Test

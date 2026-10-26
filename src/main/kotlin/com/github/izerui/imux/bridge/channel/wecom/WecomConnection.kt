@@ -17,7 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
@@ -25,6 +25,7 @@ import java.security.SecureRandom
 import java.util.Random
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.coroutines.coroutineContext
 
 fun wecomBackoffMillis(attempt: Int): Long = minOf(1_000L shl (attempt - 1).coerceIn(0, 15), 30_000L)
 
@@ -58,36 +59,52 @@ class WecomConnection(
         data class Dropped(val reason: String) : SessionEnd
     }
 
-    private val pending = ConcurrentHashMap<String, CompletableDeferred<WecomFrame.Ack>>()
+    /** Per-session mutable state, isolated from other sessions. */
+    private class SessionState {
+        val pending = ConcurrentHashMap<String, CompletableDeferred<WecomFrame.Ack>>()
+
+        @Volatile
+        var transport: FrameTransport? = null
+
+        fun endPending() {
+            val ex = IOException("session ended")
+            pending.values.forEach { it.completeExceptionally(ex) }
+            pending.clear()
+        }
+    }
+
     private val seen = LinkedHashSet<String>()
 
     @Volatile
-    private var online: FrameTransport? = null
+    private var session: SessionState? = null
 
     @Volatile
     private var job: Job? = null
 
-    private var listener: ConnectionListener = ConnectionListener { }
+    @Volatile
+    private var activeListener: ConnectionListener = ConnectionListener { }
 
     override fun start(
         sink: InboundSink,
         listener: ConnectionListener,
     ) {
         if (job != null) return
-        this.listener = listener
-        job = scope.launch { runLoop(sink) }
+        activeListener = listener
+        job = scope.launch { runLoop(sink, listener) }
     }
 
     override fun stop() {
-        job?.cancel()
+        val j = job ?: return
         job = null
-        online?.close()
-        online = null
-        listener.statusChanged(ConnectionStatus.Stopped)
+        j.cancel()
+        session?.transport?.close()
+        session = null
+        activeListener.statusChanged(ConnectionStatus.Stopped)
     }
 
     override suspend fun send(message: OutboundMessage): DeliveryResult {
-        val transport = online ?: return DeliveryResult.Rejected("offline")
+        val s = session ?: return DeliveryResult.Rejected("offline")
+        val transport = s.transport ?: return DeliveryResult.Rejected("offline")
         var wait = limiter.tryAcquire(message.chatId)
         if (wait > 0) {
             if (wait > maxRateWaitMillis) return DeliveryResult.Rejected("rate limited")
@@ -98,7 +115,7 @@ class WecomConnection(
         val reqId = WecomProtocol.reqId("aibot_send_msg", now(), random)
         val ack =
             try {
-                request(transport, reqId, WecomProtocol.sendMarkdown(reqId, message.chatId, message.text))
+                request(s, transport, reqId, WecomProtocol.sendMarkdown(reqId, message.chatId, message.text))
             } catch (e: CancellationException) {
                 throw e
             } catch (_: IOException) {
@@ -107,20 +124,24 @@ class WecomConnection(
         return if (ack.errcode == 0) DeliveryResult.Accepted(null) else DeliveryResult.Rejected("${ack.errcode} ${ack.errmsg.orEmpty()}".trim())
     }
 
-    private suspend fun runLoop(sink: InboundSink) {
+    private suspend fun runLoop(
+        sink: InboundSink,
+        listener: ConnectionListener,
+    ) {
+        val myJob = coroutineContext.job
         var attempt = 0
         var authFailures = 0
-        while (scope.isActive) {
-            listener.statusChanged(ConnectionStatus.Connecting)
-            when (val end = runSession(sink) { attempt = 0 }) {
+        while (myJob.isActive) {
+            if (myJob.isActive) listener.statusChanged(ConnectionStatus.Connecting)
+            when (val end = runSession(sink, listener) { attempt = 0 }) {
                 SessionEnd.Kicked -> {
-                    listener.statusChanged(ConnectionStatus.Kicked)
+                    if (myJob.isActive) listener.statusChanged(ConnectionStatus.Kicked)
                     return
                 }
                 is SessionEnd.AuthFailed -> {
                     authFailures++
                     if (authFailures >= MAX_AUTH_FAILURES) {
-                        listener.statusChanged(ConnectionStatus.Failed(end.reason))
+                        if (myJob.isActive) listener.statusChanged(ConnectionStatus.Failed(end.reason))
                         return
                     }
                 }
@@ -133,15 +154,17 @@ class WecomConnection(
 
     private suspend fun runSession(
         sink: InboundSink,
+        listener: ConnectionListener,
         onOnline: () -> Unit,
     ): SessionEnd {
+        val state = SessionState()
         val transport = transportFactory()
         val ended = CompletableDeferred<SessionEnd>()
         val frameListener =
             object : FrameListener {
                 override fun onText(text: String) {
                     when (val frame = WecomProtocol.parse(text)) {
-                        is WecomFrame.Ack -> pending.remove(frame.reqId)?.complete(frame)
+                        is WecomFrame.Ack -> state.pending.remove(frame.reqId)?.complete(frame)
                         is WecomFrame.Message -> deliver(frame, sink)
                         WecomFrame.Kicked -> ended.complete(SessionEnd.Kicked)
                         else -> Unit
@@ -154,17 +177,19 @@ class WecomConnection(
             }
         try {
             transport.open(WecomProtocol.URL, frameListener)
+            state.transport = transport
             val subscribeId = WecomProtocol.reqId("aibot_subscribe", now(), random)
-            val ack = request(transport, subscribeId, WecomProtocol.subscribe(subscribeId, botId, secret))
+            val ack = request(state, transport, subscribeId, WecomProtocol.subscribe(subscribeId, botId, secret))
             when {
                 ack == null -> return SessionEnd.Dropped("subscribe timeout").also { transport.close() }
                 ack.errcode != 0 -> return SessionEnd.AuthFailed("${ack.errcode} ${ack.errmsg.orEmpty()}".trim()).also { transport.close() }
             }
-            online = transport
+            this@WecomConnection.session = state
             onOnline()
-            listener.statusChanged(ConnectionStatus.Online)
+            val myJob = coroutineContext.job
+            if (myJob.isActive) listener.statusChanged(ConnectionStatus.Online)
             return coroutineScope {
-                val heartbeat = launch { heartbeat(transport, ended) }
+                val heartbeat = launch { heartbeat(state, transport, ended) }
                 val end = ended.await()
                 heartbeat.cancel()
                 end
@@ -174,14 +199,17 @@ class WecomConnection(
         } catch (e: Exception) {
             return SessionEnd.Dropped(e.message ?: e.javaClass.simpleName)
         } finally {
-            if (online === transport) online = null
+            if (this@WecomConnection.session === state) {
+                this@WecomConnection.session = null
+            }
+            state.transport = null
             transport.close()
-            pending.values.forEach { it.cancel() }
-            pending.clear()
+            state.endPending()
         }
     }
 
     private suspend fun heartbeat(
+        state: SessionState,
         transport: FrameTransport,
         ended: CompletableDeferred<SessionEnd>,
     ) {
@@ -189,7 +217,14 @@ class WecomConnection(
         while (true) {
             delay(heartbeatMillis)
             val id = WecomProtocol.reqId("ping", now(), random)
-            val ack = runCatching { request(transport, id, WecomProtocol.ping(id)) }.getOrNull()
+            val ack =
+                try {
+                    request(state, transport, id, WecomProtocol.ping(id))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
             missed = if (ack == null) missed + 1 else 0
             if (missed >= MAX_MISSED_PINGS) {
                 ended.complete(SessionEnd.Dropped("heartbeat timeout"))
@@ -199,17 +234,18 @@ class WecomConnection(
     }
 
     private suspend fun request(
+        state: SessionState,
         transport: FrameTransport,
         reqId: String,
         frame: String,
     ): WecomFrame.Ack? {
         val deferred = CompletableDeferred<WecomFrame.Ack>()
-        pending[reqId] = deferred
+        state.pending[reqId] = deferred
         try {
             transport.send(frame)
             return withTimeoutOrNull(ackTimeoutMillis) { deferred.await() }
         } finally {
-            pending.remove(reqId)
+            state.pending.remove(reqId)
         }
     }
 
