@@ -36,4 +36,24 @@ class TailStartPolicyTest {
         // resume 回旧会话，不应倾倒历史
         assertFalse(readFromStart(createdAt = now.minusSeconds(600), migratedAt = now))
     }
+
+    @Test
+    fun `同一绑定代次与会话时复用尾随器`() {
+        assertTrue(reuseTail(entryEpoch = 3, entrySessionId = "s1", bindingEpoch = 3, bindingSessionId = "s1"))
+    }
+
+    @Test
+    fun `换绑后代次不同时重建尾随器，不倒灌期间的历史`() {
+        assertFalse(reuseTail(entryEpoch = 3, entrySessionId = "s1", bindingEpoch = 5, bindingSessionId = "s1"))
+    }
+
+    @Test
+    fun `会话迁移后重建尾随器，拒绝迁移前建立的旧尾随器`() {
+        assertFalse(reuseTail(entryEpoch = 3, entrySessionId = "s1", bindingEpoch = 3, bindingSessionId = "s2"))
+    }
+
+    @Test
+    fun `绑定尚无会话时不复用`() {
+        assertFalse(reuseTail(entryEpoch = 3, entrySessionId = "s1", bindingEpoch = 3, bindingSessionId = null))
+    }
 }

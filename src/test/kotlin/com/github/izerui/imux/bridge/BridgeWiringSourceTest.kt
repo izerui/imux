@@ -28,6 +28,13 @@ class BridgeWiringSourceTest {
     }
 
     @Test
+    fun `尾随器按绑定代次与会话缓存，换绑或迁移后重建`() {
+        assertTrue(service.contains("ConcurrentHashMap<String, TailEntry>()"))
+        assertTrue(service.contains("reuseTail(cached.epoch, cached.sessionId, binding.epoch, binding.target.sessionId)"))
+        assertTrue(service.contains("TailEntry(binding.epoch, sessionId, tail)"))
+    }
+
+    @Test
     fun `桥接协程与故障隔离`() {
         assertTrue(service.contains("SupervisorJob"))
         assertTrue(hub.contains("SupervisorJob"))
