@@ -179,7 +179,8 @@
                 id="imux.ReviewOnce"
                 class="com.github.izerui.imux.terminal.ReviewOnceAction"
                 text="Review Once"
-                description="Choose an agent to review this session once">
+                description="Choose an agent to review this session once"
+                icon="AllIcons.Toolwindows.ToolWindowInspection">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="after"
                           relative-to-action="imux.PeerProgramming"/>
         </action>
