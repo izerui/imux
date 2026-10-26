@@ -166,16 +166,6 @@ class TerminalBridgeService(
         return tail
     }
 
-    /**
-     * 迁移后是否从头读取会话记录。
-     * 会话创建时间在迁移前 60 秒以内视为新会话（/clear、/new），从头转发；
-     * 更早的会话（resume 回旧会话）则从末尾开始，避免倾倒全部历史。
-     */
-    internal fun readFromStart(createdAt: Instant, migratedAt: Instant?): Boolean {
-        if (migratedAt == null) return false
-        return !createdAt.isBefore(migratedAt.minusSeconds(60))
-    }
-
     private fun boundHere(): List<Binding> = hub.bindings.snapshot().filter { it.target.projectPath == projectPath }
 
     private fun tabIdOf(sessionKey: String): String? =
@@ -192,4 +182,14 @@ class TerminalBridgeService(
 
         fun getInstance(project: Project): TerminalBridgeService = project.getService(TerminalBridgeService::class.java)
     }
+}
+
+/**
+ * 迁移后是否从头读取会话记录。
+ * 会话创建时间在迁移前 60 秒以内视为新会话（/clear、/new），从头转发；
+ * 更早的会话（resume 回旧会话）则从末尾开始，避免倾倒全部历史。
+ */
+internal fun readFromStart(createdAt: Instant, migratedAt: Instant?): Boolean {
+    if (migratedAt == null) return false
+    return !createdAt.isBefore(migratedAt.minusSeconds(60))
 }
