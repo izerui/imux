@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.bridge.core.Binding
+import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.bridge.terminal.TabChange
 import com.github.izerui.imux.bridge.terminal.tabChangeFor
 import com.github.izerui.imux.bridge.transcript.TranscriptDecoders
@@ -72,6 +73,7 @@ class TerminalBridgeService(
             TurnEventsListener.TOPIC,
             object : TurnEventsListener {
                 override fun turnCompleted(sessionId: String) {
+                    if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
                     scope.launch(Dispatchers.IO) {
                         // 先把最后的回复读出来，再报完成，手机上的顺序才和终端一致
@@ -84,6 +86,7 @@ class TerminalBridgeService(
                     sessionId: String,
                     reason: String?,
                 ) {
+                    if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
                     scope.launch(Dispatchers.IO) {
                         pollTab(tabId)
@@ -94,13 +97,15 @@ class TerminalBridgeService(
         )
         scope.launch(Dispatchers.IO) {
             while (isActive) {
-                for (binding in boundHere()) {
-                    try {
-                        pollTab(binding.target.tabId)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        LOG.warn("轮询标签 ${binding.target.tabId} 失败", e)
+                if (BridgeSettings.getInstance().state.enabled) {
+                    for (binding in boundHere()) {
+                        try {
+                            pollTab(binding.target.tabId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            LOG.warn("轮询标签 ${binding.target.tabId} 失败", e)
+                        }
                     }
                 }
                 delay(POLL_INTERVAL_MS)
@@ -128,6 +133,7 @@ class TerminalBridgeService(
     private fun release(binding: Binding) {
         if (hub.bindings.bindingOf(binding.robotId)?.epoch != binding.epoch) return
         hub.bindings.unbind(binding.robotId)
+        RobotManager.getInstance().syncBindings()
         tails.remove(binding.target.tabId)
         migratedAt.remove(binding.target.tabId)
         val title = titleOf(binding.target.sessionId)
@@ -137,6 +143,7 @@ class TerminalBridgeService(
     private fun onMigrated(to: String) {
         val tabId = tabIdOf(to) ?: return
         if (hub.bindings.migrateSession(tabId, to) != null) {
+            RobotManager.getInstance().syncBindings()
             tails.remove(tabId)
             migratedAt[tabId] = Instant.now()
         }

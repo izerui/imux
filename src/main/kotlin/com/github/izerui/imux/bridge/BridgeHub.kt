@@ -64,6 +64,12 @@ class BridgeHub(parentScope: CoroutineScope) {
         owners.remove(robotId)
     }
 
+    /** 停止连接时调用：摘除渠道与本人，但保留绑定，重新连接后继续生效。 */
+    fun detachRobot(robotId: RobotId) {
+        channels.remove(robotId)
+        owners.remove(robotId)
+    }
+
     internal fun launch(block: suspend CoroutineScope.() -> Unit) = scope.launch(block = block)
 
     companion object {

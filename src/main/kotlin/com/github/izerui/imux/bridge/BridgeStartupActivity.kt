@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge
 
+import com.github.izerui.imux.bridge.robot.RobotManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 
@@ -7,6 +8,7 @@ import com.intellij.openapi.startup.ProjectActivity
 class BridgeStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         if (!BridgeSettings.getInstance().state.enabled) return
+        RobotManager.getInstance().startAll()
         if (!project.isDisposed) TerminalBridgeService.getInstance(project).start()
     }
 }
