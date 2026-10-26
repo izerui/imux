@@ -23,7 +23,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * 一个项目里绑定终端的观察者：订阅标签变化、会话迁移与轮次事件，旁路读取会话记录。
@@ -45,6 +47,7 @@ class TerminalBridgeService(
     private val tails = ConcurrentHashMap<String, TranscriptTail>()
     private val pollLock = Mutex()
     private val seenTabs = ConcurrentHashMap.newKeySet<String>()
+    private val migratedAt = ConcurrentHashMap<String, Instant>()
 
     @Volatile
     private var projectClosing = false
@@ -91,7 +94,15 @@ class TerminalBridgeService(
         )
         scope.launch(Dispatchers.IO) {
             while (isActive) {
-                boundHere().forEach { pollTab(it.target.tabId) }
+                for (binding in boundHere()) {
+                    try {
+                        pollTab(binding.target.tabId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        LOG.warn("轮询标签 ${binding.target.tabId} 失败", e)
+                    }
+                }
                 delay(POLL_INTERVAL_MS)
             }
         }
@@ -107,6 +118,7 @@ class TerminalBridgeService(
                 is TabChange.Reattach -> {
                     hub.bindings.reattach(binding.robotId, change.tabId)
                     tails.remove(binding.target.tabId)
+                    migratedAt.remove(binding.target.tabId)
                 }
                 TabChange.Release -> release(binding)
             }
@@ -117,13 +129,17 @@ class TerminalBridgeService(
         if (hub.bindings.bindingOf(binding.robotId)?.epoch != binding.epoch) return
         hub.bindings.unbind(binding.robotId)
         tails.remove(binding.target.tabId)
+        migratedAt.remove(binding.target.tabId)
         val title = titleOf(binding.target.sessionId)
         scope.launch(Dispatchers.IO) { hub.router.onReleased(binding, title) }
     }
 
     private fun onMigrated(to: String) {
         val tabId = tabIdOf(to) ?: return
-        if (hub.bindings.migrateSession(tabId, to) != null) tails.remove(tabId)
+        if (hub.bindings.migrateSession(tabId, to) != null) {
+            tails.remove(tabId)
+            migratedAt[tabId] = Instant.now()
+        }
     }
 
     private suspend fun pollTab(tabId: String) {
@@ -136,13 +152,28 @@ class TerminalBridgeService(
         }
     }
 
-    /** 会话文件出现后才建立尾随器，并以那一刻的末尾为转发起点。 */
+    /**
+     * 会话文件出现后才建立尾随器。
+     * 迁移到新会话时从头读取，恢复到旧会话时从末尾开始，避免倾倒历史。
+     */
     private fun newTail(binding: Binding): TranscriptTail? {
         val sessionId = binding.target.sessionId ?: return null
-        val file = SessionMonitor.getInstance(project).model.sessionOf(sessionId)?.filePath ?: return null
-        return TranscriptTail(file, TranscriptDecoders.forAgent(binding.target.agentType))
-            .also { it.startAtEnd() }
-            .also { tails[binding.target.tabId] = it }
+        val session = SessionMonitor.getInstance(project).model.sessionOf(sessionId) ?: return null
+        val migrated = migratedAt.remove(binding.target.tabId)
+        val tail = TranscriptTail(session.filePath, TranscriptDecoders.forAgent(binding.target.agentType))
+        if (!readFromStart(session.createdAt, migrated)) tail.startAtEnd()
+        tails[binding.target.tabId] = tail
+        return tail
+    }
+
+    /**
+     * 迁移后是否从头读取会话记录。
+     * 会话创建时间在迁移前 60 秒以内视为新会话（/clear、/new），从头转发；
+     * 更早的会话（resume 回旧会话）则从末尾开始，避免倾倒全部历史。
+     */
+    internal fun readFromStart(createdAt: Instant, migratedAt: Instant?): Boolean {
+        if (migratedAt == null) return false
+        return !createdAt.isBefore(migratedAt.minusSeconds(60))
     }
 
     private fun boundHere(): List<Binding> = hub.bindings.snapshot().filter { it.target.projectPath == projectPath }
