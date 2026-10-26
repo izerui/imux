@@ -10,6 +10,8 @@ import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.TurnEventsListener
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
@@ -111,6 +113,9 @@ class TerminalBridgeService(
                 delay(POLL_INTERVAL_MS)
             }
         }
+        // 恢复的绑定可能指向 "restored:<sessionId>" 占位标签；如果会话标签已经打开，
+        // 需要立即对账一次以触发 Reattach，否则直到下次标签变化才会挂接。
+        ApplicationManager.getApplication().invokeLater({ if (!project.isDisposed) onSessionsChanged() }, ModalityState.any())
     }
 
     /** 在 EDT 调用（TerminalHost 的回调线程）。 */

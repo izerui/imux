@@ -50,4 +50,10 @@ class BridgeWiringSourceTest {
     fun `注册了桥接启动活动`() {
         assertTrue(pluginXml.contains("com.github.izerui.imux.bridge.BridgeStartupActivity"))
     }
+
+    @Test
+    fun `启动时调度一次恢复绑定对账`() {
+        assertTrue(service.contains("invokeLater("))
+        assertTrue(service.contains("onSessionsChanged()"))
+    }
 }

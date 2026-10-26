@@ -43,4 +43,15 @@ class BindingLifecycleTest {
         val pending = binding.copy(target = binding.target.copy(sessionId = null))
         assertEquals(TabChange.Release, tabChangeFor(pending, mapOf("tab-2" to "other"), setOf("tab-1"), projectClosing = false))
     }
+
+    @Test
+    fun `恢复的绑定在会话标签已打开时重新挂接`() {
+        // 恢复的绑定 tabId 是占位符 "restored:s1"，不在 openTabs 中；
+        // 但 sessionId 与已打开标签的 sessionKey 匹配，应触发 Reattach。
+        val restored = Binding(RobotId("r"), SessionTarget("/p", "restored:s1", AgentType.CLAUDE, "s1"), epoch = 1)
+        assertEquals(
+            TabChange.Reattach("tab-new"),
+            tabChangeFor(restored, mapOf("tab-new" to "s1"), emptySet(), projectClosing = false),
+        )
+    }
 }

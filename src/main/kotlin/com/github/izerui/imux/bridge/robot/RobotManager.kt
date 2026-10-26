@@ -156,6 +156,13 @@ class RobotManager(parentScope: CoroutineScope) {
         }
         val connection = factory.connect(RobotId(record.id), credentials, scope)
         if (connections.putIfAbsent(record.id, connection) != null) return
+        // 加载凭据期间开关可能已关闭或机器人已被删除：不留残余连接
+        if (!BridgeSettings.getInstance().state.enabled || robot(record.id) == null) {
+            connections.remove(record.id)
+            connection.stop()
+            hub.detachRobot(RobotId(record.id))
+            return
+        }
         hub.registerRobot(connection, record.owner())
         connection.start(pairingSink(record.id, connection)) { status ->
             setStatus(record.id, status)
@@ -173,6 +180,7 @@ class RobotManager(parentScope: CoroutineScope) {
         id: String,
         connection: ChannelConnection,
     ) = InboundSink { message ->
+        if (!BridgeSettings.getInstance().state.enabled) return@InboundSink
         val record = robot(id) ?: return@InboundSink
         when (val decision = Pairing.decide(record, message, System.currentTimeMillis())) {
             PairDecision.Pass -> hub.inboundSink.accept(message)
