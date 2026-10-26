@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge.transcript
 
 import com.github.izerui.imux.bridge.core.SessionEvent
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
@@ -57,16 +58,21 @@ class TranscriptTail(
         if (attrs.size() == position) return TailPoll(emptyList(), restarted = false)
 
         val events = mutableListOf<SessionEvent>()
-        FileChannel.open(path, StandardOpenOption.READ).use { channel ->
-            channel.position(position)
-            val buffer = ByteBuffer.allocate(READ_BUFFER_BYTES)
-            while (true) {
-                buffer.clear()
-                val read = channel.read(buffer)
-                if (read <= 0) break
-                position += read
-                for (i in 0 until read) consume(buffer.get(i), events)
+        try {
+            FileChannel.open(path, StandardOpenOption.READ).use { channel ->
+                channel.position(position)
+                val buffer = ByteBuffer.allocate(READ_BUFFER_BYTES)
+                while (true) {
+                    buffer.clear()
+                    val read = channel.read(buffer)
+                    if (read <= 0) break
+                    position += read
+                    for (i in 0 until read) consume(buffer.get(i), events)
+                }
             }
+        } catch (_: IOException) {
+            // 文件在 attributes() 与 open/read 之间消失或变为不可读（TOCTOU）——
+            // 返回已解码的事件，position 只含实际读取的字节，下次 poll 会重新检测。
         }
         return TailPoll(events, restarted = false)
     }

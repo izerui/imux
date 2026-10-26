@@ -10,6 +10,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFilePermission
 
 class TranscriptTailTest {
     @get:Rule
@@ -77,5 +78,27 @@ class TranscriptTailTest {
         val tail = TranscriptTail(file, echo).apply { startAtEnd() }
         Files.writeString(file, "first\n")
         assertEquals(listOf("first"), texts(tail.poll()))
+    }
+
+    @Test
+    fun `读取期间文件消失不抛异常`() {
+        // 模拟 TOCTOU：attributes() 成功（同 inode、同 size）但 FileChannel.open 抛 IOException。
+        // 方法：移除文件读权限——attributes() 仍能读取元数据，FileChannel.open 抛 AccessDeniedException。
+        val file = temp.newFile("vanish.jsonl").toPath()
+        Files.writeString(file, "line\n")
+        val tail = TranscriptTail(file, echo).apply { startAtEnd() }
+        append(file, "more\n".toByteArray())
+        Files.setPosixFilePermissions(file, setOf(PosixFilePermission.OWNER_WRITE))
+        try {
+            val poll = tail.poll()
+            assertTrue(poll.events.isEmpty())
+            assertFalse(poll.restarted)
+        } finally {
+            // 恢复权限以便 TemporaryFolder 清理
+            Files.setPosixFilePermissions(
+                file,
+                setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+            )
+        }
     }
 }
