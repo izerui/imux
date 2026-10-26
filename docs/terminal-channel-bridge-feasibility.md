@@ -667,7 +667,7 @@ https://qq-ai.cdn-go.cn/web/neon/-/a53a3adb/q.qq.com_qqbot_mobile/assets/create.
 
 DeepTutor 对企业微信扫码后的处理是 `allow_from = ["*"]`（`channel_onboarding.py: apply`），即任何人都可发消息。imux 不能照搬。企业微信、钉钉扫码成功后，IDE 显示一次性配对码，用户在手机上把配对码发给该机器人；首个匹配的发送者记为本人，配对码随即作废。配对完成前机器人显示“待配对”，不能绑定会话。这一步也顺带满足企业微信主动发送要求“用户先在该会话发过消息”的前提。
 
-非本人消息不进入 CLI，只回复无权限（受频率限制，避免被刷消耗发送额度）。
+非本人消息不进入 CLI，也不回复，避免陌生人刷消息消耗机器人的发送额度。
 
 ### 空闲机器人与换绑行为
 
@@ -691,3 +691,26 @@ DeepTutor 对企业微信扫码后的处理是 `allow_from = ["*"]`（`channel_o
 ### 本轮验证范围
 
 只读核实 imux 源码、DeepTutor 源码、`@tencent-weixin/openclaw-weixin@2.4.10` 发布包和钉钉官方连接器 `device-auth.ts`。没有修改业务代码，没有真实扫码或收发消息。企业微信、飞书扫码重复执行时会新建还是可选回原机器人，以及普通微信多 IDE 扫码的服务端行为，仍需真实账号验证。
+
+## 17. 代码结构与隔离约束
+
+实施计划：`docs/superpowers/plans/2026-10-26-terminal-channel-bridge-core.md`。
+
+| 层 | 模式 | 位置 | 约束 |
+| --- | --- | --- | --- |
+| 渠道 | Adapter | `bridge/core/BridgePorts.kt: ChannelAdapter`，实现放 `bridge/channels/` | 不认识 Agent、终端、绑定 |
+| 路由 | Mediator | `bridge/core/BridgeRouter.kt` | 不按 AgentType 分支；不依赖 IntelliJ API |
+| 绑定 | 注册表 | `bridge/core/BindingRegistry.kt` | 1:1；用户换绑递增 epoch，迁移/重新挂接沿用 |
+| 终端 | Facade | `bridge/terminal/ImuxTerminalSessionPort.kt` | 只调用 TerminalHost 公开方法；不启动 CLI |
+| 记录 | Strategy | `bridge/transcript/` | 只读；全文不截断；自有读位置 |
+| 事件 | Observer | `turn/TurnEvents.kt` | SessionMonitor 只新增两处广播，监听异常不影响原通知 |
+
+依赖方向由 `BridgeIsolationSourceTest` 强制：`bridge/` 以外的源码不得引用桥接包。总开关 `BridgeSettings.enabled` 默认关闭，关闭时不订阅、不轮询、不读取。
+
+### 实施中相对计划的补强
+
+- TranscriptTail.poll 在文件消失时不抛异常
+- BindingRegistry.reattach 拒绝占用他人终端
+- BridgeRouter 提交异常时清理回显登记、加锁后复核绑定
+- TerminalBridgeService 轮询逐会话隔离异常、迁移到新建会话时从头转发（按会话创建时间判断，避免 resume 旧会话倒灌历史）
+- 隔离测试防止空集合静默通过
