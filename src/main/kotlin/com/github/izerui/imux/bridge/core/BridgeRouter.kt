@@ -26,6 +26,13 @@ class BridgeRouter(
     private val pendingRemoteEcho = HashMap<String, ArrayDeque<String>>()
     private val toolCalls = HashMap<String, Int>()
 
+    /** 加锁提交阶段的结果。 */
+    private sealed interface SubmitPhase {
+        data class Done(val result: SubmitResult) : SubmitPhase
+        data object BindingGone : SubmitPhase
+        data object BindingChanged : SubmitPhase
+    }
+
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
         val owner = ownerOf(message.robotId) ?: return InboundOutcome.NOT_PAIRED
         if (message.senderId != owner.senderId || message.chatId != owner.chatId) return InboundOutcome.UNAUTHORIZED
@@ -42,23 +49,51 @@ class BridgeRouter(
             return InboundOutcome.UNBOUND
         }
 
-        val tabId = binding.target.tabId
-        val result =
+        val phase =
             submitLock.withLock {
+                // 加锁后复核绑定：排队期间可能已换绑或解绑
+                val current = bindings.bindingOf(message.robotId)
+                if (current == null) return@withLock SubmitPhase.BindingGone
+                if (current.epoch != binding.epoch) return@withLock SubmitPhase.BindingChanged
+
+                val tabId = current.target.tabId
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
                 rememberRemote(tabId, text)
-                sessionPort.submit(binding.target, text)
+                try {
+                    SubmitPhase.Done(sessionPort.submit(current.target, text))
+                } catch (e: CancellationException) {
+                    forgetRemote(tabId, text)
+                    unmarkSeen(message.robotId, message.externalMessageId)
+                    throw e
+                } catch (_: Exception) {
+                    forgetRemote(tabId, text)
+                    SubmitPhase.Done(SubmitResult.OFFLINE)
+                }
             }
-        if (result != SubmitResult.SUBMITTED_TO_TERMINAL) forgetRemote(tabId, text)
-        return when (result) {
-            SubmitResult.SUBMITTED_TO_TERMINAL -> InboundOutcome.SUBMITTED_TO_TERMINAL
-            SubmitResult.NOT_READY -> {
-                reply(message.robotId, owner, texts.notReady())
-                InboundOutcome.NOT_READY
+        return when (phase) {
+            SubmitPhase.BindingGone -> {
+                reply(message.robotId, owner, texts.unbound())
+                InboundOutcome.UNBOUND
             }
-            SubmitResult.OFFLINE -> {
+            SubmitPhase.BindingChanged -> {
                 reply(message.robotId, owner, texts.offline())
                 InboundOutcome.OFFLINE
+            }
+            is SubmitPhase.Done -> when (phase.result) {
+                SubmitResult.SUBMITTED_TO_TERMINAL -> InboundOutcome.SUBMITTED_TO_TERMINAL
+                SubmitResult.NOT_READY -> {
+                    // 提交失败，清除回显登记
+                    val tabId = bindings.bindingOf(message.robotId)?.target?.tabId ?: binding.target.tabId
+                    forgetRemote(tabId, text)
+                    reply(message.robotId, owner, texts.notReady())
+                    InboundOutcome.NOT_READY
+                }
+                SubmitResult.OFFLINE -> {
+                    val tabId = bindings.bindingOf(message.robotId)?.target?.tabId ?: binding.target.tabId
+                    forgetRemote(tabId, text)
+                    reply(message.robotId, owner, texts.offline())
+                    InboundOutcome.OFFLINE
+                }
             }
         }
     }
@@ -160,6 +195,13 @@ class BridgeRouter(
             while (ids.size > SEEN_CAPACITY) ids.remove(ids.first())
             true
         }
+
+    private fun unmarkSeen(
+        robotId: RobotId,
+        externalMessageId: String,
+    ) = synchronized(lock) {
+        seen[robotId]?.remove(externalMessageId)
+    }
 
     private fun rememberRemote(
         tabId: String,

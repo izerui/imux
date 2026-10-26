@@ -1,10 +1,14 @@
 package com.github.izerui.imux.bridge.core
 
 import com.github.izerui.imux.model.AgentType
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
 
 class BridgeRouterTest {
     private val robot = RobotId("r1")
@@ -198,5 +202,90 @@ class BridgeRouterTest {
             registry.unbind(robot)
             router.onReleased(bound, "修复滚动")
             assertEquals(listOf("RELEASED(修复滚动)"), sentTexts())
+        }
+
+    @Test
+    fun `port 抛出异常时返回 OFFLINE 且回显登记不泄漏`() =
+        runBlocking {
+            val throwingPort =
+                object : TerminalSessionPort {
+                    override suspend fun submit(target: SessionTarget, text: String): SubmitResult {
+                        throw IllegalStateException("boom")
+                    }
+                }
+            val r = BridgeRouter(registry, { if (it == robot) owner else null }, throwingPort, { if (it == robot) channel else null }, Texts)
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "炸了")))
+            assertEquals(listOf("OFFLINE"), sentTexts())
+            // 回显登记已清除：同样文本的本地输入应带标签转发
+            channel.sent.clear()
+            r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "炸了")))
+            assertEquals(listOf("LOCAL:\n炸了"), channel.sent.map { it.text })
+        }
+
+    @Test(expected = kotlin.coroutines.cancellation.CancellationException::class)
+    fun `port 抛出 CancellationException 时传播且消息 id 不被标记为已见`(): Unit =
+        runBlocking {
+            val cancellingPort =
+                object : TerminalSessionPort {
+                    override suspend fun submit(target: SessionTarget, text: String): SubmitResult {
+                        throw kotlin.coroutines.cancellation.CancellationException("cancelled")
+                    }
+                }
+            val r = BridgeRouter(registry, { if (it == robot) owner else null }, cancellingPort, { if (it == robot) channel else null }, Texts)
+            registry.bind(robot, target)
+            try {
+                r.onInbound(inbound("1", "取消"))
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                // 重发同一 id 不应被视为 DUPLICATE
+                // 换一个不抛异常的 port 来验证
+                val normalPort = FakePort()
+                val r2 = BridgeRouter(registry, { if (it == robot) owner else null }, normalPort, { if (it == robot) channel else null }, Texts)
+                assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r2.onInbound(inbound("1", "取消")))
+                throw e
+            }
+        }
+
+    @Test
+    fun `排队期间绑定变更后不提交到旧终端`() =
+        runBlocking {
+            val gate = CompletableDeferred<Unit>()
+            val suspendingPort =
+                object : TerminalSessionPort {
+                    val submitted = mutableListOf<Pair<String, String>>()
+
+                    override suspend fun submit(target: SessionTarget, text: String): SubmitResult {
+                        gate.await()
+                        submitted += target.tabId to text
+                        return SubmitResult.SUBMITTED_TO_TERMINAL
+                    }
+                }
+            val r = BridgeRouter(registry, { if (it == robot) owner else null }, suspendingPort, { if (it == robot) channel else null }, Texts)
+            registry.bind(robot, target)
+
+            // 第一条消息进入 submit 后挂起
+            val job1 = launch { r.onInbound(inbound("1", "先到")) }
+            // 让 job1 有时间拿到 submitLock 并进入 submit
+            kotlinx.coroutines.yield()
+            kotlinx.coroutines.yield()
+
+            // 第二条消息排队等锁
+            val deferred2 = async { r.onInbound(inbound("2", "后到")) }
+            kotlinx.coroutines.yield()
+
+            // 换绑到另一个终端
+            registry.bind(robot, target.copy(tabId = "tab-2"))
+
+            // 放行第一条
+            gate.complete(Unit)
+            job1.join()
+
+            val outcome2 = deferred2.await()
+            // 第二条不应提交到 tab-1（旧目标），而是检测到绑定已变，返回 OFFLINE
+            assertEquals(InboundOutcome.OFFLINE, outcome2)
+            // 只有第一条被提交
+            assertEquals(listOf("tab-1" to "先到"), suspendingPort.submitted)
+            // OFFLINE 回复已发送
+            assertTrue(channel.sent.any { it.text == "OFFLINE" })
         }
 }
