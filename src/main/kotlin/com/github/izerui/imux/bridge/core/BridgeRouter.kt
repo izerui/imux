@@ -154,6 +154,16 @@ class BridgeRouter(
         send(binding, texts.transcriptRestarted())
     }
 
+    /** 用户把机器人绑到会话后，告诉本人当前连接到哪里。走正常的代次校验。 */
+    suspend fun onBound(
+        binding: Binding,
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ) {
+        send(binding, texts.connected(project, agent, sessionTitle))
+    }
+
     /** 绑定已被移除后调用：不再做 epoch 校验，提示发往原聊天。 */
     suspend fun onReleased(
         binding: Binding,

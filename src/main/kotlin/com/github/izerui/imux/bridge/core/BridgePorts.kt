@@ -48,4 +48,14 @@ interface BridgeTexts {
     fun released(sessionTitle: String): String
 
     fun transcriptRestarted(): String
+
+    fun connected(
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ): String
+
+    fun pairingSucceeded(): String
+
+    fun pairingExpired(): String
 }

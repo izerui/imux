@@ -59,6 +59,16 @@ class BridgeRouterTest {
         override fun released(sessionTitle: String) = "RELEASED($sessionTitle)"
 
         override fun transcriptRestarted() = "RESTARTED"
+
+        override fun connected(
+            project: String,
+            agent: String,
+            sessionTitle: String,
+        ) = "CONNECTED($project/$agent/$sessionTitle)"
+
+        override fun pairingSucceeded() = "PAIRED"
+
+        override fun pairingExpired() = "PAIR_EXPIRED"
     }
 
     private val registry = BindingRegistry()
@@ -359,6 +369,23 @@ class BridgeRouterTest {
             assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "换绑了")))
             assertEquals(listOf("tab-1" to "换绑了"), scripted.submitted)
             assertEquals(listOf("OFFLINE"), sentTexts())
+        }
+
+    @Test
+    fun `绑定后向本人发送当前连接`() =
+        runBlocking {
+            val bound = (registry.bind(robot, target) as BindResult.Bound).binding
+            router.onBound(bound, "imux", "Codex", "修复终端滚动")
+            assertEquals(listOf("CONNECTED(imux/Codex/修复终端滚动)"), sentTexts())
+        }
+
+    @Test
+    fun `已被换绑的旧绑定不再发送当前连接`() =
+        runBlocking {
+            val old = (registry.bind(robot, target) as BindResult.Bound).binding
+            registry.bind(robot, target.copy(tabId = "tab-2"))
+            router.onBound(old, "imux", "Codex", "旧会话")
+            assertTrue(channel.sent.isEmpty())
         }
 
     @Test

@@ -26,4 +26,14 @@ internal object BundleBridgeTexts : BridgeTexts {
     override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", sessionTitle)
 
     override fun transcriptRestarted() = ImuxBundle.message("bridge.status.transcriptRestarted")
+
+    override fun connected(
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ) = ImuxBundle.message("bridge.status.connected", project, agent, sessionTitle)
+
+    override fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")
+
+    override fun pairingExpired() = ImuxBundle.message("bridge.pairing.expired")
 }
