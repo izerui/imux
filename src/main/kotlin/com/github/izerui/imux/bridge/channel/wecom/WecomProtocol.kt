@@ -65,10 +65,24 @@ object WecomProtocol {
 
     fun parse(text: String): WecomFrame {
         val root = runCatching { JsonParser.parseString(text) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject ?: return WecomFrame.Unknown
+        return try {
+            doParse(root)
+        } catch (_: RuntimeException) {
+            WecomFrame.Unknown
+        }
+    }
+
+    private fun doParse(root: JsonObject): WecomFrame {
         val reqId = root.obj("headers")?.str("req_id").orEmpty()
         val cmd = root.str("cmd")
         if (cmd == null) {
-            val errcode = root["errcode"]?.takeIf { it.isJsonPrimitive }?.asInt ?: return WecomFrame.Unknown
+            val errcode = root["errcode"]?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { p ->
+                when {
+                    p.isNumber -> p.asInt
+                    p.isString -> p.asString.toIntOrNull()
+                    else -> null
+                }
+            } ?: return WecomFrame.Unknown
             return WecomFrame.Ack(reqId, errcode, root.str("errmsg"))
         }
         val body = root.obj("body") ?: return WecomFrame.Unknown

@@ -84,4 +84,19 @@ class WecomProtocolTest {
         assertEquals(WecomFrame.Unknown, WecomProtocol.parse("not json"))
         assertEquals(WecomFrame.Unknown, WecomProtocol.parse("""{"cmd":"something_new"}"""))
     }
+
+    @Test
+    fun `errcode 为字符串数字仍解析为 Ack`() {
+        assertEquals(WecomFrame.Ack("r1", 0, "ok"), WecomProtocol.parse("""{"headers":{"req_id":"r1"},"errcode":"0","errmsg":"ok"}"""))
+    }
+
+    @Test
+    fun `errcode 为布尔值返回 Unknown`() {
+        assertEquals(WecomFrame.Unknown, WecomProtocol.parse("""{"headers":{"req_id":"r1"},"errcode":true,"errmsg":"ok"}"""))
+    }
+
+    @Test
+    fun `errcode 为非数字字符串返回 Unknown`() {
+        assertEquals(WecomFrame.Unknown, WecomProtocol.parse("""{"headers":{"req_id":"r1"},"errcode":"oops","errmsg":"ok"}"""))
+    }
 }
