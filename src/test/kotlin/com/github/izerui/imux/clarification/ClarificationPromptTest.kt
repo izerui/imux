@@ -249,4 +249,55 @@ class ClarificationPromptTest {
             assertTrue("$name：不给其他", prompt.contains(if (chinese) "不要给\"其他\"选项" else "Do not include an \"Other\" option"))
         }
     }
+
+    @Test
+    fun `核心指南只指向交付目标，交付细则只在输出协议中出现一次`() {
+        for (chinese in listOf(true, false)) {
+            val guidance = loadGuidance(chinese)
+            val detail = if (chinese) "会议纪要" else "meeting summary"
+            assertFalse("$chinese：核心指南不再复述交付细则", guidance.contains(detail))
+            assertTrue("$chinese：核心指南指向输出协议", guidance.contains(if (chinese) "交付的具体要求见输出协议" else "The output protocol defines the handoff requirements"))
+            val opening = openingMessage(fresh, chinese, guidance)
+            assertEquals("$chinese：交付细则只出现一次", 1, opening.split(detail).size - 1)
+            assertTrue(
+                "$chinese：关键取舍未定时继续询问",
+                opening.contains(if (chinese) "这类取舍阻碍任务成立时继续询问，不返回 done" else "when such a tradeoff prevents a coherent task, keep asking instead of returning done"),
+            )
+            assertTrue(
+                "$chinese：交付前核对遗漏",
+                opening.contains(if (chinese) "交付前核对是否遗漏用户的目标与明确要求" else "check that none of the user's goals or explicit requirements were omitted"),
+            )
+        }
+    }
+
+    @Test
+    fun `未回答采用已披露的默认处理，且不冒充用户主动选择`() {
+        for (chinese in listOf(true, false)) {
+            val opening = openingMessage(answered, chinese, loadGuidance(chinese))
+            assertFalse("$chinese：不再说未回答不代表赞同", opening.contains(if (chinese) "未回答不代表赞同" else "Silence is not agreement"))
+            assertTrue(
+                "$chinese：默认处理可以纳入任务",
+                opening.contains(if (chinese) "未回答的题目采用该题事先披露的默认处理，可以据此推进并纳入任务" else "An unanswered item takes the default disclosed for it, which you may proceed with and include in the task"),
+            )
+            assertTrue(
+                "$chinese：不说成主动选择",
+                opening.contains(if (chinese) "但不要说成用户的主动选择" else "do not present it as the user's active choice"),
+            )
+            assertTrue(
+                "$chinese：交付规则与之一致",
+                opening.contains(if (chinese) "采用已披露默认处理的未回答题目不算未确认" else "unanswered items taking their disclosed default are not unconfirmed"),
+            )
+        }
+    }
+
+    @Test
+    fun `材料修改只发上下文与增删内容，不发模型看不到原文的偏移`() {
+        val draft = ReviewedDraft("材料前文\n补充：需要导出\n材料后文", "材料前文\n材料后文", ContentOrigin.NOTES, 0)
+        for (chinese in listOf(true, false)) {
+            val message = continueMessage(chinese, draft)
+            assertFalse("$chinese：没有偏移", message.contains(if (chinese) "偏移" else "offset"))
+            assertTrue("$chinese：保留新增内容", message.contains("补充：需要导出"))
+            assertTrue("$chinese：保留前文定位", message.contains("材料前文"))
+        }
+    }
 }

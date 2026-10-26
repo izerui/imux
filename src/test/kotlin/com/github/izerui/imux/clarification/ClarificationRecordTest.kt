@@ -74,13 +74,13 @@ class ClarificationRecordTest {
                     answerRecord(q(), Answer.Picked(listOf("a"))),
                 ),
             )
-        assertEquals(listOf("description-a", "fallback-q1"), record.confirmed())
+        assertEquals(listOf("description-a", "fallback-q1"), record.recordedAnswers())
     }
 
     @Test
     fun `默认处理为空的不回答不算已确认`() {
         val record = ClarificationRecord("需求", listOf(answerRecord(q().copy(fallback = ""), Answer.Skipped)))
-        assertTrue(record.confirmed().isEmpty())
+        assertTrue(record.recordedAnswers().isEmpty())
     }
 
     @Test

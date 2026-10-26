@@ -104,8 +104,9 @@ internal class ClarificationFlow(
     fun undeliveredPlan(): String? =
         synchronized(lock) { undeliveredRequirement(state) ?: retainedPlanLocked() }
 
+    /** 已有回答或草稿时整理成材料：标签页关闭不能悄悄丢掉提问页、调查中已经回答过的内容。 */
     private fun retainedPlanLocked(): String? {
-        if (record.reviewedDrafts.isEmpty()) return null
+        if (record.history.isEmpty() && record.reviewedDrafts.isEmpty()) return null
         return composeFallback(record, isChinese)
     }
 

@@ -76,8 +76,8 @@ internal data class ClarificationRecord(
     val history: List<AnswerRecord> = emptyList(),
     val reviewedDrafts: List<ReviewedDraft> = emptyList(),
 ) {
-    /** 用户提交过的回答（含未回答时披露的处理），按提交顺序去重；不代表实施决定。 */
-    fun confirmed(): List<String> = history.map { it.recorded.trim() }.filter(String::isNotEmpty).distinct()
+    /** 记下的回答内容（含未回答时采用的默认处理），按提交顺序去重；不代表实施决定。 */
+    fun recordedAnswers(): List<String> = history.map { it.recorded.trim() }.filter(String::isNotEmpty).distinct()
 }
 
 /**

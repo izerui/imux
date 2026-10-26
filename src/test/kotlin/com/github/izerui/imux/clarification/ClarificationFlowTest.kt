@@ -4,6 +4,7 @@ import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -156,7 +157,7 @@ class ClarificationFlowTest {
     fun `已确认就是用户提交的回答，含不回答时的默认处理`() {
         val f = started(ask("H1", "H2"), ask("H3"))
         f.run(f.submitBatch(mapOf("q1" to Answer.Picked(listOf("b"))))!!)
-        assertEquals(listOf("D-H1-b", "F-H2"), f.record.confirmed())
+        assertEquals(listOf("D-H1-b", "F-H2"), f.record.recordedAnswers())
         val notes = composeFallback(f.record)
         assertTrue("兜底明确材料性质", notes.startsWith("待整理的讨论记录，尚未形成最终任务。"))
         assertTrue("保留用户选择", notes.contains("B-H1（D-H1-b）"))
@@ -210,7 +211,7 @@ class ClarificationFlowTest {
         f.cancelled()
         assertEquals(FailureReason.CANCELLED, (f.state as ClarificationState.Failed).reason)
         assertTrue("取消即结束对话", conversations[0].closed)
-        assertEquals("已确认的问答保留", listOf("D-H1-b"), f.record.confirmed())
+        assertEquals("已确认的问答保留", listOf("D-H1-b"), f.record.recordedAnswers())
         gate.countDown()
         worker.join(5_000)
         assertEquals("晚到的回复被丢弃", FailureReason.CANCELLED, (f.state as ClarificationState.Failed).reason)
@@ -547,7 +548,7 @@ class ClarificationFlowTest {
     }
 
     @Test
-    fun `尚未生成方案的输入调查提问失败状态没有待复制方案`() {
+    fun `没有回答时无待复制内容，有回答后失败也提供已有问答`() {
         val f = flow(ask("H1"))
         assertNull("输入页", f.undeliveredPlan())
         val run = f.begin("REQ", AgentType.CLAUDE)
@@ -557,7 +558,27 @@ class ClarificationFlowTest {
         f.submitBatch(emptyMap())
         f.cancelled()
         assertTrue(f.state is ClarificationState.Failed)
-        assertNull("有回答但尚未生成方案", f.undeliveredPlan())
+        val notes = f.undeliveredPlan()
+        assertNotNull("有回答时关闭标签页也提供已有问答", notes)
+        assertTrue("材料含原始目标", notes!!.contains("REQ"))
+        assertTrue("未回答时记下默认处理", notes.contains("Not answered; use the default: F-H1"))
+    }
+
+    @Test
+    fun `关闭标签页时调查中、下一轮提问页和取消后的失败页都保留已提交的回答`() {
+        val answer = "ANSWER-KEEP-7f3a"
+        val f = flow(ask("H1"), ask("H2"))
+        f.run(f.begin("REQ", AgentType.CLAUDE))
+        val next = f.submitBatch(mapOf("q1" to Answer.OwnWords(answer)))!!
+        assertTrue("提交后的调查中", f.state is ClarificationState.Investigating)
+        assertTrue("调查中保留回答", f.undeliveredPlan().orEmpty().contains(answer))
+        f.run(next)
+        assertTrue("下一轮提问页", f.state is ClarificationState.Asking)
+        assertTrue("下一轮提问页保留回答", f.undeliveredPlan().orEmpty().contains(answer))
+        f.submitBatch(emptyMap())
+        f.cancelled()
+        assertTrue("取消后的失败页", f.state is ClarificationState.Failed)
+        assertTrue("失败页保留回答", f.undeliveredPlan().orEmpty().contains(answer))
     }
 
     @Test
@@ -657,7 +678,7 @@ class ClarificationFlowTest {
         assertEquals(1, conversations.single().sent.size)
         f.run(f.submitBatch(mapOf("q1" to Answer.Picked(listOf("a")), "q2" to Answer.Picked(listOf("b"))))!!)
         assertEquals(2, conversations.single().sent.size)
-        assertEquals(listOf("D-H1-a", "D-H2-b"), f.record.confirmed())
+        assertEquals(listOf("D-H1-a", "D-H2-b"), f.record.recordedAnswers())
     }
 
     @Test

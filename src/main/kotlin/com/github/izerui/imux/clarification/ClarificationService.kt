@@ -57,8 +57,6 @@ class ClarificationService(
         TerminalHost.getInstance(project).addSessionKeyMigratedListener(this) { from, to -> migrate(from, to) }
     }
 
-    internal fun flowOf(sessionKey: String): ClarificationFlow? = flows[sessionKey]
-
     internal fun currentKeyOf(flow: ClarificationFlow): String? = flows.entries.firstOrNull { it.value === flow }?.key
 
     /** 打开或聚焦该会话的窗口；第一次打开时创建流程。 */

@@ -8,7 +8,6 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
-import com.intellij.openapi.ui.DialogWrapper.IdeModalityType
 import com.intellij.openapi.ui.Messages
 import com.intellij.util.ui.JBUI
 import java.awt.Dimension
