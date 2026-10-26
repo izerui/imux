@@ -176,6 +176,14 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
         <action
+                id="imux.ReviewOnce"
+                class="com.github.izerui.imux.terminal.ReviewOnceAction"
+                text="Review Once"
+                description="Choose an agent to review this session once">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="after"
+                          relative-to-action="imux.PeerProgramming"/>
+        </action>
+        <action
                 id="imux.ClarifyRequirement"
                 class="com.github.izerui.imux.terminal.ClarifyRequirementAction"
                 text="Talk First"

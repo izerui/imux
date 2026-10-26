@@ -188,13 +188,7 @@ class AgentTerminalFileEditor(
         }
     private val peerReviewOnceLink: ActionLink =
         ActionLink(ImuxBundle.message("action.peer.once.hint")) {
-            val targets = ImuxSettings.getInstance().enabledAgentTypes
-            if (targets.isEmpty()) return@ActionLink
-            val dialog = ReviewOnceDialog(project, targets, virtualFile.agentType)
-            if (!dialog.showAndGet()) return@ActionLink
-            val coordinator = SessionMonitor.getInstance(project).peerCoordinator
-            val instruction = dialog.instruction.takeIf { it.isNotBlank() }
-            coordinator.reviewOnce(virtualFile.sessionKey, dialog.selectedAgent, instruction)
+            showReviewOnceDialog(project, virtualFile)
         }.apply {
             isFocusable = false
             border = JBUI.Borders.emptyLeft(12)
@@ -636,6 +630,20 @@ class AgentTerminalFileEditor(
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30
     }
+}
+
+internal fun showReviewOnceDialog(project: Project, file: AgentTerminalVirtualFile) {
+    if (project.isDisposed) return
+    val targets = ImuxSettings.getInstance().enabledAgentTypes
+    if (targets.isEmpty()) return
+    val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+    if (coordinator.boundTarget(file.sessionKey) != null) return
+    val dialog = ReviewOnceDialog(project, targets, file.agentType)
+    if (!dialog.showAndGet() || project.isDisposed) return
+    // 弹窗期间标签页可能关闭或迁移；确认后重新校验实例，并使用此刻的会话 key。
+    if (TerminalHost.getInstance(project).fileFor(file.terminalView) !== file) return
+    val instruction = dialog.instruction.takeIf { it.isNotBlank() }
+    coordinator.reviewOnce(file.sessionKey, dialog.selectedAgent, instruction)
 }
 
 private class ReviewOnceDialog(
