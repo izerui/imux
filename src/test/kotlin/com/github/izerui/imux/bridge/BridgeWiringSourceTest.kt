@@ -28,6 +28,18 @@ class BridgeWiringSourceTest {
     }
 
     @Test
+    fun `轮次完成时只读出最后的回复，不另发完成通知`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/TerminalBridgeService.kt")
+        val completed = source.bodyAfter("override fun turnCompleted(sessionId: String)", '{')
+        assertTrue("完成回调仍要读出最后的回复", completed.contains("scope.launch(Dispatchers.IO) { pollTab(tabId) }"))
+        assertTrue("完成回调不再发通知", !completed.contains("hub.router"))
+        val router = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgeRouter.kt").normalized
+        assertTrue("路由器不再有完成通知入口", !router.contains("fun onTurnCompleted("))
+        val ports = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgePorts.kt").normalized
+        assertTrue("文案接口不再有完成通知", !ports.contains("fun completed("))
+    }
+
+    @Test
     fun `尾随器按绑定代次与会话缓存，换绑或迁移后重建`() {
         assertTrue(service.contains("ConcurrentHashMap<String, TailEntry>()"))
         assertTrue(service.contains("reuseTail(cached.epoch, cached.sessionId, binding.epoch, binding.target.sessionId)"))
