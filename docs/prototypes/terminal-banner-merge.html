@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>imux · 终端横幅合并 · 三个方向</title>
+<style>
+  :root {
+    --ide-bg: #1e1f22;
+    --ide-panel: #2b2d30;
+    --ide-border: #393b40;
+    --ide-text: #dfe1e5;
+    --ide-dim: #8c8f96;
+    --ide-link: #548af7;
+    --ide-green: #5fb865;
+    --ide-yellow: #e0b153;
+    --banner: #25324d;          /* JBUI.CurrentTheme.Banner.INFO_BACKGROUND（暗色） */
+    --banner-line: #35538f;
+    --stage: #141518;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--stage); color: var(--ide-text);
+    font-family: Inter, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; }
+  .mono { font-family: "JetBrains Mono", Menlo, Consolas, monospace; }
+  a { color: var(--ide-link); text-decoration: none; cursor: pointer; white-space: nowrap; }
+  a:hover { text-decoration: underline; }
+  a.dim { color: var(--ide-dim); }
+
+  .page { max-width: 1180px; margin: 0 auto; padding: 36px 32px 80px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
+  .lead { color: var(--ide-dim); line-height: 1.7; margin: 0 0 22px; max-width: 860px; }
+
+  /* 控制台 */
+  .controls { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; padding: 12px 14px;
+    background: var(--ide-panel); border: 1px solid var(--ide-border); border-radius: 8px; position: sticky; top: 8px; z-index: 5; }
+  .controls label { color: var(--ide-dim); margin-right: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--ide-border); border-radius: 6px; overflow: hidden; }
+  .seg button { background: transparent; border: 0; color: var(--ide-text); padding: 5px 10px; cursor: pointer; font: inherit; }
+  .seg button + button { border-left: 1px solid var(--ide-border); }
+  .seg button.on { background: #2e436e; }
+
+  /* 现状 */
+  .now { margin: 26px 0 34px; }
+  .now h2, .dir h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .now p, .dir p.note { color: var(--ide-dim); margin: 0 0 10px; line-height: 1.65; }
+
+  .dir { margin-top: 34px; }
+  .dir .tag { display: inline-block; font-size: 12px; color: var(--ide-dim); border: 1px solid var(--ide-border);
+    border-radius: 10px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+  .proscons { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px; color: var(--ide-dim); line-height: 1.65; }
+  .proscons b { color: var(--ide-text); font-weight: 500; }
+
+  /* 模拟的编辑器区 */
+  .editor { border: 1px solid var(--ide-border); border-radius: 6px; background: var(--ide-bg); overflow: visible; position: relative; }
+  .tabs { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--ide-panel);
+    border-bottom: 1px solid var(--ide-border); color: var(--ide-text); border-radius: 6px 6px 0 0; }
+  .tabs .t { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 100%; border-bottom: 2px solid var(--ide-link); }
+  .term { padding: 10px 14px 14px; color: #b9bcc3; line-height: 1.6; font-size: 12.5px; min-height: 64px; }
+  .term .u { color: var(--ide-green); }
+
+  .banner { display: flex; align-items: center; height: 28px; padding: 0 24px 0 12px; background: var(--banner);
+    white-space: nowrap; overflow: hidden; position: relative; }
+  .banner .ico { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; flex: none; }
+  .banner .gap6 { width: 6px; flex: none; } .banner .gap12 { width: 12px; flex: none; }
+  .banner .glue { flex: 1 1 auto; min-width: 12px; }
+  .banner .txt { color: var(--ide-text); overflow: hidden; text-overflow: ellipsis; }
+  .banner .sub { color: var(--ide-dim); overflow: hidden; text-overflow: ellipsis; }
+  .vsep { width: 1px; height: 14px; background: var(--banner-line); margin: 0 12px; flex: none; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+  .dot.g { background: var(--ide-green); } .dot.y { background: var(--ide-yellow); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { width: 12px; height: 12px; border: 2px solid #6d7fa6; border-top-color: var(--ide-text); border-radius: 50%; animation: spin .9s linear infinite; }
+
+  /* 方向 C：胶囊 */
+  .pill { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 9px; border-radius: 10px;
+    background: rgba(95,184,101,.14); border: 1px solid rgba(95,184,101,.35); color: var(--ide-text); flex: none; cursor: default; }
+  .pill.warn { background: rgba(224,177,83,.14); border-color: rgba(224,177,83,.4); }
+  .pill .more { display: none; gap: 10px; margin-left: 4px; padding-left: 9px; border-left: 1px solid rgba(255,255,255,.15); }
+  .pill:hover .more, .pill.open .more { display: inline-flex; }
+
+  /* 菜单按钮与弹出 */
+  .mbtn { display: inline-flex; align-items: center; gap: 5px; color: var(--ide-text); cursor: pointer; padding: 2px 6px; border-radius: 4px; flex: none; }
+  .mbtn:hover { background: rgba(255,255,255,.08); }
+  .mbtn .car { color: var(--ide-dim); font-size: 10px; }
+  .popup { position: absolute; z-index: 20; min-width: 230px; background: var(--ide-panel); border: 1px solid var(--ide-border);
+    border-radius: 8px; padding: 5px; box-shadow: 0 10px 28px rgba(0,0,0,.45); display: none; }
+  .popup.show { display: block; }
+  .popup .it { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 5px; color: var(--ide-text); white-space: nowrap; cursor: pointer; }
+  .popup .it:hover { background: #2e436e; }
+  .popup .it.dis { color: var(--ide-dim); cursor: default; white-space: normal; line-height: 1.55; font-size: 12px; }
+  .popup .it.dis:hover { background: transparent; }
+  .popup .it .k { margin-left: auto; color: var(--ide-dim); }
+  .popup .sep { height: 1px; background: var(--ide-border); margin: 4px 6px; }
+
+  .old .banner + .banner { border-top: 0; }
+  .callout { margin-top: 10px; font-size: 12px; color: var(--ide-dim); }
+  .callout code { color: var(--ide-text); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="phone" viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="12.2" r=".9" fill="currentColor"/></symbol>
+  <symbol id="cpu" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M6 2v2M10 2v2M6 12v2M10 12v2M2 6h2M2 10h2M12 6h2M12 10h2" stroke="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="ok" viewBox="0 0 16 16"><path d="M8 1.5l5.5 2v4.2c0 3.3-2.4 5.9-5.5 6.8-3.1-.9-5.5-3.5-5.5-6.8V3.5z" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M5.4 8.1l1.8 1.8 3.4-3.6" fill="none" stroke="currentColor" stroke-width="1.4"/></symbol>
+</svg>
+
+<div class="page">
+  <h1>终端顶部横幅：两条合成一条</h1>
+  <p class="lead">
+    现在终端顶部有两条横幅：一条是结对编程和先聊再做的入口，一条是手机连接状态，叠在一起占了两行，而且内容有重复（两条都是“这个会话的协作方式”）。
+    下面给出三种合并方案。用上方开关切换状态和编辑器宽度，可以对比每种方案在“审查进行中 + 已连接手机”“手机重连中”“窄窗口”这些情况下的表现。
+    方向 A、B 只用平台现有组件（<code>ActionLink</code>、<code>JBLabel</code>、弹出菜单）就能实现；方向 C 的胶囊需要少量自绘。
+  </p>
+
+  <div class="controls">
+    <span><label>结对编程</label><span class="seg" data-k="peer">
+      <button data-v="idle" class="on">未开启</button><button data-v="dismissed">已点不再提示</button><button data-v="ready">伙伴已就绪</button><button data-v="running">审查进行中</button></span></span>
+    <span><label>手机</label><span class="seg" data-k="phone">
+      <button data-v="none">未连接</button><button data-v="online" class="on">在线</button><button data-v="reconnecting">重连中</button></span></span>
+    <span><label>宽度</label><span class="seg" data-k="width">
+      <button data-v="1100" class="on">宽</button><button data-v="760">中</button><button data-v="520">窄</button></span></span>
+  </div>
+
+  <section class="now old">
+    <h2>现状（两条叠放）</h2>
+    <p>你截图里的样子。第二行的英文说明是个 bug：手机横幅的说明文字不跟随 imux 语言切换，合并时一并修掉。</p>
+    <div class="editor" data-frame><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div>
+      <div data-render="old"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅合并一下<br>⏺ 好的，先看一下两个横幅的实现…</div></div>
+  </section>
+
+  <section class="dir">
+    <h2>方向 A · 左右分区<span class="tag">推荐</span></h2>
+    <p class="note">左边是这个会话的 AI 协作（结对编程、先聊再做），右边是手机连接，中间用细分隔线隔开。手机部分只显示渠道和机器人名，点开下拉菜单才看到说明、换绑和断开。</p>
+    <div class="editor" data-frame><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div>
+      <div data-render="A"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅合并一下<br>⏺ 好的，先看一下两个横幅的实现…</div></div>
+    <div class="proscons">
+      <div><b>好处</b>：左边保持现有横幅的位置和顺序，老用户不用重新找；手机状态固定在右端，扫一眼就知道连没连上；重连中时右侧圆点和文字都变黄。</div>
+      <div><b>代价</b>：换绑、断开要多点一下；窄窗口下左侧链接会被挤成省略号，需要定义收缩顺序（先收“不再提示”，再收机器人名，只留手机图标）。</div>
+    </div>
+  </section>
+
+  <section class="dir">
+    <h2>方向 B · 一句状态 + 两个菜单</h2>
+    <p class="note">左边只放一句当前最重要的状态，优先级是：审查进行中 &gt; 手机重连中 &gt; 已连接手机 &gt; 结对伙伴已就绪 &gt; 空闲提示。右边把所有操作收进「结对编程 ▾」「手机 ▾」两个菜单按钮，「先聊再做」仍然是一个直接点击的按钮。</p>
+    <div class="editor" data-frame><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div>
+      <div data-render="B"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅合并一下<br>⏺ 好的，先看一下两个横幅的实现…</div></div>
+    <div class="proscons">
+      <div><b>好处</b>：最整洁，宽度变化时最稳定；以后再加新的协作功能，只需要往菜单里加一项，不用改横幅布局。</div>
+      <div><b>代价</b>：「开启结对编程」「审查一次」从一键直达变成两步，常用操作变慢；同一时间只显示一种状态，审查进行中时手机状态只剩右侧一个小圆点。</div>
+    </div>
+  </section>
+
+  <section class="dir">
+    <h2>方向 C · 原横幅不动，手机变成右端胶囊</h2>
+    <p class="note">结对编程这部分完全保持原样。手机连接显示成右端一枚小胶囊，绿色表示在线、黄色表示重连中；鼠标悬停时胶囊向左展开，露出「换绑」「断开」。说明文字放进悬停提示。</p>
+    <div class="editor" data-frame><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div>
+      <div data-render="C"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅合并一下<br>⏺ 好的，先看一下两个横幅的实现…</div></div>
+    <div class="proscons">
+      <div><b>好处</b>：改动最小，现有横幅的代码和行为几乎不用动；胶囊在色彩上最醒目，一眼能看出“这个终端连着手机”。</div>
+      <div><b>代价</b>：悬停展开在 Swing 里要自己处理鼠标事件，键盘无法操作（需要再补一个右键菜单）；胶囊需要自绘圆角背景，是三个方案里唯一需要自定义绘制的。</div>
+    </div>
+  </section>
+
+  <p class="callout">三个方案都满足：只有一条横幅；「不再提示」只收起结对编程的入口，「先聊再做」和手机状态始终保留；手机未连接时手机部分完全不出现；文字全部跟随 imux 语言设置刷新。</p>
+</div>
+
+<script>
+const S = { peer: 'idle', phone: 'online', width: 1100 };
+const ROBOT = '企业微信「imux 机器人 1」';
+const HINT = '手机消息会直接提交到这个终端，回复同步到手机。';
+const ic = (id, color) => `<span class="ico" style="color:${color || 'var(--ide-dim)'}"><svg width="16" height="16"><use href="#${id}"/></svg></span>`;
+const progress = '结对编程伙伴 Codex · 正在执行第 2 轮 · 已完成 3 项 · 正在执行 git diff · 18 秒';
+
+function peerLeft(s) {
+  if (s.peer === 'idle') return `${ic('cpu')}<span class="gap6"></span><a>开启结对编程</a><span class="gap12"></span><a>审查一次</a><span class="gap12"></span><a>先聊再做</a><span class="gap12"></span><a class="dim">不再提示</a>`;
+  if (s.peer === 'dismissed') return `<a>先聊再做</a>`;
+  if (s.peer === 'ready') return `${ic('ok', 'var(--ide-green)')}<span class="gap6"></span><span class="txt">结对编程伙伴 Codex 已就绪</span><span class="gap12"></span><a>先聊再做</a><span class="gap12"></span><a>停止结对编程</a>`;
+  return `<span class="ico"><span class="spin"></span></span><span class="gap6"></span><span class="txt">${progress}</span><span class="gap12"></span><a>先聊再做</a><span class="gap12"></span><a>取消</a>`;
+}
+
+function renderOld(s) {
+  let h = `<div class="banner">${peerLeft(s)}</div>`;
+  if (s.phone !== 'none') {
+    const st = s.phone === 'reconnecting' ? '（重连中）' : '';
+    h += `<div class="banner" style="border-top:1px solid #2c3a59">${ic('phone')}<span class="gap6"></span><span class="txt">已连接手机 · ${ROBOT}${st}</span><span class="gap12"></span><span class="sub">Phone messages are submitted to this terminal, and replies are synced to the phone.</span><span class="glue"></span><a>换绑</a><span class="gap12"></span><a>断开</a></div>`;
+  }
+  return h;
+}
+
+function phoneMenu(id) {
+  return `<div class="popup" id="${id}">
+    <div class="it dis">${HINT}</div><div class="sep"></div>
+    <div class="it">换绑到其它会话…<span class="k">▸</span></div>
+    <div class="it">重新连接</div>
+    <div class="it">断开</div>
+    <div class="sep"></div><div class="it">管理通讯机器人…</div></div>`;
+}
+
+function renderA(s) {
+  const w = s.width;
+  let left = peerLeft(s);
+  if (w < 600 && s.peer === 'idle') left = `${ic('cpu')}<span class="gap6"></span><a>开启结对编程</a><span class="gap12"></span><a>审查一次</a><span class="gap12"></span><a>先聊再做</a>`;
+  let right = '';
+  if (s.phone !== 'none') {
+    const warn = s.phone === 'reconnecting';
+    const label = w < 600 ? '' : (w < 900 ? (warn ? '重连中' : '企业微信') : (warn ? `${ROBOT} · 重连中` : ROBOT));
+    right = `<span class="vsep"></span><span class="mbtn" data-pop="popA" title="${HINT}">
+      <span class="dot ${warn ? 'y' : 'g'}"></span>${ic('phone', warn ? 'var(--ide-yellow)' : 'var(--ide-green)')}${label ? `<span>${label}</span>` : ''}<span class="car">▾</span></span>`;
+  }
+  return `<div class="banner" style="overflow:visible">${`<span style="display:flex;align-items:center;min-width:0;overflow:hidden">${left}</span>`}<span class="glue"></span>${right}</div>${phoneMenu('popA')}`;
+}
+
+function renderB(s) {
+  const w = s.width;
+  let status;
+  if (s.peer === 'running') status = `<span class="ico"><span class="spin"></span></span><span class="gap6"></span><span class="txt">${progress}</span><span class="gap12"></span><a>取消</a>`;
+  else if (s.phone === 'reconnecting') status = `${ic('phone', 'var(--ide-yellow)')}<span class="gap6"></span><span class="txt">手机连接中断，正在重连 · ${ROBOT}</span>`;
+  else if (s.phone === 'online') status = `${ic('phone', 'var(--ide-green)')}<span class="gap6"></span><span class="txt">已连接手机 · ${ROBOT}</span>${w > 900 ? `<span class="gap12"></span><span class="sub">${HINT}</span>` : ''}`;
+  else if (s.peer === 'ready') status = `${ic('ok', 'var(--ide-green)')}<span class="gap6"></span><span class="txt">结对编程伙伴 Codex 已就绪</span>`;
+  else if (s.peer === 'idle') status = `${ic('cpu')}<span class="gap6"></span><span class="sub">可以让另一个 AI 帮你审查改动</span>`;
+  else status = '';
+  const peerBtn = s.peer === 'dismissed' ? '' : `<span class="mbtn" data-pop="popBp">结对编程<span class="car">▾</span></span>`;
+  const dot = s.phone === 'none' ? '' : `<span class="dot ${s.phone === 'reconnecting' ? 'y' : 'g'}"></span>`;
+  const phoneBtn = s.phone === 'none' ? '' : `<span class="mbtn" data-pop="popB">${dot}手机<span class="car">▾</span></span>`;
+  const peerItems = s.peer === 'idle'
+    ? `<div class="it">开启结对编程…</div><div class="it">审查一次…</div><div class="sep"></div><div class="it">不再提示</div>`
+    : s.peer === 'ready' ? `<div class="it">审查一次…</div><div class="it">停止结对编程</div>`
+    : `<div class="it">取消本轮审查</div><div class="it">停止结对编程</div>`;
+  return `<div class="banner" style="overflow:visible"><span style="display:flex;align-items:center;min-width:0;overflow:hidden">${status}</span><span class="glue"></span>
+    ${peerBtn}<span class="gap6"></span><a style="padding:2px 6px">先聊再做</a><span class="gap6"></span>${phoneBtn}</div>
+    <div class="popup" id="popBp">${peerItems}</div>${phoneMenu('popB')}`;
+}
+
+function renderC(s) {
+  const w = s.width;
+  let right = '';
+  if (s.phone !== 'none') {
+    const warn = s.phone === 'reconnecting';
+    const label = w < 600 ? '' : (w < 900 ? '企业微信' : ROBOT);
+    right = `<span class="pill ${warn ? 'warn' : ''}" title="${HINT}"><span class="dot ${warn ? 'y' : 'g'}"></span>${ic('phone', warn ? 'var(--ide-yellow)' : 'var(--ide-green)')}${label ? `<span>${label}</span>` : ''}${warn ? '<span style="color:var(--ide-yellow)">重连中</span>' : ''}<span class="more"><a>换绑</a><a>断开</a></span></span>`;
+  }
+  return `<div class="banner"><span style="display:flex;align-items:center;min-width:0;overflow:hidden">${peerLeft(s)}</span><span class="glue"></span>${right}</div>`;
+}
+
+const R = { old: renderOld, A: renderA, B: renderB, C: renderC };
+function render() {
+  document.querySelectorAll('[data-render]').forEach(el => { el.innerHTML = R[el.dataset.render](S); });
+  document.querySelectorAll('[data-frame]').forEach(el => { el.style.width = S.width + 'px'; el.style.maxWidth = '100%'; });
+}
+document.querySelectorAll('.seg').forEach(seg => seg.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  seg.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  const k = seg.dataset.k; S[k] = k === 'width' ? +b.dataset.v : b.dataset.v; render();
+}));
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-pop]');
+  document.querySelectorAll('.popup.show').forEach(p => { if (!btn || p.id !== btn.dataset.pop) p.classList.remove('show'); });
+  if (!btn) return;
+  const pop = document.getElementById(btn.dataset.pop);
+  const frame = btn.closest('.editor').getBoundingClientRect(), r = btn.getBoundingClientRect();
+  pop.classList.toggle('show');
+  pop.style.top = (r.bottom - frame.top + 4) + 'px';
+  pop.style.left = Math.max(8, Math.min(r.right - frame.left - 240, frame.width - 248)) + 'px';
+});
+render();
+</script>
+</body>
+</html>
