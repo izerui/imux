@@ -22,6 +22,8 @@ class BridgeRouter(
     private val channelOf: (RobotId) -> ChannelAdapter?,
     private val texts: BridgeTexts,
     private val onDelivery: (OutboundMessage, DeliveryResult) -> Unit = { _, _ -> },
+    /** 入站附件落盘；默认不支持附件。 */
+    private val attachmentStore: AttachmentStore = AttachmentStore.NONE,
     /** 终端未就绪时两次尝试之间的间隔；测试传 0。 */
     private val notReadyRetryDelayMs: Long = 300,
 ) {
@@ -53,8 +55,8 @@ class BridgeRouter(
         if (message.senderId != owner.senderId || message.chatId != owner.chatId) return InboundOutcome.UNAUTHORIZED
         if (!markSeen(message.robotId, message.externalMessageId)) return InboundOutcome.DUPLICATE
 
-        val text = message.text.trim()
-        if (text.isEmpty()) {
+        val typed = message.text.trim()
+        if (typed.isEmpty() && message.attachments.isEmpty()) {
             reply(message.robotId, owner, texts.emptyInput())
             return InboundOutcome.EMPTY
         }
@@ -63,6 +65,19 @@ class BridgeRouter(
             reply(message.robotId, owner, texts.unbound())
             return InboundOutcome.UNBOUND
         }
+        // 确认本人、非重复、已绑定后才取回附件；放在提交锁之外，下载不占用提交顺序
+        val composed =
+            if (message.attachments.isEmpty()) {
+                typed
+            } else {
+                try {
+                    withAttachments(message.robotId, owner, binding.target, typed, message.attachments)
+                } catch (e: CancellationException) {
+                    unmarkSeen(message.robotId, message.externalMessageId)
+                    throw e
+                }
+            }
+        val text = composed ?: return InboundOutcome.ATTACHMENT_FAILED
 
         val phase =
             submitLock.withLock {
@@ -109,6 +124,41 @@ class BridgeRouter(
                     InboundOutcome.OFFLINE
                 }
             }
+        }
+    }
+
+    /** 取回并落盘全部附件，拼装提交文字；附件全部失败且没有文字时返回 null。失败提示各回复一次。 */
+    private suspend fun withAttachments(
+        robotId: RobotId,
+        owner: RobotOwner,
+        target: SessionTarget,
+        typed: String,
+        attachments: List<InboundAttachment>,
+    ): String? {
+        val saved = mutableListOf<String>()
+        var tooLarge = false
+        var failed = false
+        for (attachment in attachments) {
+            val result =
+                try {
+                    attachmentStore.place(target, attachment)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    PlaceResult.Failed(e.javaClass.simpleName)
+                }
+            when (result) {
+                is PlaceResult.Saved -> saved += result.relativePath
+                PlaceResult.TooLarge -> tooLarge = true
+                is PlaceResult.Failed -> failed = true
+            }
+        }
+        if (tooLarge) reply(robotId, owner, texts.attachmentTooLarge())
+        if (failed) reply(robotId, owner, texts.attachmentFailed())
+        return when {
+            saved.isEmpty() -> typed.ifEmpty { null }
+            typed.isEmpty() -> texts.attachmentsOnly(saved)
+            else -> typed + "\n\n" + saved.joinToString("\n") { texts.attachmentLine(it) }
         }
     }
 

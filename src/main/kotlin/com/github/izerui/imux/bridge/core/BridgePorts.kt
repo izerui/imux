@@ -59,6 +59,16 @@ interface BridgeTexts {
     fun pairingExpired(): String
 
     fun pairingLocked(): String
+
+    /** 提交给终端的附件行，例如 `[附件] .imux/attachments/2026-10-27/a.png`。 */
+    fun attachmentLine(path: String): String
+
+    /** 只有附件、没有文字时提交给终端的内容。 */
+    fun attachmentsOnly(paths: List<String>): String
+
+    fun attachmentFailed(): String
+
+    fun attachmentTooLarge(): String
 }
 
 sealed interface PlaceResult {

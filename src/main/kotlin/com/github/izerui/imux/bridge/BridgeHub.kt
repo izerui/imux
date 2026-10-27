@@ -10,6 +10,7 @@ import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.RobotOwner
 import com.github.izerui.imux.bridge.terminal.ImuxTerminalSessionPort
+import com.github.izerui.imux.bridge.terminal.ProjectAttachmentStore
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
@@ -39,7 +40,15 @@ class BridgeHub(parentScope: CoroutineScope) {
 
     val bindings = BindingRegistry()
     val router =
-        BridgeRouter(bindings, owners::get, ImuxTerminalSessionPort(), channels::get, BundleBridgeTexts, onDelivery = ::logDelivery)
+        BridgeRouter(
+            bindings,
+            owners::get,
+            ImuxTerminalSessionPort(),
+            channels::get,
+            BundleBridgeTexts,
+            onDelivery = ::logDelivery,
+            attachmentStore = ProjectAttachmentStore(),
+        )
 
     /** 渠道收到消息后调用。开关关闭时直接丢弃，不进入终端。 */
     val inboundSink = InboundSink { message -> if (BridgeSettings.getInstance().state.enabled) inbound.trySend(message) }

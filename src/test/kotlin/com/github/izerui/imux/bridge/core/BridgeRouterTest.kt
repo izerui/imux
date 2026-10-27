@@ -70,7 +70,50 @@ class BridgeRouterTest {
         override fun pairingExpired() = "PAIR_EXPIRED"
 
         override fun pairingLocked() = "PAIR_LOCKED"
+
+        override fun attachmentLine(path: String) = "ATT($path)"
+
+        override fun attachmentsOnly(paths: List<String>) = "ONLY(${paths.joinToString(",")})"
+
+        override fun attachmentFailed() = "ATT_FAILED"
+
+        override fun attachmentTooLarge() = "ATT_TOO_LARGE"
     }
+
+    private class FakeAttachment(override val kind: AttachmentKind = AttachmentKind.IMAGE) : InboundAttachment {
+        override suspend fun fetch(maxBytes: Long): FetchResult = error("路由器不应直接调用 fetch")
+    }
+
+    /** 按附件在列表中的顺序返回预设结果，并记录调用。 */
+    private class FakeStore(private val results: List<PlaceResult>) : AttachmentStore {
+        val placed = mutableListOf<InboundAttachment>()
+
+        override suspend fun place(
+            target: SessionTarget,
+            attachment: InboundAttachment,
+        ): PlaceResult {
+            placed += attachment
+            return results[placed.size - 1]
+        }
+    }
+
+    private fun routerWith(store: AttachmentStore) =
+        BridgeRouter(
+            registry,
+            { if (it == robot) owner else null },
+            port,
+            { if (it == robot) channel else null },
+            Texts,
+            attachmentStore = store,
+            notReadyRetryDelayMs = 0,
+        )
+
+    private fun inboundWith(
+        id: String,
+        text: String,
+        vararg attachments: InboundAttachment,
+        sender: String = owner.senderId,
+    ) = InboundMessage(robot, id, sender, owner.chatId, text, attachments.toList())
 
     private val registry = BindingRegistry()
     private val port = FakePort()
@@ -489,5 +532,74 @@ class BridgeRouterTest {
             channel.sent.clear()
             r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "同一句")))
             assertEquals(listOf("LOCAL:\n同一句"), sentTexts())
+        }
+
+    @Test
+    fun `非本人、重复或未绑定时不取回附件`() =
+        runBlocking {
+            val store = FakeStore(listOf(PlaceResult.Saved("p.png"), PlaceResult.Saved("p.png")))
+            val r = routerWith(store)
+            assertEquals(InboundOutcome.UNAUTHORIZED, r.onInbound(inboundWith("1", "", FakeAttachment(), sender = "stranger")))
+            assertEquals(InboundOutcome.UNBOUND, r.onInbound(inboundWith("2", "", FakeAttachment())))
+            registry.bind(robot, target)
+            r.onInbound(inboundWith("3", "", FakeAttachment()))
+            assertEquals(InboundOutcome.DUPLICATE, r.onInbound(inboundWith("3", "", FakeAttachment())))
+            assertEquals(1, store.placed.size)
+        }
+
+    @Test
+    fun `文字加附件时提交文字与附件行`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = routerWith(FakeStore(listOf(PlaceResult.Saved(".imux/a.png"), PlaceResult.Saved(".imux/b.pdf"))))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inboundWith("1", " 看看 ", FakeAttachment(), FakeAttachment(AttachmentKind.FILE))))
+            assertEquals(listOf("tab-1" to "看看\n\nATT(.imux/a.png)\nATT(.imux/b.pdf)"), port.submitted)
+            assertTrue(channel.sent.isEmpty())
+        }
+
+    @Test
+    fun `只有附件时用附件提示提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = routerWith(FakeStore(listOf(PlaceResult.Saved(".imux/a.png"))))
+            r.onInbound(inboundWith("1", "", FakeAttachment()))
+            assertEquals(listOf("tab-1" to "ONLY(.imux/a.png)"), port.submitted)
+        }
+
+    @Test
+    fun `部分附件失败时回复一次提示，成功的照常提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = routerWith(FakeStore(listOf(PlaceResult.Failed("x"), PlaceResult.Saved(".imux/b.png"), PlaceResult.Failed("y"))))
+            r.onInbound(inboundWith("1", "", FakeAttachment(), FakeAttachment(), FakeAttachment()))
+            assertEquals(listOf("ATT_FAILED"), sentTexts())
+            assertEquals(listOf("tab-1" to "ONLY(.imux/b.png)"), port.submitted)
+        }
+
+    @Test
+    fun `附件全部失败但有文字时，回复提示并照常提交文字`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = routerWith(FakeStore(listOf(PlaceResult.TooLarge)))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inboundWith("1", "看看", FakeAttachment(AttachmentKind.VIDEO))))
+            assertEquals(listOf("ATT_TOO_LARGE"), sentTexts())
+            assertEquals(listOf("tab-1" to "看看"), port.submitted)
+        }
+
+    @Test
+    fun `附件全部失败且没有文字时不提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = routerWith(FakeStore(listOf(PlaceResult.Failed("x"), PlaceResult.TooLarge)))
+            assertEquals(InboundOutcome.ATTACHMENT_FAILED, r.onInbound(inboundWith("1", "", FakeAttachment(), FakeAttachment())))
+            assertEquals(listOf("ATT_TOO_LARGE", "ATT_FAILED"), sentTexts())
+            assertTrue(port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `只有空白文字且没有附件仍按空输入处理`() =
+        runBlocking {
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.EMPTY, routerWith(FakeStore(emptyList())).onInbound(inboundWith("1", "  ")))
         }
 }

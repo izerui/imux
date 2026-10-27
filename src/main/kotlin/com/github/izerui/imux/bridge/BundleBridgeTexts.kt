@@ -34,4 +34,17 @@ internal object BundleBridgeTexts : BridgeTexts {
     override fun pairingExpired() = ImuxBundle.message("bridge.pairing.expired")
 
     override fun pairingLocked() = ImuxBundle.message("bridge.pairing.locked")
+
+    override fun attachmentLine(path: String) = ImuxBundle.message("bridge.attachment.line", path)
+
+    override fun attachmentsOnly(paths: List<String>) =
+        if (paths.size == 1) {
+            ImuxBundle.message("bridge.attachment.only", paths.single())
+        } else {
+            ImuxBundle.message("bridge.attachment.onlyMany") + "\n" + paths.joinToString("\n") { attachmentLine(it) }
+        }
+
+    override fun attachmentFailed() = ImuxBundle.message("bridge.reply.attachmentFailed")
+
+    override fun attachmentTooLarge() = ImuxBundle.message("bridge.reply.attachmentTooLarge")
 }
