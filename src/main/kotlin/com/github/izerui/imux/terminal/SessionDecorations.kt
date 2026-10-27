@@ -12,7 +12,7 @@ import javax.swing.JComponent
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * 其它功能给终端会话加的装饰：标签与会话树上的标记、终端顶部的横幅。
+ * 其它功能给终端会话加的装饰：标签与会话树上的标记、终端顶部横幅右端的一段。
  *
  * 现有代码只认这个接口，不认识具体功能；实现通过扩展点
  * `com.github.izerui.imux.sessionDecorator` 注册。实现必须很快返回，
@@ -24,8 +24,11 @@ interface SessionDecorator {
         tabId: String,
     ): Boolean
 
-    /** 终端顶部的横幅；不需要时返回 null。组件自己负责刷新，随 [parent] 一起释放。 */
-    fun createBanner(
+    /**
+     * 放在终端顶部横幅右端的一段，与原有横幅同处一行；不需要时返回 null。
+     * 组件应透明、自带左侧分隔，自己负责刷新与显隐，随 [parent] 一起释放。
+     */
+    fun createBannerSegment(
         project: Project,
         file: AgentTerminalVirtualFile,
         parent: Disposable,
@@ -53,11 +56,11 @@ object SessionDecorations {
         tabId: String,
     ): Boolean = collectSafely(EP_NAME.extensionList, false) { it.isPhoneConnected(project, tabId) }.any { it }
 
-    fun banners(
+    fun bannerSegments(
         project: Project,
         file: AgentTerminalVirtualFile,
         parent: Disposable,
-    ): List<JComponent> = collectSafely(EP_NAME.extensionList, null) { it.createBanner(project, file, parent) }.filterNotNull()
+    ): List<JComponent> = collectSafely(EP_NAME.extensionList, null) { it.createBannerSegment(project, file, parent) }.filterNotNull()
 
     /** 由装饰实现在 EDT 上调用。 */
     fun changed() {

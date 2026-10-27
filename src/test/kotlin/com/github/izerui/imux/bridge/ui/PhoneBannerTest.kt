@@ -43,4 +43,23 @@ class PhoneBannerTest {
         assertNull(model(binding = null))
         assertNull(model(robot = null))
     }
+
+    private val label = { channel: String, name: String -> "$channel「$name」" }
+
+    @Test
+    fun `宽横幅显示渠道与名称，出问题时追加状态`() {
+        assertEquals("wecom「开发助手 1」", phoneBannerText(model()!!, 1100, label))
+        assertEquals("wecom「开发助手 1」 · S:Kicked", phoneBannerText(model(status = ConnectionStatus.Kicked)!!, 900, label))
+    }
+
+    @Test
+    fun `中等宽度只留渠道，出问题时换成状态`() {
+        assertEquals("wecom", phoneBannerText(model()!!, 760, label))
+        assertEquals("S:Kicked", phoneBannerText(model(status = ConnectionStatus.Kicked)!!, 600, label))
+    }
+
+    @Test
+    fun `窄横幅只留图标`() {
+        assertEquals("", phoneBannerText(model()!!, 599, label))
+    }
 }

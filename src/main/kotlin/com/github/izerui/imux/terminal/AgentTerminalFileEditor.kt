@@ -53,7 +53,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.awt.Component
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.BorderLayout
@@ -401,21 +400,18 @@ class AgentTerminalFileEditor(
                 }
             }
         this.terminalLayer = terminalLayer
-        // 顶部依次是结对编程横幅与其它功能的装饰横幅（例如手机连接提示）。
-        val banners =
-            JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                isOpaque = false
-                add(peerBanner)
-                SessionDecorations.banners(project, virtualFile, this@AgentTerminalFileEditor).forEach { banner ->
-                    add(banner)
-                    trailOutsideClicks.attach(banner)
-                }
-                components.forEach { (it as? JComponent)?.alignmentX = Component.LEFT_ALIGNMENT }
+        // 顶部只有一条横幅：左边是结对编程与先聊再做，右端接其它功能的装饰段（例如手机连接）。
+        val segments = SessionDecorations.bannerSegments(project, virtualFile, this@AgentTerminalFileEditor)
+        if (segments.isNotEmpty()) {
+            peerBanner.add(Box.createHorizontalGlue())
+            segments.forEach { segment ->
+                peerBanner.add(segment)
+                trailOutsideClicks.attach(segment)
             }
+        }
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(banners, BorderLayout.NORTH)
+            add(peerBanner, BorderLayout.NORTH)
             add(terminalLayer, BorderLayout.CENTER)
         }
     }

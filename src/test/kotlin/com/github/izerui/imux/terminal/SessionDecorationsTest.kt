@@ -17,7 +17,7 @@ class SessionDecorationsTest {
             tabId: String,
         ): Boolean = value
 
-        override fun createBanner(
+        override fun createBannerSegment(
             project: Project,
             file: AgentTerminalVirtualFile,
             parent: Disposable,

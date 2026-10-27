@@ -43,8 +43,7 @@ class PeerCoordinatorSourceTest {
     @Test
     fun `横幅由自有编辑器布局承载`() {
         assertFalse(coordinator.contains("setTopComponent("))
-        assertTrue(editor.contains("add(peerBanner)"))
-        assertTrue(editor.contains("add(banners, BorderLayout.NORTH)"))
+        assertTrue(editor.contains("add(peerBanner, BorderLayout.NORTH)"))
     }
 
     @Test

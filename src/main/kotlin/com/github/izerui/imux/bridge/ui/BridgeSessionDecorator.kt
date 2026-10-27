@@ -15,7 +15,7 @@ class BridgeSessionDecorator : SessionDecorator {
         tabId: String,
     ): Boolean = BridgeSettings.getInstance().state.enabled && BridgeHub.getInstance().bindings.bindingForTab(tabId) != null
 
-    override fun createBanner(
+    override fun createBannerSegment(
         project: Project,
         file: AgentTerminalVirtualFile,
         parent: Disposable,
