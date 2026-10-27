@@ -53,6 +53,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.awt.Component
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.BorderLayout
@@ -400,9 +401,18 @@ class AgentTerminalFileEditor(
                 }
             }
         this.terminalLayer = terminalLayer
+        // 顶部依次是结对编程横幅与其它功能的装饰横幅（例如手机连接提示）。
+        val banners =
+            JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                add(peerBanner)
+                SessionDecorations.banners(project, virtualFile, this@AgentTerminalFileEditor).forEach(::add)
+                components.forEach { (it as? JComponent)?.alignmentX = Component.LEFT_ALIGNMENT }
+            }
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(peerBanner, BorderLayout.NORTH)
+            add(banners, BorderLayout.NORTH)
             add(terminalLayer, BorderLayout.CENTER)
         }
     }
