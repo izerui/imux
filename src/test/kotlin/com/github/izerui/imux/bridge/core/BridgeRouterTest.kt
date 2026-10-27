@@ -235,7 +235,95 @@ class BridgeRouterTest {
             registry.bind(robot, target)
             small.afterSend = { registry.bind(robot, target.copy(tabId = "tab-2")) }
             r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "行内容\n".repeat(40))))
+            r.onTurnCompleted("tab-1")
             assertEquals(1, small.sent.size)
+        }
+
+    @Test
+    fun `每轮只推最后一次工具调用之后的回复，中间过程不推`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看"),
+                    SessionEvent(SessionEventKind.TOOL_STARTED, "Read", "t1"),
+                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "现在改"),
+                    SessionEvent(SessionEventKind.TOOL_STARTED, "Edit", "t2"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "改好了"),
+                ),
+            )
+            assertTrue("轮次完成前不推", channel.sent.isEmpty())
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "总结")))
+            router.onTurnCompleted("tab-1")
+            assertEquals(listOf("改好了\n\n总结"), sentTexts())
+        }
+
+    @Test
+    fun `没有工具调用时推整段回复，完成信号重复不重发`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "答案")))
+            router.onTurnCompleted("tab-1")
+            router.onTurnCompleted("tab-1")
+            assertEquals(listOf("答案"), sentTexts())
+        }
+
+    @Test
+    fun `完成之后才读到的回复立即推送`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onTurnCompleted("tab-1")
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "迟到的结论")))
+            assertEquals(listOf("迟到的结论"), sentTexts())
+        }
+
+    @Test
+    fun `没等到完成信号时，下一轮开始前补发上一轮结果，电脑输入单独推`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "上一轮结果"),
+                    SessionEvent(SessionEventKind.USER_TEXT, "电脑上新需求"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "新一轮回复"),
+                ),
+            )
+            assertEquals(listOf("上一轮结果", "LOCAL:\n电脑上新需求"), sentTexts())
+            router.onTurnCompleted("tab-1")
+            assertEquals(listOf("上一轮结果", "LOCAL:\n电脑上新需求", "新一轮回复"), sentTexts())
+        }
+
+    @Test
+    fun `等待确认立即推送，不带出未完成的回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "还没说完")))
+            router.onWaiting("tab-1", "Bash")
+            assertEquals(listOf("WAIT(Bash)"), sentTexts())
+        }
+
+    @Test
+    fun `换绑后上一绑定的待发结果作废`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "旧结果")))
+            registry.unbind(robot)
+            registry.bind(robot, target)
+            router.onTurnCompleted("tab-1")
+            assertTrue(channel.sent.isEmpty())
+        }
+
+    @Test
+    fun `断开时先把已产生的结果发给原聊天，再告知已断开`() =
+        runBlocking {
+            val bound = (registry.bind(robot, target) as BindResult.Bound).binding
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "最后结果")))
+            registry.unbind(robot)
+            router.onReleased(bound, "修复滚动")
+            assertEquals(listOf("最后结果", "RELEASED(修复滚动)"), sentTexts())
         }
 
     @Test

@@ -45,4 +45,13 @@ class WaitingSubtitleTest {
     fun `omits unknown agent without an extra separator`() {
         assertEquals("Waiting for permission", waitingSubtitle(null, "permission prompt"))
     }
+
+    @Test
+    fun `手机端等待提示与 IDE 提醒共用原因译名，没有原因时兜底为等待确认`() {
+        assertEquals("等待输入", waitingReason("input needed", PluginLanguage.SIMPLIFIED_CHINESE))
+        assertEquals("等待确认", waitingReason(null, PluginLanguage.SIMPLIFIED_CHINESE))
+        val texts = com.github.izerui.imux.SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BundleBridgeTexts.kt")
+        val waiting = texts.normalized.substringAfter("override fun waiting(reason: String?)").substringBefore("override fun")
+        assertEquals(true, waiting.contains("waitingReason(reason)"))
+    }
 }

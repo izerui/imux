@@ -39,14 +39,14 @@ internal fun waitingNotificationWanted(
 ): Boolean = sessionId !in selectedSessionKeys
 
 /**
- * 把 CLI 的 `waitingFor` 译成人话。
+ * 把 CLI 的 `waitingFor` 译成人话。IDE 提醒与手机端等待提示共用，两边说法一致。
  *
  * 只单列日常会遇到的三种；`worker request`、`sandbox request` 和未知的新取值统一走
  * 兜底，避免 CLI 扩展枚举后通知显示为空。
  */
-private fun waitingReason(
+internal fun waitingReason(
     waitingFor: String?,
-    language: PluginLanguage,
+    language: PluginLanguage = ImuxBundle.currentLanguage(),
 ): String =
     ImuxBundle.message(
         language,

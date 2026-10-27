@@ -28,13 +28,15 @@ class BridgeWiringSourceTest {
     }
 
     @Test
-    fun `轮次完成时只读出最后的回复，不另发完成通知`() {
+    fun `轮次完成时先读出最后的回复，再推本轮最终回复，不另发完成通知`() {
         val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/TerminalBridgeService.kt")
         val completed = source.bodyAfter("override fun turnCompleted(sessionId: String)", '{')
-        assertTrue("完成回调仍要读出最后的回复", completed.contains("scope.launch(Dispatchers.IO) { pollTab(tabId) }"))
-        assertTrue("完成回调不再发通知", !completed.contains("hub.router"))
-        val router = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgeRouter.kt").normalized
-        assertTrue("路由器不再有完成通知入口", !router.contains("fun onTurnCompleted("))
+        val poll = completed.indexOf("pollTab(tabId)")
+        val flush = completed.indexOf("hub.router.onTurnCompleted(tabId)")
+        assertTrue("完成回调要先读出最后的回复", poll >= 0)
+        assertTrue("再推本轮最终回复", flush > poll)
+        val router = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgeRouter.kt")
+        assertTrue("完成入口只发待发结果", router.bodyAfter("suspend fun onTurnCompleted(tabId: String)", '{').contains("flushFinal(tabId)"))
         val ports = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgePorts.kt").normalized
         assertTrue("文案接口不再有完成通知", !ports.contains("fun completed("))
     }

@@ -82,8 +82,11 @@ class TerminalBridgeService(
                 override fun turnCompleted(sessionId: String) {
                     if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
-                    // 一轮结束立即读出最后的回复，不等下一次轮询；不另发“本轮完成”通知
-                    scope.launch(Dispatchers.IO) { pollTab(tabId) }
+                    // 先把最后的回复读出来，再把本轮最终回复作为一条推送；不另发“本轮完成”通知
+                    scope.launch(Dispatchers.IO) {
+                        pollTab(tabId)
+                        hub.router.onTurnCompleted(tabId)
+                    }
                 }
 
                 override fun turnWaiting(

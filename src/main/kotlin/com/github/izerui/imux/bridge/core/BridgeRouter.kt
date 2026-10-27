@@ -11,8 +11,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * 入站：校验本人 → 平台消息去重 → 找绑定 → 交给终端端口。不判断 Agent 忙闲，
  * 排队还是插入由 CLI 自己决定；这里只保证按到达顺序逐条提交。
  * 终端未就绪时在提交锁内有限重试，每次尝试前都复核绑定，换绑或解绑后立即停止。
- * 出站：助手文本原文转发；电脑端输入带标签转发；远程输入在记录中再次出现时不回显；
- * 工具调用只计数，在轮次完成时汇总，避免逐条通知触发平台限频。
+ * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在轮次完成时作为一条发出，
+ * 中间的过程说明不推，避免逐条推送触发平台限频；电脑端输入带标签单独转发；
+ * 远程输入在记录中再次出现时不回显；等待确认立即推送。
  */
 class BridgeRouter(
     private val bindings: BindingRegistry,
@@ -28,6 +29,17 @@ class BridgeRouter(
     private val lock = Any()
     private val seen = HashMap<RobotId, LinkedHashSet<String>>()
     private val pendingRemoteEcho = HashMap<String, ArrayDeque<String>>()
+
+    /** 每个标签本轮待发的最终回复，连同产生它时的绑定代次；换绑后作废。 */
+    private val pendingFinal = HashMap<String, PendingFinal>()
+
+    /** 已报完成、尚未开始下一轮的标签：此后读到的回复是迟到的最终输出，立即发出。 */
+    private val completedTabs = HashSet<String>()
+
+    private class PendingFinal(
+        val epoch: Long,
+        val text: StringBuilder,
+    )
 
     /** 加锁提交阶段的结果。 */
     private sealed interface SubmitPhase {
@@ -125,12 +137,45 @@ class BridgeRouter(
         val binding = bindings.bindingForTab(tabId) ?: return
         for (event in events) {
             when (event.kind) {
-                SessionEventKind.ASSISTANT_TEXT -> send(binding, event.text)
-                SessionEventKind.USER_TEXT ->
+                SessionEventKind.ASSISTANT_TEXT -> appendFinal(tabId, binding.epoch, event.text)
+                SessionEventKind.USER_TEXT -> {
+                    // 新一轮开始：上一轮没等到完成信号的结果先补发，再处理这句输入
+                    flushFinal(tabId)
+                    synchronized(lock) { completedTabs.remove(tabId) }
                     if (!consumeRemoteEcho(tabId, event.text)) send(binding, texts.localInputLabel() + "\n" + event.text)
-                SessionEventKind.TOOL_STARTED, SessionEventKind.TOOL_FINISHED -> Unit
+                }
+                // 工具调用之前的文字只是过程说明，不推
+                SessionEventKind.TOOL_STARTED -> synchronized(lock) { pendingFinal.remove(tabId) }
+                SessionEventKind.TOOL_FINISHED -> Unit
             }
         }
+        if (synchronized(lock) { tabId in completedTabs }) flushFinal(tabId)
+    }
+
+    /** 轮次完成：把本轮最终回复作为一条发出。 */
+    suspend fun onTurnCompleted(tabId: String) {
+        synchronized(lock) { completedTabs += tabId }
+        flushFinal(tabId)
+    }
+
+    private fun appendFinal(
+        tabId: String,
+        epoch: Long,
+        text: String,
+    ) {
+        synchronized(lock) {
+            val current = pendingFinal[tabId]?.takeIf { it.epoch == epoch } ?: PendingFinal(epoch, StringBuilder()).also { pendingFinal[tabId] = it }
+            if (current.text.isNotEmpty()) current.text.append("\n\n")
+            current.text.append(text)
+        }
+    }
+
+    private suspend fun flushFinal(tabId: String) {
+        val pending = synchronized(lock) { pendingFinal.remove(tabId) } ?: return
+        val binding = bindings.bindingForTab(tabId) ?: return
+        // 换绑后旧结果不能落到新目标的聊天里
+        if (binding.epoch != pending.epoch) return
+        send(binding, pending.text.toString())
     }
 
     suspend fun onWaiting(
@@ -161,9 +206,21 @@ class BridgeRouter(
         binding: Binding,
         sessionTitle: String,
     ) {
-        synchronized(lock) { pendingRemoteEcho.remove(binding.target.tabId) }
+        val tabId = binding.target.tabId
+        val pending =
+            synchronized(lock) {
+                pendingRemoteEcho.remove(tabId)
+                completedTabs.remove(tabId)
+                pendingFinal.remove(tabId)?.takeIf { it.epoch == binding.epoch }
+            }
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
+        // 断开前已产生的结果先发给原聊天，再告知已断开
+        pending?.let { final ->
+            TextSegmenter.split(final.text.toString(), channel.maxTextBytes).forEach { segment ->
+                deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, segment))
+            }
+        }
         deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, texts.released(sessionTitle)))
     }
 

@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.turn.waitingReason
 import com.github.izerui.imux.bridge.core.BridgeTexts
 
 internal object BundleBridgeTexts : BridgeTexts {
@@ -15,12 +16,8 @@ internal object BundleBridgeTexts : BridgeTexts {
     override fun localInputLabel() = ImuxBundle.message("bridge.label.localInput")
 
 
-    override fun waiting(reason: String?) =
-        if (reason.isNullOrBlank()) {
-            ImuxBundle.message("bridge.status.waitingNoReason")
-        } else {
-            ImuxBundle.message("bridge.status.waiting", reason)
-        }
+    // CLI 给的是 `input needed` 这类英文原因，译成与 IDE 提醒一致的说法
+    override fun waiting(reason: String?) = ImuxBundle.message("bridge.status.waiting", waitingReason(reason))
 
     override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", sessionTitle)
 
