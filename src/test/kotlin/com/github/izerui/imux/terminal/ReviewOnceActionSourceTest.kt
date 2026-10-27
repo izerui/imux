@@ -30,8 +30,8 @@ class ReviewOnceActionSourceTest {
     fun `右键和提示条共用当前会话的审查弹窗`() {
         val invoke = action.bodyAfter("override fun actionPerformed(event: AnActionEvent)", '{')
         assertTrue("右键应把当前终端文件交给弹窗", invoke.contains("showReviewOnceDialog(project, file)"))
-        val link = editor.bodyAfter("""ActionLink(ImuxBundle.message("action.peer.once.hint"))""", '{')
-        assertTrue("提示条应使用同一入口", link.contains("showReviewOnceDialog(project, virtualFile)"))
+        val menu = editor.bodyAfter("private fun showPeerMenu()", '{')
+        assertTrue("横幅的结对编程菜单应使用同一入口", menu.contains("showReviewOnceDialog(project, virtualFile)"))
     }
 
     @Test

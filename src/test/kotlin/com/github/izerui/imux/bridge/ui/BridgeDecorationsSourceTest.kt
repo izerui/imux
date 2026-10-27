@@ -18,6 +18,22 @@ class BridgeDecorationsSourceTest {
     }
 
     @Test
+    fun `开关关闭时也创建手机段，只在点开菜单时引导去设置开启`() {
+        val create = decorator.substringAfter("override fun createBannerSegment(")
+        assertTrue("装饰器无条件创建手机段", create.contains("= PhoneBanner(project, file, parent)"))
+        assertTrue("创建手机段时不看开关", !create.contains("BridgeSettings"))
+        val menu = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneBanner.kt")
+        val showMenu = menu.bodyAfter("private fun showMenu()", '{')
+        assertTrue("开关关着时不实例化中枢", showMenu.contains("showConnectMenu(if (segment.bridgeEnabled) BridgeHub.getInstance() else null)"))
+        val connectMenu = menu.bodyAfter("private fun showConnectMenu(hub: BridgeHub?)", '{')
+        val disabledBranch = connectMenu.substringAfter("if (hub == null) {").substringBefore("return")
+        assertTrue("关闭时菜单只引导去设置", disabledBranch.contains("\"bridge.action.disabled\""))
+        assertTrue(disabledBranch.contains("showSettingsDialog(project, RobotsConfigurable::class.java)"))
+        val refresh = menu.bodyAfter("private fun refresh()", '{')
+        assertTrue("刷新时不隐藏手机段", !refresh.contains("isVisible"))
+    }
+
+    @Test
     fun `机器人、状态或绑定变化时在 EDT 广播装饰变化`() {
         assertTrue(manager.contains("SessionDecorations.changed()"))
         assertTrue(manager.contains("ModalityState.any()"))

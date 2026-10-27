@@ -20,20 +20,29 @@ class ClarificationEntrySourceTest {
     }
 
     @Test
-    fun `先聊再做入口在结对编程未开启与已开启两种状态下都显示`() {
-        val refresh = editor.bodyAfter("private fun refreshPeerBanner()", '{')
-        val idle = refresh.substringBefore("} else {")
-        val bound = refresh.substringAfter("} else {")
-        assertTrue("未开启结对编程时显示", idle.contains("clarifyLink.isVisible = true"))
-        assertTrue("已开启结对编程时显示", bound.contains("clarifyLink.isVisible = true"))
-        assertTrue("任何分支都不隐藏它", !refresh.contains("clarifyLink.isVisible = false"))
+    fun `先聊再做是横幅里固定的一段，任何状态都不隐藏`() {
+        val banner = editor.normalized.substringAfter("private val peerBanner =").substringBefore("private val peerElapsedTimer")
+        assertTrue("横幅里有先聊再做段", banner.contains("add(clarifyLink)"))
+        assertTrue("与结对编程段之间有分隔线", banner.contains("add(BannerDivider())"))
+        assertTrue("任何地方都不隐藏它", !editor.normalized.contains("clarifyLink.isVisible = false"))
     }
 
     @Test
-    fun `关掉结对编程提示后横幅仍在且只隐藏结对编程的内容`() {
-        val idle = editor.bodyAfter("private fun refreshPeerBanner()", '{').substringBefore("} else {")
-        assertTrue("横幅保留以放先聊再做", idle.contains("peerBanner.isVisible = true"))
-        assertTrue("结对编程提示随不再提示隐藏", idle.contains("peerEnableLink.isVisible = !virtualFile.peerBannerDismissed"))
-        assertTrue("单次审查随不再提示隐藏", idle.contains("peerReviewOnceLink.isVisible = !virtualFile.peerBannerDismissed"))
+    fun `讨论窗口开着时横幅显示讨论中，开关窗口会通知横幅刷新`() {
+        val refresh = editor.bodyAfter("private fun refreshPeerBanner()", '{')
+        assertTrue(refresh.contains("ClarificationService.getInstance(project).isOpen(virtualFile.sessionKey)"))
+        assertTrue(refresh.contains("discussing -> ImuxBundle.message(\"clarify.status.open\")"))
+        assertTrue(refresh.contains("RowIcon(clarifyDot, AgentIcons.talk)"))
+        assertTrue(editor.normalized.contains("ClarificationService.getInstance(project).addOpenListener(this)"))
+        val service = SourceCode("src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt")
+        assertTrue("打开时通知", service.bodyAfter("internal fun open(", '{').contains("openListeners.multicaster.openChanged(sessionKey)"))
+        assertTrue("结束时通知", service.bodyAfter("private fun discard(", '{').contains("openListeners.multicaster.openChanged(sessionKey)"))
+    }
+
+    @Test
+    fun `横幅不再提供不再提示`() {
+        assertTrue(!editor.normalized.contains("peerBannerDismissed"))
+        assertTrue(!editor.normalized.contains("action.peer.enable.dismiss"))
+        assertTrue("横幅本身不隐藏", !editor.normalized.contains("peerBanner.isVisible = false"))
     }
 }

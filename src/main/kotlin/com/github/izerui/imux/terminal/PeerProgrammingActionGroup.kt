@@ -24,6 +24,7 @@ internal fun peerProgrammingActions(
     project: Project,
     sessionId: String,
     targetTypes: List<AgentType> = ImuxSettings.getInstance().enabledAgentTypes,
+    includeUnbind: Boolean = true,
 ): Array<AnAction> {
     val coordinator = SessionMonitor.getInstance(project).peerCoordinator
     val boundTarget = coordinator.boundTarget(sessionId)
@@ -32,7 +33,7 @@ internal fun peerProgrammingActions(
     targetTypes.forEach { target ->
         actions += PeerBindAction(project, sessionId, target, isBound = target == boundTarget)
     }
-    if (boundTarget != null) {
+    if (boundTarget != null && includeUnbind) {
         actions += Separator.getInstance()
         actions += PeerUnbindAction(project, sessionId)
     }
@@ -85,14 +86,14 @@ class PeerProgrammingActionGroup :
     ActionGroup(ImuxBundle.message("action.peer.group.text"), true),
     DumbAware {
     init {
-        templatePresentation.icon = AllIcons.Actions.ProfileCPU
+        templatePresentation.icon = AgentIcons.pair
     }
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun update(event: AnActionEvent) {
         event.presentation.text = ImuxBundle.message("action.peer.group.text")
-        event.presentation.icon = AllIcons.Actions.ProfileCPU
+        event.presentation.icon = AgentIcons.pair
         event.presentation.isEnabledAndVisible = sessionKey(event) != null
     }
 

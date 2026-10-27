@@ -1,6 +1,11 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import javax.swing.Icon
+import com.intellij.ui.RowIcon
+import com.intellij.openapi.actionSystem.Separator
+import com.intellij.ide.DataManager
+import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.clarification.ClarificationService
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
@@ -48,6 +53,7 @@ import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.conflate
@@ -147,66 +153,37 @@ class AgentTerminalFileEditor(
     private var keyEventsJob: Job? = null
     private var followBottomOnActivation = false
     private var disposed = false
-    private val peerIcon = JLabel()
     private val peerBusyIcon = AnimatedIcon.Default()
-    private val peerLabel = JLabel()
+    private val peerDot = StatusDotIcon()
+    private val clarifyDot = StatusDotIcon()
+    private var peerSegment = PeerSegmentModel(PeerSegmentKind.IDLE)
+
+    // 横幅左边：一句当前最要紧的状态。审查进行中时给出完整进度和「取消」，空闲时是一句淡色提示。
+    private val statusIcon = JLabel()
+    private val statusLabel = JLabel()
     private val peerCancelButton =
         ActionLink(ImuxBundle.message("action.peer.cancel")) {
             SessionMonitor.getInstance(project).peerCoordinator.cancelCurrentRun(virtualFile.sessionKey)
         }.apply {
             isFocusable = false
-            border = JBUI.Borders.emptyLeft(8)
-        }
-    private val peerCloseButton =
-        ActionLink(ImuxBundle.message("action.peer.close")) {
-            SessionMonitor.getInstance(project).peerCoordinator.unbind(virtualFile.sessionKey)
-        }.apply {
-            isFocusable = false
-            border = JBUI.Borders.emptyLeft(8)
-        }
-    private val peerEnableLink: ActionLink =
-        ActionLink(ImuxBundle.message("action.peer.enable.hint")) { event ->
-            val targets = ImuxSettings.getInstance().enabledAgentTypes
-            if (targets.isEmpty()) return@ActionLink
-            if (targets.size == 1) {
-                SessionMonitor.getInstance(project).peerCoordinator.bind(virtualFile.sessionKey, targets.first())
-            } else {
-                val source = event.source as JComponent
-                val group = DefaultActionGroup(*peerProgrammingActions(project, virtualFile.sessionKey, targets))
-                JBPopupFactory.getInstance()
-                    .createActionGroupPopup(
-                        null,
-                        group,
-                        com.intellij.openapi.actionSystem.impl.SimpleDataContext.getProjectContext(project),
-                        JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
-                        false,
-                    )
-                    .showUnderneathOf(source)
-            }
-        }.apply {
-            isFocusable = false
-        }
-    private val peerReviewOnceLink: ActionLink =
-        ActionLink(ImuxBundle.message("action.peer.once.hint")) {
-            showReviewOnceDialog(project, virtualFile)
-        }.apply {
-            isFocusable = false
             border = JBUI.Borders.emptyLeft(12)
         }
+
+    // 横幅右边是一排功能段。结对编程段：开启、审查一次、停止、不再提示都在下拉菜单里。
+    private val peerSegmentIcon = JLabel()
+    private val peerSegmentLink: ActionLink =
+        ActionLink(ImuxBundle.message("action.peer.group.text")) { showPeerMenu() }.apply {
+            isFocusable = false
+            setDropDownLinkIcon()
+        }
+
+    // 先聊再做段：只有一个动作，点了就打开或聚焦讨论窗口；窗口开着时亮绿点。
+    private val clarifyIcon = JLabel()
     private val clarifyLink: ActionLink =
         ActionLink(ImuxBundle.message("clarify.action.text")) {
             ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType)
         }.apply {
             isFocusable = false
-            border = JBUI.Borders.emptyLeft(12)
-        }
-    private val peerDismissLink =
-        ActionLink(ImuxBundle.message("action.peer.enable.dismiss")) {
-            virtualFile.peerBannerDismissed = true
-            refreshPeerBanner()
-        }.apply {
-            isFocusable = false
-            border = JBUI.Borders.emptyLeft(12)
         }
     private val peerBanner =
         JPanel().apply {
@@ -214,15 +191,21 @@ class AgentTerminalFileEditor(
             border = JBUI.Borders.empty(3, 12, 3, 24)
             isOpaque = true
             background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
-            add(peerIcon)
+            add(statusIcon)
             add(Box.createHorizontalStrut(JBUI.scale(6)))
-            add(peerLabel)
-            add(peerEnableLink)
-            add(peerReviewOnceLink)
-            add(clarifyLink)
-            add(peerDismissLink)
+            add(statusLabel)
             add(peerCancelButton)
-            add(peerCloseButton)
+            add(Box.createHorizontalGlue())
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(peerSegmentIcon)
+            add(Box.createHorizontalStrut(JBUI.scale(4)))
+            add(peerSegmentLink)
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(BannerDivider())
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(clarifyIcon)
+            add(Box.createHorizontalStrut(JBUI.scale(4)))
+            add(clarifyLink)
             isVisible = true
         }
     private val peerElapsedTimer =
@@ -271,17 +254,17 @@ class AgentTerminalFileEditor(
                 ImuxBundle.message("action.scroll.bottom.description")
             scrollButton?.update()
             peerCancelButton.text = ImuxBundle.message("action.peer.cancel")
-            peerCloseButton.text = ImuxBundle.message("action.peer.close")
-            peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
-            peerReviewOnceLink.text = ImuxBundle.message("action.peer.once.hint")
-            clarifyLink.text = ImuxBundle.message("clarify.action.text")
-            peerDismissLink.text = ImuxBundle.message("action.peer.enable.dismiss")
             refreshPeerBanner()
         }
         SessionMonitor.getInstance(project).peerCoordinator.addStateListener(
             this,
         ) { sessionKey ->
             if (sessionKey == virtualFile.sessionKey) refreshPeerBanner()
+        }
+        ClarificationService.getInstance(project).addOpenListener(this) { sessionKey ->
+            ApplicationManager.getApplication().invokeLater({
+                if (!disposed && sessionKey == virtualFile.sessionKey) refreshPeerBanner()
+            }, project.disposed)
         }
         refreshPeerBanner()
 
@@ -362,8 +345,6 @@ class AgentTerminalFileEditor(
                     setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
                     add(navigatorComponent)
                     setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
-                    add(trailOverlay.chip)
-                    setLayer(trailOverlay.chip, JLayeredPane.PALETTE_LAYER)
                     add(trailOverlay.card)
                     setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
                 }
@@ -400,14 +381,12 @@ class AgentTerminalFileEditor(
                 }
             }
         this.terminalLayer = terminalLayer
-        // 顶部只有一条横幅：左边是结对编程与先聊再做，右端接其它功能的装饰段（例如手机连接）。
-        val segments = SessionDecorations.bannerSegments(project, virtualFile, this@AgentTerminalFileEditor)
-        if (segments.isNotEmpty()) {
-            peerBanner.add(Box.createHorizontalGlue())
-            segments.forEach { segment ->
-                peerBanner.add(segment)
-                trailOutsideClicks.attach(segment)
-            }
+        // 顶部只有一条横幅：左边说状态，右边依次是结对编程、先聊再做、会话轨迹与其它功能的装饰段（例如手机连接）。
+        // 轨迹段自己负责展开收起，不挂“点外面收起”，否则按下时先收起、松开又展开。
+        peerBanner.add(trailOverlay.bannerSegment)
+        SessionDecorations.bannerSegments(project, virtualFile, this@AgentTerminalFileEditor).forEach { segment ->
+            peerBanner.add(segment)
+            trailOutsideClicks.attach(segment)
         }
         return JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -418,49 +397,110 @@ class AgentTerminalFileEditor(
 
     private fun refreshPeerBanner() {
         val status = SessionMonitor.getInstance(project).peerCoordinator.status(virtualFile.sessionKey)
-        if (status == null) {
-            peerElapsedTimer.stop()
-            peerIcon.icon = AllIcons.Actions.ProfileCPU
-            peerLabel.isVisible = false
-            peerCancelButton.isVisible = false
-            peerCloseButton.isVisible = false
-            // 横幅始终在：先聊再做不随结对编程的「不再提示」消失；不再提示只收起结对编程自己的内容
-            peerBanner.isVisible = true
-            peerIcon.isVisible = !virtualFile.peerBannerDismissed
-            peerEnableLink.isVisible = !virtualFile.peerBannerDismissed
-            peerReviewOnceLink.isVisible = !virtualFile.peerBannerDismissed
-            peerDismissLink.isVisible = !virtualFile.peerBannerDismissed
-            clarifyLink.isVisible = true
-            peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
-        } else {
-            peerBanner.isVisible = true
-            peerEnableLink.isVisible = false
-            peerReviewOnceLink.isVisible = false
-            peerDismissLink.isVisible = false
-            peerIcon.isVisible = true
-            clarifyLink.isVisible = true
-            peerLabel.isVisible = true
-            peerCancelButton.isVisible = status.running
-            peerCloseButton.isVisible = !status.running
-            peerIcon.icon =
-                if (status.running) peerBusyIcon
-                else AllIcons.CodeWithMe.CwmVerified
-            peerLabel.text =
-                "  " +
-                        if (status.running && status.progress != null) {
-                            progressSummary(
-                                status.targetAgentType.displayName,
-                                status.progress,
-                            )
-                        } else if (status.lastReviewPassed) {
-                            ImuxBundle.message("action.peer.passed", status.targetAgentType.displayName)
-                        } else {
-                            ImuxBundle.message("action.peer.enabled", status.targetAgentType.displayName)
-                        }
-            if (status.running) peerElapsedTimer.start() else peerElapsedTimer.stop()
-        }
+        val model = peerSegmentModel(status, System.currentTimeMillis())
+        peerSegment = model
+        val name = model.agentName.orEmpty()
+        val discussing = ClarificationService.getInstance(project).isOpen(virtualFile.sessionKey)
+        val progress = status?.progress
+
+        // 左边的状态句：审查中 > 结对中 > 审查通过 > 讨论进行中 > 空闲提示。
+        val hint = model.kind == PeerSegmentKind.IDLE && !discussing
+        statusIcon.icon =
+            when {
+                model.kind == PeerSegmentKind.RUNNING -> peerBusyIcon
+                model.kind == PeerSegmentKind.READY || model.kind == PeerSegmentKind.PASSED -> AllIcons.CodeWithMe.CwmVerified
+                else -> null
+            }
+        statusIcon.isVisible = statusIcon.icon != null
+        statusLabel.text =
+            when {
+                model.kind == PeerSegmentKind.RUNNING && progress != null -> progressSummary(name, progress)
+                model.kind == PeerSegmentKind.RUNNING -> ImuxBundle.message("action.peer.status.starting", name)
+                model.kind == PeerSegmentKind.READY -> ImuxBundle.message("action.peer.status.ready", name)
+                model.kind == PeerSegmentKind.PASSED -> ImuxBundle.message("action.peer.status.passed", name)
+                discussing -> ImuxBundle.message("clarify.status.open")
+                hint -> ImuxBundle.message("banner.status.idle")
+                else -> ""
+            }
+        statusLabel.foreground = if (hint || discussing) UIUtil.getContextHelpForeground() else UIUtil.getLabelForeground()
+        peerCancelButton.isVisible = model.kind == PeerSegmentKind.RUNNING
+        if (model.kind == PeerSegmentKind.RUNNING) peerElapsedTimer.start() else peerElapsedTimer.stop()
+
+        // 右边的结对编程段：图标带状态，文字固定。
+        peerDot.color = BannerColors.ONLINE
+        peerSegmentIcon.icon =
+            when (model.kind) {
+                PeerSegmentKind.IDLE -> AgentIcons.pair
+                PeerSegmentKind.RUNNING -> peerBusyIcon
+                PeerSegmentKind.READY, PeerSegmentKind.PASSED -> RowIcon(peerDot, AgentIcons.pair)
+            }
+        peerSegmentLink.text = ImuxBundle.message("action.peer.group.text")
+        val tooltip = ImuxBundle.message("action.peer.segment.hint")
+        peerSegmentIcon.toolTipText = tooltip
+        peerSegmentLink.toolTipText = tooltip
+
+        clarifyIcon.icon = if (discussing) RowIcon(clarifyDot, AgentIcons.talk) else AgentIcons.talk
+        clarifyLink.text = ImuxBundle.message("clarify.action.text")
+        clarifyLink.toolTipText = ImuxBundle.message("clarify.action.description")
+
         peerBanner.revalidate()
         peerBanner.repaint()
+    }
+
+    /** 结对编程段的下拉菜单：第一行是说明或完整进度，其余按状态给出可做的事。 */
+    private fun showPeerMenu() {
+        val key = virtualFile.sessionKey
+        val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+        val targets = ImuxSettings.getInstance().enabledAgentTypes
+        val status = coordinator.status(key)
+        val group = DefaultActionGroup()
+        group.add(Separator.create(ImuxBundle.message("action.peer.segment.hint")))
+        when (peerSegment.kind) {
+            PeerSegmentKind.IDLE -> {
+                group.add(
+                    DefaultActionGroup(ImuxBundle.message("action.peer.enable.hint"), true).apply {
+                        templatePresentation.icon = AgentIcons.pair
+                        addAll(*peerProgrammingActions(project, key, targets))
+                    },
+                )
+                group.add(
+                    bannerAction(ImuxBundle.message("action.peer.once.hint"), AgentIcons.review, enabled = targets.isNotEmpty()) {
+                        showReviewOnceDialog(project, virtualFile)
+                    },
+                )
+            }
+            PeerSegmentKind.RUNNING -> {
+                group.add(bannerAction(ImuxBundle.message("action.peer.segment.cancelRun")) { coordinator.cancelCurrentRun(key) })
+                group.add(bannerAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(key) })
+            }
+            PeerSegmentKind.READY, PeerSegmentKind.PASSED -> {
+                group.add(
+                    DefaultActionGroup(ImuxBundle.message("action.peer.segment.switch"), true).apply {
+                        addAll(*peerProgrammingActions(project, key, targets.filter { it != status?.targetAgentType }, includeUnbind = false))
+                    },
+                )
+                group.addSeparator()
+                group.add(bannerAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(key) })
+            }
+        }
+        JBPopupFactory.getInstance()
+            .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(peerSegmentLink), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
+            .showUnderneathOf(peerSegmentLink)
+    }
+
+    private fun bannerAction(
+        text: String,
+        icon: Icon? = null,
+        enabled: Boolean = true,
+        run: () -> Unit,
+    ) = object : DumbAwareAction(text, null, icon) {
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(event: AnActionEvent) {
+            event.presentation.isEnabled = enabled
+        }
+
+        override fun actionPerformed(event: AnActionEvent) = run()
     }
 
     private fun progressSummary(

@@ -13,6 +13,9 @@ import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
+import com.github.izerui.imux.terminal.StatusDotIcon
+import com.github.izerui.imux.terminal.BannerDivider
+import com.github.izerui.imux.terminal.BannerColors
 import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
@@ -27,22 +30,16 @@ import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.ui.JBColor
 import com.intellij.ui.RowIcon
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.scale.JBUIScale
 import com.intellij.util.ui.JBUI
 import java.awt.Component
-import java.awt.Dimension
-import java.awt.Graphics
-import java.awt.Graphics2D
-import java.awt.RenderingHints
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.Icon
 import javax.swing.JPanel
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -68,6 +65,18 @@ fun phoneBannerModel(
     return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem)
 }
 
+/** 手机段显示什么。开关关着也显示（未连接），点开菜单时再引导去设置里开启。 */
+sealed interface PhoneSegmentState {
+    data class Unbound(val bridgeEnabled: Boolean) : PhoneSegmentState
+
+    data class Bound(val model: PhoneBannerModel) : PhoneSegmentState
+}
+
+fun phoneSegmentState(
+    bridgeEnabled: Boolean,
+    model: PhoneBannerModel?,
+): PhoneSegmentState = if (bridgeEnabled && model != null) PhoneSegmentState.Bound(model) else PhoneSegmentState.Unbound(bridgeEnabled)
+
 /** 横幅宽度够时显示渠道与名称，稍窄只留渠道（出问题时换成状态），再窄只留图标。宽度为未缩放像素。 */
 fun phoneBannerText(
     model: PhoneBannerModel,
@@ -84,32 +93,21 @@ private const val WIDE_BANNER = 900
 private const val NARROW_BANNER = 600
 
 /**
- * 终端顶部横幅右端的手机连接段（横幅合并方案 A）：分隔线、状态圆点、手机图标、
- * 机器人名下拉。只在本标签连着手机时显示；说明、换绑、重连、断开都在下拉菜单里。
+ * 终端顶部横幅右端的手机连接段：分隔线、状态圆点、手机图标、机器人名下拉；说明、换绑、重连、断开都在下拉菜单里。
+ * 未连接时也显示「连接手机 ▾」，不必走右键菜单；通讯桥接开关关着时，菜单引导去设置里开启。
  */
 class PhoneBanner(
     private val project: Project,
     private val file: AgentTerminalVirtualFile,
     parent: Disposable,
 ) : JPanel() {
-    private val divider =
-        object : JPanel() {
-            init {
-                isOpaque = true
-                background = DIVIDER
-            }
-
-            override fun getPreferredSize() = Dimension(JBUI.scale(1), JBUI.scale(14))
-
-            override fun getMaximumSize() = preferredSize
-        }
-    private val dot = StatusDot()
+    private val dot = StatusDotIcon()
     private val icons = JBLabel(dot)
     private val link = ActionLink("") { showMenu() }.apply {
         isFocusable = false
         setDropDownLinkIcon()
     }
-    private var model: PhoneBannerModel? = null
+    private var state: PhoneSegmentState = PhoneSegmentState.Unbound(bridgeEnabled = false)
     private val widthListener =
         object : ComponentAdapter() {
             override fun componentResized(e: ComponentEvent) = updateText()
@@ -120,7 +118,7 @@ class PhoneBanner(
         isOpaque = false
         alignmentY = Component.CENTER_ALIGNMENT
         add(Box.createHorizontalStrut(JBUI.scale(12)))
-        add(divider)
+        add(BannerDivider())
         add(Box.createHorizontalStrut(JBUI.scale(12)))
         add(icons)
         add(Box.createHorizontalStrut(JBUI.scale(4)))
@@ -161,30 +159,44 @@ class PhoneBanner(
                 val robot = binding?.let { manager.robot(it.robotId.value) }
                 phoneBannerModel(enabled, binding, robot, robot?.let { manager.statusOf(it.id) }, ::channelLabel) { statusLabel(it, paired = true) }
             }
-        model = next
-        isVisible = next != null
+        state = phoneSegmentState(enabled, next)
         if (next != null) {
-            dot.color = if (next.problem == null) ONLINE else PROBLEM
+            dot.color = if (next.problem == null) BannerColors.ONLINE else BannerColors.PROBLEM
             icons.icon = RowIcon(dot, AgentIcons.phone)
             val title = ImuxBundle.message("bridge.banner.connected", next.channel, next.robotName)
             toolTipText = "<html>$title<br>${ImuxBundle.message("bridge.banner.hint")}</html>"
-            icons.toolTipText = toolTipText
-            link.toolTipText = toolTipText
+        } else {
+            icons.icon = AgentIcons.phone
+            toolTipText = ImuxBundle.message("bridge.banner.hint")
         }
+        icons.toolTipText = toolTipText
+        link.toolTipText = toolTipText
         updateText()
     }
 
     private fun updateText() {
-        val current = model ?: return
         val width = (getParent()?.width ?: 0).let { if (it == 0) Int.MAX_VALUE else (it / JBUIScale.scale(1f)).toInt() }
-        val text = phoneBannerText(current, width) { channel, name -> ImuxBundle.message("bridge.banner.robot", channel, name) }
+        val text =
+            when (val current = state) {
+                is PhoneSegmentState.Bound ->
+                    phoneBannerText(current.model, width) { channel, name -> ImuxBundle.message("bridge.banner.robot", channel, name) }
+                is PhoneSegmentState.Unbound -> if (width >= NARROW_BANNER) ImuxBundle.message("bridge.banner.connect") else ""
+            }
         if (link.text != text) link.text = text
         revalidate()
         repaint()
     }
 
     private fun showMenu() {
-        val current = model ?: return
+        val current =
+            when (val segment = state) {
+                is PhoneSegmentState.Bound -> segment.model
+                is PhoneSegmentState.Unbound -> {
+                    // 开关关着时不实例化中枢，菜单只引导去设置里开启
+                    showConnectMenu(if (segment.bridgeEnabled) BridgeHub.getInstance() else null)
+                    return
+                }
+            }
         val hub = BridgeHub.getInstance()
         val rebind = DefaultActionGroup(ImuxBundle.message("bridge.banner.rebind"), true)
         phoneMenuModel(
@@ -222,44 +234,62 @@ class PhoneBanner(
             .showUnderneathOf(link)
     }
 
+    /** 未连接时的菜单：说明、可选的机器人、添加机器人、管理。 */
+    private fun showConnectMenu(hub: BridgeHub?) {
+        val group = DefaultActionGroup()
+        group.add(Separator.create(ImuxBundle.message("bridge.banner.hint")))
+        if (hub == null) {
+            group.add(
+                simpleAction(ImuxBundle.message("bridge.action.disabled")) {
+                    ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
+                },
+            )
+            popup(group)
+            return
+        }
+        phoneMenuModel(
+            RobotManager.getInstance().robots(),
+            bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
+            thisTabId = file.tabId,
+            titleOf = BridgeLifecycle::sessionTitle,
+            labels = BundleMenuLabels,
+        ).forEach { entry ->
+            when (entry) {
+                is PhoneMenuEntry.Robot ->
+                    group.add(simpleAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
+                PhoneMenuEntry.NoRobots -> group.add(simpleAction(ImuxBundle.message("bridge.action.none"), enabled = false) {})
+                PhoneMenuEntry.AddRobot -> {
+                    group.addSeparator()
+                    group.add(simpleAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(project).show() })
+                }
+                is PhoneMenuEntry.Disconnect -> Unit
+            }
+        }
+        group.add(
+            simpleAction(ImuxBundle.message("bridge.banner.manage")) {
+                ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
+            },
+        )
+        popup(group)
+    }
+
+    private fun popup(group: DefaultActionGroup) {
+        JBPopupFactory.getInstance()
+            .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(link), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
+            .showUnderneathOf(link)
+    }
+
     private fun simpleAction(
         text: String,
+        enabled: Boolean = true,
         run: () -> Unit,
     ) = object : DumbAwareAction(text) {
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
-        override fun actionPerformed(e: AnActionEvent) = run()
-    }
-
-    /** 连接状态圆点：在线为绿，重连、被接管、失败等为黄。 */
-    private class StatusDot : Icon {
-        var color: JBColor = ONLINE
-
-        override fun paintIcon(
-            c: Component?,
-            g: Graphics,
-            x: Int,
-            y: Int,
-        ) {
-            val g2 = g.create() as Graphics2D
-            try {
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.color = color
-                val size = JBUI.scale(7)
-                g2.fillOval(x + (iconWidth - size) / 2, y + (iconHeight - size) / 2, size, size)
-            } finally {
-                g2.dispose()
-            }
+        override fun update(e: AnActionEvent) {
+            e.presentation.isEnabled = enabled
         }
 
-        override fun getIconWidth() = JBUI.scale(12)
-
-        override fun getIconHeight() = JBUI.scale(16)
-    }
-
-    private companion object {
-        val ONLINE = JBColor(0x369650, 0x5FB865)
-        val PROBLEM = JBColor(0xC27D04, 0xE0B153)
-        val DIVIDER = JBColor(0xA8BFE8, 0x35538F)
+        override fun actionPerformed(e: AnActionEvent) = run()
     }
 }

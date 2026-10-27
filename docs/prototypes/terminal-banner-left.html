@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>imux · 终端横幅左半边与图标 · 三个方向</title>
+<style>
+  :root {
+    --ide-bg: #1e1f22; --ide-panel: #2b2d30; --ide-border: #393b40; --ide-text: #dfe1e5; --ide-dim: #8c8f96;
+    --ide-link: #548af7; --ide-green: #5fb865; --ide-yellow: #e0b153;
+    --banner: #25324d; --banner-line: #35538f; --stage: #141518; --sel: #2e436e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--stage); color: var(--ide-text);
+    font-family: Inter, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; }
+  .mono { font-family: "JetBrains Mono", Menlo, Consolas, monospace; }
+  a { color: var(--ide-link); text-decoration: none; cursor: pointer; white-space: nowrap; }
+  a:hover { text-decoration: underline; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 36px 32px 80px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .lead, .note { color: var(--ide-dim); line-height: 1.7; margin: 0 0 14px; max-width: 900px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; padding: 12px 14px; background: var(--ide-panel);
+    border: 1px solid var(--ide-border); border-radius: 8px; position: sticky; top: 8px; z-index: 30; }
+  .controls label { color: var(--ide-dim); margin-right: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--ide-border); border-radius: 6px; overflow: hidden; }
+  .seg button { background: transparent; border: 0; color: var(--ide-text); padding: 5px 10px; cursor: pointer; font: inherit; }
+  .seg button + button { border-left: 1px solid var(--ide-border); }
+  .seg button.on { background: var(--sel); }
+  section { margin-top: 34px; }
+  .tag { display: inline-block; font-size: 12px; color: var(--ide-dim); border: 1px solid var(--ide-border); border-radius: 10px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+  .proscons { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px; color: var(--ide-dim); line-height: 1.65; }
+  .proscons b { color: var(--ide-text); font-weight: 500; }
+
+  /* 图标套组 */
+  .sets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .set { background: var(--ide-panel); border: 1px solid var(--ide-border); border-radius: 8px; padding: 14px 16px; cursor: pointer; }
+  .set.on { border-color: var(--ide-link); box-shadow: 0 0 0 1px var(--ide-link) inset; }
+  .set h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+  .set .row { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .set .big { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; background: var(--banner); border-radius: 6px; }
+  .set .big svg { width: 24px; height: 24px; }
+  .set .row span.n { color: var(--ide-text); }
+  .set .row span.d { color: var(--ide-dim); font-size: 12px; margin-left: auto; text-align: right; }
+
+  /* 编辑器与横幅 */
+  .editor { border: 1px solid var(--ide-border); border-radius: 6px; background: var(--ide-bg); position: relative; }
+  .tabs { height: 30px; display: flex; align-items: center; padding: 0 10px; background: var(--ide-panel); border-bottom: 1px solid var(--ide-border); border-radius: 6px 6px 0 0; }
+  .tabs .t { display: flex; align-items: center; height: 100%; padding: 0 8px; border-bottom: 2px solid var(--ide-link); }
+  .term { padding: 10px 14px 14px; color: #b9bcc3; line-height: 1.6; font-size: 12.5px; }
+  .term .u { color: var(--ide-green); }
+  .banner { display: flex; align-items: center; height: 28px; padding: 0 24px 0 12px; background: var(--banner); white-space: nowrap; position: relative; }
+  .banner .left { display: flex; align-items: center; min-width: 0; overflow: hidden; }
+  .ico { display: inline-flex; width: 16px; height: 16px; flex: none; align-items: center; justify-content: center; }
+  .ico svg { width: 16px; height: 16px; }
+  .g4 { width: 4px; flex: none; } .g6 { width: 6px; flex: none; } .g12 { width: 12px; flex: none; } .g16 { width: 16px; flex: none; }
+  .glue { flex: 1 1 auto; min-width: 12px; }
+  .txt { color: var(--ide-text); overflow: hidden; text-overflow: ellipsis; }
+  .sub { color: var(--ide-dim); }
+  .vsep { width: 1px; height: 14px; background: var(--banner-line); margin: 0 12px; flex: none; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; margin: 0 2px; }
+  .dot.g { background: var(--ide-green); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { width: 12px; height: 12px; border: 2px solid #6d7fa6; border-top-color: var(--ide-text); border-radius: 50%; animation: spin .9s linear infinite; }
+  .act { display: inline-flex; align-items: center; gap: 5px; flex: none; cursor: pointer; }
+  .act.quiet { color: var(--ide-text); }
+  .act.quiet:hover { color: var(--ide-link); }
+  .x { opacity: .75; cursor: pointer; display: inline-flex; border-radius: 3px; }
+  .x:hover { opacity: 1; background: rgba(255,255,255,.08); }
+  .mbtn { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; padding: 2px 6px; border-radius: 4px; flex: none; }
+  .mbtn:hover { background: rgba(255,255,255,.08); }
+  .car { color: var(--ide-dim); font-size: 10px; }
+  .popup { position: absolute; z-index: 20; min-width: 230px; background: var(--ide-panel); border: 1px solid var(--ide-border);
+    border-radius: 8px; padding: 5px; box-shadow: 0 10px 28px rgba(0,0,0,.45); display: none; }
+  .popup.show { display: block; }
+  .it { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 5px; color: var(--ide-text); white-space: nowrap; cursor: pointer; }
+  .it:hover { background: var(--sel); }
+  .it .k { margin-left: auto; color: var(--ide-dim); padding-left: 24px; }
+  .it.dis { color: var(--ide-dim); cursor: default; } .it.dis:hover { background: transparent; }
+  .it .ico { opacity: .95; }
+  .sep { height: 1px; background: var(--ide-border); margin: 4px 6px; }
+
+  /* 右键菜单预览 */
+  .ctxwrap { display: flex; gap: 28px; align-items: flex-start; }
+  .ctx { width: 290px; background: var(--ide-panel); border: 1px solid var(--ide-border); border-radius: 8px; padding: 5px; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+  .ctx .it.hl { background: var(--sel); }
+  .ctxnote { color: var(--ide-dim); line-height: 1.7; max-width: 520px; }
+  .callout { margin-top: 14px; font-size: 12px; color: var(--ide-dim); line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>终端横幅：把结对编程、审查一次、先聊再做做成“段”</h1>
+  <p class="lead">
+    右半边的手机段已经落地：「状态圆点 + 图标 + 简短状态 + ▾ 下拉」，各段之间用细分隔线隔开。这一页让其余功能也说同一种语言。分两件事：<b>图标</b>和<b>段的排布</b>，两者可以自由组合。
+    现状的问题有两个：一是图标对不上功能（横幅最左边是“性能分析”图标，右键菜单里“审查一次”在新 UI 下是一个戴帽子的人）；
+    二是四个蓝色链接一样重，看不出哪个是主要入口，“不再提示”也混在功能入口里。
+    用上方开关切换图标套组、结对编程状态、是否连着手机。图标套组同时作用于横幅和右键菜单。
+  </p>
+
+  <div class="controls">
+    <span><label>图标</label><span class="seg" data-k="icons">
+      <button data-v="now">现状</button><button data-v="platform">平台图标</button><button data-v="custom" class="on">imux 自绘</button></span></span>
+    <span><label>结对编程</label><span class="seg" data-k="peer">
+      <button data-v="idle" class="on">未开启</button><button data-v="dismissed">已收起</button><button data-v="ready">伙伴已就绪</button><button data-v="running">审查进行中</button><button data-v="passed">审查通过</button></span></span>
+    <span><label>先聊再做</label><span class="seg" data-k="talk">
+      <button data-v="none" class="on">无讨论</button><button data-v="open">讨论进行中</button></span></span>
+    <span><label>手机</label><span class="seg" data-k="phone">
+      <button data-v="none">未连接</button><button data-v="online" class="on">在线</button></span></span>
+  </div>
+
+  <section>
+    <h2>一 · 图标套组</h2>
+    <p class="note">点卡片也能切换。平台图标都取自 IDE 2026.2 的新 UI 图标库，未做改动；imux 自绘的三枚以“终端框”为共同母题（imux 的一切都发生在终端会话里），再各加一个记号：第二个终端框、放大镜、问号。三枚都按平台规范画：16×16、1 像素描边、圆角端点、暗色 #CED0D6，另配亮色版。</p>
+    <div class="sets" id="sets"></div>
+  </section>
+
+  <section>
+    <h2>二 · 方向 A · 一个功能一段<span class="tag">推荐</span></h2>
+    <p class="note">完全照搬手机段的语法：每个功能是一段，段内是「状态图标 + 简短状态 + ▾」，段与段之间是细分隔线。结对编程段把“开启、审查一次、停止、不再提示”都收进下拉菜单，菜单第一行是说明；审查进行中时段内直接给出「取消」，因为它最急。先聊再做只有一个动作，所以不带 ▾，点了就打开；有讨论进行中时前面亮绿点。点「不再提示」后结对段不再消失，只缩成一个图标，随时能找回来。</p>
+    <div class="editor"><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div><div data-render="A"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅左边也设计一下<br>⏺ 好的…</div></div>
+    <div class="proscons">
+      <div><b>好处</b>：整条横幅只有一种语言，学会手机段就会用全部；每段都能一眼读出状态；以后新增功能就是再加一段。</div>
+      <div><b>代价</b>：「审查一次」从一键变两步（点开结对编程 ▾ 再选）；未开启时第一眼看不到“审查一次”这个能力，只能靠菜单发现。</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>三 · 方向 B · 左边说状态，右边放功能段</h2>
+    <p class="note">把“发生了什么”和“能做什么”分开：左边整块留给状态句，审查进行中时能完整显示轮次、进度、耗时；所有功能段（结对编程 ▾、先聊再做、手机 ▾）靠右排成一组，像一排工具按钮。空闲时左边是一句淡色提示，告诉新用户这里能做什么。</p>
+    <div class="editor"><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div><div data-render="B"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅左边也设计一下<br>⏺ 好的…</div></div>
+    <div class="proscons">
+      <div><b>好处</b>：进度信息有足够空间，不会被截断；功能段的位置固定在右侧，不随状态跳动，肌肉记忆最稳。</div>
+      <div><b>代价</b>：所有操作挤在右边，离标签较远；空闲时左边那句提示需要措辞得当，否则像废话。</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>四 · 方向 C · 图标段，有事才展开</h2>
+    <p class="note">最紧凑：空闲时每个功能段只剩图标（悬停显示名称），横幅几乎是空的；一旦某个功能有状态（结对中、审查中、讨论中、手机在线），对应那段才展开文字和圆点。横幅从“入口列表”变成“状态指示器”。</p>
+    <div class="editor"><div class="tabs"><span class="t">Claude · 探索插件开发方向</span></div><div data-render="C"></div>
+      <div class="term mono"><span class="u">❯</span> 帮我把横幅左边也设计一下<br>⏺ 好的…</div></div>
+    <div class="proscons">
+      <div><b>好处</b>：最干净，终端正文上方几乎不占注意力；状态出现时变化明显，提醒效果最好。</div>
+      <div><b>代价</b>：只有图标时新用户看不懂，必须靠悬停提示；图标本身的辨识度变得关键（要配合 imux 自绘套组才成立）。</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>五 · 右键菜单（随图标套组同步）</h2>
+    <div class="ctxwrap">
+      <div class="ctx" id="ctx"></div>
+      <div class="ctxnote">
+        终端标签右键菜单里 imux 的几项和横幅用同一套图标，让“横幅上看到的”和“菜单里找到的”能对上。<br>
+        「连接到手机」沿用已有的手机图标。<br>
+        右键菜单里本来就有「交接会话」这一项，它不在这次设计范围内，图标保持原样。
+      </div>
+    </div>
+  </section>
+
+  <p class="callout">三个方向共用的规则：一条横幅；每个功能一段，状态写在段内；「不再提示」只让结对编程段变安静（缩成图标），不会让功能消失；先聊再做的“讨论进行中”状态需要新增一个小接口（查询该会话是否有未关闭的讨论），其余状态都已有数据。</p>
+</div>
+
+<script>
+const PLATFORM = {"profileCPU": "<svg viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M11.5 11C11.2239 11 11 11.2239 11 11.5C11 11.7761 11.2239 12 11.5 12H13.5C13.7761 12 14 11.7761 14 11.5C14 11.2239 13.7761 11 13.5 11H11.5Z\" fill=\"#CED0D6\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M9 15V10C9 9.44772 9.44772 9 10 9H13.5858C13.851 9 14.1054 9.10536 14.2929 9.29289L15.7071 10.7071C15.8946 10.8946 16 11.149 16 11.4142V15C16 15.5523 15.5523 16 15 16H10C9.44772 16 9 15.5523 9 15ZM10 10V15H11V14C11 13.4477 11.4477 13 12 13H13C13.5523 13 14 13.4477 14 14V15H15V11.4142L13.5858 10L10 10ZM13 15H12V14H13V15Z\" fill=\"#CED0D6\"/><path d=\"M1 8C1 4.13401 4.13401 1 8 1C11.866 1 15 4.13401 15 8C15 8.18978 14.9924 8.3778 14.9776 8.56376C14.7054 8.29991 14.3658 8.12076 13.9998 8.04332C13.9999 8.0289 14 8.01445 14 8C14 4.68629 11.3137 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14V15C4.13401 15 1 11.866 1 8Z\" fill=\"#CED0D6\"/><path d=\"M8.00008 4.5C8.27622 4.5 8.50008 4.72386 8.50008 5V8C8.50008 8.17563 8.40793 8.33838 8.25732 8.42875L5.75732 9.92875C5.52053 10.0708 5.2134 9.99404 5.07133 9.75725C4.92925 9.52046 5.00604 9.21333 5.24283 9.07125L7.50008 7.7169V5C7.50008 4.72386 7.72393 4.5 8.00008 4.5Z\" fill=\"#CED0D6\"/></svg>", "toolWindowInspection": "<svg viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\"> <path fill=\"none\" stroke=\"#CED0D6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.93 11.32c-1.28.39-2.7 1.26-2.91 3.18m9.95 0c-.21-1.92-1.63-2.79-2.91-3.18M3 5.5h10\"/> <path fill=\"none\" stroke=\"#CED0D6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M4.5 9c-.55 0-1-.45-1-1s.45-1 1-1V3c0-.83.67-1.5 1.5-1.5h4c.83 0 1.5.67 1.5 1.5v4c.55 0 1 .45 1 1s-.45 1-1 1h-.04c-.24 1.69-1.7 3-3.46 3s-3.22-1.31-3.46-3H4.5Z\" clip-rule=\"evenodd\"/></svg>", "intentionBulb": "<svg viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"5.70142\" y=\"12\" width=\"4.6\" height=\"1\" fill=\"#CED0D6\"/><path d=\"M6 14H10C10 14.5523 9.55228 15 9 15H7C6.44772 15 6 14.5523 6 14Z\" fill=\"#CED0D6\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M10.8704 9.14748C12.0417 8.27221 12.8 6.87465 12.8 5.3C12.8 2.64903 10.6509 0.5 7.99995 0.5C5.34898 0.5 3.19995 2.64903 3.19995 5.3C3.19995 6.87464 3.95817 8.27218 5.12943 9.14746L5.49994 11H10.4999L10.8704 9.14748Z\" fill=\"#F2C55C\"/></svg>", "cwmUsers": "<svg viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M8.5 4.5C8.5 5.88071 7.38071 7 6 7C4.61929 7 3.5 5.88071 3.5 4.5C3.5 3.11929 4.61929 2 6 2C7.38071 2 8.5 3.11929 8.5 4.5ZM7.5 4.5C7.5 5.32843 6.82843 6 6 6C5.17157 6 4.5 5.32843 4.5 4.5C4.5 3.67157 5.17157 3 6 3C6.82843 3 7.5 3.67157 7.5 4.5Z\" fill=\"#CED0D6\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M1.90099 13H10.099C10.6614 13 11.1039 12.5357 10.9786 11.9878C10.6448 10.5267 9.55331 8 5.99687 8C2.43936 8 1.35225 10.5282 1.02104 11.9891C0.896888 12.5367 1.3392 13 1.90099 13ZM9.95087 12H2.04872C2.20872 11.401 2.50316 10.696 3.03189 10.1276C3.59414 9.52324 4.48671 9 5.99687 9C7.50663 9 8.40044 9.52299 8.96416 10.1277C9.49402 10.696 9.78976 11.401 9.95087 12Z\" fill=\"#CED0D6\"/><path d=\"M9.99992 7C9.54449 7 9.11751 6.87822 8.74976 6.66545C8.95564 6.40435 9.12514 6.11323 9.2506 5.79972C9.47108 5.9271 9.72699 6 9.99992 6C10.8284 6 11.4999 5.32843 11.4999 4.5C11.4999 3.67157 10.8284 3 9.99992 3C9.72699 3 9.47108 3.0729 9.2506 3.20028C9.12514 2.88677 8.95564 2.59565 8.74976 2.33455C9.11751 2.12178 9.54449 2 9.99992 2C11.3806 2 12.4999 3.11929 12.4999 4.5C12.4999 5.88071 11.3806 7 9.99992 7Z\" fill=\"#CED0D6\"/><path d=\"M13.9508 12H11.9927C12.0321 12.3731 11.9566 12.7117 11.8025 13H14.0989C14.6613 13 15.1038 12.5357 14.9786 11.9878C14.6447 10.5267 13.5532 8 9.9968 8C9.84635 8 9.70032 8.00452 9.55859 8.01329C9.88392 8.23753 10.1727 8.49069 10.4275 8.76407C10.5111 8.85368 10.5905 8.94488 10.6659 9.03724C11.7801 9.16688 12.4892 9.61829 12.9641 10.1277C13.4939 10.696 13.7897 11.401 13.9508 12Z\" fill=\"#CED0D6\"/></svg>", "preview": "<svg viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M6 3.02242V3C6 1.89543 6.89543 1 8 1H13C14.1046 1 15 1.89543 15 3V9C15 10.1046 14.1046 11 13 11H10.4003C10.5622 10.6832 10.6944 10.3486 10.793 10H13C13.5523 10 14 9.55228 14 9V3C14 2.44772 13.5523 2 13 2H8C7.44772 2 7 2.44772 7 3V3.20703C6.67772 3.11588 6.34341 3.05337 6 3.02242Z\" fill=\"#CED0D6\"/><path d=\"M9.74284 5C9.42948 4.62057 9.06621 4.28389 8.66308 4H12.5C12.7761 4 13 4.22386 13 4.5C13 4.77614 12.7761 5 12.5 5H9.74284Z\" fill=\"#CED0D6\"/><path d=\"M10.9776 8C10.9466 7.65659 10.8841 7.32228 10.793 7H12.5C12.7761 7 13 7.22386 13 7.5C13 7.77614 12.7761 8 12.5 8H10.9776Z\" fill=\"#CED0D6\"/><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M5.5 13C6.56251 13 7.53901 12.6318 8.30884 12.0159L11.1464 14.8536C11.3417 15.0488 11.6583 15.0488 11.8536 14.8536C12.0488 14.6583 12.0488 14.3417 11.8536 14.1464L9.01595 11.3088C9.63176 10.539 10 9.56251 10 8.5C10 6.01472 7.98528 4 5.5 4C3.01472 4 1 6.01472 1 8.5C1 10.9853 3.01472 13 5.5 13ZM5.5 12C7.433 12 9 10.433 9 8.5C9 6.567 7.433 5 5.5 5C3.567 5 2 6.567 2 8.5C2 10.433 3.567 12 5.5 12Z\" fill=\"#CED0D6\"/></svg>", "balloon": "<svg viewBox=\"0 0 16 16\" xmlns=\"http://www.w3.org/2000/svg\"> <path fill=\"#43454A\" stroke=\"#CED0D6\" stroke-linejoin=\"round\" d=\"M9.312 10.61A.5.5 0 0 0 9 10.5H4A1.5 1.5 0 0 1 2.5 9V4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v9.96l-4.188-3.35Z\"/></svg>", "cwmVerified": "<svg viewBox=\"0 0 14 14\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M6.29312 1.41411C6.68365 1.02362 7.31678 1.02364 7.70729 1.41415L8.20735 1.91421C8.58242 2.28929 9.09113 2.5 9.62156 2.5H10.5C11.0523 2.5 11.5 2.94772 11.5 3.5V4.37863C11.5 4.9091 11.7107 5.41785 12.0859 5.79293L12.6972 6.40418C13.0576 6.7645 13.0893 7.33817 12.771 7.73607L11.9383 8.77674C11.6546 9.13138 11.5 9.57204 11.5 10.0262V10.5C11.5 11.0523 11.0523 11.5 10.5 11.5H9.62137C9.0909 11.5 8.58215 11.7107 8.20707 12.0859L7.70726 12.5857C7.31676 12.9763 6.6836 12.9763 6.29305 12.5858L5.79286 12.0857C5.4178 11.7107 4.90912 11.5 4.37873 11.5H3.5001C2.94785 11.5 2.50015 11.0523 2.5001 10.5001L2.50005 10.026C2.50001 9.57195 2.34548 9.13145 2.06186 8.77689L1.68487 9.07844L2.06186 8.77689L1.22928 7.73603C0.911003 7.33814 0.942787 6.76456 1.30308 6.40427L1.91441 5.79294C2.28952 5.41783 2.50024 4.90906 2.50019 4.37857L2.50012 3.50008C2.50008 2.94776 2.94781 2.5 3.50012 2.5H4.37873C4.90912 2.5 5.41779 2.28932 5.79286 1.9143L6.29312 1.41411Z\" fill=\"#253627\" stroke=\"#57965C\"/><path d=\"M9.5 5.5L6.5 8.5L5 7\" stroke=\"#57965C\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>", "closeSmall": "<svg viewBox=\"0 0 16 16\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M11.4939 4.48784C11.3002 4.28007 10.9724 4.27548 10.7729 4.47775L8.00074 7.28849L5.22871 4.47788C5.02922 4.27561 4.70143 4.2802 4.50768 4.48797C4.32506 4.68382 4.32933 4.98882 4.51736 5.17947L7.29908 7.99991L4.51756 10.8201C4.32953 11.0108 4.32526 11.3158 4.50788 11.5116C4.70163 11.7194 5.02942 11.724 5.22892 11.5217L8.00074 8.71133L10.7727 11.5219C10.9722 11.7241 11.3 11.7196 11.4937 11.5118C11.6764 11.3159 11.6721 11.0109 11.484 10.8203L8.7024 7.99991L11.4843 5.17934C11.6723 4.98869 11.6766 4.68368 11.4939 4.48784Z\" fill=\"#6F737A\"/></svg>"};
+const S = { icons: 'custom', peer: 'idle', phone: 'online', talk: 'none' };
+const st = 'fill="none" stroke="#CED0D6" stroke-linecap="round" stroke-linejoin="round"';
+const CUSTOM = {
+  pair: `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path ${st} d="M5.5 9.5h-3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3"/><rect ${st} x="5.5" y="5.5" width="9" height="9" rx="1"/><path ${st} d="M8 8.5l1.5 1.5L8 11.5M11 11.5h1.5"/></svg>`,
+  review: `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path ${st} d="M7.5 12.5h-5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3.5"/><path ${st} d="M4 5.5l1.5 1.5L4 8.5"/><circle ${st} cx="11" cy="11" r="2.5"/><path ${st} d="M12.8 12.8l1.7 1.7"/></svg>`,
+  talk: `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path ${st} d="M2.5 2.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5l-3 2.5v-2.5h-2a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path ${st} d="M6.6 5.6a1.5 1.5 0 1 1 2.1 1.4c-.45.2-.7.5-.7.95v.3"/><circle cx="8" cy="9.75" r=".6" fill="#CED0D6"/></svg>`,
+};
+const PHONE = `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><rect x="4.5" y="1.5" width="7" height="13" rx="1.6" fill="none" stroke="#5fb865" stroke-width="1"/><circle cx="8" cy="12.2" r=".8" fill="#5fb865"/></svg>`;
+const SETS = {
+  now: { name: '现状', pair: PLATFORM.profileCPU, review: PLATFORM.toolWindowInspection, talk: PLATFORM.intentionBulb,
+    d: ['性能分析（与结对无关）', '新 UI 下是戴帽子的人', '灯泡＝快速修复的语义'] },
+  platform: { name: '平台图标', pair: PLATFORM.cwmUsers, review: PLATFORM.preview, talk: PLATFORM.balloon,
+    d: ['Code With Me 的“多人”', '“预览”：文档＋放大镜', '通知气泡'] },
+  custom: { name: 'imux 自绘', pair: CUSTOM.pair, review: CUSTOM.review, talk: CUSTOM.talk,
+    d: ['两个终端叠在一起', '终端＋放大镜', '终端形气泡＋问号'] },
+};
+const ic = svg => `<span class="ico">${svg}</span>`;
+const cur = () => SETS[S.icons];
+const progress = '结对编程伙伴 Codex · 第 2 轮 · 已完成 3 项 · 正在执行 git diff · 18 秒';
+
+const CHECK = PLATFORM.cwmVerified;
+const spin = '<span class="ico"><span class="spin"></span></span>';
+const car = '<span class="car">▾</span>';
+const vs = '<span class="vsep"></span>';
+
+// 结对编程段：图标、状态、是否带 ▾ 与段内急用链接
+function pairSeg(s, mode) {
+  const iconOnly = mode === 'icon' || (mode !== 'full' && S.peer === 'dismissed');
+  let head, label, extra = '';
+  switch (S.peer) {
+    case 'ready': head = `<span class="dot g"></span>${ic(s.pair)}`; label = 'Codex 结对中'; break;
+    case 'running': head = spin; label = 'Codex 审查中 · 第 2 轮 · 18 秒'; extra = `<span class="g12"></span><a>取消</a>`; break;
+    case 'passed': head = ic(CHECK); label = 'Codex 无新反馈'; break;
+    default: head = ic(s.pair); label = '结对编程';
+  }
+  const quietIdle = mode === 'icon' && (S.peer === 'idle' || S.peer === 'dismissed');
+  const showLabel = !(iconOnly || quietIdle) || (mode === 'icon' && !['idle', 'dismissed'].includes(S.peer));
+  const tip = S.peer === 'dismissed' ? '结对编程（提示已收起）' : '结对编程';
+  return `<span class="mbtn" data-pop="popPair" title="${tip}">${head}${showLabel ? `<span>${label}</span>` : ''}${car}</span>${extra}`;
+}
+
+function talkSeg(s, mode) {
+  const open = S.talk === 'open';
+  const label = open ? '先聊再做 · 讨论中' : '先聊再做';
+  const show = mode !== 'icon' || open;
+  return `<span class="mbtn" title="先聊再做：与 Agent 一起把需求聊清楚再动手">${open ? '<span class="dot g"></span>' : ''}${ic(s.talk)}${show ? `<span>${label}</span>` : ''}</span>`;
+}
+
+function phoneSegC(mode) {
+  if (S.phone === 'none') return '';
+  return `${vs}<span class="mbtn"><span class="dot g"></span>${ic(PHONE)}<span>${mode === 'icon' ? '企业微信' : '企业微信「imux 机器人 1」'}</span>${car}</span>`;
+}
+
+function pairMenu(s) {
+  let items;
+  if (S.peer === 'idle' || S.peer === 'dismissed') items = `
+      <div class="it">${ic(s.pair)}开启结对编程<span class="k">▸</span></div>
+      <div class="it">${ic(s.review)}审查一次…</div>
+      <div class="sep"></div>
+      <div class="it"><span class="ico"></span>${S.peer === 'dismissed' ? '恢复提示' : '不再提示'}</div>`;
+  else if (S.peer === 'running') items = `
+      <div class="it"><span class="ico"></span>取消本轮审查</div>
+      <div class="it"><span class="ico"></span>停止结对编程</div>`;
+  else items = `
+      <div class="it">${ic(s.review)}立即审查一次</div>
+      <div class="it"><span class="ico"></span>更换结对伙伴<span class="k">▸</span></div>
+      <div class="sep"></div>
+      <div class="it"><span class="ico"></span>停止结对编程</div>`;
+  const head = S.peer === 'running' ? progress : '让另一个 AI 在你改代码时帮你看，或者只审查一次。';
+  return `<div class="popup" id="popPair"><div class="it dis" style="white-space:normal;max-width:300px;line-height:1.55;font-size:12px">${head}</div><div class="sep"></div>${items}</div>`;
+}
+
+function renderA() {
+  const s = cur();
+  return `<div class="banner"><span class="left">${pairSeg(s, 'auto')}${vs}${talkSeg(s, 'full')}</span><span class="glue"></span>${phoneSegC('full')}</div>${pairMenu(s)}`;
+}
+
+function renderB() {
+  const s = cur();
+  let status;
+  if (S.peer === 'running') status = `${spin}<span class="g6"></span><span class="txt">${progress}</span><span class="g12"></span><a>取消</a>`;
+  else if (S.peer === 'ready') status = `${ic(CHECK)}<span class="g6"></span><span class="txt">结对编程伙伴 Codex 已就绪，你每改完一轮它会自动审查</span>`;
+  else if (S.peer === 'passed') status = `${ic(CHECK)}<span class="g6"></span><span class="txt">Codex 已审查，没有新的反馈</span>`;
+  else if (S.talk === 'open') status = `<span class="sub">先聊再做的讨论还开着，聊完会把方案交给这个终端</span>`;
+  else if (S.peer === 'idle') status = `<span class="sub">可以先和 AI 把需求聊清楚，或让另一个 AI 帮你审查改动</span>`;
+  else status = '';
+  const pair = S.peer === 'running' ? `<span class="mbtn" data-pop="popPair">${spin}<span>结对编程</span>${car}</span>`
+    : `<span class="mbtn" data-pop="popPair">${S.peer === 'ready' || S.peer === 'passed' ? '<span class="dot g"></span>' : ''}${ic(s.pair)}<span>结对编程</span>${car}</span>`;
+  return `<div class="banner"><span class="left">${status}</span><span class="glue"></span>${pair}${vs}${talkSeg(s, 'full')}${phoneSegC('full')}</div>${pairMenu(s)}`;
+}
+
+function renderC() {
+  const s = cur();
+  return `<div class="banner"><span class="left">${pairSeg(s, 'icon')}<span class="g6"></span>${talkSeg(s, 'icon')}</span><span class="glue"></span>${phoneSegC('icon')}</div>${pairMenu(s)}`;
+}
+
+function renderSets() {
+  document.getElementById('sets').innerHTML = Object.entries(SETS).map(([k, s]) =>
+    `<div class="set ${k === S.icons ? 'on' : ''}" data-set="${k}"><h3>${s.name}</h3>
+      ${['pair', 'review', 'talk'].map((f, i) => `<div class="row"><span class="big">${s[f]}</span>${ic(s[f])}<span class="n">${['结对编程', '审查一次', '先聊再做'][i]}</span><span class="d">${s.d[i]}</span></div>`).join('')}
+    </div>`).join('');
+}
+
+function renderCtx() {
+  const s = cur();
+  const plain = t => `<div class="it"><span class="ico"></span>${t}</div>`;
+  document.getElementById('ctx').innerHTML =
+    plain('复制') + plain('粘贴') + plain('全选') + '<div class="sep"></div>' + plain('清空终端') + '<div class="sep"></div>' +
+    `<div class="it"><span class="ico"></span>交接会话<span class="k">▸</span></div>` +
+    `<div class="it hl">${ic(s.pair)}结对编程<span class="k">▸</span></div>` +
+    `<div class="it">${ic(s.review)}审查一次…</div>` +
+    `<div class="it">${ic(s.talk)}先聊再做</div>` +
+    `<div class="it">${ic(PHONE)}连接到手机<span class="k">▸</span></div>`;
+}
+
+const R = { A: renderA, B: renderB, C: renderC };
+function render() {
+  document.querySelectorAll('[data-render]').forEach(el => { el.innerHTML = R[el.dataset.render](); });
+  renderSets(); renderCtx();
+  document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', S[seg.dataset.k] === b.dataset.v)));
+}
+document.querySelectorAll('.seg').forEach(seg => seg.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; S[seg.dataset.k] = b.dataset.v; render();
+}));
+document.addEventListener('click', e => {
+  const set = e.target.closest('[data-set]'); if (set) { S.icons = set.dataset.set; render(); return; }
+  const btn = e.target.closest('[data-pop]');
+  document.querySelectorAll('.popup.show').forEach(p => { if (!btn || p.id !== btn.dataset.pop) p.classList.remove('show'); });
+  if (!btn) return;
+  const pop = document.getElementById(btn.dataset.pop), frame = btn.closest('.editor').getBoundingClientRect(), r = btn.getBoundingClientRect();
+  pop.classList.toggle('show'); pop.style.top = (r.bottom - frame.top + 4) + 'px'; pop.style.left = (r.left - frame.left) + 'px';
+});
+render();
+</script>
+</body>
+</html>

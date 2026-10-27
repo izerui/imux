@@ -210,7 +210,7 @@
                 class="com.github.izerui.imux.terminal.ReviewOnceAction"
                 text="Review Once"
                 description="Choose an agent to review this session once"
-                icon="AllIcons.Toolwindows.ToolWindowInspection">
+                icon="/icons/review.svg">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="after"
                           relative-to-action="imux.PeerProgramming"/>
         </action>
@@ -219,7 +219,7 @@
                 class="com.github.izerui.imux.terminal.ClarifyRequirementAction"
                 text="Talk First"
                 description="Before starting, talk it through with the agent: it combines the project's code and web knowledge to ask you step by step, fills in directions you haven't considered, and delivers an execution plan"
-                icon="AllIcons.Actions.IntentionBulb">
+                icon="/icons/talk.svg">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </action>
         <action

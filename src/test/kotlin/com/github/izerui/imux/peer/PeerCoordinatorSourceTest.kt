@@ -58,36 +58,26 @@ class PeerCoordinatorSourceTest {
     @Test
     fun `横幅使用紧凑操作和较小纵向内边距`() {
         assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.cancel"))"""))
-        assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.close"))"""))
         assertTrue(editor.contains("border = JBUI.Borders.empty(3, 12, 3, 24)"))
+        assertTrue("结对编程段带下拉箭头", editor.contains("setDropDownLinkIcon()"))
     }
 
     @Test
-    fun `横幅三种状态使用正确的图标`() {
-        val refreshFun = editor.substringAfter("fun refreshPeerBanner()").substringBefore("private fun progressSummary")
-        val nullBranch = refreshFun.substringAfter("if (status == null)").substringBefore("} else {")
-        val boundBranch = refreshFun.substringAfter("} else {").substringBefore("peerBanner.revalidate()")
-
-        assertTrue("未绑定时应显示 ProfileCPU 图标", nullBranch.contains("peerIcon.icon = AllIcons.Actions.ProfileCPU"))
-        assertFalse("未绑定分支不应出现旋转图标", nullBranch.contains("peerBusyIcon"))
-
-        assertTrue("运行中应复用缓存的旋转图标", boundBranch.contains("if (status.running) peerBusyIcon"))
-        assertTrue("就绪时应显示结对验证图标", boundBranch.contains("AllIcons.CodeWithMe.CwmVerified"))
-
+    fun `结对编程段按状态使用正确的图标`() {
+        val refreshFun = editor.substringAfter("fun refreshPeerBanner()").substringBefore("private fun showPeerMenu")
+        assertTrue("空闲用结对图标", refreshFun.contains("PeerSegmentKind.IDLE -> AgentIcons.pair"))
+        assertTrue("审查中复用缓存的旋转图标", refreshFun.contains("PeerSegmentKind.RUNNING -> peerBusyIcon"))
+        assertTrue("结对中与通过带绿点", refreshFun.contains("PeerSegmentKind.READY, PeerSegmentKind.PASSED -> RowIcon(peerDot, AgentIcons.pair)"))
         assertTrue("旋转图标应缓存为字段", editor.contains("private val peerBusyIcon = AnimatedIcon.Default()"))
         assertFalse("refreshPeerBanner 不应新建 AnimatedIcon", refreshFun.contains("AnimatedIcon.Default()"))
     }
 
     @Test
-    fun `横幅在 PASS 时显示 action-peer-passed 文案`() {
-        val editorCompact = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt")
-            .compact(editor)
-        assertTrue(
-            "lastReviewPassed 分支应切到 action.peer.passed 文案",
-            editorCompact.contains(
-                """elseif(status.lastReviewPassed){ImuxBundle.message("action.peer.passed",status.targetAgentType.displayName)}""",
-            ),
-        )
+    fun `左边状态句：审查中给完整进度，通过时显示无新反馈`() {
+        val refreshFun = editor.substringAfter("fun refreshPeerBanner()").substringBefore("private fun showPeerMenu")
+        assertTrue(refreshFun.contains("model.kind == PeerSegmentKind.RUNNING && progress != null -> progressSummary(name, progress)"))
+        assertTrue(refreshFun.contains("""model.kind == PeerSegmentKind.PASSED -> ImuxBundle.message("action.peer.status.passed", name)"""))
+        assertTrue(refreshFun.contains("""hint -> ImuxBundle.message("banner.status.idle")"""))
     }
 
     @Test

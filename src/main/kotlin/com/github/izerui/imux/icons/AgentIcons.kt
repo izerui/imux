@@ -53,6 +53,14 @@ internal object AgentIcons {
     /** 会话连着手机。见 [forTab]。 */
     val phone: Icon = IconLoader.getIcon("/icons/phone.svg", javaClass)
 
+    /** 结对编程、审查一次、先聊再做：都以终端框为母题，分别加第二个终端、放大镜、问号。 */
+    val pair: Icon = IconLoader.getIcon("/icons/pair.svg", javaClass)
+    val review: Icon = IconLoader.getIcon("/icons/review.svg", javaClass)
+    val talk: Icon = IconLoader.getIcon("/icons/talk.svg", javaClass)
+
+    /** 会话轨迹：终端框里一条时间线。 */
+    val trail: Icon = IconLoader.getIcon("/icons/trail.svg", javaClass)
+
     // 动画帧只建一次：标签页会反复来取图标，每次新建不只是浪费，
     // 还会让动画每次都从第一帧重来，看着像卡住。
     private val claudeBusy by lazy { spinning(claude) }

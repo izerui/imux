@@ -22,6 +22,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
+import com.intellij.util.EventDispatcher
 import com.intellij.openapi.util.SystemInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,9 +53,21 @@ class ClarificationService(
     private val jobs = ConcurrentHashMap<String, Job>()
     private val dialogs = ConcurrentHashMap<String, ClarificationDialog>()
     private val unexited = UnexitedProcesses()
+    private val openListeners = EventDispatcher.create(ClarificationOpenListener::class.java)
 
     init {
         TerminalHost.getInstance(project).addSessionKeyMigratedListener(this) { from, to -> migrate(from, to) }
+    }
+
+    /** 该会话的讨论窗口是否开着；横幅据此显示「讨论中」。 */
+    internal fun isOpen(sessionKey: String): Boolean = dialogs.containsKey(sessionKey)
+
+    /** 讨论窗口打开或关闭时通知；回调可能不在 EDT 上。 */
+    internal fun addOpenListener(
+        parentDisposable: Disposable,
+        listener: ClarificationOpenListener,
+    ) {
+        openListeners.addListener(listener, parentDisposable)
     }
 
     internal fun currentKeyOf(flow: ClarificationFlow): String? = flows.entries.firstOrNull { it.value === flow }?.key
@@ -69,6 +82,7 @@ class ClarificationService(
         val flow = flows.getOrPut(sessionKey) { newFlow() }
         val dialog = ClarificationDialog(project, this, flow, defaultAgentType)
         dialogs[sessionKey] = dialog
+        openListeners.multicaster.openChanged(sessionKey)
         dialog.show()
     }
 
@@ -236,6 +250,7 @@ class ClarificationService(
         jobs.remove(sessionKey)?.cancel()
         owners.remove(sessionKey)
         dialogs.remove(sessionKey)?.close(com.intellij.openapi.ui.DialogWrapper.OK_EXIT_CODE)
+        openListeners.multicaster.openChanged(sessionKey)
     }
 
     /**
@@ -261,6 +276,7 @@ class ClarificationService(
         dialogs.remove(from)?.let {
             dialogs[to] = it
             it.sessionKey = to
+            openListeners.multicaster.openChanged(to)
         }
     }
 
@@ -293,3 +309,7 @@ internal fun undeliveredRequirement(state: ClarificationState): String? =
 /** 主会话正在执行或停在确认框上（只有 Claude 有这个信号）。纯函数，便于单测。 */
 internal fun mainSessionBusy(running: Set<String>, waiting: Set<String>, sessionKey: String): Boolean =
     sessionKey in running || sessionKey in waiting
+
+fun interface ClarificationOpenListener : java.util.EventListener {
+    fun openChanged(sessionKey: String)
+}

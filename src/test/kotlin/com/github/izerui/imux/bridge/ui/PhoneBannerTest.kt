@@ -62,4 +62,17 @@ class PhoneBannerTest {
     fun `窄横幅只留图标`() {
         assertEquals("", phoneBannerText(model()!!, 599, label))
     }
+
+    @Test
+    fun `开关关闭时手机段仍显示为未连接，不会消失`() {
+        assertEquals(PhoneSegmentState.Unbound(bridgeEnabled = false), phoneSegmentState(false, null))
+        // 即使残留了绑定模型，开关关着也不当作已连接
+        assertEquals(PhoneSegmentState.Unbound(bridgeEnabled = false), phoneSegmentState(false, model(enabled = true)))
+    }
+
+    @Test
+    fun `开关打开时按是否绑定区分未连接与已连接`() {
+        assertEquals(PhoneSegmentState.Unbound(bridgeEnabled = true), phoneSegmentState(true, null))
+        assertEquals(PhoneSegmentState.Bound(model()!!), phoneSegmentState(true, model()))
+    }
 }

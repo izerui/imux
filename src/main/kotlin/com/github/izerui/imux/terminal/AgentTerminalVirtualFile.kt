@@ -30,7 +30,6 @@ class AgentTerminalVirtualFile(
     var sessionId: String? = null,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
-    var peerBannerDismissed: Boolean = false
 
     /** 右上角会话轨迹面板是否展开。放在会话上：拖动标签页重建编辑器后保持，同一会话的多个编辑器实例一致。 */
     var trailExpanded: Boolean = false

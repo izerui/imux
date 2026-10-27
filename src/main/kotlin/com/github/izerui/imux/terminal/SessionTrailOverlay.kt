@@ -1,6 +1,10 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import javax.swing.BoxLayout
+import javax.swing.Box
+import com.intellij.ui.RowIcon
+import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.overview.LoadingRow
 import com.github.izerui.imux.overview.ProgressOverviewService
@@ -22,7 +26,6 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.AnimatedIcon
-import com.intellij.ui.BadgeIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
@@ -46,9 +49,9 @@ import javax.swing.SwingUtilities
 import javax.swing.Timer
 
 /**
- * 会话标签页正文右上角的轨迹面板：折叠时是一个小图标，展开是一张可滚动、可调整大小的卡片。
+ * 会话轨迹：入口是终端顶部横幅上的一段（[bannerSegment]），展开后是正文右上角一张可滚动、可调整大小的卡片。
  *
- * 两个组件都由 [AgentTerminalFileEditor] 放进终端上方的 `PALETTE_LAYER`，只遮住自身范围，
+ * 卡片由 [AgentTerminalFileEditor] 放进终端上方的 `PALETTE_LAYER`，只遮住自身范围，
  * 不改变终端尺寸，TUI 不会重新排版。这里只负责显示：状态与生成任务在
  * [com.github.izerui.imux.overview.TrailStateStore]，展开状态在 [AgentTerminalVirtualFile.trailExpanded]，
  * 所以拖动标签页重建编辑器后内容不丢，同一会话的多个编辑器实例看到的也是同一份内容。
@@ -76,37 +79,29 @@ internal class SessionTrailOverlay(
     private var availableWidth = 0
     private var availableHeight = 0
 
-    private val expandAction =
-        object : DumbAwareAction() {
-            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-            override fun update(event: AnActionEvent) {
-                val state = store.state(key)
-                event.presentation.icon = chipIcon(state)
-                event.presentation.text =
-                    if (state is TrailState.Unavailable) ImuxBundle.message("action.overview.pending")
-                    else ImuxBundle.message("action.overview.text")
-                event.presentation.isEnabled = state !is TrailState.Unavailable
-            }
-
-            override fun actionPerformed(event: AnActionEvent) = setExpanded(true)
-        }
-
-    private val chipButton =
-        ActionButton(
-            expandAction,
-            expandAction.templatePresentation.clone(),
-            CHIP_ACTION_PLACE,
-            ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE,
-        ).apply {
-            setLook(ActionButtonLook.SYSTEM_LOOK)
+    // 横幅上的会话轨迹段：图标带状态（生成中转圈，过期或失败亮黄点），点一下展开或收起右上角的卡片。
+    private val segmentDot = StatusDotIcon(BannerColors.PROBLEM)
+    private val segmentIcon = JBLabel()
+    private val segmentLink =
+        ActionLink(ImuxBundle.message("action.overview.text")) {
+            if (store.state(key) !is TrailState.Unavailable) setExpanded(!virtualFile.trailExpanded)
+        }.apply {
             isFocusable = false
+            setDropDownLinkIcon()
         }
 
-    val chip: JComponent = TrailSurface().apply {
-        layout = BorderLayout()
-        add(trailCornerSlot(chipButton), BorderLayout.CENTER)
-    }
+    /** 放进终端顶部横幅的一段，自带左侧分隔线。 */
+    val bannerSegment: JComponent =
+        JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            isOpaque = false
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(BannerDivider())
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(segmentIcon)
+            add(Box.createHorizontalStrut(JBUI.scale(4)))
+            add(segmentLink)
+        }
 
     private val titleLabel = JBLabel().apply { font = JBUI.Fonts.label().asBold() }
     private val collapseAction =
@@ -176,7 +171,6 @@ internal class SessionTrailOverlay(
     fun layout(width: Int, height: Int, rightReserve: Int) {
         val metrics = trailMetrics()
         val expanded = virtualFile.trailExpanded
-        chip.isVisible = !expanded
         card.isVisible = expanded
         availableWidth = (width - rightReserve - metrics.margin * 2).coerceAtLeast(0)
         availableHeight = (height - metrics.margin * 2).coerceAtLeast(0)
@@ -184,7 +178,7 @@ internal class SessionTrailOverlay(
         val desiredWidth = size?.width ?: JBUI.scale(TrailSizeSetting.width())
         val desiredHeight = size?.height ?: desiredCardHeight()
         val bounds = trailBounds(width, height, rightReserve, expanded, desiredWidth, desiredHeight, metrics)
-        if (expanded) card.bounds = bounds else chip.bounds = bounds
+        if (expanded) card.bounds = bounds
     }
 
     /** 有时间线时用设定高度；提示、加载、报错这类短内容按内容收紧，不超过设定高度。 */
@@ -217,8 +211,7 @@ internal class SessionTrailOverlay(
 
         if (expanded) store.generateIfNeeded(key, virtualFile.tabId)
         val state = store.state(key)
-        chipButton.update()
-        chipButton.repaint()
+        updateSegment(state)
         if (expanded) render(state) else loadingTimer.stop()
         relayout()
     }
@@ -299,13 +292,30 @@ internal class SessionTrailOverlay(
         row.update(state.progress ?: ImuxBundle.message("action.overview.loading"), seconds)
     }
 
-    private fun chipIcon(state: TrailState): javax.swing.Icon =
-        when {
-            state is TrailState.Loading -> AnimatedIcon.Default.INSTANCE
-            state is TrailState.Failed || (state is TrailState.Ready && state.stale) ->
-                BadgeIcon(AllIcons.Actions.Preview, BADGE_COLOR)
-            else -> AllIcons.Actions.Preview
-        }
+    private fun updateSegment(state: TrailState) {
+        segmentIcon.icon =
+            when {
+                state is TrailState.Loading -> AnimatedIcon.Default.INSTANCE
+                state is TrailState.Failed || (state is TrailState.Ready && state.stale) -> RowIcon(segmentDot, AgentIcons.trail)
+                else -> AgentIcons.trail
+            }
+        val title = ImuxBundle.message("action.overview.text")
+        segmentLink.text =
+            when {
+                state is TrailState.Loading -> "$title · ${ImuxBundle.message("action.overview.status.loading")}"
+                state is TrailState.Failed -> "$title · ${ImuxBundle.message("action.overview.status.failed")}"
+                state is TrailState.Ready && state.stale -> "$title · ${ImuxBundle.message("action.overview.status.stale")}"
+                else -> title
+            }
+        segmentLink.isEnabled = state !is TrailState.Unavailable
+        val tip =
+            if (state is TrailState.Unavailable) ImuxBundle.message("action.overview.pending")
+            else ImuxBundle.message("action.overview.toggle.description")
+        segmentIcon.toolTipText = tip
+        segmentLink.toolTipText = tip
+        bannerSegment.revalidate()
+        bannerSegment.repaint()
+    }
 
     /** 收起时若焦点在卡片里（比如刚选中了节点文字），交还终端，免得键盘输入落空。 */
     private fun returnFocusIfInside() {
@@ -394,7 +404,6 @@ internal class SessionTrailOverlay(
     private companion object {
         const val CHIP_ACTION_PLACE = "imuxSessionTrail"
         const val MONITOR_REFRESH_MS = 1_000
-                val BADGE_COLOR = JBColor.namedColor("Imux.SessionTrail.staleBadge", JBColor(0xE08E0B, 0xD9A343))
     }
 }
 

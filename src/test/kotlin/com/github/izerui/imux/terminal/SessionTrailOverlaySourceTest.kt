@@ -11,7 +11,6 @@ class SessionTrailOverlaySourceTest {
 
     @Test
     fun `轨迹面板叠在终端上层，不进入终端布局`() {
-        assertTrue(editor.normalized.contains("setLayer(trailOverlay.chip, JLayeredPane.PALETTE_LAYER)"))
         assertTrue(editor.normalized.contains("setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)"))
         assertTrue("终端仍占满正文", editor.normalized.contains("terminal.setBounds(0, 0, width, height)"))
         assertTrue(
