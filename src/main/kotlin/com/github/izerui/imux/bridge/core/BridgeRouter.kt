@@ -12,7 +12,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * 排队还是插入由 CLI 自己决定；这里只保证按到达顺序逐条提交。
  * 终端未就绪时在提交锁内有限重试，每次尝试前都复核绑定，换绑或解绑后立即停止。
  * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在轮次完成时作为一条发出，
- * 中间的过程说明不推，避免逐条推送触发平台限频；电脑端输入带标签单独转发；
+ * 中间的过程说明不推，避免逐条推送触发平台限频。一轮是否结束只看完成信号（与 IDE 的“本轮完成”提醒同源），
+ * 轮次进行中有人插话或注入消息，此前攒的都是过程说明，直接丢弃；电脑端输入带标签单独转发；
  * 远程输入在记录中再次出现时不回显；等待确认立即推送。
  * 换绑前后的回复宁可发到新机器人也不丢；状态提示（当前连接、等待确认等）在绑定已变时不发。
  */
@@ -239,17 +240,27 @@ class BridgeRouter(
             when (event.kind) {
                 SessionEventKind.ASSISTANT_TEXT -> appendFinal(tabId, binding.epoch, event.text)
                 SessionEventKind.USER_TEXT -> {
-                    // 新一轮开始：上一轮没等到完成信号的结果先补发，再处理这句输入
-                    flushFinal(tabId)
-                    synchronized(lock) { completedTabs.remove(tabId) }
+                    startTurn(tabId)
                     if (!consumeRemoteEcho(tabId, event.text)) sendContent(binding, texts.localInputLabel() + "\n" + event.text)
                 }
                 // 工具调用之前的文字只是过程说明，不推
                 SessionEventKind.TOOL_STARTED -> synchronized(lock) { pendingFinal.remove(tabId) }
                 SessionEventKind.TOOL_FINISHED -> Unit
+                SessionEventKind.TURN_STARTED -> startTurn(tabId)
             }
         }
         if (synchronized(lock) { tabId in completedTabs }) flushFinal(tabId)
+    }
+
+    /**
+     * 有人说话或注入消息开启了新一轮（也可能是轮次进行中插话）。已完成的轮次结论早已发出；
+     * 没收到完成信号时攒下的只是过程说明，丢弃，免得混进之后的最终回复。
+     */
+    private fun startTurn(tabId: String) {
+        synchronized(lock) {
+            completedTabs.remove(tabId)
+            pendingFinal.remove(tabId)
+        }
     }
 
     /** 轮次完成：把本轮最终回复作为一条发出。 */
@@ -308,32 +319,26 @@ class BridgeRouter(
         send(binding, texts.connected(project, agent, sessionTitle))
     }
 
-    /** 绑定已被移除后调用：不再做 epoch 校验，提示发往原聊天。只清理 [binding] 这一代次的状态。 */
+    /**
+     * 绑定已被移除后调用：不再做 epoch 校验，只向原聊天发断开提示。
+     * 释放时没有完成信号，缓存里只是过程说明，不发给旧机器人：标签已无绑定就丢弃；
+     * 已被新绑定接管则留给新绑定，本轮完成时若仍在最后一次工具调用之后，就是最终回复的一部分。
+     */
     suspend fun onReleased(
         binding: Binding,
         sessionTitle: String,
     ) {
         val tabId = binding.target.tabId
-        val pending =
-            synchronized(lock) {
-                // 换绑时新绑定先建立、旧绑定的清理后执行：只能取走旧代次的待发回复，
-                // 标签已被新绑定接管时，回显登记与完成状态属于新绑定，不能清
-                val final = pendingFinal[tabId]?.takeIf { it.epoch == binding.epoch }
-                if (final != null) pendingFinal.remove(tabId)
-                if (bindings.bindingForTab(tabId) == null) {
-                    pendingRemoteEcho.remove(tabId)
-                    completedTabs.remove(tabId)
-                }
-                final
-            }
-        val owner = ownerOf(binding.robotId) ?: return
-        val channel = channelOf(binding.robotId) ?: return
-        // 断开前已产生的结果先发给原聊天，再告知已断开
-        pending?.let { final ->
-            TextSegmenter.split(final.text.toString(), channel.maxTextBytes).forEach { segment ->
-                deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, segment))
+        synchronized(lock) {
+            // 换绑时新绑定先建立、旧绑定的清理后执行：标签已被接管时，缓存、回显登记与完成状态都属于新绑定
+            if (bindings.bindingForTab(tabId) == null) {
+                pendingFinal.remove(tabId)
+                pendingRemoteEcho.remove(tabId)
+                completedTabs.remove(tabId)
             }
         }
+        val owner = ownerOf(binding.robotId) ?: return
+        val channel = channelOf(binding.robotId) ?: return
         deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, texts.released(sessionTitle)))
     }
 

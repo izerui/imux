@@ -12,8 +12,11 @@ import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -27,6 +30,8 @@ import kotlin.coroutines.cancellation.CancellationException
 class ProjectAttachmentStore(
     private val clock: () -> LocalDateTime = LocalDateTime::now,
     private val keepDays: Long = 7,
+    /** 文件名后缀，测试可固定。 */
+    private val suffix: () -> String = { AttachmentNames.randomSuffix() },
 ) : AttachmentStore {
     override suspend fun place(
         target: SessionTarget,
@@ -66,11 +71,60 @@ class ProjectAttachmentStore(
         val name =
             AttachmentNames.sanitize(file.suggestedName)?.let { if ('.' !in it && sniffed != null) "$it.$sniffed" else it }
                 ?: AttachmentNames.fallback(kind, now.toLocalTime(), sniffed)
-        val dest = dir.resolve(AttachmentNames.unique(name) { Files.exists(dir.resolve(it)) })
-        Files.move(file.path, dest)
+        val dest = reserve(dir, name)
+        try {
+            moveOnto(file.path, dest)
+        } catch (e: Exception) {
+            deleteQuietly(dest)
+            throw e
+        }
         ensureGitExclude(root)
         cleanup(base, now.toLocalDate())
         return PlaceResult.Saved(root.relativize(dest).joinToString("/"))
+    }
+
+    /**
+     * 原名加随机后缀（`报告-k3f9.pdf`），并用 createFile（不存在才创建）原子占位；撞名就换个后缀。
+     * 只“查存在再移动”时，同名附件同时保存会挑到同一个名字，
+     * 后一个要么失败，要么在 macOS/Linux 上被 rename 静默覆盖前一个。
+     */
+    private fun reserve(
+        dir: Path,
+        name: String,
+    ): Path {
+        repeat(MAX_RESERVE_ATTEMPTS) {
+            try {
+                return Files.createFile(dir.resolve(AttachmentNames.withSuffix(name, suffix())))
+            } catch (_: FileAlreadyExistsException) {
+                // 后缀撞上了，换一个
+            }
+        }
+        throw IOException("no free attachment name")
+    }
+
+    /**
+     * 用文件内容原子替换 [reserve] 建的空占位文件。不能用 REPLACE_EXISTING：JDK 会先删目标再改名，
+     * 中间的空档里别人能占到同一个名字，随后被覆盖。临时文件不在同一卷时，先复制到目标目录再原子改名。
+     */
+    private fun moveOnto(
+        source: Path,
+        dest: Path,
+    ) {
+        try {
+            Files.move(source, dest, StandardCopyOption.ATOMIC_MOVE)
+            return
+        } catch (_: AtomicMoveNotSupportedException) {
+            // 跨卷：走下面的同目录中转
+        }
+        val staging = Files.createTempFile(dest.parent, ".incoming-", ".part")
+        try {
+            Files.copy(source, staging, StandardCopyOption.REPLACE_EXISTING)
+            Files.move(staging, dest, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) {
+            deleteQuietly(staging)
+            throw e
+        }
+        deleteQuietly(source)
     }
 
     private fun readHead(path: Path): ByteArray =
@@ -80,19 +134,21 @@ class ProjectAttachmentStore(
             buffer.copyOf(read)
         }
 
-    /** 尽力而为：附件已经保存，写 exclude 失败只记日志，不影响本次结果。 */
+    /** 尽力而为：附件已经保存，写 exclude 失败只记日志，不影响本次结果。加锁：并发保存时只追加一行。 */
     private fun ensureGitExclude(root: Path) {
-        try {
-            val git = root.resolve(".git")
-            if (!Files.isDirectory(git)) return
-            val exclude = git.resolve("info").resolve("exclude")
-            val lines = if (Files.exists(exclude)) Files.readAllLines(exclude) else emptyList()
-            if (lines.any { it.trim() == EXCLUDE_LINE }) return
-            Files.createDirectories(exclude.parent)
-            val prefix = if (lines.isNotEmpty() && !Files.readString(exclude).endsWith("\n")) "\n" else ""
-            Files.writeString(exclude, "$prefix$EXCLUDE_LINE\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-        } catch (e: IOException) {
-            LOG.warn("写入 git exclude 失败：${e.javaClass.simpleName}")
+        synchronized(EXCLUDE_LOCK) {
+            try {
+                val git = root.resolve(".git")
+                if (!Files.isDirectory(git)) return
+                val exclude = git.resolve("info").resolve("exclude")
+                val lines = if (Files.exists(exclude)) Files.readAllLines(exclude) else emptyList()
+                if (lines.any { it.trim() == EXCLUDE_LINE }) return
+                Files.createDirectories(exclude.parent)
+                val prefix = if (lines.isNotEmpty() && !Files.readString(exclude).endsWith("\n")) "\n" else ""
+                Files.writeString(exclude, "$prefix$EXCLUDE_LINE\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+            } catch (e: IOException) {
+                LOG.warn("写入 git exclude 失败：${e.javaClass.simpleName}")
+            }
         }
     }
 
@@ -133,7 +189,9 @@ class ProjectAttachmentStore(
 
     private companion object {
         const val HEAD_BYTES = 16
+        const val MAX_RESERVE_ATTEMPTS = 20
         const val EXCLUDE_LINE = ".imux/"
+        val EXCLUDE_LOCK = Any()
         val LOG = logger<ProjectAttachmentStore>()
     }
 }

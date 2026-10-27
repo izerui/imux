@@ -249,9 +249,10 @@ class BridgeRouterTest {
                 listOf(
                     SessionEvent(SessionEventKind.USER_TEXT, "修一下 测试"),
                     SessionEvent(SessionEventKind.ASSISTANT_TEXT, "好的\n```\ncode\n```"),
-                    SessionEvent(SessionEventKind.USER_TEXT, "电脑上补一句"),
                 ),
             )
+            router.onTurnCompleted("tab-1")
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "电脑上补一句")))
             assertEquals(listOf("好的\n```\ncode\n```", "LOCAL:\n电脑上补一句"), sentTexts())
         }
 
@@ -366,20 +367,58 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `没等到完成信号时，下一轮开始前补发上一轮结果，电脑输入单独推`() =
+    fun `上一轮完成后，由注入消息开启的新一轮，过程说明不提前推送`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "第一轮结论")))
+            router.onTurnCompleted("tab-1")
+            // 斜杠命令或后台任务完成通知开启了新一轮：没有人写的输入
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent(SessionEventKind.TURN_STARTED, ""),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看日志"),
+                    SessionEvent(SessionEventKind.TOOL_STARTED, "Bash", "t1"),
+                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "第二轮结论"),
+                ),
+            )
+            assertEquals(listOf("第一轮结论"), sentTexts())
+            router.onTurnCompleted("tab-1")
+            assertEquals(listOf("第一轮结论", "第二轮结论"), sentTexts())
+        }
+
+    @Test
+    fun `轮次进行中插话：此前的过程说明不推也不混进结论，电脑输入单独推`() =
         runBlocking {
             registry.bind(robot, target)
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "上一轮结果"),
-                    SessionEvent(SessionEventKind.USER_TEXT, "电脑上新需求"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "新一轮回复"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看日志"),
+                    SessionEvent(SessionEventKind.USER_TEXT, "顺便改一下 X"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "好的，已经一起改了"),
                 ),
             )
-            assertEquals(listOf("上一轮结果", "LOCAL:\n电脑上新需求"), sentTexts())
+            assertEquals(listOf("LOCAL:\n顺便改一下 X"), sentTexts())
             router.onTurnCompleted("tab-1")
-            assertEquals(listOf("上一轮结果", "LOCAL:\n电脑上新需求", "新一轮回复"), sentTexts())
+            assertEquals(listOf("LOCAL:\n顺便改一下 X", "好的，已经一起改了"), sentTexts())
+        }
+
+    @Test
+    fun `轮次进行中的注入消息同样丢弃此前的过程说明`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先等后台任务"),
+                    SessionEvent(SessionEventKind.TURN_STARTED, ""),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "后台任务完成了，结论是 Y"),
+                ),
+            )
+            router.onTurnCompleted("tab-1")
+            assertEquals(listOf("后台任务完成了，结论是 Y"), sentTexts())
         }
 
     @Test
@@ -403,13 +442,17 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `断开时先把已产生的结果发给原聊天，再告知已断开`() =
+    fun `过程说明之后、未收到完成信号就断开：只发断开提示，之后也不补发`() =
         runBlocking {
             val bound = (registry.bind(robot, target) as BindResult.Bound).binding
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "最后结果")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看")))
             registry.unbind(robot)
             router.onReleased(bound, "修复滚动")
-            assertEquals(listOf("最后结果", "RELEASED(修复滚动)"), sentTexts())
+            assertEquals(listOf("RELEASED(修复滚动)"), sentTexts())
+            // 同一机器人重新绑回来，本轮完成时也不能把断开前的过程说明带出来
+            registry.bind(robot, target)
+            router.onTurnCompleted("tab-1")
+            assertEquals(listOf("RELEASED(修复滚动)"), sentTexts())
         }
 
     private val robotB = RobotId("r2")
@@ -468,16 +511,37 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `换绑前旧绑定未发出的回复仍发给原聊天，不落到新机器人`() =
+    fun `换绑机器人：旧机器人只收到断开提示；换绑前的文字若本轮再无工具调用，作为结论交给新机器人`() =
         runBlocking {
             val old = (registry.bind(robot, target) as BindResult.Bound).binding
-            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "旧回复")))
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "结论前半")))
             registry.unbind(robot)
             registry.bind(robotB, target)
             switchRouter.onReleased(old, "修复滚动")
             switchRouter.onTurnCompleted("tab-1")
-            assertEquals(listOf("旧回复", "RELEASED(修复滚动)"), channel.sent.map { it.text })
-            assertTrue(channelB.sent.isEmpty())
+            assertEquals(listOf("RELEASED(修复滚动)"), channel.sent.map { it.text })
+            assertEquals(listOf("结论前半"), channelB.sent.map { it.text })
+        }
+
+    @Test
+    fun `换绑机器人：换绑前的过程说明在之后调用工具时清掉，不发给任何一方`() =
+        runBlocking {
+            val old = (registry.bind(robot, target) as BindResult.Bound).binding
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看")))
+            registry.unbind(robot)
+            registry.bind(robotB, target)
+            switchRouter.onReleased(old, "修复滚动")
+            switchRouter.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent(SessionEventKind.TOOL_STARTED, "Bash", "t1"),
+                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
+                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "结论"),
+                ),
+            )
+            switchRouter.onTurnCompleted("tab-1")
+            assertEquals(listOf("RELEASED(修复滚动)"), channel.sent.map { it.text })
+            assertEquals(listOf("结论"), channelB.sent.map { it.text })
         }
 
     /** 远程控制开关：null 为关闭，数字为开启代次。 */

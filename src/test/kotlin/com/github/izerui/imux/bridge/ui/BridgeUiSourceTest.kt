@@ -71,7 +71,21 @@ class RobotsSettingsRecoverySourceTest {
     fun `等待认主在机器人被删除时退出`() {
         assertTrue(dialog.normalized.contains("@Volatile private var robotId: String? = null"))
         val body = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: String)", '{'))
-        assertTrue(body.contains("pairWait(manager.robot(id))"))
+        assertTrue(body.contains("pairWait(manager.robot(id),System.currentTimeMillis(),status)"))
         assertTrue(body.contains("PairWait.GONE->return"))
+    }
+
+    @Test
+    fun `配对码失效、过期或连接异常时说明原因，重新生成时一并重连`() {
+        val wait = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: String)", '{'))
+        assertTrue("状态变化才刷新界面，且继续等待", wait.contains("if(wait!=shown){shown=waitui{showPairState(wait,status)}}delay(500)"))
+        val state = dialog.compact(dialog.bodyAfter("private fun showPairState(", '{'))
+        assertTrue(state.contains("pairCode.isEnabled=wait==PairWait.WAITING"))
+        assertTrue(state.contains("bridge.add.pair.invalidated"))
+        assertTrue(state.contains("bridge.add.pair.expired"))
+        assertTrue(state.contains("bridge.add.pair.disconnected"))
+        val renew = dialog.compact(dialog.bodyAfter("private fun renew(id: String)", '{'))
+        assertTrue(renew.startsWith("{reconnectIfDown(id)manager.renewPairCode(id)"))
+        assertTrue(dialog.compact(dialog.normalized).contains("renewButton.addActionListener{robotId?.let(::renew)}"))
     }
 }

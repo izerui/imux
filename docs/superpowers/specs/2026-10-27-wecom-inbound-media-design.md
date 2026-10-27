@@ -42,7 +42,7 @@ BridgeRouter.onInbound
 | 文件下载 `HttpFileDownload` | `bridge/channel/Transports.kt`（新增） | 流式下载到临时文件、60 秒超时、边写边计数、返回响应头文件名；JDK `HttpClient` 不显式设代理，走默认 `ProxySelector`（IDE 代理设置） | JDK |
 | 企业微信取回实现 | `bridge/channel/wecom/WecomMedia.kt` | 调用下载、AES 解密、`Content-Disposition` 解析 | `HttpFileDownload` |
 | `ProjectAttachmentStore` | `bridge/terminal/ProjectAttachmentStore.kt` | 落盘、命名、编号、`.git/info/exclude`、7 天清理 | JDK 文件 API |
-| `AttachmentNames` | `bridge/core/AttachmentNames.kt` | 文件名清理、按文件头识别扩展名、同名编号（纯函数） | 无 |
+| `AttachmentNames` | `bridge/core/AttachmentNames.kt` | 文件名清理、按文件头识别扩展名、加随机后缀（纯函数） | 无 |
 | `BridgeRouter` | 已有 | 决定是否、何时取回；拼装提交文字 | 以上端口 |
 
 `core` 中新增的类型不依赖 IntelliJ API 与 `AgentType`，满足现有 `BridgeIsolationSourceTest`。
@@ -69,7 +69,7 @@ BridgeRouter.onInbound
   1. 响应头文件名：去掉路径分隔符与控制字符，限制 120 字符；
   2. 否则 `<类型>-<HHmmss>.<扩展名>`，扩展名按文件头识别：png、jpg、gif、webp、bmp、pdf、zip、mp4（含 mov 的 `ftyp`）；
   3. 仍无法识别用 `.bin`。
-- 同名时编号：`a.png`、`a-1.png`、`a-2.png`。
+- 每个文件名都在扩展名前加 4 位随机后缀（小写字母与数字），例如 `报告-k3f9.pdf`；用“不存在才创建”原子占名，撞名换后缀，再原子改名落盘，同名附件并发保存互不覆盖。
 - 提交给 Agent 的是相对项目根的路径，分隔符统一为 `/`。
 
 ### 3.4 提交格式
@@ -77,8 +77,8 @@ BridgeRouter.onInbound
 ```
 <用户文字>
 
-[附件] .imux/attachments/2026-10-27/image-153012.png
-[附件] .imux/attachments/2026-10-27/报告.pdf
+[附件] `.imux/attachments/2026-10-27/image-153012-a7k2.png`
+[附件] `.imux/attachments/2026-10-27/报告-k3f9.pdf`
 ```
 
 - 只有附件：`请查看这个附件：<路径>`；多个时 `请查看这些附件：` 加路径列表。
@@ -109,7 +109,7 @@ BridgeRouter.onInbound
 |---|---|
 | 协议解析 | image、file、video、mixed 的 url 与 aeskey；只有附件的消息不再被丢弃；compat_info 与群聊仍忽略 |
 | 解密 | 测试内按 32 字节 PKCS#7 加密后能解回原文；非法填充报错 |
-| 命名（纯函数） | 两种 `Content-Disposition`；危险文件名清理；文件头识别；同名编号 |
+| 命名（纯函数） | 两种 `Content-Disposition`；危险文件名清理；文件头识别；随机后缀；同名并发保存 |
 | 路由器 | 非本人、重复、未绑定时 fetch 调用次数为 0；成功时提交文字格式；部分失败与全部失败的回复与文字提交；过大回复 |
 | 落盘 | 临时项目目录中：日期目录、exclude 只追加一次、非 git 跳过、7 天清理、编号 |
 | 真机 | 手机分别发图片、文件、视频、图文混排，Agent 能读取 |

@@ -7,6 +7,9 @@ import com.github.izerui.imux.bridge.core.InboundAttachment
 import com.github.izerui.imux.bridge.core.PlaceResult
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.model.AgentType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -53,25 +56,62 @@ class ProjectAttachmentStoreTest {
         }
     }
 
-    private fun store() = ProjectAttachmentStore(clock = { now })
+    /** 固定后缀序列，按调用顺序取 s1、s2……，便于断言文件名。 */
+    private fun store(): ProjectAttachmentStore {
+        var next = 0
+        return ProjectAttachmentStore(clock = { now }, suffix = { "s${++next}" })
+    }
 
     @Test
     fun `没有文件名时按类型、时间与文件头命名，存到日期目录并返回相对路径`() =
         runBlocking {
             val root = project()
             val result = store().place(target(root), FakeAttachment(png, null))
-            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/image-153012.png"), result)
-            assertTrue(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012.png")))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/image-153012-s1.png"), result)
+            assertTrue(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012-s1.png")))
         }
 
     @Test
-    fun `有文件名时清理后使用，没有扩展名时补上识别出的扩展名，同名编号`() =
+    fun `有文件名时清理后使用并加后缀，没有扩展名时补上识别出的扩展名`() =
         runBlocking {
             val root = project()
             val s = store()
-            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/报告.pdf"), s.place(target(root), FakeAttachment("%PDF-1".toByteArray(), "../报告.pdf", AttachmentKind.FILE)))
-            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/报告-1.pdf"), s.place(target(root), FakeAttachment("%PDF-1".toByteArray(), "报告.pdf", AttachmentKind.FILE)))
-            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/shot.png"), s.place(target(root), FakeAttachment(png, "shot")))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/报告-s1.pdf"), s.place(target(root), FakeAttachment("%PDF-1".toByteArray(), "../报告.pdf", AttachmentKind.FILE)))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/报告-s2.pdf"), s.place(target(root), FakeAttachment("%PDF-1".toByteArray(), "报告.pdf", AttachmentKind.FILE)))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/shot-s3.png"), s.place(target(root), FakeAttachment(png, "shot")))
+        }
+
+    @Test
+    fun `随机后缀撞名时换一个，不覆盖已有文件`() =
+        runBlocking {
+            val root = project()
+            val suffixes = ArrayDeque(listOf("dup", "dup", "new"))
+            val s = ProjectAttachmentStore(clock = { now }, suffix = { suffixes.removeFirst() })
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/a-dup.txt"), s.place(target(root), FakeAttachment("1".toByteArray(), "a.txt", AttachmentKind.FILE)))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/a-new.txt"), s.place(target(root), FakeAttachment("2".toByteArray(), "a.txt", AttachmentKind.FILE)))
+            assertEquals("1", Files.readString(root.resolve(".imux/attachments/2026-10-27/a-dup.txt")))
+        }
+
+    @Test
+    fun `同名附件同时保存：全部成功、各自一个文件，互不覆盖`() =
+        runBlocking {
+            val root = project()
+            val s = ProjectAttachmentStore(clock = { now })
+            val contents = List(32) { "%PDF-$it".toByteArray() }
+            val attachments = contents.map { FakeAttachment(it, "报告.pdf", AttachmentKind.FILE) }
+            // 先取回到临时文件，再让保存同时开始，把竞争集中在挑名字与落盘上
+            val results =
+                attachments
+                    .map { attachment -> async(Dispatchers.IO) { s.place(target(root), attachment) } }
+                    .awaitAll()
+            val paths = results.map { (it as PlaceResult.Saved).relativePath }
+            assertEquals(contents.size, paths.toSet().size)
+            assertEquals(
+                contents.map { String(it) }.toSet(),
+                paths.map { Files.readString(root.resolve(it)) }.toSet(),
+            )
+            Files.list(root.resolve(".imux/attachments/2026-10-27")).use { assertEquals(contents.size.toLong(), it.count()) }
+            assertEquals(1, Files.readAllLines(root.resolve(".git/info/exclude")).count { it == ".imux/" })
         }
 
     @Test
@@ -151,8 +191,8 @@ class ProjectAttachmentStoreTest {
             // exclude 是目录，读写都会失败
             Files.createDirectories(root.resolve(".git/info/exclude"))
             val result = store().place(target(root), FakeAttachment(png, null))
-            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/image-153012.png"), result)
-            assertTrue(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012.png")))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/image-153012-s1.png"), result)
+            assertTrue(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012-s1.png")))
         }
 
     @Test
@@ -174,6 +214,6 @@ class ProjectAttachmentStoreTest {
             job.join()
             assertTrue(job.isCancelled)
             assertFalse("临时文件应删除", Files.exists(attachment.file))
-            assertFalse(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012.png")))
+            assertFalse(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012-s1.png")))
         }
 }

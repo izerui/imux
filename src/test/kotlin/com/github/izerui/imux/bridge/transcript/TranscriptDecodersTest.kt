@@ -4,6 +4,7 @@ import com.github.izerui.imux.bridge.core.SessionEvent
 import com.github.izerui.imux.bridge.core.SessionEventKind.ASSISTANT_TEXT
 import com.github.izerui.imux.bridge.core.SessionEventKind.TOOL_FINISHED
 import com.github.izerui.imux.bridge.core.SessionEventKind.TOOL_STARTED
+import com.github.izerui.imux.bridge.core.SessionEventKind.TURN_STARTED
 import com.github.izerui.imux.bridge.core.SessionEventKind.USER_TEXT
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
@@ -33,16 +34,46 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `Claude 跳过元数据、压缩摘要、子代理、命令包裹与中断标记`() {
+    fun `Claude 跳过元数据、压缩摘要、子代理与中断标记`() {
         listOf(
             """{"type":"user","isMeta":true,"message":{"role":"user","content":"meta"}}""",
             """{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"摘要"}}""",
             """{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"子代理"}]}}""",
-            """{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}""",
             """{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"}}""",
             """{"type":"summary","summary":"x"}""",
             "not json",
         ).forEach { assertTrue(it, ClaudeTranscriptDecoder.decode(it).isEmpty()) }
+    }
+
+    @Test
+    fun `Claude 命令与后台任务通知等注入消息不转发，只标记新一轮开始`() {
+        val command = """{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"""
+        val notification =
+            """{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<task-notification>\n<status>completed</status>\n</task-notification>"}]}}"""
+        assertEquals(listOf(SessionEvent(TURN_STARTED, "")), ClaudeTranscriptDecoder.decode(command))
+        assertEquals(listOf(SessionEvent(TURN_STARTED, "")), ClaudeTranscriptDecoder.decode(notification))
+    }
+
+    @Test
+    fun `Codex 的各种工具调用都算工具，过程说明不算最终回复`() {
+        fun item(payload: String) = """{"type":"response_item","payload":$payload}"""
+        assertEquals(
+            listOf(SessionEvent(TOOL_STARTED, "web_search_call", null)),
+            CodexTranscriptDecoder.decode(item("""{"type":"web_search_call","status":"completed","action":{"type":"search","query":"x"}}""")),
+        )
+        assertEquals(
+            listOf(SessionEvent(TOOL_STARTED, "tool_search_call", "c2")),
+            CodexTranscriptDecoder.decode(item("""{"type":"tool_search_call","call_id":"c2"}""")),
+        )
+        assertEquals(
+            listOf(SessionEvent(TOOL_FINISHED, "", "c2")),
+            CodexTranscriptDecoder.decode(item("""{"type":"tool_search_output","call_id":"c2"}""")),
+        )
+        assertTrue(CodexTranscriptDecoder.decode(item("""{"type":"reasoning","summary":[]}""")).isEmpty())
+        val commentary = item("""{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"我先搜一下"}]}""")
+        val answer = item("""{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"结论"}]}""")
+        assertTrue(CodexTranscriptDecoder.decode(commentary).isEmpty())
+        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论")), CodexTranscriptDecoder.decode(answer))
     }
 
     @Test
@@ -62,7 +93,7 @@ class TranscriptDecodersTest {
         val mirror = """{"type":"event_msg","payload":{"type":"agent_message","message":"好的"}}"""
 
         assertEquals(listOf(SessionEvent(USER_TEXT, "修一下\n测试")), CodexTranscriptDecoder.decode(user))
-        assertTrue(CodexTranscriptDecoder.decode(agents).isEmpty())
+        assertEquals("只有注入时不转发，只标记新一轮开始", listOf(SessionEvent(TURN_STARTED, "")), CodexTranscriptDecoder.decode(agents))
         assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "好的")), CodexTranscriptDecoder.decode(assistant))
         assertEquals(listOf(SessionEvent(TOOL_STARTED, "shell", "c1")), CodexTranscriptDecoder.decode(call))
         assertEquals(listOf(SessionEvent(TOOL_FINISHED, "", "c1")), CodexTranscriptDecoder.decode(output))

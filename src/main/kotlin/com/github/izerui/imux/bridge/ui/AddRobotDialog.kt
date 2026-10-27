@@ -30,13 +30,25 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-/** 等待认主的一次检查结果。 */
-internal enum class PairWait { WAITING, PAIRED, GONE }
+/**
+ * 等待认主的一次检查结果。[INVALIDATED]、[EXPIRED]、[DISCONNECTED] 时这个配对码已经不可能成功，
+ * 页面要说明原因并提示重新生成，不能继续显示“等待配对码”。
+ */
+internal enum class PairWait { WAITING, PAIRED, GONE, INVALIDATED, EXPIRED, DISCONNECTED }
 
-internal fun pairWait(robot: RobotRecord?): PairWait =
+internal fun pairWait(
+    robot: RobotRecord?,
+    nowMillis: Long,
+    status: ConnectionStatus?,
+): PairWait =
     when {
         robot == null -> PairWait.GONE
         robot.owner() != null -> PairWait.PAIRED
+        // 连续猜错后配对码被作废
+        robot.pairCode == null -> PairWait.INVALIDATED
+        nowMillis > robot.pairCodeExpiresAtMillis -> PairWait.EXPIRED
+        // 连接中或尚未开始连接都算还在等；失败、被接管、已停止就收不到配对码
+        status is ConnectionStatus.Failed || status == ConnectionStatus.Kicked || status == ConnectionStatus.Stopped -> PairWait.DISCONNECTED
         else -> PairWait.WAITING
     }
 
@@ -119,7 +131,7 @@ class AddRobotDialog(
             }
 
         pairCode.font = pairCode.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(32f).toFloat())
-        renewButton.addActionListener { robotId?.let { manager.renewPairCode(it) }?.let { showPair(it.pairCode.orEmpty()) } }
+        renewButton.addActionListener { robotId?.let(::renew) }
         val pairPanel =
             JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -222,22 +234,43 @@ class AddRobotDialog(
             return
         }
         val justEnabled = ensureBridgeEnabled()
-        val status = manager.statusOf(id)
-        if (!justEnabled && status != ConnectionStatus.Online && status != ConnectionStatus.Connecting) manager.reconnect(id)
+        if (!justEnabled) reconnectIfDown(id)
         manager.renewPairCode(id)?.let { showPair(it.pairCode.orEmpty()) }
         job = manager.launch { awaitPaired(id) }
     }
 
-    /** 认主后进入完成卡片；机器人被删除时停止等待。 */
+    /** 重新生成配对码；连接已失败、被接管或停止时一并重连，否则新配对码同样收不到。 */
+    private fun renew(id: String) {
+        reconnectIfDown(id)
+        manager.renewPairCode(id)?.let { showPair(it.pairCode.orEmpty()) }
+    }
+
+    private fun reconnectIfDown(id: String) {
+        val status = manager.statusOf(id)
+        if (status != ConnectionStatus.Online && status != ConnectionStatus.Connecting) manager.reconnect(id)
+    }
+
+    /**
+     * 认主后进入完成卡片；机器人被删除时停止等待。配对码失效、过期或连接异常时
+     * 说明原因、置灰旧配对码，但继续等待：用户点“重新生成”后自动恢复。
+     */
     private suspend fun awaitPaired(id: String) {
+        var shown: PairWait? = null
         while (true) {
-            when (pairWait(manager.robot(id))) {
+            val status = manager.statusOf(id)
+            when (val wait = pairWait(manager.robot(id), System.currentTimeMillis(), status)) {
                 PairWait.GONE -> return
                 PairWait.PAIRED -> {
                     ui { finish() }
                     return
                 }
-                PairWait.WAITING -> delay(500)
+                else -> {
+                    if (wait != shown) {
+                        shown = wait
+                        ui { showPairState(wait, status) }
+                    }
+                    delay(500)
+                }
             }
         }
     }
@@ -245,8 +278,22 @@ class AddRobotDialog(
     private fun showPair(code: String) {
         pairInstruction.text = ImuxBundle.message("bridge.add.pair.instruction", label(kind))
         pairCode.text = code.chunked(3).joinToString(" ")
-        pairStatus.text = ImuxBundle.message("bridge.add.pair.waiting")
+        showPairState(PairWait.WAITING, null)
         show(Card.PAIR)
+    }
+
+    private fun showPairState(
+        wait: PairWait,
+        status: ConnectionStatus?,
+    ) {
+        pairCode.isEnabled = wait == PairWait.WAITING
+        pairStatus.text =
+            when (wait) {
+                PairWait.INVALIDATED -> ImuxBundle.message("bridge.add.pair.invalidated")
+                PairWait.EXPIRED -> ImuxBundle.message("bridge.add.pair.expired")
+                PairWait.DISCONNECTED -> ImuxBundle.message("bridge.add.pair.disconnected", statusLabel(status, paired = false))
+                else -> ImuxBundle.message("bridge.add.pair.waiting")
+            }
     }
 
     private fun finish() {

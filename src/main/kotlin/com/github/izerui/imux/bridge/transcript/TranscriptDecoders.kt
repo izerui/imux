@@ -51,7 +51,9 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
 
     private fun userText(text: String): SessionEvent? {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || isWrappedMarkup(trimmed) || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return null
+        if (trimmed.isEmpty() || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return null
+        // 斜杠命令、后台任务通知等注入消息：不转发，但它们会开启新一轮
+        if (isWrappedMarkup(trimmed)) return SessionEvent(SessionEventKind.TURN_STARTED, "")
         return SessionEvent(SessionEventKind.USER_TEXT, trimmed)
     }
 
@@ -76,12 +78,13 @@ object CodexTranscriptDecoder : TranscriptDecoder {
         // event_msg 里的 user_message/agent_message 是同一内容的镜像，只认 response_item
         if (root.str("type") != "response_item") return emptyList()
         val payload = root.obj("payload") ?: return emptyList()
-        return when (val type = payload.str("type")) {
-            "message" -> messageEvents(payload)
-            "function_call", "custom_tool_call" ->
-                listOf(SessionEvent(SessionEventKind.TOOL_STARTED, payload.str("name") ?: type, payload.str("call_id")))
-            "function_call_output", "custom_tool_call_output" ->
-                listOf(SessionEvent(SessionEventKind.TOOL_FINISHED, "", payload.str("call_id")))
+        val type = payload.str("type") ?: return emptyList()
+        // 工具种类会增加（function_call、custom_tool_call、web_search_call、tool_search_call…），按后缀认，
+        // 漏认一种，它前面的过程说明就会混进最终回复
+        return when {
+            type == "message" -> messageEvents(payload)
+            type.endsWith("_call") -> listOf(SessionEvent(SessionEventKind.TOOL_STARTED, payload.str("name") ?: type, payload.str("call_id")))
+            type.endsWith("_output") -> listOf(SessionEvent(SessionEventKind.TOOL_FINISHED, "", payload.str("call_id")))
             else -> emptyList()
         }
     }
@@ -90,15 +93,19 @@ object CodexTranscriptDecoder : TranscriptDecoder {
         val content = payload.get("content") ?: return emptyList()
         return when (payload.str("role")) {
             "user" -> {
-                val text =
-                    blocks(content)
-                        .filter { it.str("type") == "input_text" }
-                        .mapNotNull { it.str("text")?.trim() }
-                        .filter { it.isNotEmpty() && !isWrappedMarkup(it) && !it.startsWith(CODEX_AGENTS_INSTRUCTIONS_PREFIX) }
-                        .joinToString("\n")
-                listOfNotNull(text.takeIf(String::isNotEmpty)?.let { SessionEvent(SessionEventKind.USER_TEXT, it) })
+                val inputs = blocks(content).filter { it.str("type") == "input_text" }.mapNotNull { it.str("text")?.trim() }.filter(String::isNotEmpty)
+                val text = inputs.filter { !isWrappedMarkup(it) && !it.startsWith(CODEX_AGENTS_INSTRUCTIONS_PREFIX) }.joinToString("\n")
+                when {
+                    text.isNotEmpty() -> listOf(SessionEvent(SessionEventKind.USER_TEXT, text))
+                    // 只有环境、AGENTS 等注入：不转发，但开启了新一轮
+                    inputs.isNotEmpty() -> listOf(SessionEvent(SessionEventKind.TURN_STARTED, ""))
+                    else -> emptyList()
+                }
             }
-            "assistant" -> {
+            // 过程说明（commentary）不是最终回复；只有 final_answer 或没有标注的才算
+            "assistant" -> if (payload.str("phase") == "commentary") {
+                emptyList()
+            } else {
                 val text =
                     blocks(content)
                         .filter { it.str("type") == "output_text" }

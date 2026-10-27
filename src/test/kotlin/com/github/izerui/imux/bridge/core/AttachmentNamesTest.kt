@@ -52,11 +52,17 @@ class AttachmentNamesTest {
     }
 
     @Test
-    fun `同名时依次编号`() {
-        val taken = setOf("a.png", "a-1.png", "noext")
-        assertEquals("b.png", AttachmentNames.unique("b.png") { it in taken })
-        assertEquals("a-2.png", AttachmentNames.unique("a.png") { it in taken })
-        assertEquals("noext-1", AttachmentNames.unique("noext") { it in taken })
+    fun `后缀加在扩展名前，没有扩展名时加在末尾`() {
+        assertEquals("报告-k3f9.pdf", AttachmentNames.withSuffix("报告.pdf", "k3f9"))
+        assertEquals("a.tar-k3f9.gz", AttachmentNames.withSuffix("a.tar.gz", "k3f9"))
+        assertEquals("noext-k3f9", AttachmentNames.withSuffix("noext", "k3f9"))
+        assertEquals(".env-k3f9", AttachmentNames.withSuffix(".env", "k3f9"))
+    }
+
+    @Test
+    fun `随机后缀为 4 位小写字母与数字`() {
+        val random = kotlin.random.Random(7)
+        repeat(200) { assertTrue(Regex("[a-z0-9]{4}").matches(AttachmentNames.randomSuffix(random))) }
     }
 
     @Test

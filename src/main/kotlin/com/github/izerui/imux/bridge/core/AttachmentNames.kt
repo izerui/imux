@@ -6,7 +6,7 @@ import java.time.LocalTime
 object AttachmentNames {
     const val MAX_NAME_LENGTH = 120
 
-    /** 常见文件系统单个文件名上限 255 字节，留出同名编号 `-N` 的余量。 */
+    /** 常见文件系统单个文件名上限 255 字节，留出随机后缀 `-xxxx` 的余量。 */
     const val MAX_NAME_BYTES = 200
 
     private const val ILLEGAL = "<>:\"|?*"
@@ -84,22 +84,20 @@ object AttachmentNames {
         extension: String?,
     ): String = "%s-%02d%02d%02d.%s".format(kind.name.lowercase(), time.hour, time.minute, time.second, extension ?: "bin")
 
-    /** 有同名时依次尝试 `a-1.png`、`a-2.png`。 */
-    fun unique(
+    /** 在扩展名前加后缀，例如 `报告.pdf` 加 `k3f9` 得 `报告-k3f9.pdf`；没有扩展名或以点开头的整体作为主名。 */
+    fun withSuffix(
         name: String,
-        taken: (String) -> Boolean,
+        suffix: String,
     ): String {
-        if (!taken(name)) return name
         val dot = name.lastIndexOf('.').takeIf { it > 0 }
         val stem = dot?.let { name.substring(0, it) } ?: name
         val extension = dot?.let { name.substring(it) }.orEmpty()
-        var index = 1
-        while (true) {
-            val candidate = "$stem-$index$extension"
-            if (!taken(candidate)) return candidate
-            index++
-        }
+        return "$stem-$suffix$extension"
     }
+
+    /** 4 位小写字母与数字：附件名可读，又让同名附件几乎不会撞名。 */
+    fun randomSuffix(random: kotlin.random.Random = kotlin.random.Random.Default): String =
+        String(CharArray(SUFFIX_LENGTH) { SUFFIX_CHARS[random.nextInt(SUFFIX_CHARS.length)] })
 
     private fun ByteArray.startsWith(vararg values: Int): Boolean =
         size >= values.size && values.indices.all { (this[it].toInt() and 0xFF) == values[it] }
@@ -110,4 +108,7 @@ object AttachmentNames {
         offset: Int,
         text: String,
     ): Boolean = size >= offset + text.length && text.indices.all { this[offset + it] == text[it].code.toByte() }
+
+    private const val SUFFIX_LENGTH = 4
+    private const val SUFFIX_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 }

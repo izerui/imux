@@ -72,7 +72,18 @@ data class OutboundMessage(
     val text: String,
 )
 
-enum class SessionEventKind { USER_TEXT, ASSISTANT_TEXT, TOOL_STARTED, TOOL_FINISHED }
+enum class SessionEventKind {
+    USER_TEXT,
+    ASSISTANT_TEXT,
+    TOOL_STARTED,
+    TOOL_FINISHED,
+
+    /**
+     * CLI 注入的消息开启了新一轮（斜杠命令、后台任务完成通知等），不是人写的，不转发。
+     * 只用来结束上一轮的“已完成”状态，否则这一轮的过程说明会被当成迟到的最终回复逐条推送。
+     */
+    TURN_STARTED,
+}
 
 data class SessionEvent(
     val kind: SessionEventKind,
