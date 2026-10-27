@@ -235,7 +235,8 @@ class RobotManager(parentScope: CoroutineScope) {
         id: String,
         status: ConnectionStatus,
     ) {
-        statuses[id] = status
+        // 联调与排障依据：只记状态变化，不记消息内容
+        if (statuses.put(id, status) != status) LOG.info("机器人 ${robot(id)?.name ?: id} 连接状态：$status")
         bump()
     }
 

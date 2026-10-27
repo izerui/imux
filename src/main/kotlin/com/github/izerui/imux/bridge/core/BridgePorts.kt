@@ -41,7 +41,6 @@ interface BridgeTexts {
 
     fun localInputLabel(): String
 
-    fun completed(toolCalls: Int): String
 
     fun waiting(reason: String?): String
 

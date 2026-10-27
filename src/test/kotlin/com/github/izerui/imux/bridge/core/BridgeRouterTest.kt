@@ -52,7 +52,6 @@ class BridgeRouterTest {
 
         override fun localInputLabel() = "LOCAL:"
 
-        override fun completed(toolCalls: Int) = "DONE($toolCalls)"
 
         override fun waiting(reason: String?) = "WAIT($reason)"
 
@@ -205,7 +204,7 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `轮次完成报告工具次数，等待确认带原因`() =
+    fun `工具调用不单独通知，等待确认带原因`() =
         runBlocking {
             registry.bind(robot, target)
             router.onSessionEvents(
@@ -217,16 +216,14 @@ class BridgeRouterTest {
                 ),
             )
             router.onWaiting("tab-1", "Edit")
-            router.onTurnCompleted("tab-1")
-            router.onTurnCompleted("tab-1")
-            assertEquals(listOf("WAIT(Edit)", "DONE(2)", "DONE(0)"), sentTexts())
+            assertEquals(listOf("WAIT(Edit)"), sentTexts())
         }
 
     @Test
     fun `未绑定终端的事件不转发`() =
         runBlocking {
             router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "x")))
-            router.onTurnCompleted("tab-1")
+            router.onWaiting("tab-1", null)
             assertTrue(channel.sent.isEmpty())
         }
 

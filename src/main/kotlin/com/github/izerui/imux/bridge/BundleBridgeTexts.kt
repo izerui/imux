@@ -14,7 +14,6 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun localInputLabel() = ImuxBundle.message("bridge.label.localInput")
 
-    override fun completed(toolCalls: Int) = ImuxBundle.message("bridge.status.completed", toolCalls)
 
     override fun waiting(reason: String?) =
         if (reason.isNullOrBlank()) {

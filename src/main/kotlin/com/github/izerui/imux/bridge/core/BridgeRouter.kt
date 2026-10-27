@@ -28,7 +28,6 @@ class BridgeRouter(
     private val lock = Any()
     private val seen = HashMap<RobotId, LinkedHashSet<String>>()
     private val pendingRemoteEcho = HashMap<String, ArrayDeque<String>>()
-    private val toolCalls = HashMap<String, Int>()
 
     /** 加锁提交阶段的结果。 */
     private sealed interface SubmitPhase {
@@ -129,16 +128,9 @@ class BridgeRouter(
                 SessionEventKind.ASSISTANT_TEXT -> send(binding, event.text)
                 SessionEventKind.USER_TEXT ->
                     if (!consumeRemoteEcho(tabId, event.text)) send(binding, texts.localInputLabel() + "\n" + event.text)
-                SessionEventKind.TOOL_STARTED -> synchronized(lock) { toolCalls.merge(tabId, 1, Int::plus) }
-                SessionEventKind.TOOL_FINISHED -> Unit
+                SessionEventKind.TOOL_STARTED, SessionEventKind.TOOL_FINISHED -> Unit
             }
         }
-    }
-
-    suspend fun onTurnCompleted(tabId: String) {
-        val binding = bindings.bindingForTab(tabId) ?: return
-        val count = synchronized(lock) { toolCalls.remove(tabId) ?: 0 }
-        send(binding, texts.completed(count))
     }
 
     suspend fun onWaiting(
@@ -169,10 +161,7 @@ class BridgeRouter(
         binding: Binding,
         sessionTitle: String,
     ) {
-        synchronized(lock) {
-            pendingRemoteEcho.remove(binding.target.tabId)
-            toolCalls.remove(binding.target.tabId)
-        }
+        synchronized(lock) { pendingRemoteEcho.remove(binding.target.tabId) }
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
         deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, texts.released(sessionTitle)))
