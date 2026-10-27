@@ -131,6 +131,7 @@
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
         <notificationGroup id="imux.ideaMcp" displayType="BALLOON"/>
+        <notificationGroup id="imux.phoneBridge" displayType="BALLOON"/>
 
         <!--
           必须注册：工具窗口的内容是懒加载的，监听逻辑若只在 createToolWindowContent
@@ -142,6 +143,8 @@
         <!-- 终端会话通讯桥接：仅在开关打开时启动，见 docs/terminal-channel-bridge-feasibility.md -->
         <postStartupActivity
                 implementation="com.github.izerui.imux.bridge.BridgeStartupActivity"/>
+        <postStartupActivity
+                implementation="com.github.izerui.imux.bridge.ui.BridgeNotificationsActivity"/>
 
         <!--
           接收 pi 扩展的会话上报。pi 的会话切换（/new、/resume、/fork）无法从进程外
@@ -217,5 +220,11 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="before"
                           relative-to-action="imux.CopySessionIdentity"/>
         </action>
+        <group
+                id="imux.bridge.ConnectToPhone"
+                class="com.github.izerui.imux.bridge.ui.ConnectToPhoneGroup"
+                popup="true">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </group>
     </actions>
 </idea-plugin>
