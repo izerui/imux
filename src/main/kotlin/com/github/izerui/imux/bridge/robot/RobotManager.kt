@@ -57,6 +57,9 @@ class RobotManager(parentScope: CoroutineScope) {
     private val vault: CredentialVault = PasswordSafeVault()
     private val connections = ConcurrentHashMap<String, ChannelConnection>()
     private val statuses = ConcurrentHashMap<String, ConnectionStatus>()
+
+    /** 登记/摘除连接与写入状态共用一把锁：start()/stop() 都不阻塞，持锁时间很短。 */
+    private val lifecycleLock = Any()
     private val _revision = MutableStateFlow(0L)
 
     /** 机器人、状态或绑定任何变化时加一，界面据此刷新。 */
@@ -89,6 +92,15 @@ class RobotManager(parentScope: CoroutineScope) {
     fun stopAll() {
         connections.keys.toList().forEach(::disconnect)
         bump()
+    }
+
+    /** 断开后重新连接；用于被别处接管、连接失败或已停止的机器人。开关关闭时只断开。 */
+    fun reconnect(id: String) {
+        scope.launch(Dispatchers.IO) {
+            disconnect(id)
+            robot(id)?.let { connect(it) }
+            bump()
+        }
     }
 
     suspend fun add(
@@ -155,25 +167,35 @@ class RobotManager(parentScope: CoroutineScope) {
             return
         }
         val connection = factory.connect(RobotId(record.id), credentials, scope)
-        if (connections.putIfAbsent(record.id, connection) != null) return
-        // 加载凭据期间开关可能已关闭或机器人已被删除：不留残余连接
-        if (!BridgeSettings.getInstance().state.enabled || robot(record.id) == null) {
-            connections.remove(record.id)
-            connection.stop()
-            hub.detachRobot(RobotId(record.id))
-            return
-        }
-        hub.registerRobot(connection, record.owner())
-        connection.start(pairingSink(record.id, connection)) { status ->
-            setStatus(record.id, status)
-            if (status == ConnectionStatus.Kicked) robot(record.id)?.let { notifyKicked(it) }
+        synchronized(lifecycleLock) {
+            if (connections.putIfAbsent(record.id, connection) != null) return
+            // 加载凭据期间开关可能已关闭或机器人已被删除：不留残余连接
+            if (!BridgeSettings.getInstance().state.enabled || robot(record.id) == null) {
+                connections.remove(record.id)
+                connection.stop()
+                hub.detachRobot(RobotId(record.id))
+                return
+            }
+            hub.registerRobot(connection, record.owner())
+            connection.start(pairingSink(record.id, connection)) { status ->
+                val current =
+                    synchronized(lifecycleLock) {
+                        // 已被断开或替换的旧连接，状态不能覆盖新连接
+                        if (connections[record.id] !== connection) return@synchronized false
+                        setStatus(record.id, status)
+                        true
+                    }
+                if (current && status == ConnectionStatus.Kicked) robot(record.id)?.let { notifyKicked(it) }
+            }
         }
     }
 
     private fun disconnect(id: String) {
-        connections.remove(id)?.stop()
-        hub.detachRobot(RobotId(id))
-        statuses.remove(id)
+        synchronized(lifecycleLock) {
+            connections.remove(id)?.stop()
+            hub.detachRobot(RobotId(id))
+            statuses.remove(id)
+        }
     }
 
     private fun pairingSink(

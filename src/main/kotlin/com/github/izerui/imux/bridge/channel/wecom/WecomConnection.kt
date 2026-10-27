@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -184,6 +185,8 @@ class WecomConnection(
                 ack == null -> return SessionEnd.Dropped("subscribe timeout").also { transport.close() }
                 ack.errcode != 0 -> return SessionEnd.AuthFailed("${ack.errcode} ${ack.errmsg.orEmpty()}".trim()).also { transport.close() }
             }
+            // 已被 stop() 取消的旧运行不能覆盖新运行的会话
+            coroutineContext.ensureActive()
             this@WecomConnection.session = state
             onOnline()
             val myJob = coroutineContext.job

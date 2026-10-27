@@ -13,7 +13,10 @@ sealed interface DriverState {
 
     data object NeedVerifyCode : DriverState
 
-    data class Done(val step: OnboardingStep.Succeeded) : DriverState
+    data class Done(val step: OnboardingStep.Succeeded) : DriverState {
+        /** 委托给已屏蔽凭据的 [OnboardingStep.Succeeded.toString]。 */
+        override fun toString(): String = "Done(step=$step)"
+    }
 
     data class Error(
         val messageKey: String,

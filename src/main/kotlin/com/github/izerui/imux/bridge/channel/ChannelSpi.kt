@@ -32,7 +32,11 @@ sealed interface OnboardingStep {
         val credentials: Map<String, String>,
         val ownerId: String?,
         val suggestedName: String?,
-    ) : OnboardingStep
+    ) : OnboardingStep {
+        /** 凭据只显示键名，避免进入日志或异常消息。 */
+        override fun toString(): String =
+            "Succeeded(credentials=${credentials.keys.joinToString(prefix = "{", postfix = "}") { "$it=***" }}, ownerId=$ownerId, suggestedName=$suggestedName)"
+    }
 
     /** [messageKey] 是 ImuxBundle 的键。 */
     data class Failed(val messageKey: String) : OnboardingStep

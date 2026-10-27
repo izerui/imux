@@ -38,3 +38,27 @@ class RobotManagerSourceTest {
         assertTrue(startup.contains("RobotManager.getInstance().startAll()"))
     }
 }
+
+class RobotManagerReconnectSourceTest {
+    private val code = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/robot/RobotManager.kt")
+
+    @Test
+    fun `重新连接先断开再在 IO 上连接`() {
+        val body = code.compact(code.bodyAfter("fun reconnect(id: String)", '{'))
+        assertTrue(body.contains("scope.launch(Dispatchers.IO){disconnect(id)robot(id)?.let{connect(it)}"))
+    }
+
+    @Test
+    fun `连接与断开在同一把锁内登记和摘除`() {
+        val connect = code.compact(code.bodyAfter("private fun connect(record: RobotRecord)", '{'))
+        assertTrue(connect.contains("synchronized(lifecycleLock){if(connections.putIfAbsent(record.id,connection)!=null)return"))
+        val disconnect = code.compact(code.bodyAfter("private fun disconnect(id: String)", '{'))
+        assertTrue(disconnect.contains("synchronized(lifecycleLock){connections.remove(id)?.stop()"))
+    }
+
+    @Test
+    fun `旧连接的状态回调被忽略`() {
+        val connect = code.compact(code.bodyAfter("private fun connect(record: RobotRecord)", '{'))
+        assertTrue(connect.contains("if(connections[record.id]!==connection)return@synchronized"))
+    }
+}

@@ -3,8 +3,10 @@ package com.github.izerui.imux.bridge
 import com.github.izerui.imux.bridge.core.BindingRegistry
 import com.github.izerui.imux.bridge.core.BridgeRouter
 import com.github.izerui.imux.bridge.core.ChannelAdapter
+import com.github.izerui.imux.bridge.core.DeliveryResult
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
+import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.RobotOwner
 import com.github.izerui.imux.bridge.terminal.ImuxTerminalSessionPort
@@ -36,7 +38,8 @@ class BridgeHub(parentScope: CoroutineScope) {
     private val inbound = Channel<InboundMessage>(Channel.UNLIMITED)
 
     val bindings = BindingRegistry()
-    val router = BridgeRouter(bindings, owners::get, ImuxTerminalSessionPort(), channels::get, BundleBridgeTexts)
+    val router =
+        BridgeRouter(bindings, owners::get, ImuxTerminalSessionPort(), channels::get, BundleBridgeTexts, onDelivery = ::logDelivery)
 
     /** 渠道收到消息后调用。开关关闭时直接丢弃，不进入终端。 */
     val inboundSink = InboundSink { message -> if (BridgeSettings.getInstance().state.enabled) inbound.trySend(message) }
@@ -77,4 +80,34 @@ class BridgeHub(parentScope: CoroutineScope) {
 
         fun getInstance(): BridgeHub = ApplicationManager.getApplication().getService(BridgeHub::class.java)
     }
+}
+
+/** 一条出站结果的日志。[warn] 为 false 时记 INFO。 */
+internal class DeliveryLog(
+    val warn: Boolean,
+    val text: String,
+)
+
+/**
+ * 被拒或结果不明的出站要留痕（例如超过每会话 30 条/分钟被丢弃），成功的不记。
+ * 只记机器人 id 与原因，不记正文与对端 id。
+ */
+internal fun deliveryLog(
+    message: OutboundMessage,
+    result: DeliveryResult,
+): DeliveryLog? =
+    when (result) {
+        is DeliveryResult.Accepted -> null
+        is DeliveryResult.Rejected -> DeliveryLog(true, "出站消息被拒绝：robot=${message.robotId.value} reason=${result.reason}")
+        DeliveryResult.Unknown -> DeliveryLog(false, "出站消息结果不明：robot=${message.robotId.value}")
+    }
+
+private val DELIVERY_LOG = logger<BridgeRouter>()
+
+private fun logDelivery(
+    message: OutboundMessage,
+    result: DeliveryResult,
+) {
+    val log = deliveryLog(message, result) ?: return
+    if (log.warn) DELIVERY_LOG.warn(log.text) else DELIVERY_LOG.info(log.text)
 }

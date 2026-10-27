@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -54,11 +55,15 @@ class TerminalBridgeService(
 
     @Volatile
     private var projectClosing = false
-    private var started = false
+
+    // 启动活动（后台线程）、开关切换与绑定动作（EDT）都会调用 start()，必须原子地只启动一次
+    private val started = AtomicBoolean(false)
+
+    // 只在 pollLock 内读写：关闭期间不轮询，重新开启时要丢弃旧读取位置
+    private val enabledEdge = EnabledEdge()
 
     fun start() {
-        if (started) return
-        started = true
+        if (!started.compareAndSet(false, true)) return
         val host = TerminalHost.getInstance(project)
         seenTabs += host.openTabsByTabId().keys
         host.addSessionsChangedListener(this) { onSessionsChanged() }
@@ -99,7 +104,9 @@ class TerminalBridgeService(
         )
         scope.launch(Dispatchers.IO) {
             while (isActive) {
-                if (BridgeSettings.getInstance().state.enabled) {
+                val enabled = BridgeSettings.getInstance().state.enabled
+                pollLock.withLock { observeEnabled(enabled) }
+                if (enabled) {
                     for (binding in boundHere()) {
                         try {
                             pollTab(binding.target.tabId)
@@ -156,6 +163,9 @@ class TerminalBridgeService(
 
     private suspend fun pollTab(tabId: String) {
         pollLock.withLock {
+            val enabled = BridgeSettings.getInstance().state.enabled
+            observeEnabled(enabled)
+            if (!enabled) return
             // 以当前绑定为准：换绑（代次变了）或迁移（会话变了）后的旧尾随器一律丢弃重建，
             // 新绑定从当前记录边界开始，不倒灌期间产生的历史
             val binding = hub.bindings.bindingForTab(tabId) ?: return
@@ -170,6 +180,17 @@ class TerminalBridgeService(
             val poll = tail.poll()
             if (poll.restarted) hub.router.onTranscriptRestarted(tabId)
             if (poll.events.isNotEmpty()) hub.router.onSessionEvents(tabId, poll.events)
+        }
+    }
+
+    /**
+     * 在 pollLock 内调用。关闭期间轮询暂停但读取位置还在；重新开启时全部丢弃，
+     * 新尾随器从当前末尾开始，关闭期间产生的输出不推送到手机。
+     */
+    private fun observeEnabled(enabled: Boolean) {
+        if (enabledEdge.observe(enabled)) {
+            tails.clear()
+            migratedAt.clear()
         }
     }
 
@@ -209,6 +230,20 @@ class TerminalBridgeService(
         private const val POLL_INTERVAL_MS = 1_000L
 
         fun getInstance(project: Project): TerminalBridgeService = project.getService(TerminalBridgeService::class.java)
+    }
+}
+
+/**
+ * 记住上次观察到的开关状态；[observe] 只在从关到开时返回 true。
+ * 服务只在开关打开时启动，所以初始视为已开启，首次观察不会误清启动前记下的迁移时间。
+ */
+internal class EnabledEdge(initiallyEnabled: Boolean = true) {
+    private var last = initiallyEnabled
+
+    fun observe(enabled: Boolean): Boolean {
+        val rising = enabled && !last
+        last = enabled
+        return rising
     }
 }
 
