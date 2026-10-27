@@ -14,6 +14,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在轮次完成时作为一条发出，
  * 中间的过程说明不推，避免逐条推送触发平台限频；电脑端输入带标签单独转发；
  * 远程输入在记录中再次出现时不回显；等待确认立即推送。
+ * 换绑前后的回复宁可发到新机器人也不丢；状态提示（当前连接、等待确认等）在绑定已变时不发。
  */
 class BridgeRouter(
     private val bindings: BindingRegistry,
@@ -28,6 +29,8 @@ class BridgeRouter(
     private val notReadyRetryDelayMs: Long = 300,
     /** 警告日志出口（core 不依赖 IDE 日志）；只传原因，不含路径、对端 id、正文与密钥。 */
     private val onWarning: (String) -> Unit = {},
+    /** 远程控制的开启代次：每次开启换新，关闭时为 null。提交前据此确认期间没有关闭过。 */
+    private val switchGeneration: () -> Long? = { 0L },
 ) {
     private val submitLock = Mutex()
     private val lock = Any()
@@ -50,9 +53,21 @@ class BridgeRouter(
         data class Done(val result: SubmitResult) : SubmitPhase
         data object BindingGone : SubmitPhase
         data object BindingChanged : SubmitPhase
+        data object SwitchedOff : SubmitPhase
     }
 
-    suspend fun onInbound(message: InboundMessage): InboundOutcome {
+    /** 消息到达时调用，记下当时的绑定与开关；排队之后按它判断消息是否仍然有效。 */
+    fun arrival(robotId: RobotId): Arrival = Arrival(bindings.bindingOf(robotId)?.epoch, switchGeneration())
+
+    /**
+     * [arrival] 须在消息到达时取得：排队或下载附件期间关闭过远程控制的不提交、不回复；
+     * 期间换绑的不提交到新终端，回复本人重新发送。
+     */
+    suspend fun onInbound(
+        message: InboundMessage,
+        arrival: Arrival = arrival(message.robotId),
+    ): InboundOutcome {
+        if (!stillOn(arrival)) return InboundOutcome.SWITCHED_OFF
         val owner = ownerOf(message.robotId) ?: return InboundOutcome.NOT_PAIRED
         if (message.senderId != owner.senderId || message.chatId != owner.chatId) return InboundOutcome.UNAUTHORIZED
         if (!markSeen(message.robotId, message.externalMessageId)) return InboundOutcome.DUPLICATE
@@ -63,9 +78,13 @@ class BridgeRouter(
             return InboundOutcome.EMPTY
         }
         val binding = bindings.bindingOf(message.robotId)
-        if (binding == null) {
+        if (binding == null || arrival.bindingEpoch == null) {
             reply(message.robotId, owner, texts.unbound())
             return InboundOutcome.UNBOUND
+        }
+        if (binding.epoch != arrival.bindingEpoch) {
+            reply(message.robotId, owner, texts.rebound())
+            return InboundOutcome.REBOUND
         }
         // 确认本人、非重复、已绑定后才取回附件。下载放在提交锁之外，不阻塞其它机器人的提交；
         // 同一机器人的消息由上层按机器人逐条处理，下载期间该机器人的后续消息仍在排队
@@ -86,6 +105,7 @@ class BridgeRouter(
             submitLock.withLock {
                 // 加锁后复核绑定：排队期间可能已换绑或解绑
                 val current = bindings.bindingOf(message.robotId)
+                if (!stillOn(arrival)) return@withLock SubmitPhase.SwitchedOff
                 if (current == null) return@withLock SubmitPhase.BindingGone
                 if (current.epoch != binding.epoch) return@withLock SubmitPhase.BindingChanged
 
@@ -94,7 +114,7 @@ class BridgeRouter(
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
                 rememberRemote(tabId, text)
                 try {
-                    val phase = submitWithRetry(message.robotId, current, text)
+                    val phase = submitWithRetry(message.robotId, current, text, arrival)
                     // 未提交成功，清除回显登记
                     if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) forgetRemote(tabId, text)
                     phase
@@ -113,9 +133,10 @@ class BridgeRouter(
                 InboundOutcome.UNBOUND
             }
             SubmitPhase.BindingChanged -> {
-                reply(message.robotId, owner, texts.offline())
-                InboundOutcome.OFFLINE
+                reply(message.robotId, owner, texts.rebound())
+                InboundOutcome.REBOUND
             }
+            SubmitPhase.SwitchedOff -> InboundOutcome.SWITCHED_OFF
             is SubmitPhase.Done -> when (phase.result) {
                 SubmitResult.SUBMITTED_TO_TERMINAL -> InboundOutcome.SUBMITTED_TO_TERMINAL
                 SubmitResult.NOT_READY -> {
@@ -129,6 +150,17 @@ class BridgeRouter(
             }
         }
     }
+
+    /** 远程控制关闭时调用：丢弃尚未发出的回复与轮次状态，重新开启后不补发关闭前的内容。 */
+    fun discardPending() {
+        synchronized(lock) {
+            pendingFinal.clear()
+            completedTabs.clear()
+            pendingRemoteEcho.clear()
+        }
+    }
+
+    private fun stillOn(arrival: Arrival): Boolean = arrival.switchGeneration != null && switchGeneration() == arrival.switchGeneration
 
     /** 引用的文字用 Markdown 引用块放在正文前，Agent 才知道“这里”指的是哪段。 */
     private fun withQuote(
@@ -179,15 +211,17 @@ class BridgeRouter(
 
     /**
      * 须在 submitLock 内调用。终端未就绪时最多尝试 [NOT_READY_ATTEMPTS] 次；
-     * 每次尝试前复核绑定代次，等待期间换绑或解绑则不再提交，按绑定已变处理。
+     * 每次尝试前复核开关与绑定代次，等待期间关闭、换绑或解绑则不再提交。
      */
     private suspend fun submitWithRetry(
         robotId: RobotId,
         binding: Binding,
         text: String,
+        arrival: Arrival,
     ): SubmitPhase {
         repeat(NOT_READY_ATTEMPTS) { attempt ->
             if (attempt > 0) delay(notReadyRetryDelayMs)
+            if (!stillOn(arrival)) return SubmitPhase.SwitchedOff
             if (!bindings.isCurrent(robotId, binding.epoch)) return SubmitPhase.BindingChanged
             val result = sessionPort.submit(binding.target, text)
             if (result != SubmitResult.NOT_READY) return SubmitPhase.Done(result)
@@ -195,6 +229,7 @@ class BridgeRouter(
         return SubmitPhase.Done(SubmitResult.NOT_READY)
     }
 
+    /** 读取期间换绑的，事件交给当前绑定：宁可发到新机器人，也不丢。 */
     suspend fun onSessionEvents(
         tabId: String,
         events: List<SessionEvent>,
@@ -207,7 +242,7 @@ class BridgeRouter(
                     // 新一轮开始：上一轮没等到完成信号的结果先补发，再处理这句输入
                     flushFinal(tabId)
                     synchronized(lock) { completedTabs.remove(tabId) }
-                    if (!consumeRemoteEcho(tabId, event.text)) send(binding, texts.localInputLabel() + "\n" + event.text)
+                    if (!consumeRemoteEcho(tabId, event.text)) sendContent(binding, texts.localInputLabel() + "\n" + event.text)
                 }
                 // 工具调用之前的文字只是过程说明，不推
                 SessionEventKind.TOOL_STARTED -> synchronized(lock) { pendingFinal.remove(tabId) }
@@ -229,7 +264,15 @@ class BridgeRouter(
         text: String,
     ) {
         synchronized(lock) {
-            val current = pendingFinal[tabId]?.takeIf { it.epoch == epoch } ?: PendingFinal(epoch, StringBuilder()).also { pendingFinal[tabId] = it }
+            // 换绑前攒下、旧绑定还没来得及取走的回复并入新绑定，不丢
+            val previous = pendingFinal[tabId]
+            val current =
+                when {
+                    previous == null -> PendingFinal(epoch, StringBuilder())
+                    previous.epoch == epoch -> previous
+                    else -> PendingFinal(epoch, previous.text)
+                }
+            pendingFinal[tabId] = current
             if (current.text.isNotEmpty()) current.text.append("\n\n")
             current.text.append(text)
         }
@@ -237,10 +280,9 @@ class BridgeRouter(
 
     private suspend fun flushFinal(tabId: String) {
         val pending = synchronized(lock) { pendingFinal.remove(tabId) } ?: return
+        // 换绑后旧绑定的结果交给当前绑定：宁可发到新机器人，也不丢
         val binding = bindings.bindingForTab(tabId) ?: return
-        // 换绑后旧结果不能落到新目标的聊天里
-        if (binding.epoch != pending.epoch) return
-        send(binding, pending.text.toString())
+        sendContent(binding, pending.text.toString())
     }
 
     suspend fun onWaiting(
@@ -295,6 +337,19 @@ class BridgeRouter(
         deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, texts.released(sessionTitle)))
     }
 
+    /** 回复内容：一旦开始发就全部发完，分段途中换绑也不截断，不丢内容。 */
+    private suspend fun sendContent(
+        binding: Binding,
+        text: String,
+    ) {
+        val owner = ownerOf(binding.robotId) ?: return
+        val channel = channelOf(binding.robotId) ?: return
+        for (segment in TextSegmenter.split(text, channel.maxTextBytes)) {
+            deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, segment))
+        }
+    }
+
+    /** 状态提示：绑定已变时内容不再成立，每段发送前都核对。 */
     private suspend fun send(
         binding: Binding,
         text: String,

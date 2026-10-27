@@ -30,6 +30,38 @@ class TranscriptTailTest {
     }
 
     @Test
+    fun `从绑定时记下的边界开始：之后才建立尾随器，也读到边界之后写入的回复`() {
+        val file = temp.newFile("s.jsonl").toPath()
+        Files.writeString(file, "history\n")
+        val boundary = TranscriptTail.boundaryOf(file)
+        append(file, "first-reply\n".toByteArray())
+        val tail = TranscriptTail(file, echo).apply { startAt(boundary) }
+        assertEquals(listOf("first-reply"), texts(tail.poll()))
+    }
+
+    @Test
+    fun `绑定时文件尚不存在，边界为 0，出现后从头读取`() {
+        val file = temp.root.toPath().resolve("later.jsonl")
+        val boundary = TranscriptTail.boundaryOf(file)
+        Files.writeString(file, "first\n")
+        val tail = TranscriptTail(file, echo).apply { startAt(boundary) }
+        assertEquals(listOf("first"), texts(tail.poll()))
+    }
+
+    @Test
+    fun `边界之后文件被替换，按重启处理不倒灌`() {
+        val file = temp.newFile("s.jsonl").toPath()
+        Files.writeString(file, "history-long-enough\n")
+        val boundary = TranscriptTail.boundaryOf(file)
+        Files.delete(file)
+        Files.writeString(file, "x\n")
+        val tail = TranscriptTail(file, echo).apply { startAt(boundary) }
+        val poll = tail.poll()
+        assertTrue(poll.restarted)
+        assertTrue(poll.events.isEmpty())
+    }
+
+    @Test
     fun `从当前末尾开始，不倾倒历史`() {
         val file = temp.newFile("s.jsonl").toPath()
         Files.writeString(file, "old-1\nold-2\n")

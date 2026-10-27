@@ -14,7 +14,8 @@ class PhoneActionsSourceTest {
         assertTrue(actions.contains("router.onReleased("))
         assertTrue(actions.contains("router.onBound("))
         assertTrue(actions.contains("RobotManager.getInstance().syncBindings()"))
-        assertTrue(actions.contains("TerminalBridgeService.getInstance(project).start()"))
+        assertTrue(actions.contains("service.markBoundary(target)"))
+        assertTrue(actions.contains("start()"))
     }
 
     @Test

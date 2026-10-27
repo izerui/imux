@@ -55,6 +55,15 @@ data class InboundMessage(
     val quote: String? = null,
 )
 
+/**
+ * 消息到达时的状态。[bindingEpoch] 为当时的绑定代次，未绑定为 null；
+ * [switchGeneration] 为远程控制的开启代次，已关闭为 null。
+ */
+data class Arrival(
+    val bindingEpoch: Long?,
+    val switchGeneration: Long?,
+)
+
 data class OutboundMessage(
     val robotId: RobotId,
     val chatId: String,
@@ -89,4 +98,10 @@ enum class InboundOutcome {
     NOT_READY,
     OFFLINE,
     ATTACHMENT_FAILED,
+
+    /** 排队或处理期间换绑：不提交到新终端，已提示本人重新发送。 */
+    REBOUND,
+
+    /** 排队或处理期间关闭过远程控制：不提交、不回复。 */
+    SWITCHED_OFF,
 }

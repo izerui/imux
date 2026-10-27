@@ -35,6 +35,9 @@ interface BridgeTexts {
 
     fun offline(): String
 
+    /** 消息排队期间会话连接已切换，这条没有发送。 */
+    fun rebound(): String
+
     fun notReady(): String
 
     fun emptyInput(): String

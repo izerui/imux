@@ -45,12 +45,17 @@ class BridgeHub(parentScope: CoroutineScope) {
             onDelivery = ::logDelivery,
             attachmentStore = ProjectAttachmentStore(),
             onWarning = { LOG.warn(it) },
+            switchGeneration = { if (BridgeSettings.getInstance().state.enabled) BridgeLifecycle.switchGeneration else null },
         )
 
-    private val inbound = RobotInboundQueues(scope, onFailure = { LOG.warn("处理入站消息失败", it) }, handle = { router.onInbound(it) })
+    private val inbound =
+        RobotInboundQueues(scope, onFailure = { LOG.warn("处理入站消息失败", it) }, handle = { message, arrival -> router.onInbound(message, arrival) })
 
-    /** 渠道收到消息后调用。开关关闭时直接丢弃，不进入终端。 */
-    val inboundSink = InboundSink { message -> if (BridgeSettings.getInstance().state.enabled) inbound.offer(message) }
+    /** 渠道收到消息后调用。开关关闭时直接丢弃，不进入终端；到达时记下绑定与开关，排队后据此复核。 */
+    val inboundSink =
+        InboundSink { message ->
+            if (BridgeSettings.getInstance().state.enabled) inbound.offer(message, router.arrival(message.robotId))
+        }
 
     /** 由机器人管理在连接成功后调用；[owner] 为 null 表示尚未配对，消息一律忽略。 */
     fun registerRobot(

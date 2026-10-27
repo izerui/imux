@@ -47,6 +47,8 @@ class BridgeRouterTest {
 
         override fun offline() = "OFFLINE"
 
+        override fun rebound() = "REBOUND"
+
         override fun notReady() = "NOT_READY"
 
         override fun emptyInput() = "EMPTY"
@@ -300,7 +302,7 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `分段发送途中换绑，剩余分段不再发往旧目标`() =
+    fun `分段发送途中换绑，回复照样发完，不截断`() =
         runBlocking {
             val small = FakeChannel(robot, maxTextBytes = 64)
             val r = BridgeRouter(registry, { owner }, port, { small }, Texts)
@@ -308,6 +310,18 @@ class BridgeRouterTest {
             small.afterSend = { registry.bind(robot, target.copy(tabId = "tab-2")) }
             r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "行内容\n".repeat(40))))
             r.onTurnCompleted("tab-1")
+            assertTrue(small.sent.size > 1)
+            assertEquals(40, small.sent.sumOf { Regex("行内容").findAll(it.text).count() })
+        }
+
+    @Test
+    fun `分段发送途中换绑，状态提示不再继续发`() =
+        runBlocking {
+            val small = FakeChannel(robot, maxTextBytes = 64)
+            val r = BridgeRouter(registry, { owner }, port, { small }, Texts)
+            registry.bind(robot, target)
+            small.afterSend = { registry.bind(robot, target.copy(tabId = "tab-2")) }
+            r.onWaiting("tab-1", "行内容\n".repeat(40))
             assertEquals(1, small.sent.size)
         }
 
@@ -378,14 +392,14 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `换绑后上一绑定的待发结果作废`() =
+    fun `换绑后上一绑定的待发结果交给当前绑定，不丢`() =
         runBlocking {
             registry.bind(robot, target)
             router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "旧结果")))
             registry.unbind(robot)
             registry.bind(robot, target)
             router.onTurnCompleted("tab-1")
-            assertTrue(channel.sent.isEmpty())
+            assertEquals(listOf("旧结果"), sentTexts())
         }
 
     @Test
@@ -464,6 +478,107 @@ class BridgeRouterTest {
             switchRouter.onTurnCompleted("tab-1")
             assertEquals(listOf("旧回复", "RELEASED(修复滚动)"), channel.sent.map { it.text })
             assertTrue(channelB.sent.isEmpty())
+        }
+
+    /** 远程控制开关：null 为关闭，数字为开启代次。 */
+    private var generation: Long? = 1L
+
+    private fun switchableRouter(store: AttachmentStore = AttachmentStore.NONE) =
+        BridgeRouter(
+            registry,
+            { if (it == robot) owner else null },
+            port,
+            { if (it == robot) channel else null },
+            Texts,
+            attachmentStore = store,
+            notReadyRetryDelayMs = 0,
+            switchGeneration = { generation },
+        )
+
+    /** 落盘时执行 [during]（模拟下载期间的操作），然后保存成功。 */
+    private class SlowStore(private val during: () -> Unit) : AttachmentStore {
+        override suspend fun place(
+            target: SessionTarget,
+            attachment: InboundAttachment,
+        ): PlaceResult {
+            during()
+            return PlaceResult.Saved(".imux/a.png")
+        }
+    }
+
+    @Test
+    fun `下载附件期间关闭远程控制，下载完也不提交、不回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = switchableRouter(SlowStore { generation = null })
+            assertEquals(InboundOutcome.SWITCHED_OFF, r.onInbound(inboundWith("1", "看图", FakeAttachment())))
+            assertTrue(port.submitted.isEmpty())
+            assertTrue(channel.sent.isEmpty())
+        }
+
+    @Test
+    fun `下载附件期间关闭又开启，旧指令仍不提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = switchableRouter(SlowStore { generation = 2L })
+            assertEquals(InboundOutcome.SWITCHED_OFF, r.onInbound(inboundWith("1", "看图", FakeAttachment())))
+            assertTrue(port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `到达时远程控制已关闭的消息不处理`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = switchableRouter()
+            generation = null
+            val arrival = r.arrival(robot)
+            generation = 2L
+            assertEquals(InboundOutcome.SWITCHED_OFF, r.onInbound(inbound("1", "hi"), arrival))
+            assertTrue(port.submitted.isEmpty())
+            assertTrue(channel.sent.isEmpty())
+        }
+
+    @Test
+    fun `排队时绑定项目 A，处理前换绑到 B：不提交到 B，提示重新发送`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val arrival = router.arrival(robot)
+            registry.bind(robot, target.copy(projectPath = "/b", tabId = "tab-b"))
+            assertEquals(InboundOutcome.REBOUND, router.onInbound(inbound("1", "改一下代码"), arrival))
+            assertTrue(port.submitted.isEmpty())
+            assertEquals(listOf("REBOUND"), sentTexts())
+        }
+
+    @Test
+    fun `到达时未绑定、处理前才绑定：按未绑定回复，不提交`() =
+        runBlocking {
+            val arrival = router.arrival(robot)
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.UNBOUND, router.onInbound(inbound("1", "hi"), arrival))
+            assertTrue(port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `换绑机器人前攒下的回复，旧绑定还没取走时并入新机器人这一轮，不丢`() =
+        runBlocking {
+            registry.bind(robot, target)
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "换绑前")))
+            registry.unbind(robot)
+            registry.bind(robotB, target)
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "换绑后")))
+            switchRouter.onTurnCompleted("tab-1")
+            assertEquals(listOf("换绑前\n\n换绑后"), channelB.sent.map { it.text })
+            assertTrue(channel.sent.isEmpty())
+        }
+
+    @Test
+    fun `关闭远程控制时丢弃未发出的回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "关闭前的回复")))
+            router.discardPending()
+            router.onTurnCompleted("tab-1")
+            assertTrue(channel.sent.isEmpty())
         }
 
     @Test
@@ -552,12 +667,11 @@ class BridgeRouterTest {
             job1.join()
 
             val outcome2 = deferred2.await()
-            // 第二条不应提交到 tab-1（旧目标），而是检测到绑定已变，返回 OFFLINE
-            assertEquals(InboundOutcome.OFFLINE, outcome2)
+            // 第二条不应提交到任何终端：检测到绑定已变，提示本人重新发送
+            assertEquals(InboundOutcome.REBOUND, outcome2)
             // 只有第一条被提交
             assertEquals(listOf("tab-1" to "先到"), suspendingPort.submitted)
-            // OFFLINE 回复已发送
-            assertTrue(channel.sent.any { it.text == "OFFLINE" })
+            assertTrue(channel.sent.any { it.text == "REBOUND" })
         }
 
     @Test
@@ -591,9 +705,9 @@ class BridgeRouterTest {
                 }
             val r = routerWith(scripted)
             registry.bind(robot, target)
-            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "换绑了")))
+            assertEquals(InboundOutcome.REBOUND, r.onInbound(inbound("1", "换绑了")))
             assertEquals(listOf("tab-1" to "换绑了"), scripted.submitted)
-            assertEquals(listOf("OFFLINE"), sentTexts())
+            assertEquals(listOf("REBOUND"), sentTexts())
         }
 
     @Test

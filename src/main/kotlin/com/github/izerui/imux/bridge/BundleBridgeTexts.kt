@@ -9,6 +9,8 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun offline() = ImuxBundle.message("bridge.reply.offline")
 
+    override fun rebound() = ImuxBundle.message("bridge.reply.rebound")
+
     override fun notReady() = ImuxBundle.message("bridge.reply.notReady")
 
     override fun emptyInput() = ImuxBundle.message("bridge.reply.emptyInput")

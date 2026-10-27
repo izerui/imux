@@ -246,6 +246,21 @@ class WecomConnectionTest {
     }
 
     @Test
+    fun `进入会话事件不回欢迎语也不转交，之后的文字照常转交`() {
+        startAndAwaitOnline(connection())
+        val t = transports.first()
+        t.emit(
+            """{"cmd":"aibot_event_callback","headers":{"req_id":"EV1"},"body":{"msgid":"e1","msgtype":"event","from":{"userid":"u1"},"event":{"eventtype":"enter_chat"}}}""",
+        )
+        t.emit(singleText("m1", "u1", "继续"))
+        // 回复帧可能是异步发出的：等满一个应答超时再断言，免得以后接回欢迎语时漏检
+        runBlocking { delay(200) }
+        // 只剩订阅帧：欢迎语暂不使用，事件既不回复也不进入终端
+        assertEquals(listOf("aibot_subscribe"), t.sent.map { JsonParser.parseString(it).asJsonObject["cmd"].asString })
+        assertEquals(listOf(InboundMessage(RobotId("r"), "m1", "u1", "u1", "继续")), received.toList())
+    }
+
+    @Test
     fun `退避从 1 秒翻倍到 30 秒封顶`() {
         assertEquals(1_000L, wecomBackoffMillis(1))
         assertEquals(2_000L, wecomBackoffMillis(2))

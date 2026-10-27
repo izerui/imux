@@ -1,9 +1,11 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.bridge.core.Binding
+import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.bridge.terminal.TabChange
 import com.github.izerui.imux.bridge.terminal.tabChangeFor
+import com.github.izerui.imux.bridge.transcript.TailBoundary
 import com.github.izerui.imux.bridge.transcript.TranscriptDecoders
 import com.github.izerui.imux.bridge.transcript.TranscriptTail
 import com.github.izerui.imux.monitor.SessionMonitor
@@ -59,11 +61,15 @@ class TerminalBridgeService(
     // 启动活动（后台线程）、开关切换与绑定动作（EDT）都会调用 start()，必须原子地只启动一次
     private val started = AtomicBoolean(false)
 
-    // 只在 pollLock 内读写：关闭期间不轮询，重新开启时要丢弃旧读取位置
-    private val enabledEdge = EnabledEdge()
+    // 只在 pollLock 内读写（start 中的初始化除外）：重新开启过就丢弃旧读取位置
+    private val switchWatch = SwitchWatch()
+
+    /** 用户绑定那一刻记下的读取边界：尾随器稍后建立时从这里开始，不漏掉期间产生的回复。 */
+    private val bindStarts = ConcurrentHashMap<String, BindStart>()
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
+        switchWatch.reset(BridgeLifecycle.switchGeneration)
         val host = TerminalHost.getInstance(project)
         seenTabs += host.openTabsByTabId().keys
         host.addSessionsChangedListener(this) { onSessionsChanged() }
@@ -105,7 +111,7 @@ class TerminalBridgeService(
         scope.launch(Dispatchers.IO) {
             while (isActive) {
                 val enabled = BridgeSettings.getInstance().state.enabled
-                pollLock.withLock { observeEnabled(enabled) }
+                pollLock.withLock { observeSwitch() }
                 if (enabled) {
                     for (binding in boundHere()) {
                         try {
@@ -136,6 +142,7 @@ class TerminalBridgeService(
                     hub.bindings.reattach(binding.robotId, change.tabId)
                     tails.remove(binding.target.tabId)
                     migratedAt.remove(binding.target.tabId)
+                    bindStarts.remove(binding.target.tabId)
                     RobotManager.getInstance().syncBindings()
                 }
                 TabChange.Release -> release(binding)
@@ -149,6 +156,7 @@ class TerminalBridgeService(
         RobotManager.getInstance().syncBindings()
         tails.remove(binding.target.tabId)
         migratedAt.remove(binding.target.tabId)
+        bindStarts.remove(binding.target.tabId)
         val title = titleOf(binding.target.sessionId)
         scope.launch(Dispatchers.IO) { hub.router.onReleased(binding, title) }
     }
@@ -162,11 +170,26 @@ class TerminalBridgeService(
         }
     }
 
+    /**
+     * 用户把机器人绑到这个标签**之前**调用（EDT）：记下会话记录此刻的边界。
+     * 尾随器要等轮询才建立，若从那时的末尾开始，会漏掉期间产生的回复；
+     * 先记边界再绑定，绑定一生效、轮询立刻建立尾随器也能用上它。
+     */
+    fun markBoundary(target: SessionTarget) {
+        val sessionId = target.sessionId ?: return
+        val session = SessionMonitor.getInstance(project).model.sessionOf(sessionId) ?: return
+        bindStarts[target.tabId] = BindStart(sessionId, BridgeLifecycle.switchGeneration, TranscriptTail.boundaryOf(session.filePath))
+    }
+
+    /** 绑定没有成功时调用，免得边界留到以后被别的绑定误用、倒灌期间的内容。 */
+    fun forgetBoundary(tabId: String) {
+        bindStarts.remove(tabId)
+    }
+
     private suspend fun pollTab(tabId: String) {
         pollLock.withLock {
-            val enabled = BridgeSettings.getInstance().state.enabled
-            observeEnabled(enabled)
-            if (!enabled) return
+            observeSwitch()
+            if (!BridgeSettings.getInstance().state.enabled) return
             // 以当前绑定为准：换绑（代次变了）或迁移（会话变了）后的旧尾随器一律丢弃重建，
             // 新绑定从当前记录边界开始，不倒灌期间产生的历史
             val binding = hub.bindings.bindingForTab(tabId) ?: return
@@ -185,13 +208,15 @@ class TerminalBridgeService(
     }
 
     /**
-     * 在 pollLock 内调用。关闭期间轮询暂停但读取位置还在；重新开启时全部丢弃，
-     * 新尾随器从当前末尾开始，关闭期间产生的输出不推送到手机。
+     * 在 pollLock 内调用。关闭期间轮询暂停但读取位置还在；只要开启代次变了（哪怕关闭又开启
+     * 发生在两次轮询之间）就全部丢弃，新尾随器从当前末尾开始，关闭期间的输出不推送到手机。
      */
-    private fun observeEnabled(enabled: Boolean) {
-        if (enabledEdge.observe(enabled)) {
+    private fun observeSwitch() {
+        if (switchWatch.observe(BridgeLifecycle.switchGeneration)) {
             tails.clear()
             migratedAt.clear()
+            // 开启之后才记下的边界仍然有效（打开开关后马上绑定），只清更早的
+            bindStarts.values.removeIf { it.generation != BridgeLifecycle.switchGeneration }
         }
     }
 
@@ -205,12 +230,18 @@ class TerminalBridgeService(
         val tabId = binding.target.tabId
         val migrated = migratedAt[tabId]
         val tail = TranscriptTail(session.filePath, TranscriptDecoders.forAgent(binding.target.agentType))
-        if (!readFromStart(session.createdAt, migrated)) tail.startAtEnd()
+        val bindStart = bindStarts[tabId]?.takeIf { it.sessionId == sessionId }
+        when {
+            readFromStart(session.createdAt, migrated) -> Unit
+            bindStart != null -> tail.startAt(bindStart.boundary)
+            else -> tail.startAtEnd()
+        }
         // 建立期间绑定可能已在 EDT 上迁移或换绑：此时不登记、不消费迁移时间，留给下次轮询按新绑定重建
         val current = hub.bindings.bindingForTab(tabId) ?: return null
         if (!reuseTail(binding.epoch, sessionId, current.epoch, current.target.sessionId)) return null
         // 只移除本次用到的迁移时间；期间又发生的迁移会写入新值，不能被吞掉
         if (migrated != null) migratedAt.remove(tabId, migrated)
+        if (bindStart != null) bindStarts.remove(tabId, bindStart)
         // 记下建立时依据的绑定代次与会话，下次轮询据此判断能否沿用
         tails[tabId] = TailEntry(binding.epoch, sessionId, tail)
         return tail
@@ -235,18 +266,30 @@ class TerminalBridgeService(
 }
 
 /**
- * 记住上次观察到的开关状态；[observe] 只在从关到开时返回 true。
- * 服务只在开关打开时启动，所以初始视为已开启，首次观察不会误清启动前记下的迁移时间。
+ * 记住上次观察到的开启代次；[observe] 在代次变化（期间重新开启过）时返回 true。
+ * 服务启动时以当时的代次为准，首次观察不会误清启动后记下的迁移时间。
  */
-internal class EnabledEdge(initiallyEnabled: Boolean = true) {
-    private var last = initiallyEnabled
+internal class SwitchWatch {
+    @Volatile
+    private var last = 0L
 
-    fun observe(enabled: Boolean): Boolean {
-        val rising = enabled && !last
-        last = enabled
-        return rising
+    fun reset(generation: Long) {
+        last = generation
+    }
+
+    fun observe(generation: Long): Boolean {
+        if (generation == last) return false
+        last = generation
+        return true
     }
 }
+
+/** 绑定前记下的读取边界：只对同一会话有效，第一次建立尾随器时用掉；[generation] 为记下时的开启代次。 */
+private class BindStart(
+    val sessionId: String,
+    val generation: Long,
+    val boundary: TailBoundary,
+)
 
 /** 尾随器连同建立它时的绑定代次与会话一起缓存。 */
 private class TailEntry(

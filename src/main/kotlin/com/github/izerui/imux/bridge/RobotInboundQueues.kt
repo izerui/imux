@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge
 
+import com.github.izerui.imux.bridge.core.Arrival
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import kotlinx.coroutines.CoroutineScope
@@ -16,20 +17,24 @@ import kotlin.coroutines.cancellation.CancellationException
 internal class RobotInboundQueues(
     private val scope: CoroutineScope,
     private val onFailure: (Throwable) -> Unit,
-    private val handle: suspend (InboundMessage) -> Unit,
+    private val handle: suspend (InboundMessage, Arrival) -> Unit,
 ) {
-    private val queues = ConcurrentHashMap<RobotId, Channel<InboundMessage>>()
+    private val queues = ConcurrentHashMap<RobotId, Channel<Pair<InboundMessage, Arrival>>>()
 
-    fun offer(message: InboundMessage) {
-        queues.computeIfAbsent(message.robotId) { start() }.trySend(message)
+    /** [arrival] 须在消息到达时取得，处理时据此判断排队期间是否换绑或关闭过。 */
+    fun offer(
+        message: InboundMessage,
+        arrival: Arrival,
+    ) {
+        queues.computeIfAbsent(message.robotId) { start() }.trySend(message to arrival)
     }
 
-    private fun start(): Channel<InboundMessage> {
-        val queue = Channel<InboundMessage>(Channel.UNLIMITED)
+    private fun start(): Channel<Pair<InboundMessage, Arrival>> {
+        val queue = Channel<Pair<InboundMessage, Arrival>>(Channel.UNLIMITED)
         scope.launch {
-            for (message in queue) {
+            for ((message, arrival) in queue) {
                 try {
-                    handle(message)
+                    handle(message, arrival)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
