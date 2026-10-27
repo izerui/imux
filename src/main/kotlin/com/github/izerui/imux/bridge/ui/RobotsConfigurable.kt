@@ -37,6 +37,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             ToolbarDecorator.createDecorator(table)
                 .setAddAction {
                     AddRobotDialog(null).show()
+                    reset()
                     refresh()
                 }
                 .setRemoveAction { remove(table) }

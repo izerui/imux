@@ -39,6 +39,7 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
     private val radios = ChannelKind.entries.associateWith { JBRadioButton(label(it)) }
     private val qrLabel = JBLabel()
     private val qrStatus = JBLabel()
+    private val enabledHint = JBLabel()
     private val verifyField = JBTextField(8)
     private val verifyButton = JButton(ImuxBundle.message("bridge.add.verifyCode.submit"))
     private val verifyPanel = JPanel()
@@ -90,6 +91,7 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
                 add(
                     JPanel().apply {
                         layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                        add(enabledHint)
                         add(qrStatus)
                         add(verifyPanel)
                         add(retryButton)
@@ -123,7 +125,8 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
         when (step) {
             Card.CHANNEL -> {
                 kind = radios.entries.first { it.value.isSelected }.key
-                ensureBridgeEnabled()
+                val justEnabled = ensureBridgeEnabled()
+                if (justEnabled) enabledHint.text = ImuxBundle.message("bridge.add.enabledBridge")
                 show(Card.QR)
                 isOKActionEnabled = false
                 startScan()
@@ -140,6 +143,7 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
 
     private fun startScan() {
         job?.cancel()
+        qrLabel.icon = null
         retryButton.isVisible = false
         verifyPanel.isVisible = false
         val factory = ChannelFactories.forKind(kind) ?: return
@@ -173,13 +177,22 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
         val name = result.suggestedName ?: ImuxBundle.message("bridge.add.defaultName", manager.robots().size + 1)
         job =
             manager.launch {
-                val record = manager.add(kind, result.credentials, result.ownerId, name)
-                robotId = record.id
-                ui {
-                    if (record.owner() != null) finish() else showPair(record.pairCode.orEmpty())
+                try {
+                    val record = manager.add(kind, result.credentials, result.ownerId, name)
+                    robotId = record.id
+                    ui {
+                        if (record.owner() != null) finish() else showPair(record.pairCode.orEmpty())
+                    }
+                    while (manager.robot(record.id)?.owner() == null) delay(500)
+                    ui { finish() }
+                } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    ui {
+                        qrStatus.text = ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName)
+                        retryButton.isVisible = true
+                    }
                 }
-                while (manager.robot(record.id)?.owner() == null) delay(500)
-                ui { finish() }
             }
     }
 
@@ -196,11 +209,12 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
         isOKActionEnabled = true
     }
 
-    private fun ensureBridgeEnabled() {
+    private fun ensureBridgeEnabled(): Boolean {
         val settings = BridgeSettings.getInstance()
-        if (settings.state.enabled) return
+        if (settings.state.enabled) return false
         settings.state.enabled = true
         BridgeLifecycle.applyEnabled(true)
+        return true
     }
 
     private fun show(card: Card) {
