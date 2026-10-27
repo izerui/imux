@@ -6,6 +6,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CancellationException
@@ -601,5 +602,29 @@ class BridgeRouterTest {
         runBlocking {
             registry.bind(robot, target)
             assertEquals(InboundOutcome.EMPTY, routerWith(FakeStore(emptyList())).onInbound(inboundWith("1", "  ")))
+        }
+
+    @Test
+    fun `附件失败原因记一条警告，只含原因`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val warnings = mutableListOf<String>()
+            val r =
+                BridgeRouter(
+                    registry,
+                    { if (it == robot) owner else null },
+                    port,
+                    { if (it == robot) channel else null },
+                    Texts,
+                    attachmentStore = FakeStore(listOf(PlaceResult.Failed("HTTP 404"), PlaceResult.Saved(".imux/b.png"), PlaceResult.TooLarge)),
+                    notReadyRetryDelayMs = 0,
+                    onWarning = { warnings += it },
+                )
+            r.onInbound(inboundWith("1", "看看", FakeAttachment(), FakeAttachment(), FakeAttachment()))
+            assertEquals(1, warnings.size)
+            assertTrue(warnings[0].contains("HTTP 404"))
+            assertFalse(warnings[0].contains(owner.senderId))
+            assertFalse(warnings[0].contains(owner.chatId))
+            assertFalse(warnings[0].contains("看看"))
         }
 }

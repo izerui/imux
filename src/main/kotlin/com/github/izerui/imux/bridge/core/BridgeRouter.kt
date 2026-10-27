@@ -26,6 +26,8 @@ class BridgeRouter(
     private val attachmentStore: AttachmentStore = AttachmentStore.NONE,
     /** 终端未就绪时两次尝试之间的间隔；测试传 0。 */
     private val notReadyRetryDelayMs: Long = 300,
+    /** 警告日志出口（core 不依赖 IDE 日志）；只传原因，不含路径、对端 id、正文与密钥。 */
+    private val onWarning: (String) -> Unit = {},
 ) {
     private val submitLock = Mutex()
     private val lock = Any()
@@ -65,7 +67,8 @@ class BridgeRouter(
             reply(message.robotId, owner, texts.unbound())
             return InboundOutcome.UNBOUND
         }
-        // 确认本人、非重复、已绑定后才取回附件；放在提交锁之外，下载不占用提交顺序
+        // 确认本人、非重复、已绑定后才取回附件。下载放在提交锁之外，不阻塞其它机器人的提交；
+        // 同一机器人的消息由上层按机器人逐条处理，下载期间该机器人的后续消息仍在排队
         val composed =
             if (message.attachments.isEmpty()) {
                 typed
@@ -150,7 +153,10 @@ class BridgeRouter(
             when (result) {
                 is PlaceResult.Saved -> saved += result.relativePath
                 PlaceResult.TooLarge -> tooLarge = true
-                is PlaceResult.Failed -> failed = true
+                is PlaceResult.Failed -> {
+                    failed = true
+                    onWarning("入站附件处理失败：reason=${result.reason}")
+                }
             }
         }
         if (tooLarge) reply(robotId, owner, texts.attachmentTooLarge())

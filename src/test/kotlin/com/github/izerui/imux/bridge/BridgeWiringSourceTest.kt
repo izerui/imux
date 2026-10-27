@@ -55,9 +55,10 @@ class BridgeWiringSourceTest {
     }
 
     @Test
-    fun `入站消息经单一消费者按到达顺序处理`() {
-        assertTrue(hub.contains("Channel<InboundMessage>(Channel.UNLIMITED)"))
-        assertTrue(hub.contains("for (message in inbound)"))
+    fun `入站消息按机器人分队列处理，附件失败原因进日志`() {
+        assertTrue(hub.contains("RobotInboundQueues("))
+        assertTrue(hub.contains("inbound.offer(message)"))
+        assertTrue(hub.contains("onWarning ="))
     }
 
     @Test
