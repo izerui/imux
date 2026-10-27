@@ -80,6 +80,13 @@ class HttpFileDownloadTest {
         assertEquals("报告.pdf", contentDispositionFileName("attachment; filename=\"fallback.pdf\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.pdf"))
         assertEquals("报告.pdf", contentDispositionFileName("attachment; filename*=UTF-8'zh'%E6%8A%A5%E5%91%8A.pdf"))
         assertEquals("a.txt", contentDispositionFileName("attachment; filename*=utf-8'en-US'a.txt"))
+        assertEquals(
+            "普通 filename= 里的百分号编码按 UTF-8 解出（企业微信实测）",
+            "微信图片_2025-05-16_103524_132.jpg",
+            contentDispositionFileName("attachment; filename=\"%E5%BE%AE%E4%BF%A1%E5%9B%BE%E7%89%87_2025-05-16_103524_132.jpg\""),
+        )
+        assertEquals("不是合法 UTF-8 的百分号序列原样保留", "100%FF.txt", contentDispositionFileName("attachment; filename=100%FF.txt"))
+        assertEquals("不像百分号编码的 % 原样保留", "50% off.pdf", contentDispositionFileName("attachment; filename=\"50% off.pdf\""))
         assertNull(contentDispositionFileName("attachment"))
         assertNull(contentDispositionFileName(null))
     }

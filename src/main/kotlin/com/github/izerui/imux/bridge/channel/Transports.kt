@@ -242,4 +242,37 @@ fun contentDispositionFileName(header: String?): String? {
         ?.trim()
         ?.removeSurrounding("\"")
         ?.takeIf(String::isNotBlank)
+        ?.let(::decodePercentUtf8)
+}
+
+private val PERCENT_ESCAPE = Regex("%[0-9A-Fa-f]{2}")
+
+/**
+ * 企业微信等平台会把中文文件名百分号编码后直接放进普通的 `filename=`（实测“微信图片_…jpg”）。
+ * 含 `%XX` 且能严格按 UTF-8 解出时用解码结果，否则原样返回，避免误伤本来就含 `%` 的文件名。
+ */
+private fun decodePercentUtf8(value: String): String {
+    if (!PERCENT_ESCAPE.containsMatchIn(value)) return value
+    val bytes = java.io.ByteArrayOutputStream()
+    var index = 0
+    while (index < value.length) {
+        val c = value[index]
+        if (c == '%' && PERCENT_ESCAPE.matchesAt(value, index)) {
+            bytes.write(value.substring(index + 1, index + 3).toInt(16))
+            index += 3
+        } else {
+            bytes.write(c.toString().toByteArray(Charsets.UTF_8))
+            index++
+        }
+    }
+    return try {
+        Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+            .decode(java.nio.ByteBuffer.wrap(bytes.toByteArray()))
+            .toString()
+            .takeIf(String::isNotBlank) ?: value
+    } catch (_: java.nio.charset.CharacterCodingException) {
+        value
+    }
 }
