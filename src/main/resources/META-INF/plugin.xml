@@ -159,6 +159,10 @@
           观测，只能由它自己上报，见 PiSessionReportHandler 的说明。
         -->
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
+
+        <statusBarWidgetFactory
+                id="imux.phoneBridge"
+                implementation="com.github.izerui.imux.bridge.ui.PhoneStatusWidgetFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.github.izerui.imux">
