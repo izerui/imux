@@ -71,28 +71,36 @@ class WecomAttachment(
         when (val downloaded = download.download(url, maxBytes + PADDING_ALLOWANCE)) {
             DownloadResult.TooLarge -> FetchResult.TooLarge
             is DownloadResult.Failed -> FetchResult.Failed(downloaded.reason)
-            is DownloadResult.Ok ->
+            is DownloadResult.Ok -> decrypt(downloaded, maxBytes)
+        }
+
+    private suspend fun decrypt(
+        downloaded: DownloadResult.Ok,
+        maxBytes: Long,
+    ): FetchResult {
+        var plain: Path? = null
+        var handedOver = false
+        try {
+            val result =
                 withContext(Dispatchers.IO) {
-                    val plain = Files.createTempFile(downloaded.path.parent, "imux-", ".bin")
                     try {
-                        WecomMedia.decryptFile(downloaded.path, plain, aesKey)
-                        if (Files.size(plain) > maxBytes) {
-                            Files.deleteIfExists(plain)
-                            FetchResult.TooLarge
-                        } else {
-                            FetchResult.Ok(FetchedFile(plain, downloaded.fileName))
-                        }
+                        val target = Files.createTempFile(downloaded.path.parent, "imux-", ".bin").also { plain = it }
+                        WecomMedia.decryptFile(downloaded.path, target, aesKey)
+                        if (Files.size(target) > maxBytes) FetchResult.TooLarge else FetchResult.Ok(FetchedFile(target, downloaded.fileName))
                     } catch (e: CancellationException) {
-                        Files.deleteIfExists(plain)
                         throw e
                     } catch (e: Exception) {
-                        Files.deleteIfExists(plain)
                         FetchResult.Failed("decrypt: ${e.javaClass.simpleName}")
-                    } finally {
-                        Files.deleteIfExists(downloaded.path)
                     }
                 }
+            handedOver = result is FetchResult.Ok
+            return result
+        } finally {
+            // 任何退出（含在 withContext 边界被取消）都删掉密文；明文只有交给调用方时才保留
+            runCatching { Files.deleteIfExists(downloaded.path) }
+            if (!handedOver) plain?.let { runCatching { Files.deleteIfExists(it) } }
         }
+    }
 
     private companion object {
         /** 密文最多比明文多一个 32 字节的填充块。 */

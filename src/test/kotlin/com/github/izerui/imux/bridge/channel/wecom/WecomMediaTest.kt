@@ -4,6 +4,9 @@ import com.github.izerui.imux.bridge.channel.DownloadResult
 import com.github.izerui.imux.bridge.channel.HttpFileDownload
 import com.github.izerui.imux.bridge.core.AttachmentKind
 import com.github.izerui.imux.bridge.core.FetchResult
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -100,5 +103,26 @@ class WecomMediaTest {
             val garbage = file(ByteArray(47) { 1 })
             assertTrue(WecomAttachment(AttachmentKind.FILE, "u", keyText, FakeDownload { DownloadResult.Ok(garbage, null) }).fetch(1_000) is FetchResult.Failed)
             assertFalse(Files.exists(garbage))
+        }
+
+    @Test
+    fun `下载完成后被取消时删除密文临时文件`() =
+        runBlocking {
+            val encrypted = file(encrypt("hello".toByteArray()))
+            val download =
+                object : HttpFileDownload {
+                    override suspend fun download(
+                        url: String,
+                        maxBytes: Long,
+                    ): DownloadResult {
+                        currentCoroutineContext().job.cancel()
+                        return DownloadResult.Ok(encrypted, null)
+                    }
+                }
+            val job = launch { WecomAttachment(AttachmentKind.FILE, "u", keyText, download).fetch(1_000) }
+            job.join()
+            assertTrue(job.isCancelled)
+            assertFalse("密文临时文件应删除", Files.exists(encrypted))
+            assertEquals("不应残留明文临时文件", emptyList<String>(), Files.list(encrypted.parent).use { s -> s.map { it.fileName.toString() }.filter { it.endsWith(".bin") }.toList() })
         }
 }

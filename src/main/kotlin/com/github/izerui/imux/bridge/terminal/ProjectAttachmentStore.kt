@@ -18,6 +18,7 @@ import java.nio.file.StandardOpenOption
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeParseException
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * 把附件存到绑定会话所在项目的 `.imux/attachments/<日期>/`：Agent 读取项目内文件不会触发权限确认。
@@ -35,14 +36,20 @@ class ProjectAttachmentStore(
             FetchResult.TooLarge -> PlaceResult.TooLarge
             is FetchResult.Failed -> PlaceResult.Failed(fetched.reason)
             is FetchResult.Ok ->
-                withContext(Dispatchers.IO) {
-                    try {
-                        save(Path.of(target.projectPath), attachment.kind, fetched.file)
-                    } catch (e: IOException) {
-                        Files.deleteIfExists(fetched.file.path)
-                        LOG.warn("保存附件失败：${e.javaClass.simpleName}")
-                        PlaceResult.Failed("save")
+                try {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            save(Path.of(target.projectPath), attachment.kind, fetched.file)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            LOG.warn("保存附件失败：${e.javaClass.simpleName}")
+                            PlaceResult.Failed("save")
+                        }
                     }
+                } finally {
+                    // 保存成功时临时文件已被移走；其余任何退出（失败、取消）都删掉解密后的临时文件
+                    deleteQuietly(fetched.file.path)
                 }
         }
 
@@ -73,15 +80,20 @@ class ProjectAttachmentStore(
             buffer.copyOf(read)
         }
 
+    /** 尽力而为：附件已经保存，写 exclude 失败只记日志，不影响本次结果。 */
     private fun ensureGitExclude(root: Path) {
-        val git = root.resolve(".git")
-        if (!Files.isDirectory(git)) return
-        val exclude = git.resolve("info").resolve("exclude")
-        val lines = if (Files.exists(exclude)) Files.readAllLines(exclude) else emptyList()
-        if (lines.any { it.trim() == EXCLUDE_LINE }) return
-        Files.createDirectories(exclude.parent)
-        val prefix = if (lines.isNotEmpty() && !Files.readString(exclude).endsWith("\n")) "\n" else ""
-        Files.writeString(exclude, "$prefix$EXCLUDE_LINE\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+        try {
+            val git = root.resolve(".git")
+            if (!Files.isDirectory(git)) return
+            val exclude = git.resolve("info").resolve("exclude")
+            val lines = if (Files.exists(exclude)) Files.readAllLines(exclude) else emptyList()
+            if (lines.any { it.trim() == EXCLUDE_LINE }) return
+            Files.createDirectories(exclude.parent)
+            val prefix = if (lines.isNotEmpty() && !Files.readString(exclude).endsWith("\n")) "\n" else ""
+            Files.writeString(exclude, "$prefix$EXCLUDE_LINE\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+        } catch (e: IOException) {
+            LOG.warn("写入 git exclude 失败：${e.javaClass.simpleName}")
+        }
     }
 
     /** 尽力清理：失败只记日志，不影响本次保存。 */
@@ -104,6 +116,14 @@ class ProjectAttachmentStore(
             }
         } catch (e: IOException) {
             LOG.warn("清理过期附件失败：${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun deleteQuietly(path: Path) {
+        try {
+            Files.deleteIfExists(path)
+        } catch (e: IOException) {
+            LOG.warn("删除附件临时文件失败：${e.javaClass.simpleName}")
         }
     }
 

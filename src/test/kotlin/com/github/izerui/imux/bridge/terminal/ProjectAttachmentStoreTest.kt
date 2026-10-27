@@ -7,6 +7,9 @@ import com.github.izerui.imux.bridge.core.InboundAttachment
 import com.github.izerui.imux.bridge.core.PlaceResult
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.model.AgentType
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -124,5 +127,53 @@ class ProjectAttachmentStoreTest {
                 }
             store().place(target(project()), attachment)
             assertEquals(100L * 1024 * 1024, limit)
+        }
+
+    /** 取回成功后把临时文件交给调用方，记下路径以便检查残留。 */
+    private inner class TempFileAttachment(
+        private val beforeReturn: suspend () -> Unit = {},
+    ) : InboundAttachment {
+        override val kind = AttachmentKind.IMAGE
+        lateinit var file: Path
+
+        override suspend fun fetch(maxBytes: Long): FetchResult {
+            file = temp.newFile().toPath()
+            Files.write(file, png)
+            beforeReturn()
+            return FetchResult.Ok(FetchedFile(file, null))
+        }
+    }
+
+    @Test
+    fun `写 exclude 失败不影响保存结果`() =
+        runBlocking {
+            val root = project()
+            // exclude 是目录，读写都会失败
+            Files.createDirectories(root.resolve(".git/info/exclude"))
+            val result = store().place(target(root), FakeAttachment(png, null))
+            assertEquals(PlaceResult.Saved(".imux/attachments/2026-10-27/image-153012.png"), result)
+            assertTrue(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012.png")))
+        }
+
+    @Test
+    fun `保存时出现非 IO 异常返回失败并删除临时文件`() =
+        runBlocking {
+            val attachment = TempFileAttachment()
+            // 含 NUL 的路径会抛 InvalidPathException
+            val result = store().place(SessionTarget("bad\u0000path", "tab-1", AgentType.CLAUDE, "s1"), attachment)
+            assertEquals(PlaceResult.Failed("save"), result)
+            assertFalse("临时文件应删除", Files.exists(attachment.file))
+        }
+
+    @Test
+    fun `取回之后被取消时删除临时文件`() =
+        runBlocking {
+            val root = project()
+            val attachment = TempFileAttachment { currentCoroutineContext().job.cancel() }
+            val job = launch { store().place(target(root), attachment) }
+            job.join()
+            assertTrue(job.isCancelled)
+            assertFalse("临时文件应删除", Files.exists(attachment.file))
+            assertFalse(Files.exists(root.resolve(".imux/attachments/2026-10-27/image-153012.png")))
         }
 }
