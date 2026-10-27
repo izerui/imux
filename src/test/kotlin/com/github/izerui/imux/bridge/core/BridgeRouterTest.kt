@@ -398,6 +398,74 @@ class BridgeRouterTest {
             assertEquals(listOf("最后结果", "RELEASED(修复滚动)"), sentTexts())
         }
 
+    private val robotB = RobotId("r2")
+    private val ownerB = RobotOwner(senderId = "me-b", chatId = "chat-b")
+    private val channelB = FakeChannel(robotB)
+
+    /** 两个机器人共用同一标签：换绑时旧机器人 [robot] 让位给 [robotB]。 */
+    private val switchRouter =
+        BridgeRouter(
+            registry,
+            { mapOf(robot to owner, robotB to ownerB)[it] },
+            port,
+            { mapOf(robot to channel, robotB to channelB)[it] },
+            Texts,
+            notReadyRetryDelayMs = 0,
+        )
+
+    /** 与切换机器人的界面操作同序：先解绑旧的、绑定新的，旧绑定的清理随后异步执行。 */
+    private fun switchToB(): Binding {
+        val old = (registry.bind(robot, target) as BindResult.Bound).binding
+        registry.unbind(robot)
+        registry.bind(robotB, target)
+        return old
+    }
+
+    @Test
+    fun `换绑后旧绑定的清理晚到，不删新机器人已攒下的回复`() =
+        runBlocking {
+            val old = switchToB()
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "新回复")))
+            switchRouter.onReleased(old, "修复滚动")
+            switchRouter.onTurnCompleted("tab-1")
+            assertEquals(listOf("RELEASED(修复滚动)"), channel.sent.map { it.text })
+            assertEquals(listOf("新回复"), channelB.sent.map { it.text })
+        }
+
+    @Test
+    fun `换绑后旧绑定的清理晚到，不清新绑定的完成状态`() =
+        runBlocking {
+            val old = switchToB()
+            switchRouter.onTurnCompleted("tab-1")
+            switchRouter.onReleased(old, "修复滚动")
+            // 完成之后才读到的回复是迟到的最终输出，应立即发出
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "迟到的回复")))
+            assertEquals(listOf("迟到的回复"), channelB.sent.map { it.text })
+        }
+
+    @Test
+    fun `换绑后旧绑定的清理晚到，不清新绑定的回显登记`() =
+        runBlocking {
+            val old = switchToB()
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, switchRouter.onInbound(InboundMessage(robotB, "1", "me-b", "chat-b", "跑测试")))
+            switchRouter.onReleased(old, "修复滚动")
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "跑测试")))
+            assertTrue(channelB.sent.isEmpty())
+        }
+
+    @Test
+    fun `换绑前旧绑定未发出的回复仍发给原聊天，不落到新机器人`() =
+        runBlocking {
+            val old = (registry.bind(robot, target) as BindResult.Bound).binding
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "旧回复")))
+            registry.unbind(robot)
+            registry.bind(robotB, target)
+            switchRouter.onReleased(old, "修复滚动")
+            switchRouter.onTurnCompleted("tab-1")
+            assertEquals(listOf("旧回复", "RELEASED(修复滚动)"), channel.sent.map { it.text })
+            assertTrue(channelB.sent.isEmpty())
+        }
+
     @Test
     fun `释放时向原聊天发送断开提示`() =
         runBlocking {

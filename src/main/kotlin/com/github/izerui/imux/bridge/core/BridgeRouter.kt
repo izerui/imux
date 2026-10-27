@@ -266,7 +266,7 @@ class BridgeRouter(
         send(binding, texts.connected(project, agent, sessionTitle))
     }
 
-    /** 绑定已被移除后调用：不再做 epoch 校验，提示发往原聊天。 */
+    /** 绑定已被移除后调用：不再做 epoch 校验，提示发往原聊天。只清理 [binding] 这一代次的状态。 */
     suspend fun onReleased(
         binding: Binding,
         sessionTitle: String,
@@ -274,9 +274,15 @@ class BridgeRouter(
         val tabId = binding.target.tabId
         val pending =
             synchronized(lock) {
-                pendingRemoteEcho.remove(tabId)
-                completedTabs.remove(tabId)
-                pendingFinal.remove(tabId)?.takeIf { it.epoch == binding.epoch }
+                // 换绑时新绑定先建立、旧绑定的清理后执行：只能取走旧代次的待发回复，
+                // 标签已被新绑定接管时，回显登记与完成状态属于新绑定，不能清
+                val final = pendingFinal[tabId]?.takeIf { it.epoch == binding.epoch }
+                if (final != null) pendingFinal.remove(tabId)
+                if (bindings.bindingForTab(tabId) == null) {
+                    pendingRemoteEcho.remove(tabId)
+                    completedTabs.remove(tabId)
+                }
+                final
             }
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
