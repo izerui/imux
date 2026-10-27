@@ -36,6 +36,12 @@ class SessionDecorationsTest {
     }
 
     @Test
+    fun `链接错误取回退值`() {
+        val results = collectSafely(listOf(Fake(true)), false) { throw NoClassDefFoundError("missing") }
+        assertEquals(listOf(false), results)
+    }
+
+    @Test
     fun `取消信号照常向上传递`() {
         val thrown =
             runCatching { collectSafely(listOf<SessionDecorator>(Fake(true)), false) { throw CancellationException("c") } }.exceptionOrNull()

@@ -407,7 +407,10 @@ class AgentTerminalFileEditor(
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 isOpaque = false
                 add(peerBanner)
-                SessionDecorations.banners(project, virtualFile, this@AgentTerminalFileEditor).forEach(::add)
+                SessionDecorations.banners(project, virtualFile, this@AgentTerminalFileEditor).forEach { banner ->
+                    add(banner)
+                    trailOutsideClicks.attach(banner)
+                }
                 components.forEach { (it as? JComponent)?.alignmentX = Component.LEFT_ALIGNMENT }
             }
         return JPanel(BorderLayout()).apply {

@@ -75,8 +75,8 @@ internal fun <R> collectSafely(
     decorators.map { decorator ->
         try {
             call(decorator)
-        } catch (e: Exception) {
-            if (e is CancellationException || e is ControlFlowException) throw e
+        } catch (e: Throwable) {
+            if (e is CancellationException || e is ControlFlowException || e is VirtualMachineError) throw e
             LOG.warn("会话装饰 ${decorator.javaClass.name} 出错，已忽略", e)
             fallback
         }

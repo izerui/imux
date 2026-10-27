@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -239,7 +240,7 @@ class RobotManager(parentScope: CoroutineScope) {
     }
 
     private fun bump() {
-        _revision.value = _revision.value + 1
+        _revision.update { it + 1 }
     }
 
     companion object {

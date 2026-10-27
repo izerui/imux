@@ -5,6 +5,7 @@ import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.terminal.SessionDecorationsListener
+import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -62,8 +63,8 @@ private class PhoneStatusWidget(
     override fun getText(): String {
         val enabled = BridgeSettings.getInstance().state.enabled
         if (!enabled) return ""
-        val path = project.basePath ?: System.getProperty("user.home")
-        val bound = BridgeHub.getInstance().bindings.snapshot().count { it.target.projectPath == path }
+        val openTabIds = TerminalHost.getInstance(project).openTabsByTabId().keys
+        val bound = BridgeHub.getInstance().bindings.snapshot().count { it.target.tabId in openTabIds }
         return statusBarText(
             enabled,
             RobotManager.getInstance().robots().size,

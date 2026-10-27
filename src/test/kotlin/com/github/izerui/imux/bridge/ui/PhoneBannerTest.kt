@@ -33,6 +33,11 @@ class PhoneBannerTest {
     }
 
     @Test
+    fun `状态未知时不视为问题`() {
+        assertNull(model(status = null)!!.problem)
+    }
+
+    @Test
     fun `未开启、未绑定或机器人不存在时不显示`() {
         assertNull(model(enabled = false))
         assertNull(model(binding = null))

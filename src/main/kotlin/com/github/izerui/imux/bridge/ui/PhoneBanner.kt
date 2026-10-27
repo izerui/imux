@@ -15,6 +15,8 @@ import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.diagnostic.ControlFlowException
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
@@ -29,6 +31,9 @@ import com.intellij.util.ui.UIUtil
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JPanel
+import kotlin.coroutines.cancellation.CancellationException
+
+private val LOG = logger<PhoneBanner>()
 
 data class PhoneBannerModel(
     val robotId: String,
@@ -46,7 +51,7 @@ fun phoneBannerModel(
     statusText: (ConnectionStatus?) -> String,
 ): PhoneBannerModel? {
     if (!enabled || binding == null || robot == null) return null
-    val problem = if (status == ConnectionStatus.Online) null else statusText(status)
+    val problem = if (status == null || status == ConnectionStatus.Online) null else statusText(status)
     return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem)
 }
 
@@ -76,7 +81,17 @@ class PhoneBanner(
         add(Box.createHorizontalStrut(JBUI.scale(12)))
         add(disconnect)
         ApplicationManager.getApplication().messageBus.connect(parent)
-            .subscribe(SessionDecorationsListener.TOPIC, SessionDecorationsListener { refresh() })
+            .subscribe(
+                SessionDecorationsListener.TOPIC,
+                SessionDecorationsListener {
+                    try {
+                        refresh()
+                    } catch (e: Throwable) {
+                        if (e is CancellationException || e is ControlFlowException) throw e
+                        LOG.warn("PhoneBanner 刷新出错，已忽略", e)
+                    }
+                },
+            )
         refresh()
     }
 
