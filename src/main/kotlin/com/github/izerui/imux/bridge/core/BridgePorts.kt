@@ -60,3 +60,27 @@ interface BridgeTexts {
 
     fun pairingLocked(): String
 }
+
+sealed interface PlaceResult {
+    /** [relativePath] 相对项目根，分隔符为 `/`。 */
+    data class Saved(val relativePath: String) : PlaceResult
+
+    data object TooLarge : PlaceResult
+
+    data class Failed(val reason: String) : PlaceResult
+}
+
+/** 把入站附件放到目标会话能读到的位置。不得抛出 CancellationException 以外的异常。 */
+fun interface AttachmentStore {
+    suspend fun place(
+        target: SessionTarget,
+        attachment: InboundAttachment,
+    ): PlaceResult
+
+    companion object {
+        const val MAX_BYTES: Long = 100L * 1024 * 1024
+
+        /** 不支持附件时的默认实现。 */
+        val NONE = AttachmentStore { _, _ -> PlaceResult.Failed("unsupported") }
+    }
+}
