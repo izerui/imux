@@ -18,6 +18,30 @@ data class SessionTarget(
     val sessionId: String?,
 )
 
+enum class AttachmentKind { IMAGE, FILE, VIDEO }
+
+/** 渠道取回并解密后的临时文件；调用方负责移走或删除。[suggestedName] 是平台给的原始文件名，未清理。 */
+data class FetchedFile(
+    val path: java.nio.file.Path,
+    val suggestedName: String?,
+)
+
+sealed interface FetchResult {
+    data class Ok(val file: FetchedFile) : FetchResult
+
+    /** 超过上限；实现方不得留下临时文件。 */
+    data object TooLarge : FetchResult
+
+    data class Failed(val reason: String) : FetchResult
+}
+
+/** 入站附件。[fetch] 不得抛出 CancellationException 以外的异常。 */
+interface InboundAttachment {
+    val kind: AttachmentKind
+
+    suspend fun fetch(maxBytes: Long): FetchResult
+}
+
 data class InboundMessage(
     val robotId: RobotId,
     /** 平台消息 id，用于抵御平台重投；不能用文本去重。 */
@@ -25,6 +49,8 @@ data class InboundMessage(
     val senderId: String,
     val chatId: String,
     val text: String,
+    /** 渠道只解析不下载；路由器确认本人、非重复、已绑定后才调用 [InboundAttachment.fetch]。 */
+    val attachments: List<InboundAttachment> = emptyList(),
 )
 
 data class OutboundMessage(
@@ -60,4 +86,5 @@ enum class InboundOutcome {
     SUBMITTED_TO_TERMINAL,
     NOT_READY,
     OFFLINE,
+    ATTACHMENT_FAILED,
 }
