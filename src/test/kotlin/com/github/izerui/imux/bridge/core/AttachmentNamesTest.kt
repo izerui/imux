@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalTime
 
@@ -56,5 +57,40 @@ class AttachmentNamesTest {
         assertEquals("b.png", AttachmentNames.unique("b.png") { it in taken })
         assertEquals("a-2.png", AttachmentNames.unique("a.png") { it in taken })
         assertEquals("noext-1", AttachmentNames.unique("noext") { it in taken })
+    }
+
+    @Test
+    fun `过长的中文文件名按 UTF-8 字节截断到 200 字节以内并保留扩展名`() {
+        val name = AttachmentNames.sanitize("报".repeat(150) + ".pdf")!!
+        assertTrue("实际 ${name.toByteArray(Charsets.UTF_8).size} 字节", name.toByteArray(Charsets.UTF_8).size <= 200)
+        assertTrue(name.endsWith(".pdf"))
+        assertEquals("报".repeat(65) + ".pdf", name)
+        val noExtension = AttachmentNames.sanitize("报".repeat(150))!!
+        assertEquals("报".repeat(66), noExtension)
+    }
+
+    @Test
+    fun `截断不拆开代理对`() {
+        // 每个 emoji 占 2 个 char、4 个 UTF-8 字节
+        val name = AttachmentNames.sanitize("\uD83D\uDE00".repeat(100) + ".png")!!
+        assertTrue(name.toByteArray(Charsets.UTF_8).size <= 200)
+        assertTrue(name.endsWith(".png"))
+        val stem = name.removeSuffix(".png")
+        assertEquals(0, stem.length % 2)
+        assertTrue(stem.codePoints().allMatch { it == 0x1F600 })
+    }
+
+    @Test
+    fun `ASCII 文件名截断行为不变`() {
+        assertEquals("a".repeat(116) + ".pdf", AttachmentNames.sanitize("a".repeat(300) + ".pdf"))
+        assertEquals("b".repeat(120), AttachmentNames.sanitize("b".repeat(300)))
+        assertEquals("short.txt", AttachmentNames.sanitize("short.txt"))
+    }
+
+    @Test
+    fun `去掉 Unicode 格式字符，防止伪装扩展名`() {
+        assertEquals("invoicefdp.exe", AttachmentNames.sanitize("invoice\u202Efdp.exe"))
+        assertEquals("ab.txt", AttachmentNames.sanitize("a\u200Bb\uFEFF.txt"))
+        assertNull(AttachmentNames.sanitize("\u202E\u200F"))
     }
 }

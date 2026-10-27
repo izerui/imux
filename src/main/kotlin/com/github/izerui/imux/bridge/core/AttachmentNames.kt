@@ -6,24 +6,62 @@ import java.time.LocalTime
 object AttachmentNames {
     const val MAX_NAME_LENGTH = 120
 
+    /** 常见文件系统单个文件名上限 255 字节，留出同名编号 `-N` 的余量。 */
+    const val MAX_NAME_BYTES = 200
+
     private const val ILLEGAL = "<>:\"|?*"
 
-    /** 去掉路径部分、控制字符与 Windows 非法字符，去掉首尾空白和点；空名返回 null。 */
+    /**
+     * 去掉路径部分、控制字符、Unicode 格式字符（如 U+202E，可用来伪装扩展名）与 Windows 非法字符，
+     * 去掉首尾空白和点；空名返回 null。
+     */
     fun sanitize(raw: String?): String? {
         if (raw == null) return null
         val base = raw.substringAfterLast('/').substringAfterLast('\\')
-        val cleaned = base.filterNot { it.isISOControl() || it in ILLEGAL }.trim().trim('.').trim()
+        val cleaned =
+            base.filterNot { it.isISOControl() || Character.getType(it) == Character.FORMAT.toInt() || it in ILLEGAL }
+                .trim().trim('.').trim()
         if (cleaned.isEmpty()) return null
         return truncate(cleaned)
     }
 
+    /** 同时限制字符数与 UTF-8 字节数；尽量保留扩展名，按码点截断，不拆开代理对。 */
     private fun truncate(name: String): String {
-        if (name.length <= MAX_NAME_LENGTH) return name
+        if (name.length <= MAX_NAME_LENGTH && utf8Size(name) <= MAX_NAME_BYTES) return name
         val dot = name.lastIndexOf('.')
         val extension = if (dot > 0) name.substring(dot) else ""
-        if (extension.length in 2..11) return name.substring(0, MAX_NAME_LENGTH - extension.length) + extension
-        return name.substring(0, MAX_NAME_LENGTH)
+        val suffix = if (extension.length in 2..11) extension else ""
+        val stem = if (suffix.isEmpty()) name else name.substring(0, dot)
+        return takeWithin(stem, MAX_NAME_LENGTH - suffix.length, MAX_NAME_BYTES - utf8Size(suffix)) + suffix
     }
+
+    private fun takeWithin(
+        text: String,
+        maxChars: Int,
+        maxBytes: Int,
+    ): String {
+        var end = 0
+        var bytes = 0
+        while (end < text.length) {
+            val codePoint = text.codePointAt(end)
+            val chars = Character.charCount(codePoint)
+            val size = utf8Size(codePoint)
+            if (end + chars > maxChars || bytes + size > maxBytes) break
+            end += chars
+            bytes += size
+        }
+        return text.substring(0, end)
+    }
+
+    private fun utf8Size(text: String): Int = text.codePoints().map(::utf8Size).sum()
+
+    private fun utf8Size(codePoint: Int): Int =
+        when {
+            codePoint < 0x80 -> 1
+            codePoint < 0x800 -> 2
+            codePoint < 0x10000 -> 3
+            else -> 4
+        }
 
     /** 按文件头识别扩展名；识别不了返回 null。[head] 至少给 12 字节才能识别全部类型。 */
     fun extensionOf(head: ByteArray): String? =
