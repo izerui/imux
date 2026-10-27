@@ -52,8 +52,30 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
 
                         override fun actionPerformed(e: AnActionEvent) = unbind(table)
                     },
+                ).addExtraAction(
+                    object : com.intellij.openapi.project.DumbAwareAction(ImuxBundle.message("bridge.settings.reconnect"), null, AllIcons.Actions.Refresh) {
+                        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+                        override fun update(e: AnActionEvent) {
+                            e.presentation.isEnabled = selected(table) != null && BridgeSettings.getInstance().state.enabled
+                        }
+
+                        override fun actionPerformed(e: AnActionEvent) = reconnect(table)
+                    },
+                ).addExtraAction(
+                    object : com.intellij.openapi.project.DumbAwareAction(ImuxBundle.message("bridge.settings.pair"), null, AllIcons.General.User) {
+                        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+                        override fun update(e: AnActionEvent) {
+                            e.presentation.isEnabled = selected(table)?.let { RobotManager.getInstance().robot(it.id)?.owner() == null } == true
+                        }
+
+                        override fun actionPerformed(e: AnActionEvent) = pair(table)
+                    },
                 ).createPanel()
         refresh()
+        // 设置页可能多次创建面板：先停掉旧定时器，避免泄漏
+        timer?.stop()
         timer = Timer(1_000) { refresh() }.also { it.start() }
         return panel {
             row {
@@ -106,6 +128,20 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         val row = selected(table) ?: return
         val name = Messages.showInputDialog(ImuxBundle.message("bridge.settings.rename"), ImuxBundle.message("bridge.settings.displayName"), null, row.name, null)
         if (!name.isNullOrBlank()) RobotManager.getInstance().rename(row.id, name.trim())
+        refresh()
+    }
+
+    private fun reconnect(table: JBTable) {
+        val row = selected(table) ?: return
+        RobotManager.getInstance().reconnect(row.id)
+        refresh()
+    }
+
+    private fun pair(table: JBTable) {
+        val row = selected(table) ?: return
+        AddRobotDialog(null, pairRobotId = row.id).show()
+        // 配对入口可能自动开启桥接，与添加入口一样同步开关状态
+        reset()
         refresh()
     }
 

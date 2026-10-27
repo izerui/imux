@@ -4,9 +4,11 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.bridge.channel.ChannelFactories
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.channel.OnboardingStep
 import com.github.izerui.imux.bridge.robot.ChannelKind
 import com.github.izerui.imux.bridge.robot.RobotManager
+import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.intellij.CommonBundle
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
@@ -28,11 +30,25 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 
+/** 等待认主的一次检查结果。 */
+internal enum class PairWait { WAITING, PAIRED, GONE }
+
+internal fun pairWait(robot: RobotRecord?): PairWait =
+    when {
+        robot == null -> PairWait.GONE
+        robot.owner() != null -> PairWait.PAIRED
+        else -> PairWait.WAITING
+    }
+
 /**
  * 添加机器人：选渠道 → 扫码 →（需要时）配对 → 完成。
+ * 传入 [pairRobotId] 时直接进入配对卡片，为已保存但未认主的机器人重新配对。
  * 网络与轮询在 RobotManager 的协程里进行，界面状态经 invokeLater(ModalityState.any()) 刷新。
  */
-class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
+class AddRobotDialog(
+    project: Project?,
+    pairRobotId: String? = null,
+) : DialogWrapper(project, true) {
     private val manager = RobotManager.getInstance()
     private val cards = CardLayout()
     private val root = JPanel(cards)
@@ -51,6 +67,7 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
     private var job: Job? = null
     private var driver: OnboardingDriver? = null
     private var kind: ChannelKind = ChannelKind.WECOM
+    @Volatile
     private var robotId: String? = null
     private var step = Card.CHANNEL
 
@@ -60,6 +77,7 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
         title = ImuxBundle.message("bridge.add.title")
         setOKButtonText(ImuxBundle.message("bridge.add.next"))
         init()
+        if (pairRobotId != null) startPairing(pairRobotId)
     }
 
     override fun createCenterPanel(): JComponent {
@@ -180,11 +198,8 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
                 try {
                     val record = manager.add(kind, result.credentials, result.ownerId, name)
                     robotId = record.id
-                    ui {
-                        if (record.owner() != null) finish() else showPair(record.pairCode.orEmpty())
-                    }
-                    while (manager.robot(record.id)?.owner() == null) delay(500)
-                    ui { finish() }
+                    if (record.owner() == null) ui { showPair(record.pairCode.orEmpty()) }
+                    awaitPaired(record.id)
                 } catch (e: kotlin.coroutines.cancellation.CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -194,6 +209,37 @@ class AddRobotDialog(project: Project?) : DialogWrapper(project, true) {
                     }
                 }
             }
+    }
+
+    /** 为已保存的机器人重新配对：续期配对码、确保连接在线，再等待认主。 */
+    private fun startPairing(id: String) {
+        val record = manager.robot(id) ?: return
+        kind = record.kind
+        robotId = id
+        isOKActionEnabled = false
+        if (record.owner() != null) {
+            finish()
+            return
+        }
+        val justEnabled = ensureBridgeEnabled()
+        val status = manager.statusOf(id)
+        if (!justEnabled && status != ConnectionStatus.Online && status != ConnectionStatus.Connecting) manager.reconnect(id)
+        manager.renewPairCode(id)?.let { showPair(it.pairCode.orEmpty()) }
+        job = manager.launch { awaitPaired(id) }
+    }
+
+    /** 认主后进入完成卡片；机器人被删除时停止等待。 */
+    private suspend fun awaitPaired(id: String) {
+        while (true) {
+            when (pairWait(manager.robot(id))) {
+                PairWait.GONE -> return
+                PairWait.PAIRED -> {
+                    ui { finish() }
+                    return
+                }
+                PairWait.WAITING -> delay(500)
+            }
+        }
     }
 
     private fun showPair(code: String) {
