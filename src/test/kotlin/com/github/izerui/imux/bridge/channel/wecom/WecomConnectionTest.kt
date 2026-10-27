@@ -237,6 +237,15 @@ class WecomConnectionTest {
         }
 
     @Test
+    fun `引用文字随消息转交`() {
+        startAndAwaitOnline(connection())
+        transports.first().emit(
+            """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"m1","chattype":"single","from":{"userid":"u1"},"msgtype":"text","text":{"content":"这里"},"quote":{"msgtype":"text","text":{"content":"原文"}}}}""",
+        )
+        assertEquals("原文", received.single().quote)
+    }
+
+    @Test
     fun `退避从 1 秒翻倍到 30 秒封顶`() {
         assertEquals(1_000L, wecomBackoffMillis(1))
         assertEquals(2_000L, wecomBackoffMillis(2))

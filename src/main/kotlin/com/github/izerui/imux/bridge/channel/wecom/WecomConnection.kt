@@ -272,7 +272,7 @@ class WecomConnection(
             while (seen.size > SEEN_CAPACITY) seen.remove(seen.first())
         }
         val attachments = frame.media.map { WecomAttachment(it.kind, it.url, it.aesKey, download) }
-        sink.accept(InboundMessage(robotId, frame.msgId, frame.fromUserId, frame.fromUserId, frame.text.orEmpty(), attachments))
+        sink.accept(InboundMessage(robotId, frame.msgId, frame.fromUserId, frame.fromUserId, frame.text.orEmpty(), attachments, frame.quote))
     }
 
     private companion object {

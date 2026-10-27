@@ -51,6 +51,8 @@ data class InboundMessage(
     val text: String,
     /** 渠道只解析不下载；路由器确认本人、非重复、已绑定后才调用 [InboundAttachment.fetch]。 */
     val attachments: List<InboundAttachment> = emptyList(),
+    /** 用户引用的那条消息里的文字；没有引用或引用的不是文字时为 null。 */
+    val quote: String? = null,
 )
 
 data class OutboundMessage(

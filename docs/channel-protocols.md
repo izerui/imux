@@ -43,9 +43,11 @@
 - 单聊时没有 `chatid`，对端 id 用 `from.userid`。
 - `voice.content` 为转写文本（仅单聊）；`mixed.msg_item[]`；`image/file` 为 url+aeskey（5 分钟有效，AES-256-CBC，IV=key 前 16 字节，按 32 字节块去 PKCS#7）。
 - 已接入（2026-10-27）：`image`、`file`、`video` 与 `mixed` 中的图片。渠道只解析引用，路由器确认本人、非重复、已绑定后才下载；aeskey 为 base64（常缺结尾 `=`）；消息不含文件名，从下载响应的 `Content-Disposition` 取，取不到按文件头识别扩展名；文件、视频上限 100 MB。附件存到 `<项目>/.imux/attachments/<日期>/`，相对路径随文字提交给终端，见 `docs/superpowers/specs/2026-10-27-wecom-inbound-media-design.md`。
+- 引用：消息体可带 `quote`（text / image / mixed / voice / file）。只取其中的文字（文本、语音转写、混排中的文字），以 Markdown 引用块 `> …` 放在正文前提交；引用图片、文件不处理。
 - 带 `compat_info` 的不是普通用户消息，忽略。
 - `msgid` 可能重复推送，用于去重。
 - 事件 `aibot_event_callback`：`enter_chat`、`template_card_event`、`feedback_event`、`disconnected_event`。
+- 欢迎语：`enter_chat` 是用户当天首次进入单聊时推送，5 秒内用该事件的 `req_id` 发 `aibot_respond_welcome_msg`（`msgtype: text`）。协议层已支持解析与构造回复帧（`WecomProtocol.respondWelcome`），业务上暂不使用：每人每天只推送一次，触发不稳定。
 
 **主动推送**
 ```json

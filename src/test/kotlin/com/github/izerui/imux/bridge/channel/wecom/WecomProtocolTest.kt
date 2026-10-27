@@ -77,7 +77,39 @@ class WecomProtocolTest {
         assertEquals(WecomFrame.Kicked, WecomProtocol.parse(kicked))
         val enter =
             """{"cmd":"aibot_event_callback","headers":{"req_id":"R"},"body":{"msgtype":"event","from":{"userid":"u"},"event":{"eventtype":"enter_chat"}}}"""
-        assertEquals(WecomFrame.Event("enter_chat"), WecomProtocol.parse(enter))
+        assertEquals(WecomFrame.Event("enter_chat", "R", "", true, "u"), WecomProtocol.parse(enter))
+        val groupEnter =
+            """{"cmd":"aibot_event_callback","headers":{"req_id":"R2"},"body":{"msgid":"e1","chattype":"group","msgtype":"event","from":{"userid":"u"},"event":{"eventtype":"enter_chat"}}}"""
+        assertEquals(WecomFrame.Event("enter_chat", "R2", "e1", false, "u"), WecomProtocol.parse(groupEnter))
+    }
+
+    @Test
+    fun `欢迎语用事件的 req_id 回复纯文本`() {
+        val frame = JsonParser.parseString(WecomProtocol.respondWelcome("R", "你好")).asJsonObject
+        assertEquals("aibot_respond_welcome_msg", frame["cmd"].asString)
+        assertEquals("R", frame["headers"].asJsonObject["req_id"].asString)
+        val body = frame["body"].asJsonObject
+        assertEquals("text", body["msgtype"].asString)
+        assertEquals("你好", body["text"].asJsonObject["content"].asString)
+    }
+
+    @Test
+    fun `解析引用的文本、语音与图文混排，引用图片与兼容来源没有引用文字`() {
+        fun parseQuote(quote: String, extra: String = "") =
+            (
+                WecomProtocol.parse(
+                    """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"m","chattype":"single","from":{"userid":"u"},"msgtype":"text","text":{"content":"这里"},"quote":$quote$extra}}""",
+                ) as WecomFrame.Message
+            ).quote
+        assertEquals("原文", parseQuote("""{"msgtype":"text","text":{"content":"原文"}}"""))
+        assertEquals("语音", parseQuote("""{"msgtype":"voice","voice":{"content":"语音"}}"""))
+        assertEquals(
+            "a\nb",
+            parseQuote("""{"msgtype":"mixed","mixed":{"msg_item":[{"msgtype":"text","text":{"content":"a"}},{"msgtype":"image","image":{"url":"x"}},{"msgtype":"text","text":{"content":"b"}}]}}"""),
+        )
+        assertNull(parseQuote("""{"msgtype":"image","image":{"url":"x","aeskey":"k"}}"""))
+        assertNull(parseQuote("""{"msgtype":"text","text":{"content":"  "}}"""))
+        assertNull(parseQuote("""{"msgtype":"text","text":{"content":"原文"}}""", ""","compat_info":{"source":"x"}"""))
     }
 
     @Test

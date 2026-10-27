@@ -80,7 +80,7 @@ class BridgeRouter(
                     throw e
                 }
             }
-        val text = composed ?: return InboundOutcome.ATTACHMENT_FAILED
+        val text = withQuote(message.quote, composed ?: return InboundOutcome.ATTACHMENT_FAILED)
 
         val phase =
             submitLock.withLock {
@@ -128,6 +128,15 @@ class BridgeRouter(
                 }
             }
         }
+    }
+
+    /** 引用的文字用 Markdown 引用块放在正文前，Agent 才知道“这里”指的是哪段。 */
+    private fun withQuote(
+        quote: String?,
+        text: String,
+    ): String {
+        val quoted = quote?.trim()?.takeIf(String::isNotEmpty) ?: return text
+        return quoted.lines().joinToString("\n") { "> $it".trimEnd() } + "\n\n" + text
     }
 
     /** 取回并落盘全部附件，拼装提交文字；附件全部失败且没有文字时返回 null。失败提示各回复一次。 */

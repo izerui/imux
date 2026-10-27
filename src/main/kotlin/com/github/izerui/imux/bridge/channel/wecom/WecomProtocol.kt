@@ -20,7 +20,10 @@ sealed interface WecomFrame {
         val errmsg: String?,
     ) : WecomFrame
 
-    /** [text] 为 null 表示没有文字；[media] 为消息里的图片、文件、视频引用。 */
+    /**
+     * [text] 为 null 表示没有文字；[media] 为消息里的图片、文件、视频引用；
+     * [quote] 为用户引用的那条消息里的文字，引用的是图片或文件时为 null。
+     */
     data class Message(
         val reqId: String,
         val msgId: String,
@@ -28,11 +31,19 @@ sealed interface WecomFrame {
         val fromUserId: String,
         val text: String?,
         val media: List<WecomMediaRef> = emptyList(),
+        val quote: String? = null,
     ) : WecomFrame
 
     data object Kicked : WecomFrame
 
-    data class Event(val eventType: String?) : WecomFrame
+    /** 事件回调。回复欢迎语要用这个事件的 [reqId]；事件可能不带 chattype，此时按单聊处理。 */
+    data class Event(
+        val eventType: String?,
+        val reqId: String = "",
+        val msgId: String = "",
+        val single: Boolean = true,
+        val fromUserId: String = "",
+    ) : WecomFrame
 
     data object Unknown : WecomFrame
 }
@@ -72,6 +83,16 @@ object WecomProtocol {
             add("markdown", JsonObject().apply { addProperty("content", content) })
         }
 
+    /** 回复进入会话事件的欢迎语，[reqId] 必须是该事件的 req_id；只支持纯文本。 */
+    fun respondWelcome(
+        reqId: String,
+        content: String,
+    ): String =
+        frame("aibot_respond_welcome_msg", reqId) {
+            addProperty("msgtype", "text")
+            add("text", JsonObject().apply { addProperty("content", content) })
+        }
+
     fun parse(text: String): WecomFrame {
         val root = runCatching { JsonParser.parseString(text) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject ?: return WecomFrame.Unknown
         return try {
@@ -99,7 +120,17 @@ object WecomProtocol {
             "aibot_msg_callback" -> message(reqId, body)
             "aibot_event_callback" -> {
                 val eventType = body.obj("event")?.str("eventtype")
-                if (eventType == "disconnected_event") WecomFrame.Kicked else WecomFrame.Event(eventType)
+                if (eventType == "disconnected_event") {
+                    WecomFrame.Kicked
+                } else {
+                    WecomFrame.Event(
+                        eventType = eventType,
+                        reqId = reqId,
+                        msgId = body.str("msgid").orEmpty(),
+                        single = body.str("chattype").let { it == null || it == "single" },
+                        fromUserId = body.obj("from")?.str("userid").orEmpty(),
+                    )
+                }
             }
             else -> WecomFrame.Unknown
         }
@@ -109,23 +140,9 @@ object WecomProtocol {
         reqId: String,
         body: JsonObject,
     ): WecomFrame {
-        val text =
-            if (body.has("compat_info")) {
-                null
-            } else {
-                when (body.str("msgtype")) {
-                    "text" -> body.obj("text")?.str("content")
-                    "voice" -> body.obj("voice")?.str("content")
-                    "mixed" ->
-                        body.obj("mixed")?.get("msg_item")?.takeIf(JsonElement::isJsonArray)?.asJsonArray
-                            ?.mapNotNull { item -> item.takeIf(JsonElement::isJsonObject)?.asJsonObject }
-                            ?.filter { it.str("msgtype") == "text" }
-                            ?.mapNotNull { it.obj("text")?.str("content") }
-                            ?.joinToString("\n")
-                            ?.takeIf(String::isNotEmpty)
-                    else -> null
-                }
-            }
+        val compat = body.has("compat_info")
+        val text = if (compat) null else textOf(body)
+        val quote = if (compat) null else body.obj("quote")?.let(::textOf)?.takeIf(String::isNotBlank)
         val media =
             if (body.has("compat_info")) {
                 emptyList()
@@ -150,8 +167,24 @@ object WecomProtocol {
             fromUserId = body.obj("from")?.str("userid").orEmpty(),
             text = text,
             media = media,
+            quote = quote,
         )
     }
+
+    /** 消息或引用体里的文字：文本、语音转写、图文混排中的文字按原顺序拼接。 */
+    private fun textOf(body: JsonObject): String? =
+        when (body.str("msgtype")) {
+            "text" -> body.obj("text")?.str("content")
+            "voice" -> body.obj("voice")?.str("content")
+            "mixed" ->
+                body.obj("mixed")?.get("msg_item")?.takeIf(JsonElement::isJsonArray)?.asJsonArray
+                    ?.mapNotNull { item -> item.takeIf(JsonElement::isJsonObject)?.asJsonObject }
+                    ?.filter { it.str("msgtype") == "text" }
+                    ?.mapNotNull { it.obj("text")?.str("content") }
+                    ?.joinToString("\n")
+                    ?.takeIf(String::isNotEmpty)
+            else -> null
+        }
 
     private fun mediaRef(
         kind: AttachmentKind,

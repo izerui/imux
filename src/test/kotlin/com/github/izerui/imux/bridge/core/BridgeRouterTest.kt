@@ -177,6 +177,32 @@ class BridgeRouterTest {
         }
 
     @Test
+    fun `引用的文字以引用块放在正文前提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val message = InboundMessage(robot, "1", "me", "chat-1", "这里改一下", quote = "第一行\n\n第二行  ")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(message))
+            assertEquals("> 第一行\n>\n> 第二行\n\n这里改一下", port.submitted.single().second)
+        }
+
+    @Test
+    fun `只有引用没有文字时按空消息处理`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val message = InboundMessage(robot, "1", "me", "chat-1", "  ", quote = "上一条")
+            assertEquals(InboundOutcome.EMPTY, router.onInbound(message))
+            assertTrue(port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `空白引用不加引用块`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onInbound(InboundMessage(robot, "1", "me", "chat-1", "继续", quote = " \n "))
+            assertEquals("继续", port.submitted.single().second)
+        }
+
+    @Test
     fun `未配对机器人的消息被忽略`() =
         runBlocking {
             val stranger = InboundMessage(RobotId("other"), "1", "me", "chat-1", "hi")
