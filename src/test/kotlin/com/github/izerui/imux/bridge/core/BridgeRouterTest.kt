@@ -68,6 +68,8 @@ class BridgeRouterTest {
         override fun pairingSucceeded() = "PAIRED"
 
         override fun pairingExpired() = "PAIR_EXPIRED"
+
+        override fun pairingLocked() = "PAIR_LOCKED"
     }
 
     private val registry = BindingRegistry()

@@ -61,4 +61,16 @@ class RobotManagerReconnectSourceTest {
         val connect = code.compact(code.bodyAfter("private fun connect(record: RobotRecord)", '{'))
         assertTrue(connect.contains("if(connections[record.id]!==connection)return@synchronized"))
     }
+
+    @Test
+    fun `配对码连续猜错达到上限即作废，只在作废时回复一次，成功或重新生成时清零`() {
+        val manager = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/robot/RobotManager.kt")
+        val sink = manager.bodyAfter("private fun pairingSink(", '{')
+        val wrong = sink.substringAfter("PairDecision.Wrong ->").substringBefore("PairDecision.Ignore")
+        assertTrue(wrong.contains("wrongPairAttempts.merge(id, 1, Int::plus)!! < Pairing.MAX_WRONG_ATTEMPTS) return@InboundSink"))
+        assertTrue(wrong.contains("store.update { it.withPairCode(id, null, 0) }"))
+        assertTrue(wrong.contains("BundleBridgeTexts.pairingLocked()"))
+        assertTrue(sink.substringAfter("is PairDecision.Paired ->").contains("wrongPairAttempts.remove(id)"))
+        assertTrue(manager.bodyAfter("fun renewPairCode(id: String)", '{').contains("wrongPairAttempts.remove(id)"))
+    }
 }

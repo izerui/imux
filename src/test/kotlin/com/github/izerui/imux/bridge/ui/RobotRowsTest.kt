@@ -45,4 +45,12 @@ class RobotRowsTest {
             rows,
         )
     }
+
+    @Test
+    fun `只是状态变化时视为同一批机器人，增删或换序时不是`() {
+        fun row(id: String, status: String = "在线") = RobotRow(id, id, "企业微信", status, null)
+        org.junit.Assert.assertTrue(sameRobotsInOrder(listOf(row("a"), row("b")), listOf(row("a", "连接中"), row("b"))))
+        org.junit.Assert.assertFalse(sameRobotsInOrder(listOf(row("a")), listOf(row("a"), row("b"))))
+        org.junit.Assert.assertFalse(sameRobotsInOrder(listOf(row("a"), row("b")), listOf(row("b"), row("a"))))
+    }
 }

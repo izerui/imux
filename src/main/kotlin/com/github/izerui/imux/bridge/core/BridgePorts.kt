@@ -57,4 +57,6 @@ interface BridgeTexts {
     fun pairingSucceeded(): String
 
     fun pairingExpired(): String
+
+    fun pairingLocked(): String
 }

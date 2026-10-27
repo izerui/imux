@@ -71,9 +71,10 @@ data class RobotBook(
             it.copy(ownerSenderId = owner.senderId, ownerChatId = owner.chatId, pairCode = null, pairCodeExpiresAtMillis = 0)
         }
 
+    /** [code] 为 null 表示作废当前配对码（例如连续猜错）。 */
     fun withPairCode(
         id: String,
-        code: String,
+        code: String?,
         expiresAtMillis: Long,
     ): RobotBook = update(id) { it.copy(pairCode = code, pairCodeExpiresAtMillis = expiresAtMillis) }
 

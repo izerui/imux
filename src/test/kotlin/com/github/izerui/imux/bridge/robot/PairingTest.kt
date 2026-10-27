@@ -25,9 +25,18 @@ class PairingTest {
     }
 
     @Test
-    fun `错误配对码与普通消息被忽略`() {
-        assertEquals(PairDecision.Ignore, Pairing.decide(pending, msg("111111"), nowMillis = 500))
+    fun `格式像配对码但不对的计为猜错，普通消息被忽略`() {
+        assertEquals(PairDecision.Wrong, Pairing.decide(pending, msg("111111"), nowMillis = 500))
+        assertEquals(PairDecision.Wrong, Pairing.decide(pending, msg(" 111 111 "), nowMillis = 500))
         assertEquals(PairDecision.Ignore, Pairing.decide(pending, msg("在吗"), nowMillis = 500))
+        assertEquals("位数不对不算猜错", PairDecision.Ignore, Pairing.decide(pending, msg("12345"), nowMillis = 500))
+        assertEquals("含非数字不算猜错", PairDecision.Ignore, Pairing.decide(pending, msg("12345a"), nowMillis = 500))
+    }
+
+    @Test
+    fun `作废后的配对码不再认主`() {
+        val book = RobotBook().add(pending).withPairCode("r", null, 0)
+        assertEquals(PairDecision.Ignore, Pairing.decide(book.robot("r")!!, msg("482713"), nowMillis = 0))
     }
 
     @Test

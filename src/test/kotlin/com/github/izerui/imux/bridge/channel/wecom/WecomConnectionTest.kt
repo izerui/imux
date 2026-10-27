@@ -138,6 +138,20 @@ class WecomConnectionTest {
         }
 
     @Test
+    fun `认证失败与认证前断开交替出现时，仍在第 5 次认证失败后停止`() =
+        runBlocking {
+            val subscribes = AtomicInteger()
+            // 奇数次订阅认证失败，偶数次不确认（订阅超时，按断开处理）
+            val conn =
+                connection(acker = { cmd ->
+                    if (cmd != "aibot_subscribe") 0 else if (subscribes.incrementAndGet() % 2 == 1) 40001 else null
+                })
+            conn.start(InboundSink { }) { statuses += it }
+            withTimeout(5_000) { while (statuses.none { it is ConnectionStatus.Failed }) delay(5) }
+            assertEquals(9, opens.get())
+        }
+
+    @Test
     fun `心跳连续两次未确认则重连`() =
         runBlocking {
             val conn = connection(heartbeatMillis = 20, acker = { cmd -> if (cmd == "ping") null else 0 })

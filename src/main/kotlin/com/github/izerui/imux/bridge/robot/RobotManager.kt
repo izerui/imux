@@ -61,6 +61,9 @@ class RobotManager(parentScope: CoroutineScope) {
     private val connections = ConcurrentHashMap<String, ChannelConnection>()
     private val statuses = ConcurrentHashMap<String, ConnectionStatus>()
 
+    /** 当前配对码的连续错误次数，只在内存里；配对成功或重新生成时清零。 */
+    private val wrongPairAttempts = ConcurrentHashMap<String, Int>()
+
     /** 登记/摘除连接与写入状态共用一把锁：start()/stop() 都不阻塞，持锁时间很短。 */
     private val lifecycleLock = Any()
     private val _revision = MutableStateFlow(0L)
@@ -139,6 +142,7 @@ class RobotManager(parentScope: CoroutineScope) {
     }
 
     fun renewPairCode(id: String): RobotRecord? {
+        wrongPairAttempts.remove(id)
         val book = store.update { it.withPairCode(id, Pairing.newCode(), System.currentTimeMillis() + Pairing.TTL_MILLIS) }
         bump()
         return book.robot(id)
@@ -216,6 +220,7 @@ class RobotManager(parentScope: CoroutineScope) {
         when (val decision = Pairing.decide(record, message, System.currentTimeMillis())) {
             PairDecision.Pass -> hub.inboundSink.accept(message)
             is PairDecision.Paired -> {
+                wrongPairAttempts.remove(id)
                 store.update { it.withOwner(id, decision.owner) }
                 hub.registerRobot(connection, decision.owner)
                 bump()
@@ -227,6 +232,16 @@ class RobotManager(parentScope: CoroutineScope) {
                 scope.launch {
                     connection.send(OutboundMessage(connection.robotId, message.chatId, null, BundleBridgeTexts.pairingExpired()))
                 }
+            PairDecision.Wrong -> {
+                if (wrongPairAttempts.merge(id, 1, Int::plus)!! < Pairing.MAX_WRONG_ATTEMPTS) return@InboundSink
+                // 连续猜错：作废配对码，只在作废这一下回复一次
+                wrongPairAttempts.remove(id)
+                store.update { it.withPairCode(id, null, 0) }
+                bump()
+                scope.launch {
+                    connection.send(OutboundMessage(connection.robotId, message.chatId, null, BundleBridgeTexts.pairingLocked()))
+                }
+            }
             PairDecision.Ignore -> Unit
         }
     }

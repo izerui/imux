@@ -134,7 +134,12 @@ class WecomConnection(
         var authFailures = 0
         while (myJob.isActive) {
             if (myJob.isActive) listener.statusChanged(ConnectionStatus.Connecting)
-            when (val end = runSession(sink, listener) { attempt = 0 }) {
+            // 认证真正通过（上线）才清零失败计数；认证前的网络中断不算，否则“认证失败、断网”交替时永远到不了上限
+            when (val end =
+                runSession(sink, listener) {
+                    attempt = 0
+                    authFailures = 0
+                }) {
                 SessionEnd.Kicked -> {
                     if (myJob.isActive) listener.statusChanged(ConnectionStatus.Kicked)
                     return
@@ -146,7 +151,7 @@ class WecomConnection(
                         return
                     }
                 }
-                is SessionEnd.Dropped -> authFailures = 0
+                is SessionEnd.Dropped -> Unit
             }
             attempt++
             delay(backoff(attempt))

@@ -32,4 +32,6 @@ internal object BundleBridgeTexts : BridgeTexts {
     override fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")
 
     override fun pairingExpired() = ImuxBundle.message("bridge.pairing.expired")
+
+    override fun pairingLocked() = ImuxBundle.message("bridge.pairing.locked")
 }

@@ -232,4 +232,12 @@ class TerminalHostWiringSourceTest {
             startup.compactArgs(startup.normalized).contains("sweepStaleTabPidFilesOnce()"),
         )
     }
+
+    @Test
+    fun `移出工具窗口的标签 Content 挂到本服务下，项目关闭时同步释放`() {
+        val create = host.bodyAfter("private fun createView(", '{')
+        val detach = create.indexOf("detachTabAcross262(manager, tab)")
+        val register = create.indexOf("Disposer.register(this, tab.content)")
+        assertTrue("detach 之后没人释放 Content，退出 IDE 时会被报成泄漏", detach >= 0 && register > detach)
+    }
 }

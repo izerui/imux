@@ -133,9 +133,10 @@ internal class TrailStateStore(
     private fun finish(key: String, self: Job?, next: TrailState) {
         onEdt {
             if (jobs[key] !== self) return@onEdt
-            jobs.remove(key)
-            beforeGeneration.remove(key)
+            // 先写结果再撤登记：看到任务已撤的人读到的一定是最终状态，不会停在 Loading
             states[key] = next
+            beforeGeneration.remove(key)
+            jobs.remove(key)
             notifyChanged(key)
         }
     }
@@ -147,11 +148,12 @@ internal class TrailStateStore(
     }
 
     private fun restoreBeforeGeneration(key: String) {
-        jobs.remove(key)
+        // 与 finish 同序：先恢复状态再撤登记
         when (val before = beforeGeneration.remove(key)) {
             is TrailState -> states[key] = before
             else -> states.remove(key)
         }
+        jobs.remove(key)
         notifyChanged(key)
     }
 

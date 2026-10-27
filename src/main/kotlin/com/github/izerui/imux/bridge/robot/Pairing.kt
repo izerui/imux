@@ -14,6 +14,9 @@ sealed interface PairDecision {
     /** 发来的是正确配对码，但已过期：提示到 IDE 重新生成。 */
     data object Expired : PairDecision
 
+    /** 发来的是配对码格式的数字但不对：计入错误次数，不回复。 */
+    data object Wrong : PairDecision
+
     /** 不处理也不回复。陌生人的消息不能消耗机器人的发送额度。 */
     data object Ignore : PairDecision
 }
@@ -27,6 +30,9 @@ object Pairing {
     const val CODE_LENGTH = 6
     const val TTL_MILLIS = 10 * 60_000L
 
+    /** 连续猜错这么多次，配对码作废，须在 IDE 中重新生成。 */
+    const val MAX_WRONG_ATTEMPTS = 5
+
     fun newCode(random: Random = SecureRandom()): String = (0 until CODE_LENGTH).joinToString("") { random.nextInt(10).toString() }
 
     fun decide(
@@ -36,7 +42,8 @@ object Pairing {
     ): PairDecision {
         if (record.owner() != null) return PairDecision.Pass
         val code = record.pairCode ?: return PairDecision.Ignore
-        if (message.text.filterNot(Char::isWhitespace) != code) return PairDecision.Ignore
+        val sent = message.text.filterNot(Char::isWhitespace)
+        if (sent != code) return if (sent.length == CODE_LENGTH && sent.all(Char::isDigit)) PairDecision.Wrong else PairDecision.Ignore
         if (nowMillis > record.pairCodeExpiresAtMillis) return PairDecision.Expired
         return PairDecision.Paired(RobotOwner(message.senderId, message.chatId))
     }

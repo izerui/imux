@@ -20,6 +20,7 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.project.ProjectCloseListener
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
@@ -632,6 +633,10 @@ class TerminalHost(
                 .createTab()
 
         detachTabAcross262(manager, tab)
+        // detach 只是把 Content 从工具窗口静默移走，没人再释放它；平台只在 view 的 scope 取消后
+        // 异步到 EDT 上释放，退出 IDE 时排不上就被报成泄漏。挂到本服务下：标签关闭时平台照常释放
+        // 并自动摘除，项目关闭时随本服务同步释放。
+        Disposer.register(this, tab.content)
         return tab.view
     }
 

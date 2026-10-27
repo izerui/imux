@@ -25,6 +25,7 @@ import javax.swing.table.AbstractTableModel
 class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings.displayName")) {
     private val model = RobotTableModel()
     private var timer: Timer? = null
+    private var table: JBTable? = null
 
     override fun createPanel(): DialogPanel {
         val settings = BridgeSettings.getInstance()
@@ -32,7 +33,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             JBTable(model).apply {
                 setShowGrid(false)
                 emptyText.text = ImuxBundle.message("bridge.settings.empty")
-            }
+            }.also { this.table = it }
         val decorated =
             ToolbarDecorator.createDecorator(table)
                 .setAddAction {
@@ -98,12 +99,15 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
     override fun disposeUIResources() {
         timer?.stop()
         timer = null
+        table = null
         super.disposeUIResources()
     }
 
     private fun refresh() {
         val manager = RobotManager.getInstance()
         val hub = BridgeHub.getInstance()
+        val table = this.table
+        val selectedId = table?.let { selected(it)?.id }
         model.rows =
             robotRows(
                 manager.robots(),
@@ -112,6 +116,10 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 titleOf = BridgeLifecycle::sessionTitle,
                 labels = BundleRowLabels,
             )
+        // 增删机器人会整表重建：按 id 把选中放回去
+        if (table != null && selectedId != null && selected(table)?.id != selectedId) {
+            model.rows.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 }?.let { table.setRowSelectionInterval(it, it) }
+        }
     }
 
     private fun selected(table: JBTable): RobotRow? = table.selectedRow.takeIf { it >= 0 }?.let { model.rows.getOrNull(it) }
@@ -158,8 +166,10 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         var rows: List<RobotRow> = emptyList()
             set(value) {
                 if (field == value) return
+                val sameRows = sameRobotsInOrder(field, value)
                 field = value
-                fireTableDataChanged()
+                // 每秒都会刷新状态：只是内容变了就只更新行，整表重建会把用户的选中清掉
+                if (sameRows && value.isNotEmpty()) fireTableRowsUpdated(0, value.lastIndex) else fireTableDataChanged()
             }
 
         private val columns =
@@ -185,3 +195,9 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         }
     }
 }
+
+/** 机器人是否还是同一批、同一顺序（只是状态等内容变了）。 */
+internal fun sameRobotsInOrder(
+    before: List<RobotRow>,
+    after: List<RobotRow>,
+): Boolean = before.map { it.id } == after.map { it.id }
