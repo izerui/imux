@@ -78,9 +78,11 @@ class RobotsSettingsRecoverySourceTest {
     @Test
     fun `配对码失效、过期或连接异常时说明原因，重新生成时一并重连`() {
         val wait = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: String)", '{'))
-        assertTrue("状态变化才刷新界面，且继续等待", wait.contains("if(wait!=shown){shown=waitui{showPairState(wait,status)}}delay(500)"))
+        assertTrue("与界面实际显示的状态比较，不同才刷新，且继续等待", wait.contains("if(wait!=shownPairWait)ui{showPairState(wait,status)}delay(500)"))
         val state = dialog.compact(dialog.bodyAfter("private fun showPairState(", '{'))
-        assertTrue(state.contains("pairCode.isEnabled=wait==PairWait.WAITING"))
+        assertTrue("显示即记录，重新生成改回等待时也随之更新", state.contains("){shownPairWait=waitpairCode.isEnabled=wait==PairWait.WAITING"))
+        val show = dialog.compact(dialog.bodyAfter("private fun showPair(code: String)", '{'))
+        assertTrue("重新生成后经 showPairState 显示等待", show.contains("showPairState(PairWait.WAITING,null)"))
         assertTrue(state.contains("bridge.add.pair.invalidated"))
         assertTrue(state.contains("bridge.add.pair.expired"))
         assertTrue(state.contains("bridge.add.pair.disconnected"))

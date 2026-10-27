@@ -1,11 +1,9 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.bridge.core.Binding
-import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.bridge.terminal.TabChange
 import com.github.izerui.imux.bridge.terminal.tabChangeFor
-import com.github.izerui.imux.bridge.transcript.TailBoundary
 import com.github.izerui.imux.bridge.transcript.TranscriptDecoders
 import com.github.izerui.imux.bridge.transcript.TranscriptTail
 import com.github.izerui.imux.monitor.SessionMonitor
@@ -63,9 +61,6 @@ class TerminalBridgeService(
 
     // 只在 pollLock 内读写（start 中的初始化除外）：重新开启过就丢弃旧读取位置
     private val switchWatch = SwitchWatch()
-
-    /** 用户绑定那一刻记下的读取边界：尾随器稍后建立时从这里开始，不漏掉期间产生的回复。 */
-    private val bindStarts = ConcurrentHashMap<String, BindStart>()
 
     fun start() {
         if (!started.compareAndSet(false, true)) return
@@ -142,7 +137,6 @@ class TerminalBridgeService(
                     hub.bindings.reattach(binding.robotId, change.tabId)
                     tails.remove(binding.target.tabId)
                     migratedAt.remove(binding.target.tabId)
-                    bindStarts.remove(binding.target.tabId)
                     RobotManager.getInstance().syncBindings()
                 }
                 TabChange.Release -> release(binding)
@@ -156,7 +150,6 @@ class TerminalBridgeService(
         RobotManager.getInstance().syncBindings()
         tails.remove(binding.target.tabId)
         migratedAt.remove(binding.target.tabId)
-        bindStarts.remove(binding.target.tabId)
         val title = titleOf(binding.target.sessionId)
         scope.launch(Dispatchers.IO) { hub.router.onReleased(binding, title) }
     }
@@ -168,22 +161,6 @@ class TerminalBridgeService(
             tails.remove(tabId)
             migratedAt[tabId] = Instant.now()
         }
-    }
-
-    /**
-     * 用户把机器人绑到这个标签**之前**调用（EDT）：记下会话记录此刻的边界。
-     * 尾随器要等轮询才建立，若从那时的末尾开始，会漏掉期间产生的回复；
-     * 先记边界再绑定，绑定一生效、轮询立刻建立尾随器也能用上它。
-     */
-    fun markBoundary(target: SessionTarget) {
-        val sessionId = target.sessionId ?: return
-        val session = SessionMonitor.getInstance(project).model.sessionOf(sessionId) ?: return
-        bindStarts[target.tabId] = BindStart(sessionId, BridgeLifecycle.switchGeneration, TranscriptTail.boundaryOf(session.filePath))
-    }
-
-    /** 绑定没有成功时调用，免得边界留到以后被别的绑定误用、倒灌期间的内容。 */
-    fun forgetBoundary(tabId: String) {
-        bindStarts.remove(tabId)
     }
 
     private suspend fun pollTab(tabId: String) {
@@ -215,8 +192,6 @@ class TerminalBridgeService(
         if (switchWatch.observe(BridgeLifecycle.switchGeneration)) {
             tails.clear()
             migratedAt.clear()
-            // 开启之后才记下的边界仍然有效（打开开关后马上绑定），只清更早的
-            bindStarts.values.removeIf { it.generation != BridgeLifecycle.switchGeneration }
         }
     }
 
@@ -230,18 +205,12 @@ class TerminalBridgeService(
         val tabId = binding.target.tabId
         val migrated = migratedAt[tabId]
         val tail = TranscriptTail(session.filePath, TranscriptDecoders.forAgent(binding.target.agentType))
-        val bindStart = bindStarts[tabId]?.takeIf { it.sessionId == sessionId }
-        when {
-            readFromStart(session.createdAt, migrated) -> Unit
-            bindStart != null -> tail.startAt(bindStart.boundary)
-            else -> tail.startAtEnd()
-        }
+        if (!readFromStart(session.createdAt, migrated)) tail.startAtEnd()
         // 建立期间绑定可能已在 EDT 上迁移或换绑：此时不登记、不消费迁移时间，留给下次轮询按新绑定重建
         val current = hub.bindings.bindingForTab(tabId) ?: return null
         if (!reuseTail(binding.epoch, sessionId, current.epoch, current.target.sessionId)) return null
         // 只移除本次用到的迁移时间；期间又发生的迁移会写入新值，不能被吞掉
         if (migrated != null) migratedAt.remove(tabId, migrated)
-        if (bindStart != null) bindStarts.remove(tabId, bindStart)
         // 记下建立时依据的绑定代次与会话，下次轮询据此判断能否沿用
         tails[tabId] = TailEntry(binding.epoch, sessionId, tail)
         return tail
@@ -284,12 +253,6 @@ internal class SwitchWatch {
     }
 }
 
-/** 绑定前记下的读取边界：只对同一会话有效，第一次建立尾随器时用掉；[generation] 为记下时的开启代次。 */
-private class BindStart(
-    val sessionId: String,
-    val generation: Long,
-    val boundary: TailBoundary,
-)
 
 /** 尾随器连同建立它时的绑定代次与会话一起缓存。 */
 private class TailEntry(

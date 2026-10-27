@@ -33,7 +33,14 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val content = message.get("content") ?: return emptyList()
         return when (message.str("role")) {
             "user" -> userEvents(content)
-            "assistant" -> assistantEvents(content)
+            // 一条消息的各个块分行写入且都带 stop_reason；只在含正文的那一行标记结束，结论才在结束之前
+            "assistant" -> assistantEvents(content).let { events ->
+                if (message.str("stop_reason") == "end_turn" && events.any { it.kind == SessionEventKind.ASSISTANT_TEXT }) {
+                    events + SessionEvent(SessionEventKind.TURN_ENDED, "")
+                } else {
+                    events
+                }
+            }
             else -> emptyList()
         }
     }
@@ -75,7 +82,10 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
 object CodexTranscriptDecoder : TranscriptDecoder {
     override fun decode(line: String): List<SessionEvent> {
         val root = parseObject(line) ?: return emptyList()
-        // event_msg 里的 user_message/agent_message 是同一内容的镜像，只认 response_item
+        // event_msg 里的 user_message/agent_message 是同一内容的镜像，只认 response_item；task_complete 标记本轮结束
+        if (root.str("type") == "event_msg" && root.obj("payload")?.str("type") == "task_complete") {
+            return listOf(SessionEvent(SessionEventKind.TURN_ENDED, ""))
+        }
         if (root.str("type") != "response_item") return emptyList()
         val payload = root.obj("payload") ?: return emptyList()
         val type = payload.str("type") ?: return emptyList()
@@ -137,14 +147,18 @@ object PiTranscriptDecoder : TranscriptDecoder {
                     }
                 listOfNotNull(text.trim().takeIf(String::isNotEmpty)?.let { SessionEvent(SessionEventKind.USER_TEXT, it) })
             }
-            "assistant" ->
-                blocks(message.get("content")).mapNotNull { block ->
-                    when (block.str("type")) {
-                        "text" -> block.str("text")?.let(::assistantText)
-                        "toolCall" -> SessionEvent(SessionEventKind.TOOL_STARTED, block.str("name").orEmpty(), block.str("id"))
-                        else -> null
+            "assistant" -> {
+                val events =
+                    blocks(message.get("content")).mapNotNull { block ->
+                        when (block.str("type")) {
+                            "text" -> block.str("text")?.let(::assistantText)
+                            "toolCall" -> SessionEvent(SessionEventKind.TOOL_STARTED, block.str("name").orEmpty(), block.str("id"))
+                            else -> null
+                        }
                     }
-                }
+                // stop 表示本轮正常结束；toolUse 还要继续，error/aborted 没有结论
+                if (message.str("stopReason") == "stop") events + SessionEvent(SessionEventKind.TURN_ENDED, "") else events
+            }
             "toolResult" -> listOf(SessionEvent(SessionEventKind.TOOL_FINISHED, "", message.str("toolCallId")))
             else -> emptyList()
         }

@@ -4,6 +4,7 @@ import com.github.izerui.imux.bridge.core.SessionEvent
 import com.github.izerui.imux.bridge.core.SessionEventKind.ASSISTANT_TEXT
 import com.github.izerui.imux.bridge.core.SessionEventKind.TOOL_FINISHED
 import com.github.izerui.imux.bridge.core.SessionEventKind.TOOL_STARTED
+import com.github.izerui.imux.bridge.core.SessionEventKind.TURN_ENDED
 import com.github.izerui.imux.bridge.core.SessionEventKind.TURN_STARTED
 import com.github.izerui.imux.bridge.core.SessionEventKind.USER_TEXT
 import com.github.izerui.imux.model.AgentType
@@ -43,6 +44,28 @@ class TranscriptDecodersTest {
             """{"type":"summary","summary":"x"}""",
             "not json",
         ).forEach { assertTrue(it, ClaudeTranscriptDecoder.decode(it).isEmpty()) }
+    }
+
+    @Test
+    fun `本轮结束标记：Claude 只在含正文的 end_turn 行，Codex 为 task_complete，Pi 为 stop`() {
+        val claudeText =
+            """{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"结论"}]}}"""
+        val claudeThinking =
+            """{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"…"}]}}"""
+        val claudeTool =
+            """{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"我先看看"}]}}"""
+        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), ClaudeTranscriptDecoder.decode(claudeText))
+        assertTrue("同一消息里先写入的思考行不能提前结束，否则结论会晚于结束标记", ClaudeTranscriptDecoder.decode(claudeThinking).isEmpty())
+        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "我先看看")), ClaudeTranscriptDecoder.decode(claudeTool))
+
+        val codexDone = """{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"结论"}}"""
+        assertEquals(listOf(SessionEvent(TURN_ENDED, "")), CodexTranscriptDecoder.decode(codexDone))
+
+        fun pi(stop: String) =
+            """{"type":"message","message":{"role":"assistant","stopReason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
+        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), PiTranscriptDecoder.decode(pi("stop")))
+        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论")), PiTranscriptDecoder.decode(pi("toolUse")))
+        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论")), PiTranscriptDecoder.decode(pi("aborted")))
     }
 
     @Test

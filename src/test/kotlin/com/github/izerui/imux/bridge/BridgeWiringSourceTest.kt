@@ -57,7 +57,7 @@ class BridgeWiringSourceTest {
     @Test
     fun `入站消息按机器人分队列处理，附件失败原因进日志`() {
         assertTrue(hub.contains("RobotInboundQueues("))
-        assertTrue(hub.contains("inbound.offer(message, router.arrival(message.robotId))"))
+        assertTrue(hub.contains("inbound.offer(message)"))
         assertTrue(hub.contains("onWarning ="))
     }
 

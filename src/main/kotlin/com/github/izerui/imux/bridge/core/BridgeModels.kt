@@ -55,15 +55,6 @@ data class InboundMessage(
     val quote: String? = null,
 )
 
-/**
- * 消息到达时的状态。[bindingEpoch] 为当时的绑定代次，未绑定为 null；
- * [switchGeneration] 为远程控制的开启代次，已关闭为 null。
- */
-data class Arrival(
-    val bindingEpoch: Long?,
-    val switchGeneration: Long?,
-)
-
 data class OutboundMessage(
     val robotId: RobotId,
     val chatId: String,
@@ -83,6 +74,12 @@ enum class SessionEventKind {
      * 只用来结束上一轮的“已完成”状态，否则这一轮的过程说明会被当成迟到的最终回复逐条推送。
      */
     TURN_STARTED,
+
+    /**
+     * 会话记录里的本轮结束标记（Claude 的 end_turn、Codex 的 task_complete、Pi 的 stop）。
+     * 与 IDE“本轮完成”是同一件事，但按记录顺序到达：即使与下一轮开头在同一次读取里，结论也先发出。
+     */
+    TURN_ENDED,
 }
 
 data class SessionEvent(
@@ -110,9 +107,6 @@ enum class InboundOutcome {
     OFFLINE,
     ATTACHMENT_FAILED,
 
-    /** 排队或处理期间换绑：不提交到新终端，已提示本人重新发送。 */
+    /** 提交前发现已换绑：不提交到新终端，已提示本人重新发送。 */
     REBOUND,
-
-    /** 排队或处理期间关闭过远程控制：不提交、不回复。 */
-    SWITCHED_OFF,
 }

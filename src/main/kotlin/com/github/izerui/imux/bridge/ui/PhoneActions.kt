@@ -68,11 +68,8 @@ internal object PhoneOperations {
         val other = hub.bindings.bindingForTab(file.tabId)?.takeIf { it.robotId.value != robotId }
         other?.let { hub.bindings.unbind(it.robotId) }
         val target = SessionTarget(project.basePath ?: System.getProperty("user.home"), file.tabId, file.agentType, file.sessionId)
-        val service = TerminalBridgeService.getInstance(project)
-        // 先记读取边界再绑定：绑定一生效轮询就可能建立尾随器，从这里开始才不漏第一条回复
-        service.markBoundary(target)
-        val result = hub.bindings.bind(RobotId(robotId), target) as? BindResult.Bound ?: return service.forgetBoundary(target.tabId)
-        service.start()
+        val result = hub.bindings.bind(RobotId(robotId), target) as? BindResult.Bound ?: return
+        TerminalBridgeService.getInstance(project).start()
         RobotManager.getInstance().syncBindings()
         val replaced = result.replaced?.takeIf { it.target.tabId != file.tabId }
         hub.launch {

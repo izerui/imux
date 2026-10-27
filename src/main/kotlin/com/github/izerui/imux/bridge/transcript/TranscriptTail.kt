@@ -11,12 +11,6 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 
-/** 读取边界：当时的文件大小与文件标识。文件尚不存在时为 0 与 null。 */
-data class TailBoundary(
-    val position: Long,
-    val fileKey: Any?,
-)
-
 data class TailPoll(
     val events: List<SessionEvent>,
     /** 记录文件被替换或截短；已从新末尾重新开始，调用方应提示同步出现缺口。 */
@@ -48,14 +42,6 @@ class TranscriptTail(
         val attrs = attributes()
         position = attrs?.size() ?: 0L
         fileKey = attrs?.fileKey()
-        pending.reset()
-        discarding = false
-    }
-
-    /** 从先前记下的边界开始：边界之后写入的内容都会读到。文件已被替换或截短时，下次 [poll] 按重启处理。 */
-    fun startAt(boundary: TailBoundary) {
-        position = boundary.position
-        fileKey = boundary.fileKey
         pending.reset()
         discarding = false
     }
@@ -113,17 +99,12 @@ class TranscriptTail(
         pending.write(byte.toInt())
     }
 
-    private fun attributes(): BasicFileAttributes? = runCatching { Files.readAttributes(path, BasicFileAttributes::class.java) }.getOrNull()
+    private fun attributes(): BasicFileAttributes? =
+        runCatching { Files.readAttributes(path, BasicFileAttributes::class.java) }.getOrNull()
 
-    companion object {
-        /** 记下 [path] 此刻的读取边界，供稍后建立的尾随器从这里开始。 */
-        fun boundaryOf(path: Path): TailBoundary {
-            val attrs = runCatching { Files.readAttributes(path, BasicFileAttributes::class.java) }.getOrNull()
-            return TailBoundary(attrs?.size() ?: 0L, attrs?.fileKey())
-        }
-
-        private const val DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024
-        private const val READ_BUFFER_BYTES = 64 * 1024
-        private const val NEWLINE: Byte = 10
+    private companion object {
+        const val DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024
+        const val READ_BUFFER_BYTES = 64 * 1024
+        const val NEWLINE: Byte = 10
     }
 }

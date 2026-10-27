@@ -83,6 +83,10 @@ class AddRobotDialog(
     private var robotId: String? = null
     private var step = Card.CHANNEL
 
+    /** 配对卡片当前显示的状态，只在 [showPairState] 里写；等待循环据此判断是否需要刷新。 */
+    @Volatile
+    private var shownPairWait: PairWait? = null
+
     private enum class Card { CHANNEL, QR, PAIR, DONE }
 
     init {
@@ -255,7 +259,6 @@ class AddRobotDialog(
      * 说明原因、置灰旧配对码，但继续等待：用户点“重新生成”后自动恢复。
      */
     private suspend fun awaitPaired(id: String) {
-        var shown: PairWait? = null
         while (true) {
             val status = manager.statusOf(id)
             when (val wait = pairWait(manager.robot(id), System.currentTimeMillis(), status)) {
@@ -265,10 +268,8 @@ class AddRobotDialog(
                     return
                 }
                 else -> {
-                    if (wait != shown) {
-                        shown = wait
-                        ui { showPairState(wait, status) }
-                    }
+                    // 与界面实际显示的比：重新生成会把界面改回“等待”，不能用循环自己记的上次结果
+                    if (wait != shownPairWait) ui { showPairState(wait, status) }
                     delay(500)
                 }
             }
@@ -286,6 +287,7 @@ class AddRobotDialog(
         wait: PairWait,
         status: ConnectionStatus?,
     ) {
+        shownPairWait = wait
         pairCode.isEnabled = wait == PairWait.WAITING
         pairStatus.text =
             when (wait) {
