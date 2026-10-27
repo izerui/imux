@@ -28,6 +28,9 @@ dependencies {
     // 且 codex 的权威标题只存在于这个 sqlite 里（rollout 文件里没有）。
     implementation("org.xerial:sqlite-jdbc:3.49.1.0")
 
+    // 通讯机器人扫码：在 IDE 内绘制二维码。平台未捆绑 ZXing；只用 core，不引入 javase。
+    implementation("com.google.zxing:core:3.5.3")
+
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {

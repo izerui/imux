@@ -84,6 +84,13 @@
                 id="com.github.izerui.imux.settings.lsp"
                 displayName="LSP"/>
 
+        <applicationConfigurable
+                parentId="com.github.izerui.imux.settings"
+                instance="com.github.izerui.imux.bridge.ui.RobotsConfigurable"
+                id="com.github.izerui.imux.settings.bridge"
+                key="bridge.settings.displayName"
+                bundle="messages.ImuxBundle"/>
+
         <toolWindow
                 id="imux"
                 anchor="left"
