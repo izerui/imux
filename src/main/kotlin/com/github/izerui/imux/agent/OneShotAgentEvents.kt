@@ -31,6 +31,8 @@ internal class AgentJsonEventParser(
     private val agentType: AgentType,
     private val onProgress: (AgentProgressEvent) -> Unit,
     private val maxOutputChars: Int = MAX_AGENT_OUTPUT_CHARS,
+    /** Codex `thread.started` 的会话 ID 一到就交出：续接下一轮、清理会话文件都靠它，不能等这一轮结束。 */
+    private val onCodexThread: (String) -> Unit = {},
 ) {
     private val claudeTools = mutableMapOf<String, String>()
     private var latestFinalText: String? = null
@@ -79,7 +81,10 @@ internal class AgentJsonEventParser(
 
     private fun acceptCodex(root: JsonObject) {
         when (root.string("type") ?: return) {
-            "thread.started" -> emit(AgentProgressKind.STARTING)
+            "thread.started" -> {
+                root.string("thread_id")?.let(onCodexThread)
+                emit(AgentProgressKind.STARTING)
+            }
             "turn.started" -> {
                 // 新一轮的完成状态、回答和溢出标记都只属于这一轮，不能沿用上一轮的
                 codexTurnCompleted = false

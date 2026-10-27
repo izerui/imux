@@ -121,7 +121,7 @@ class PlatformApiAlignmentSourceTest {
 
         assertTrue(provider.contains("SessionMonitor.getInstance(project)"))
         // 状态修饰品牌图标而不取代它
-        assertTrue(provider.contains("AgentIcons.forTab(agentType, running, unread)"))
+        assertTrue(provider.contains("AgentIcons.forTab(agentType, running, unread, phoneConnected)"))
         // 帧调度交给平台 API，不自己造帧循环
         assertTrue(icons.contains("AnimatedIcon("))
         // 未读格与会话列表用同一个常量，两处样式才一致

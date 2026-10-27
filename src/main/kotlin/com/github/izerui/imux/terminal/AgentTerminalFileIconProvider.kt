@@ -27,6 +27,7 @@ class AgentTerminalFileIconProvider : FileIconProvider {
             agentType = terminalFile.agentType,
             running = monitor?.runningIds?.contains(terminalFile.sessionKey) == true,
             unread = monitor?.isUnread(terminalFile.sessionKey) == true,
+            phoneConnected = project != null && !project.isDisposed && SessionDecorations.phoneConnected(project, terminalFile.tabId),
         )
     }
 }
@@ -43,4 +44,5 @@ internal fun terminalTabIcon(
     agentType: AgentType,
     running: Boolean,
     unread: Boolean,
-): Icon = AgentIcons.forTab(agentType, running, unread)
+    phoneConnected: Boolean = false,
+): Icon = AgentIcons.forTab(agentType, running, unread, phoneConnected)

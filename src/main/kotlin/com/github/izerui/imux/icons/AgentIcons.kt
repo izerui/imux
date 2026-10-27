@@ -50,6 +50,9 @@ internal object AgentIcons {
     private val codex = IconLoader.getIcon("/icons/codex.png", javaClass)
     private val pi = IconLoader.getIcon("/icons/pi.png", javaClass)
 
+    /** 会话连着手机。见 [forTab]。 */
+    val phone: Icon = IconLoader.getIcon("/icons/phone.svg", javaClass)
+
     // 动画帧只建一次：标签页会反复来取图标，每次新建不只是浪费，
     // 还会让动画每次都从第一帧重来，看着像卡住。
     private val claudeBusy by lazy { spinning(claude) }
@@ -63,6 +66,7 @@ internal object AgentIcons {
         val agentType: AgentType,
         val running: Boolean,
         val unread: Boolean,
+        val phoneConnected: Boolean,
     )
 
     fun forAgent(agentType: AgentType): Icon =
@@ -91,21 +95,23 @@ internal object AgentIcons {
      *
      * 没有未读时不留空位，图标就是品牌图标本身。代价是标记出现与消失时后面整块会横移一格；
      * 留空位能免掉这一下，但换来每个标签常年空着半截，权衡后选了前者。
+     *
+     * 连着手机时在品牌图标之后再加一格手机标记，图标由会话装饰扩展提供的状态决定，
+     * 见 `SessionDecorations`。
      */
     fun forTab(
         agentType: AgentType,
         running: Boolean,
         unread: Boolean,
+        phoneConnected: Boolean = false,
     ): Icon =
-        tabIcons.getOrPut(TabIconKey(agentType, running, unread)) {
+        tabIcons.getOrPut(TabIconKey(agentType, running, unread, phoneConnected)) {
             val brand = if (running) busy(agentType) else forAgent(agentType)
-            if (!unread) {
+            val parts = listOfNotNull(AllIcons.General.Modified.takeIf { unread }, brand, phone.takeIf { phoneConnected })
+            if (parts.size == 1) {
                 brand
             } else {
-                RowIcon(2).apply {
-                    setIcon(AllIcons.General.Modified, 0)
-                    setIcon(brand, 1)
-                }
+                RowIcon(parts.size).apply { parts.forEachIndexed { index, icon -> setIcon(icon, index) } }
             }
         }
 

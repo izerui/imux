@@ -20,7 +20,17 @@ data class ClaudeRuntimeSession(
     val status: String?,
     val cwd: String?,
     val waitingFor: String? = null,
+    val entrypoint: String? = null,
 ) {
+    /**
+     * `claude -p` 与 Agent SDK 起的无头进程（`entrypoint` 为 `sdk-cli`、`sdk-ts` 等）。
+     *
+     * 插件自己的轨迹生成、peer 审查就是这种进程，同样在项目目录里写运行态文件，
+     * 带工具时还会走 `busy -> idle`。但它们不是用户的会话：`--no-session-persistence`
+     * 不落会话文件，永远进不了列表，被当成「一轮跑完」标上的未读就再也清不掉。
+     */
+    val isHeadless: Boolean get() = entrypoint?.startsWith("sdk-") == true
+
     val isBackground: Boolean get() = kind == "bg"
 
     /** 弹出了权限确认或选择框，这一轮停下等用户操作。 */
@@ -91,6 +101,7 @@ class ClaudeRuntimeIndex(
                 stream.toList()
                     .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".json") }
                     .mapNotNull { readOne(it) }
+                    .filterNot { it.isHeadless }
                     .filter { projectPath == null || it.cwd == projectPath }
                     .filter { isProcessAlive(it.pid) }
                     .associateBy { it.sessionId }
@@ -113,6 +124,7 @@ class ClaudeRuntimeIndex(
             status = record.stringOf("status"),
             cwd = record.stringOf("cwd"),
             waitingFor = record.stringOf("waitingFor"),
+            entrypoint = record.stringOf("entrypoint"),
         )
     }.getOrNull()
 

@@ -25,12 +25,13 @@ class ClaudeRuntimeIndexTest {
         status: String? = "idle",
         cwd: String = "/Users/demo/proj",
         waitingFor: String? = null,
+        entrypoint: String = "cli",
     ) {
         val dir = File(tmp.root, "sessions").apply { mkdirs() }
         val statusField = if (status == null) "" else ""","status":"$status""""
         val waitingField = if (waitingFor == null) "" else ""","waitingFor":"$waitingFor""""
         File(dir, "$pid.json").writeText(
-            """{"pid":"$pid","sessionId":"$sessionId","cwd":"$cwd","kind":"$kind"$statusField$waitingField}""",
+            """{"pid":"$pid","sessionId":"$sessionId","cwd":"$cwd","kind":"$kind","entrypoint":"$entrypoint"$statusField$waitingField}""",
         )
     }
 
@@ -45,6 +46,17 @@ class ClaudeRuntimeIndexTest {
         val loaded = index().load("/Users/demo/proj")
 
         assertEquals(setOf("mine"), loaded.keys)
+    }
+
+    @Test
+    fun `claude -p 这类无头进程不算会话`() {
+        // 轨迹生成、peer 审查都在项目目录里起 `claude -p --no-session-persistence`。
+        // 它同样写运行态文件，带工具时还会走 busy -> idle，被当成「一轮跑完」标未读；
+        // 可它不落会话文件，永远进不了列表，那个未读就再也清不掉。
+        writeSession(1001, "mine", status = "busy")
+        writeSession(1002, "headless", status = "busy", entrypoint = "sdk-cli")
+
+        assertEquals(setOf("mine"), index().load("/Users/demo/proj").keys)
     }
 
     @Test

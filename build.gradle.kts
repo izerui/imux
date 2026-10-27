@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "com.github.izerui"
-version = "1.3.0"
+version = "1.3.1"
 
 repositories {
     // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。
@@ -27,6 +27,9 @@ dependencies {
     // 该库自带各平台原生库，体积较大，但 IDEA 未捆绑任何标准 JDBC 驱动，
     // 且 codex 的权威标题只存在于这个 sqlite 里（rollout 文件里没有）。
     implementation("org.xerial:sqlite-jdbc:3.49.1.0")
+
+    // 通讯机器人扫码：在 IDE 内绘制二维码。平台未捆绑 ZXing；只用 core，不引入 javase。
+    implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
 

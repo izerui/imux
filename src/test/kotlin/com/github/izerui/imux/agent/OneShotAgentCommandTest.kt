@@ -79,4 +79,51 @@ class OneShotAgentCommandTest {
             assertFalse(script.contains("会话记录"))
         }
     }
+
+    // ---- 持续对话（需求澄清） ----
+
+    private fun conversation(agentType: AgentType, mcp: AgentMcpConfig = AgentMcpConfig.NONE, resumeId: String? = null) =
+        conversationInvocation("/bin/zsh", agentType, "/tmp/project", mcp, resumeId).command.last()
+
+    @Test
+    fun `持续对话：Claude 常驻进程从 stdin 读 stream-json，权限与单次调用相同且不保存会话`() {
+        val script = conversation(AgentType.CLAUDE)
+        assertTrue(script.startsWith("printf '%s\\n' '$AGENT_OUTPUT_MARKER'; claude -p "))
+        assertTrue(script.contains("--input-format stream-json --output-format stream-json --verbose"))
+        assertTrue(script.contains("--permission-mode bypassPermissions"))
+        assertTrue(script.contains("--tools default"))
+        assertTrue(script.contains("--no-session-persistence"))
+    }
+
+    @Test
+    fun `持续对话：Pi 常驻进程用 RPC 模式且不保存会话`() {
+        val script = conversation(AgentType.PI)
+        assertTrue(script.contains("pi --mode rpc --no-session"))
+        assertFalse("RPC 模式不是单次输出", script.contains(" -p "))
+        assertFalse(script.contains("--mode json"))
+    }
+
+    @Test
+    fun `持续对话：Codex 首轮保存会话以便续接，之后以 resume 加会话 ID 续接且消息仍从 stdin 读`() {
+        val first = conversation(AgentType.CODEX)
+        assertTrue(first.contains("codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --color never"))
+        assertFalse("不加 --ephemeral，否则无法续接", first.contains("--ephemeral"))
+        assertTrue(first.endsWith("--json -C '/tmp/project'"))
+
+        val later = conversation(AgentType.CODEX, resumeId = "01a16450-3d47-7b90-ad5a-97f82254eaa6")
+        assertFalse(later.contains("--ephemeral"))
+        assertTrue("exec 的选项放在 resume 之前，最后的 - 表示从 stdin 读消息", later.endsWith("--json -C '/tmp/project' resume '01a16450-3d47-7b90-ad5a-97f82254eaa6' -"))
+    }
+
+    @Test
+    fun `持续对话的三个 CLI 都按设置注入 IDEA MCP`() {
+        val claude = conversation(AgentType.CLAUDE, withMcp)
+        assertTrue("Claude", claude.contains("--mcp-config") && claude.contains(ideaMcp.url))
+        assertTrue("Claude 的 --mcp-config 后面紧跟其他选项，不会吞掉后面的参数", claude.indexOf("--mcp-config") < claude.indexOf("--input-format"))
+        val codex = conversation(AgentType.CODEX, withMcp, resumeId = "01a16450-3d47-7b90-ad5a-97f82254eaa6")
+        assertTrue("Codex 续接时", codex.contains("""mcp_servers.idea.url="${ideaMcp.url}""""))
+        val pi = conversationInvocation("/bin/zsh", AgentType.PI, "/tmp/project", withMcp)
+        assertTrue("Pi", pi.command.last().contains("pi --mode rpc --no-session -e '/tmp/pi-imux-idea-mcp.js'"))
+        assertEquals("Pi 通过环境变量拿到 MCP 地址", ideaMcp.url, pi.environment["IMUX_IDEA_MCP_URL"])
+    }
 }

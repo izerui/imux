@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>imux · 终端会话通讯桥接 · 交互原型</title>
+<!--
+  原型假设（Junior pass 说明）：
+  - IDE 端按 IntelliJ New UI 深色主题绘制；结构沿用 imux 现有布局：左侧 imux 会话树、编辑区终端标签。
+  - 手机端以企业微信为第一个落地渠道；其余渠道在“添加机器人”里出现，标为后续版本。
+  - 二维码、配对码、对话内容均为示意数据。
+  - 所有交互走同一套动作函数：可以按高亮点自己点，也可以点底部“下一步”自动演示。
+-->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --ide-bg: #1e1f22;
+    --ide-panel: #2b2d30;
+    --ide-border: #393b40;
+    --ide-hover: #393b40;
+    --ide-select: #2e436e;
+    --ide-text: #dfe1e5;
+    --ide-dim: #8c8f96;
+    --ide-accent: #3574f0;
+    --ide-green: #5fb865;
+    --ide-yellow: #e0b153;
+    --stage: #141518;
+    --wc-bg: #f2f3f5;
+    --wc-me: #cfe2ff;
+    --wc-ink: #1d1d1f;
+    --hot: #f0a33a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--stage); color: var(--ide-text);
+    font-family: Inter, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 13px; }
+  button { font: inherit; }
+  .mono { font-family: "JetBrains Mono", Menlo, Consolas, monospace; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(240,163,58,.75); } 70% { box-shadow: 0 0 0 9px rgba(240,163,58,0); } 100% { box-shadow: 0 0 0 0 rgba(240,163,58,0); } }
+  .hot { animation: pulse 1.4s infinite; outline: 1.5px solid var(--hot); outline-offset: 2px; border-radius: 4px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .caret { display: inline-block; width: 7px; height: 14px; background: var(--ide-text); vertical-align: -2px; animation: blink 1s step-end infinite; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .fadein { animation: fadein .25s ease-out; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: rgba(140,143,150,.35); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------- iPhone 外壳（来自 huashu-design assets/ios_frame.jsx，原样内联） ---------- */
+const iosFrameStyles = {
+  wrapper: { display: 'inline-block', padding: 12, background: '#000', borderRadius: 60, boxShadow: '0 0 0 2px #1f2937, 0 20px 60px rgba(0,0,0,0.3)', position: 'relative' },
+  screen: { position: 'relative', borderRadius: 48, overflow: 'hidden', background: '#fff' },
+  statusBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 54, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px 0 32px', fontSize: 16, fontWeight: 600, fontFamily: '-apple-system, "SF Pro Text", sans-serif', zIndex: 20, pointerEvents: 'none' },
+  dynamicIsland: { position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', width: 124, height: 36, background: '#000', borderRadius: 999, zIndex: 30 },
+  statusIcons: { display: 'flex', alignItems: 'center', gap: 6 },
+  signalIcon: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 12 },
+  signalBar: { width: 3, background: 'currentColor', borderRadius: 1 },
+  batteryIcon: { width: 26, height: 12, border: '1.5px solid currentColor', borderRadius: 3, padding: 1, position: 'relative', opacity: 0.8 },
+  batteryCap: { position: 'absolute', top: 3, right: -3, width: 2, height: 6, background: 'currentColor', borderRadius: '0 1px 1px 0' },
+  content: { position: 'absolute', top: 54, left: 0, right: 0, bottom: 34, overflow: 'hidden' },
+  homeIndicator: { position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', width: 140, height: 5, background: 'rgba(0,0,0,0.3)', borderRadius: 999, zIndex: 10 },
+};
+function IosFrame({ children, width = 393, height = 852, time = '9:41', battery = 100 }) {
+  return (
+    <div style={iosFrameStyles.wrapper}>
+      <div style={{ ...iosFrameStyles.screen, width, height }}>
+        <div style={{ ...iosFrameStyles.statusBar, color: '#000' }}>
+          <span>{time}</span>
+          <div style={iosFrameStyles.statusIcons}>
+            <div style={iosFrameStyles.signalIcon}>
+              {[4, 6, 9, 11].map(h => <div key={h} style={{ ...iosFrameStyles.signalBar, height: h }} />)}
+            </div>
+            <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
+              <path d="M8 11.5a1 1 0 100-2 1 1 0 000 2z" fill="currentColor" />
+              <path d="M3 7.5a7 7 0 0110 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+              <path d="M1 4.5a11 11 0 0114 0" stroke="currentColor" strokeWidth="1.3" fill="none" strokeLinecap="round" opacity="0.7" />
+            </svg>
+            <div style={iosFrameStyles.batteryIcon}>
+              <div style={{ width: `${battery}%`, height: '100%', background: 'currentColor', borderRadius: 1, opacity: 0.9 }} />
+              <div style={iosFrameStyles.batteryCap} />
+            </div>
+          </div>
+        </div>
+        <div style={iosFrameStyles.dynamicIsland} />
+        <div style={iosFrameStyles.content}>{children}</div>
+        <div style={iosFrameStyles.homeIndicator} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 示意数据 ---------- */
+const ICON = {
+  claude: '../../src/main/resources/icons/claude.png',
+  codex: '../../src/main/resources/icons/codex_dark.png',
+  pi: '../../src/main/resources/icons/pi_dark.png',
+};
+const AGENT_NAME = { claude: 'Claude', codex: 'Codex', pi: 'Pi' };
+const PROJECT = 'imux';
+const PAIR_CODE = '4827';
+
+const INITIAL_TABS = [
+  { id: 't-codex', agent: 'codex', title: '修复终端滚动', lines: [
+    { k: 'dim', t: 'OpenAI Codex · model gpt-5.5 · ~/github/imux' },
+    { k: 'user', t: '终端回到底部的按钮有时不出现，帮我看看' },
+    { k: 'tool', t: 'Read  terminal/AgentTerminalFileEditor.kt' },
+    { k: 'assistant', t: '原因是可视区监听在拖动标签后没有重新挂上，已改为在 attach 时注册。' },
+  ] },
+  { id: 't-claude', agent: 'claude', title: '登录接口重构', lines: [
+    { k: 'dim', t: 'Claude Code · ~/github/imux' },
+    { k: 'user', t: '把登录接口改成 token 刷新的方式' },
+    { k: 'assistant', t: '先梳理现有调用点，共 4 处……' },
+  ] },
+];
+const TREE = [
+  { agent: 'claude', items: [{ tab: 't-claude', title: '登录接口重构', time: '3 分钟前' }, { title: '新增导出功能', time: '昨天' }] },
+  { agent: 'codex', items: [{ tab: 't-codex', title: '修复终端滚动', time: '刚刚' }, { title: '整理 LSP 设置页', time: '2 天前' }] },
+  { agent: 'pi', items: [{ title: '性能分析', time: '上周' }] },
+];
+
+/* ---------- 小部件 ---------- */
+const PhoneGlyph = ({ size = 12, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 12 12" fill="none" style={{ flex: 'none' }}>
+    <rect x="3" y="0.75" width="6" height="10.5" rx="1.4" stroke={color} strokeWidth="1.2" />
+    <circle cx="6" cy="9.1" r="0.7" fill={color} />
+  </svg>
+);
+const Dot = ({ c }) => <span style={{ width: 7, height: 7, borderRadius: 7, background: c, display: 'inline-block', flex: 'none' }} />;
+
+function FakeQr({ size = 150 }) {
+  // 示意二维码：确定性图案 + 三个定位角，不是真码
+  const n = 25, cells = [];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const finder = (x < 7 && y < 7) || (x > n - 8 && y < 7) || (x < 7 && y > n - 8);
+    if (finder) continue;
+    if (((x * 7 + y * 13 + x * y) % 5) < 2) cells.push(<rect key={x + '-' + y} x={x} y={y} width="1" height="1" />);
+  }
+  const finderAt = (x, y) => (
+    <g key={'f' + x + y}>
+      <rect x={x} y={y} width="7" height="7" fill="#000" /><rect x={x + 1} y={y + 1} width="5" height="5" fill="#fff" /><rect x={x + 2} y={y + 2} width="3" height="3" fill="#000" />
+    </g>
+  );
+  return (
+    <svg width={size} height={size} viewBox={`-1 -1 ${n + 2} ${n + 2}`} style={{ background: '#fff', borderRadius: 6 }}>
+      <g fill="#000">{cells}</g>{finderAt(0, 0)}{finderAt(n - 7, 0)}{finderAt(0, n - 7)}
+    </svg>
+  );
+}
+
+/* ---------- 场景脚本 ---------- */
+const STEPS = [
+  { id: 'open-settings', title: '打开机器人管理', note: '机器人管理是独立模块：设置 › 工具 › imux › 通讯机器人。机器人长期保存，与会话无关。' },
+  { id: 'add-robot', title: '添加机器人', note: '只提供扫码接入，不需要去开发者后台建应用、复制密钥。' },
+  { id: 'pick-channel', title: '选择企业微信', note: '五个渠道共用一套流程；第一版先落地企业微信。' },
+  { id: 'scan', title: '手机扫码确认', note: '手机上确认创建智能机器人，插件自动取得 Bot ID 与 Secret，存入 IDE 凭据库。' },
+  { id: 'pair', title: '发送配对码', note: '企业微信扫码拿不到“扫码人是谁”，所以多一步：把配对码发给机器人，插件据此只认你本人的消息。' },
+  { id: 'close-settings', title: '完成设置', note: '机器人已就绪，状态为“空闲”。新建会话不会自动占用它。' },
+  { id: 'bind', title: '把会话连接到手机', note: '在终端标签上右键 › 连接到手机 › 选机器人。同一时刻 1 个机器人 ↔ 1 个会话。' },
+  { id: 'remote-input', title: '手机发需求', note: '手机文字直接提交给 IDE 里这个终端里原来的 CLI 进程：不启动新进程，IDEA MCP 照常可用。' },
+  { id: 'approve', title: '在 IDE 里确认', note: '需要权限确认时，手机只收到提醒；确认仍在 IDE 里做（远程审批是后续能力）。' },
+  { id: 'local-input', title: '电脑端也能接着说', note: '电脑上输入的话，会带“电脑端输入”标签同步到手机；两边共用同一段对话。' },
+  { id: 'rebind', title: '换绑到另一个会话', note: '机器人复用：把它改连到 Claude 会话。原会话照常运行，只是不再转发。' },
+  { id: 'close-tab', title: '关闭会话标签', note: '关闭标签 = 会话结束，机器人自动释放回“空闲”，留给下次使用。' },
+  { id: 'unbound-msg', title: '未连接时发消息', note: '机器人没连接会话时，只回复提示，不会擅自挑一个会话执行。' },
+];
+
+/* ---------- 主应用 ---------- */
+function App() {
+  const [step, setStep] = useState(0);
+  const [tabs, setTabs] = useState(INITIAL_TABS);
+  const [activeTab, setActiveTab] = useState('t-codex');
+  const [settings, setSettings] = useState({ open: false, page: 'list' }); // list | channel | qr | pair
+  const [robot, setRobot] = useState(null); // { name, status: 'pairing'|'idle'|'bound', boundTab }
+  const [menu, setMenu] = useState(null); // { x, y, tab, sub }
+  const [confirm, setConfirm] = useState(null);
+  const [phone, setPhone] = useState({ screen: 'home', msgs: [], draft: '' });
+  const [working, setWorking] = useState(null); // tab id
+  const [perm, setPerm] = useState(null); // tab id awaiting approval
+  const [localDraft, setLocalDraft] = useState('');
+  const [toast, setToast] = useState(null);
+  const timers = useRef([]);
+  const later = (ms, fn) => timers.current.push(setTimeout(fn, ms));
+
+  const tabById = id => tabs.find(t => t.id === id);
+  const pushLine = (tabId, line) => setTabs(ts => ts.map(t => t.id === tabId ? { ...t, lines: [...t.lines, line] } : t));
+  const pushPhone = (from, kind, text) => setPhone(p => ({ ...p, msgs: [...p.msgs, { from, kind, text, id: Math.random() }] }));
+  const flash = (text) => { setToast(text); later(2600, () => setToast(null)); };
+  const at = id => STEPS[step] && STEPS[step].id === id;
+  const advance = id => { if (at(id)) setStep(s => s + 1); };
+
+  /* ----- 动作：每个都可以被热点点击或“下一步”触发 ----- */
+  const A = {
+    'open-settings': () => { setSettings({ open: true, page: 'list' }); advance('open-settings'); },
+    'add-robot': () => { setSettings(s => ({ ...s, page: 'channel' })); advance('add-robot'); },
+    'pick-channel': () => {
+      setSettings(s => ({ ...s, page: 'qr' }));
+      setPhone(p => ({ ...p, screen: 'scan' }));
+      advance('pick-channel');
+    },
+    'scan': () => {
+      setRobot({ name: 'imux · 开发助手 1', status: 'pairing', boundTab: null });
+      setSettings(s => ({ ...s, page: 'pair' }));
+      setPhone({ screen: 'chat', msgs: [{ from: 'sys', kind: 'sys', text: '你创建了智能机器人「imux · 开发助手 1」', id: 1 }], draft: PAIR_CODE });
+      advance('scan');
+    },
+    'pair': () => {
+      pushPhone('me', 'text', PAIR_CODE);
+      setPhone(p => ({ ...p, draft: '' }));
+      later(700, () => {
+        setRobot(r => ({ ...r, status: 'idle' }));
+        pushPhone('bot', 'text', '配对成功，之后只接受你本人的消息。\n在 IDE 里把某个会话连接到我，就能在这里继续操作它。');
+        setSettings(s => ({ ...s, page: 'list' }));
+      });
+      advance('pair');
+    },
+    'close-settings': () => { setSettings({ open: false, page: 'list' }); advance('close-settings'); },
+    'bind': (tabId = 't-codex') => {
+      setMenu(null);
+      if (robot && robot.boundTab && robot.boundTab !== tabId) {
+        setConfirm({ tabId });
+        return;
+      }
+      doBind(tabId, null);
+      advance('bind');
+    },
+    'remote-input': () => {
+      const text = '跑一下单测，失败的修掉';
+      pushPhone('me', 'text', text);
+      setPhone(p => ({ ...p, draft: '' }));
+      const tabId = robot.boundTab;
+      later(500, () => { pushLine(tabId, { k: 'user', t: text, remote: true }); setWorking(tabId); });
+      later(1300, () => pushLine(tabId, { k: 'tool', t: 'Shell  ./gradlew test --tests "*TerminalHost*"' }));
+      later(2200, () => pushLine(tabId, { k: 'dim', t: '  2 failed: TerminalHostTest > scrollToBottom ...' }));
+      later(3000, () => pushLine(tabId, { k: 'tool', t: 'Read  terminal/TerminalHost.kt' }));
+      later(3800, () => {
+        const reply = '有 2 个用例失败：拖动标签后 `isScrolledToBottom` 读到了旧的 editor。\n准备改 `TerminalHost.kt` 第 539 行，在 attach 时刷新引用。';
+        pushLine(tabId, { k: 'assistant', t: reply });
+        pushPhone('bot', 'text', reply);
+      });
+      later(4500, () => {
+        pushLine(tabId, { k: 'perm', t: 'Edit  terminal/TerminalHost.kt — 允许修改？' });
+        setWorking(null); setPerm(tabId);
+        pushPhone('bot', 'status', '等待你在 IDE 中处理：Edit terminal/TerminalHost.kt');
+      });
+      advance('remote-input');
+    },
+    'approve': () => {
+      const tabId = perm || robot.boundTab;
+      setPerm(null);
+      pushLine(tabId, { k: 'dim', t: '  › 1. 允许' });
+      setWorking(tabId);
+      later(900, () => pushLine(tabId, { k: 'tool', t: 'Edit  terminal/TerminalHost.kt  (+3 −1)' }));
+      later(1700, () => pushLine(tabId, { k: 'tool', t: 'Shell  ./gradlew test --tests "*TerminalHost*"' }));
+      later(2600, () => {
+        const reply = '已修复，2 个用例通过。';
+        pushLine(tabId, { k: 'assistant', t: reply });
+        pushPhone('bot', 'text', reply);
+        setWorking(null);
+        pushPhone('bot', 'status', '本轮完成 · 工具调用 4 次');
+      });
+      advance('approve');
+    },
+    'local-input': () => {
+      const text = localDraft.trim() || '顺便把 README 里的说明也更新一下';
+      const tabId = robot.boundTab;
+      setLocalDraft('');
+      pushLine(tabId, { k: 'user', t: text });
+      setWorking(tabId);
+      later(600, () => pushPhone('bot', 'local', text));
+      later(1500, () => pushLine(tabId, { k: 'tool', t: 'Edit  README.md  (+4 −1)' }));
+      later(2400, () => {
+        const reply = 'README 已补充“回到底部”按钮的说明。';
+        pushLine(tabId, { k: 'assistant', t: reply });
+        pushPhone('bot', 'text', reply);
+        setWorking(null);
+        pushPhone('bot', 'status', '本轮完成 · 工具调用 1 次');
+      });
+      advance('local-input');
+    },
+    'rebind': () => {
+      setActiveTab('t-claude');
+      openMenuFor('t-claude', 400, 70, 'phone');
+    },
+    'close-tab': () => closeTab(robot && robot.boundTab ? robot.boundTab : 't-claude'),
+    disconnect: () => {
+      const t = tabById(robot.boundTab);
+      setRobot(r => ({ ...r, status: 'idle', boundTab: null }));
+      pushPhone('bot', 'status', `已断开会话：${t.title}`);
+      flash('已断开手机连接，会话照常运行');
+    },
+    'unbound-msg': () => {
+      pushPhone('me', 'text', '还在吗？');
+      later(600, () => pushPhone('bot', 'text', '这个机器人还没有连接 imux 会话。请在 IDE 中通过会话右键菜单连接。'));
+      advance('unbound-msg');
+    },
+  };
+
+  function doBind(tabId, previous) {
+    const t = tabById(tabId);
+    if (previous) {
+      const old = tabById(previous);
+      pushPhone('bot', 'status', `已断开会话：${old.title}`);
+    }
+    setRobot(r => ({ ...r, status: 'bound', boundTab: tabId }));
+    pushPhone('bot', 'connect', `当前连接：${PROJECT} · ${AGENT_NAME[t.agent]} · ${t.title}\n后续消息将发送到这个会话。`);
+    flash(`「${t.title}」已连接到 imux · 开发助手 1`);
+  }
+
+  function closeTab(tabId) {
+    const t = tabById(tabId);
+    setTabs(ts => ts.filter(x => x.id !== tabId));
+    setActiveTab(a => (a === tabId ? (tabs.find(x => x.id !== tabId) || {}).id : a));
+    if (robot && robot.boundTab === tabId) {
+      setRobot(r => ({ ...r, status: 'idle', boundTab: null }));
+      pushPhone('bot', 'status', `已断开会话：${t.title}`);
+      flash('会话已结束，机器人回到空闲');
+    }
+    advance('close-tab');
+  }
+
+  function openMenuFor(tabId, x, y, sub = null) { setActiveTab(tabId); setMenu({ x, y, tab: tabId, sub }); }
+
+  const confirmReplace = () => {
+    const prev = robot.boundTab;
+    doBind(confirm.tabId, prev);
+    setConfirm(null);
+    advance('rebind');
+  };
+
+  const next = () => {
+    const s = STEPS[step];
+    if (!s) return;
+    if ((s.id === 'approve' && !perm) || ((s.id === 'local-input' || s.id === 'approve') && working)) return flash('等这一轮输出完再继续');
+    if (s.id === 'bind') return A.bind('t-codex');
+    if (s.id === 'rebind') {
+      if (!menu && !confirm) return A.rebind();
+      if (menu) return A.bind('t-claude');
+      return confirmReplace();
+    }
+    A[s.id]();
+  };
+
+  const reset = () => {
+    timers.current.forEach(clearTimeout); timers.current = [];
+    setStep(0); setTabs(INITIAL_TABS); setActiveTab('t-codex'); setSettings({ open: false, page: 'list' });
+    setRobot(null); setMenu(null); setConfirm(null); setPhone({ screen: 'home', msgs: [], draft: '' });
+    setWorking(null); setPerm(null); setLocalDraft(''); setToast(null);
+  };
+
+  useEffect(() => {
+    const close = () => setMenu(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  const ctx = { step, at, A, tabs, activeTab, setActiveTab, robot, settings, setSettings, menu, setMenu, openMenuFor,
+    working, perm, localDraft, setLocalDraft, closeTab, phone, setPhone, confirm, setConfirm, confirmReplace, toast };
+
+  return (
+    <div style={{ display: 'grid', gridTemplateRows: '1fr auto', height: '100vh' }}>
+      <div style={{ display: 'flex', gap: 28, padding: '22px 28px 12px', alignItems: 'flex-start', justifyContent: 'center', minHeight: 0 }}>
+        <Ide ctx={ctx} />
+        <div style={{ transform: 'scale(0.78)', transformOrigin: 'top center', marginBottom: -190, flex: 'none' }}>
+          <IosFrame time="21:42" battery={76}><Phone ctx={ctx} /></IosFrame>
+        </div>
+      </div>
+      <Stepper step={step} onNext={next} onReset={reset} />
+    </div>
+  );
+}
+
+/* ---------- IDE ---------- */
+function Ide({ ctx }) {
+  const { tabs, activeTab, setActiveTab, robot, settings, at, A, openMenuFor, menu, confirm, toast } = ctx;
+  const tab = tabs.find(t => t.id === activeTab);
+  const openAt = (e, tabId) => {
+    const host = e.currentTarget.closest('[data-ide]').getBoundingClientRect();
+    openMenuFor(tabId, e.clientX - host.left, e.clientY - host.top);
+  };
+  return (
+    <div data-ide="1" style={{ width: 1000, height: 690, background: 'var(--ide-bg)', border: '1px solid var(--ide-border)', borderRadius: 10,
+      overflow: 'hidden', display: 'grid', gridTemplateRows: '38px 1fr 24px', position: 'relative', flex: 'none',
+      boxShadow: '0 24px 60px rgba(0,0,0,.45)' }}>
+      {/* 标题栏 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px', background: 'var(--ide-panel)', borderBottom: '1px solid var(--ide-border)' }}>
+        <div style={{ display: 'flex', gap: 7 }}>{['#ff5f57', '#febc2e', '#28c840'].map(c => <Dot key={c} c={c} />)}</div>
+        <span style={{ fontWeight: 600 }}>imux</span><span style={{ color: 'var(--ide-dim)' }}>feat/terminal-channel-bridge</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={e => { e.stopPropagation(); A['open-settings'](); }} className={at('open-settings') ? 'hot' : ''}
+          style={ideBtn} title="设置">设置</button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', minHeight: 0 }}>
+        <SessionTree ctx={ctx} />
+        <div style={{ display: 'grid', gridTemplateRows: '36px auto 1fr', minHeight: 0, borderLeft: '1px solid var(--ide-border)' }}>
+          {/* 终端标签 */}
+          <div style={{ display: 'flex', alignItems: 'stretch', background: 'var(--ide-panel)', borderBottom: '1px solid var(--ide-border)' }}>
+            {tabs.map(t => {
+              const bound = robot && robot.boundTab === t.id;
+              const hot = (at('bind') && t.id === 't-codex' && !menu) || (at('rebind') && t.id === 't-claude' && !menu && !confirm);
+              return (
+                <div key={t.id}
+                  onClick={e => { if (hot) { e.stopPropagation(); openAt(e, t.id); } else setActiveTab(t.id); }}
+                  onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openAt(e, t.id); }}
+                  className={hot ? 'hot' : ''}
+                  style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 12px', cursor: 'default',
+                    borderBottom: t.id === activeTab ? '2px solid var(--ide-accent)' : '2px solid transparent',
+                    background: t.id === activeTab ? 'var(--ide-bg)' : 'transparent' }}>
+                  <img src={ICON[t.agent]} width="14" height="14" />
+                  <span>{t.title}</span>
+                  {bound && <span title="已连接手机" style={{ color: 'var(--ide-green)', display: 'flex' }}><PhoneGlyph /></span>}
+                  <span onClick={e => { e.stopPropagation(); ctx.closeTab(t.id); }}
+                    className={at('close-tab') && bound ? 'hot' : ''}
+                    style={{ color: 'var(--ide-dim)', marginLeft: 2, padding: '0 3px', cursor: 'pointer' }}>×</span>
+                </div>
+              );
+            })}
+            <div style={{ flex: 1 }} />
+            <div style={{ color: 'var(--ide-dim)', alignSelf: 'center', padding: '0 10px', fontSize: 11 }}>右键标签可连接到手机</div>
+          </div>
+          {/* 连接提示条：只在绑定的终端上出现 */}
+          {tab && robot && robot.boundTab === tab.id ? <BindBanner ctx={ctx} tab={tab} /> : <div />}
+          {tab ? <Terminal ctx={ctx} tab={tab} /> : <EmptyEditor />}
+        </div>
+      </div>
+
+      {/* 状态栏 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '0 12px', background: 'var(--ide-panel)', borderTop: '1px solid var(--ide-border)', color: 'var(--ide-dim)', fontSize: 11 }}>
+        <span>imux 1.3.1</span><span>IDEA MCP 已注入</span><div style={{ flex: 1 }} />
+        {robot && robot.status !== 'pairing' && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: robot.status === 'bound' ? 'var(--ide-green)' : 'var(--ide-dim)' }}>
+            <PhoneGlyph size={11} />{robot.status === 'bound' ? '1 个会话已连接手机' : '机器人空闲'}
+          </span>
+        )}
+      </div>
+
+      {menu && <ContextMenu ctx={ctx} />}
+      {settings.open && <SettingsDialog ctx={ctx} />}
+      {confirm && <ReplaceDialog ctx={ctx} />}
+      {toast && <div className="fadein" style={{ position: 'absolute', right: 16, bottom: 36, background: '#3d3f43', border: '1px solid #4e5157',
+        borderRadius: 8, padding: '10px 14px', boxShadow: '0 8px 24px rgba(0,0,0,.4)', display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ color: 'var(--ide-green)' }}><PhoneGlyph /></span>{toast}</div>}
+    </div>
+  );
+}
+const ideBtn = { background: 'transparent', color: 'var(--ide-text)', border: '1px solid var(--ide-border)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer' };
+const primaryBtn = { ...ideBtn, background: 'var(--ide-accent)', borderColor: 'var(--ide-accent)', color: '#fff' };
+
+function SessionTree({ ctx }) {
+  const { tabs, robot, activeTab, setActiveTab, openMenuFor } = ctx;
+  const open = new Set(tabs.map(t => t.id));
+  return (
+    <div style={{ background: 'var(--ide-panel)', overflow: 'auto', padding: '8px 0' }}>
+      <div style={{ padding: '2px 12px 8px', fontWeight: 600, display: 'flex', justifyContent: 'space-between' }}>
+        <span>imux</span><span style={{ color: 'var(--ide-dim)', fontWeight: 400 }}>＋</span>
+      </div>
+      {TREE.map(g => (
+        <div key={g.agent} style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 12px', color: 'var(--ide-dim)' }}>
+            <span style={{ fontSize: 9 }}>▼</span><img src={ICON[g.agent]} width="14" height="14" />{AGENT_NAME[g.agent]}
+          </div>
+          {g.items.map(it => {
+            const isOpen = it.tab && open.has(it.tab);
+            const bound = robot && it.tab && robot.boundTab === it.tab;
+            const selected = it.tab && it.tab === activeTab;
+            return (
+              <div key={it.title} onClick={() => it.tab && isOpen && setActiveTab(it.tab)}
+                onContextMenu={e => { if (!isOpen) return; e.preventDefault(); e.stopPropagation(); const host = e.currentTarget.closest('[data-ide]').getBoundingClientRect(); openMenuFor(it.tab, e.clientX - host.left, e.clientY - host.top); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 12px 4px 34px',
+                  background: selected ? 'var(--ide-select)' : 'transparent' }}>
+                <span style={{ width: 6, display: 'inline-flex' }}>{isOpen && <Dot c="var(--ide-accent)" />}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title}</span>
+                {bound && <span title="已连接手机" style={{ color: 'var(--ide-green)', display: 'flex' }}><PhoneGlyph size={11} /></span>}
+                <span style={{ color: 'var(--ide-dim)', fontSize: 11 }}>{it.time}</span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      <div style={{ margin: '14px 12px 0', padding: '10px 0 0', borderTop: '1px solid var(--ide-border)', color: 'var(--ide-dim)', fontSize: 11, lineHeight: 1.6 }}>
+        <span style={{ color: 'var(--ide-green)', display: 'inline-flex', verticalAlign: -2 }}><PhoneGlyph size={11} /></span> 表示该会话已连接手机
+      </div>
+    </div>
+  );
+}
+
+function BindBanner({ ctx, tab }) {
+  const { robot, openMenuFor, closeTab } = ctx;
+  return (
+    <div className="fadein" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', background: '#25323a', borderBottom: '1px solid #2f4a56', fontSize: 12 }}>
+      <span style={{ color: 'var(--ide-green)', display: 'flex' }}><PhoneGlyph /></span>
+      <span>已连接手机 · 企业微信「{robot.name}」</span>
+      <span style={{ color: 'var(--ide-dim)' }}>手机消息会直接提交到这个终端，回复同步到手机</span>
+      <div style={{ flex: 1 }} />
+      <a onClick={e => { e.stopPropagation(); openMenuFor(tab.id, 560, 104, 'phone'); }} style={linkStyle}>换绑</a>
+      <a onClick={e => { e.stopPropagation(); ctx.A.disconnect && ctx.A.disconnect(); }} style={{ ...linkStyle, color: 'var(--ide-dim)' }}>断开</a>
+    </div>
+  );
+}
+const linkStyle = { color: '#6ea6ff', cursor: 'pointer' };
+
+function Terminal({ ctx, tab }) {
+  const { working, perm, at, A, localDraft, setLocalDraft, robot } = ctx;
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [tab.lines.length, working, perm]);
+  const color = { user: '#dfe1e5', assistant: '#c9cdd4', tool: '#7fb4ff', dim: '#6f737a', perm: '#e0b153' };
+  const bound = robot && robot.boundTab === tab.id;
+  return (
+    <div style={{ display: 'grid', gridTemplateRows: '1fr auto', minHeight: 0, background: 'var(--ide-bg)' }}>
+      <div ref={ref} className="mono" style={{ overflow: 'auto', padding: '12px 16px', fontSize: 12.5, lineHeight: 1.7 }}>
+        {tab.lines.map((l, i) => (
+          <div key={i} className="fadein" style={{ color: color[l.k], whiteSpace: 'pre-wrap', marginTop: l.k === 'user' ? 10 : 0 }}>
+            {l.k === 'user' && <span style={{ color: 'var(--ide-accent)' }}>› </span>}
+            {l.k === 'tool' && <span style={{ color: '#5fb865' }}>● </span>}
+            {l.t}
+            {l.remote && <span style={{ marginLeft: 8, fontSize: 10.5, color: '#5fb865', border: '1px solid #3f6b45', borderRadius: 3, padding: '0 4px', fontFamily: 'Inter, sans-serif' }}>来自手机</span>}
+          </div>
+        ))}
+        {perm === tab.id && (
+          <div className="fadein" style={{ marginTop: 6, color: '#e0b153' }}>
+            <span onClick={() => A.approve()} className={at('approve') ? 'hot' : ''} style={{ cursor: 'pointer', padding: '0 4px' }}>› 1. 允许</span>
+            <span style={{ marginLeft: 16, color: 'var(--ide-dim)' }}>2. 拒绝</span>
+          </div>
+        )}
+        {working === tab.id && <div style={{ color: 'var(--ide-dim)', marginTop: 4 }}>✻ Working… <span style={{ fontSize: 11 }}>(esc 中断)</span></div>}
+      </div>
+      <div className="mono" style={{ borderTop: '1px solid var(--ide-border)', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ color: 'var(--ide-accent)' }}>›</span>
+        <input value={localDraft} onChange={e => setLocalDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && bound && !working && !perm) A['local-input'](); }}
+          placeholder={bound ? '在电脑上输入，回车提交（会同步到手机）' : '在电脑上输入'}
+          className={at('local-input') && bound ? 'hot' : ''}
+          style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--ide-text)', font: 'inherit' }} />
+      </div>
+    </div>
+  );
+}
+const EmptyEditor = () => <div style={{ display: 'grid', placeItems: 'center', color: 'var(--ide-dim)' }}>没有打开的会话</div>;
+
+function ContextMenu({ ctx }) {
+  const { menu, setMenu, robot, A, at, closeTab } = ctx;
+  const sub = menu.sub === 'phone';
+  const bound = robot && robot.boundTab === menu.tab;
+  const item = (label, onClick, extra = {}) => (
+    <div onClick={e => { e.stopPropagation(); onClick && onClick(); }} className={extra.hot ? 'hot' : ''}
+      style={{ padding: '5px 14px', display: 'flex', alignItems: 'center', gap: 8, color: extra.disabled ? 'var(--ide-dim)' : 'var(--ide-text)',
+        cursor: extra.disabled ? 'default' : 'pointer', borderRadius: 4 }}
+      onMouseEnter={e => !extra.disabled && (e.currentTarget.style.background = 'var(--ide-accent)')}
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>{label}</div>
+  );
+  const sep = <div style={{ height: 1, background: 'var(--ide-border)', margin: '4px 0' }} />;
+  const panel = { background: '#2b2d30', border: '1px solid #43454a', borderRadius: 8, padding: 4, minWidth: 210, boxShadow: '0 10px 30px rgba(0,0,0,.5)' };
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', left: Math.min(Math.max(8, menu.x), 1000 - 470), top: Math.min(menu.y, 690 - 260), display: 'flex', gap: 2, zIndex: 40 }}>
+      <div style={panel}>
+        {item('重命名会话标题…', null, { disabled: true })}
+        {item('复制会话 ID', null, { disabled: true })}
+        {item('结对编程 ▸', null, { disabled: true })}
+        {item('审查一次…', null, { disabled: true })}
+        {sep}
+        {item(<><PhoneGlyph /> <span style={{ flex: 1 }}>连接到手机</span>▸</>, () => setMenu({ ...menu, sub: 'phone' }),
+          { hot: !sub && (at('bind') || at('rebind')) })}
+        {bound && item('断开手机连接', () => { setMenu(null); A.disconnect && A.disconnect(); })}
+      </div>
+      {sub && (
+        <div style={panel} className="fadein">
+          <div style={{ padding: '4px 14px 6px', color: 'var(--ide-dim)', fontSize: 11 }}>选择机器人（1 个机器人同时只连 1 个会话）</div>
+          {!robot || robot.status === 'pairing'
+            ? item('还没有可用的机器人', null, { disabled: true })
+            : item(
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Dot c={robot.status === 'bound' ? 'var(--ide-yellow)' : 'var(--ide-green)'} />企业微信 · {robot.name}</span>
+                <span style={{ color: 'inherit', opacity: .7, fontSize: 11, paddingLeft: 13 }}>
+                  {robot.status === 'bound' ? (robot.boundTab === menu.tab ? '已连接此会话' : `正在连接：${ctx.tabs.find(t => t.id === robot.boundTab).title}`) : '空闲'}
+                </span>
+              </div>,
+              () => robot.boundTab !== menu.tab && A.bind(menu.tab),
+              { hot: at('bind') || at('rebind'), disabled: robot.boundTab === menu.tab })}
+          {sep}
+          {item('添加机器人…', () => { setMenu(null); ctx.setSettings({ open: true, page: 'channel' }); })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReplaceDialog({ ctx }) {
+  const { confirm, setConfirm, confirmReplace, robot, tabs, at } = ctx;
+  const from = tabs.find(t => t.id === robot.boundTab), to = tabs.find(t => t.id === confirm.tabId);
+  return (
+    <Modal width={430}>
+      <div style={{ fontWeight: 600, marginBottom: 10 }}>替换「{robot.name}」的连接？</div>
+      <div style={{ lineHeight: 1.7, color: '#c9cdd4' }}>
+        它正在连接「{from.title}」。改连到「{to.title}」后：<br />
+        · 「{from.title}」继续在 IDE 里运行，只是不再收发手机消息<br />
+        · 手机聊天里会提示连接已切换，旧会话未发出的内容不会转到新会话
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+        <button style={ideBtn} onClick={() => setConfirm(null)}>取消</button>
+        <button style={primaryBtn} className={at('rebind') ? 'hot' : ''} onClick={confirmReplace}>替换连接</button>
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({ width, children }) {
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', zIndex: 50 }}>
+      <div className="fadein" style={{ width, background: '#2b2d30', border: '1px solid #43454a', borderRadius: 10, padding: 20, boxShadow: '0 20px 50px rgba(0,0,0,.5)' }}>{children}</div>
+    </div>
+  );
+}
+
+function SettingsDialog({ ctx }) {
+  const { settings, setSettings, robot, at, A, tabs } = ctx;
+  const page = settings.page;
+  const nav = ['外观与行为', '编辑器', '插件', '工具', '  imux', '    IDEA MCP', '    LSP', '    通讯机器人'];
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', zIndex: 45 }}>
+      <div className="fadein" style={{ width: 820, height: 540, background: '#2b2d30', border: '1px solid #43454a', borderRadius: 10, display: 'grid', gridTemplateRows: '1fr 52px', overflow: 'hidden', boxShadow: '0 20px 50px rgba(0,0,0,.5)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '190px 1fr', minHeight: 0 }}>
+          <div style={{ background: '#26282b', padding: '12px 0', borderRight: '1px solid var(--ide-border)' }}>
+            {nav.map(n => (
+              <div key={n} style={{ padding: '4px 14px', whiteSpace: 'pre', background: n.trim() === '通讯机器人' ? 'var(--ide-select)' : 'transparent', color: n.startsWith('    ') || n.trim() === 'imux' ? 'var(--ide-text)' : 'var(--ide-dim)' }}>{n}</div>
+            ))}
+          </div>
+          <div style={{ padding: '16px 22px', overflow: 'auto' }}>
+            <div style={{ color: 'var(--ide-dim)', marginBottom: 12 }}>工具 › imux › <span style={{ color: 'var(--ide-text)' }}>通讯机器人</span></div>
+            {page === 'list' && <RobotList ctx={ctx} />}
+            {page === 'channel' && <ChannelPicker ctx={ctx} />}
+            {page === 'qr' && <QrPage ctx={ctx} />}
+            {page === 'pair' && <PairPage ctx={ctx} />}
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, padding: '0 16px', borderTop: '1px solid var(--ide-border)' }}>
+          {page !== 'list' && <button style={ideBtn} onClick={() => setSettings(s => ({ ...s, page: 'list' }))}>返回列表</button>}
+          <div style={{ flex: 1 }} />
+          <button style={ideBtn} onClick={() => A['close-settings']()}>取消</button>
+          <button style={primaryBtn} className={at('close-settings') ? 'hot' : ''} onClick={() => A['close-settings']()}>确定</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RobotList({ ctx }) {
+  const { robot, at, A, tabs } = ctx;
+  const statusText = r => r.status === 'pairing' ? ['var(--ide-yellow)', '待配对'] : r.status === 'bound' ? ['var(--ide-green)', '已连接会话'] : ['var(--ide-green)', '在线 · 空闲'];
+  return (
+    <div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <input type="checkbox" checked readOnly /> 启用终端会话通讯桥接
+      </label>
+      <div style={{ color: 'var(--ide-dim)', fontSize: 12, marginBottom: 16, paddingLeft: 24, lineHeight: 1.6 }}>
+        手机消息提交到 IDE 里已打开的终端，由原来的 CLI 处理；不会启动新的 Agent 进程，IDEA MCP 照常可用。
+      </div>
+      <div style={{ border: '1px solid var(--ide-border)', borderRadius: 6, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: 2, padding: 4, borderBottom: '1px solid var(--ide-border)', background: '#26282b' }}>
+          <span onClick={() => A['add-robot']()} className={at('add-robot') ? 'hot' : ''} style={{ padding: '2px 8px', cursor: 'pointer' }}>＋ 添加</span>
+          <span style={{ padding: '2px 8px', color: 'var(--ide-dim)' }}>－ 移除</span>
+          <span style={{ padding: '2px 8px', color: 'var(--ide-dim)' }}>重新扫码</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr .8fr 1fr 1.4fr', padding: '6px 10px', color: 'var(--ide-dim)', fontSize: 12, borderBottom: '1px solid var(--ide-border)' }}>
+          <span>机器人</span><span>渠道</span><span>状态</span><span>当前连接的会话</span>
+        </div>
+        {!robot ? (
+          <div style={{ padding: '26px 10px', color: 'var(--ide-dim)', textAlign: 'center' }}>还没有机器人。添加一次，之后可以反复连接不同会话。</div>
+        ) : (
+          <div className="fadein" style={{ display: 'grid', gridTemplateColumns: '1.4fr .8fr 1fr 1.4fr', padding: '8px 10px', alignItems: 'center' }}>
+            <span>{robot.name}</span><span>企业微信</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Dot c={statusText(robot)[0]} />{statusText(robot)[1]}</span>
+            <span style={{ color: robot.boundTab ? 'var(--ide-text)' : 'var(--ide-dim)' }}>
+              {robot.boundTab ? `${PROJECT} · ${tabs.find(t => t.id === robot.boundTab).title}` : '—'}
+            </span>
+          </div>
+        )}
+      </div>
+      <div style={{ marginTop: 16, color: 'var(--ide-dim)', fontSize: 12, lineHeight: 1.8 }}>
+        机器人数量 = 想同时在手机上操作几个会话，不是累计开过多少会话。<br />
+        会话关闭后机器人自动回到空闲；普通微信每个微信号只有一个入口，只能换绑不能并存。
+      </div>
+    </div>
+  );
+}
+
+function ChannelPicker({ ctx }) {
+  const { at, A } = ctx;
+  const chans = [
+    { n: '企业微信', d: '扫码创建智能机器人，长连接收发', ok: true },
+    { n: '飞书', d: '扫码创建个人机器人', ok: false },
+    { n: '钉钉', d: '扫码一键创建机器人', ok: false },
+    { n: 'QQ', d: '扫码，首次需在手机上给机器人取名', ok: false },
+    { n: '微信', d: '扫码登录 ClawBot；每个微信号一个入口', ok: false },
+  ];
+  return (
+    <div>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>添加机器人</div>
+      <div style={{ color: 'var(--ide-dim)', marginBottom: 14 }}>只需手机扫码确认，无需配置开发者后台或复制密钥。</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        {chans.map(c => (
+          <div key={c.n} onClick={() => c.ok && A['pick-channel']()} className={c.ok && at('pick-channel') ? 'hot' : ''}
+            style={{ border: '1px solid ' + (c.ok ? '#4e5157' : 'var(--ide-border)'), borderRadius: 8, padding: '12px 14px', cursor: c.ok ? 'pointer' : 'default', opacity: c.ok ? 1 : .55 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><b>{c.n}</b>{!c.ok && <span style={{ fontSize: 11, color: 'var(--ide-dim)' }}>后续版本</span>}</div>
+            <div style={{ color: 'var(--ide-dim)', fontSize: 12, marginTop: 4 }}>{c.d}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QrPage({ ctx }) {
+  const { at, A } = ctx;
+  return (
+    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+      <div style={{ padding: 10, background: '#fff', borderRadius: 8 }}><FakeQr size={170} /></div>
+      <div style={{ lineHeight: 1.8 }}>
+        <div style={{ fontWeight: 600 }}>用企业微信扫码</div>
+        <div style={{ color: 'var(--ide-dim)' }}>1. 打开手机企业微信，扫一扫<br />2. 确认创建智能机器人<br />3. 回到这里继续配对</div>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--ide-dim)' }}>
+          <Dot c="var(--ide-yellow)" /> 等待扫码… 二维码 5 分钟内有效
+        </div>
+        <div style={{ marginTop: 14, fontSize: 11, color: 'var(--ide-dim)' }}>（示意二维码。右侧手机上点“确认创建”模拟扫码）</div>
+        {at('scan') && <div style={{ marginTop: 6, color: 'var(--hot)', fontSize: 12 }}>→ 去右边手机上确认</div>}
+      </div>
+    </div>
+  );
+}
+
+function PairPage({ ctx }) {
+  const { robot } = ctx;
+  const paired = robot && robot.status !== 'pairing';
+  return (
+    <div style={{ lineHeight: 1.8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}><Dot c="var(--ide-green)" />扫码成功，已创建「{robot.name}」</div>
+      <div style={{ marginTop: 10, color: '#c9cdd4' }}>为确认是你本人，请在企业微信里把下面的配对码发给这个机器人：</div>
+      <div className="mono" style={{ fontSize: 34, letterSpacing: 14, margin: '10px 0 4px', color: paired ? 'var(--ide-dim)' : 'var(--ide-text)', textDecoration: paired ? 'line-through' : 'none' }}>{PAIR_CODE}</div>
+      <div style={{ color: 'var(--ide-dim)', fontSize: 12 }}>5 分钟内有效。配对后，只有你发的消息会进入终端，其他人的消息一律忽略。</div>
+      <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+        {paired ? <><Dot c="var(--ide-green)" />已配对，可以连接会话了</> : <><Dot c="var(--ide-yellow)" />等待配对码…</>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 手机：企业微信 ---------- */
+function Phone({ ctx }) {
+  const { phone } = ctx;
+  if (phone.screen === 'home') return <WcHome />;
+  if (phone.screen === 'scan') return <WcScan ctx={ctx} />;
+  return <WcChat ctx={ctx} />;
+}
+
+function WcHome() {
+  const rows = [['产品群', '周会改到下午三点'], ['张三', '收到'], ['审批', '你有 1 条待审批']];
+  return (
+    <div style={{ height: '100%', background: '#fff', color: 'var(--wc-ink)' }}>
+      <div style={{ textAlign: 'center', fontWeight: 600, fontSize: 17, padding: '10px 0 12px' }}>消息</div>
+      {rows.map(([a, b]) => (
+        <div key={a} style={{ display: 'flex', gap: 12, padding: '12px 16px', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ width: 44, height: 44, borderRadius: 8, background: '#dfe6f1' }} />
+          <div><div style={{ fontSize: 16 }}>{a}</div><div style={{ color: '#999', fontSize: 13, marginTop: 3 }}>{b}</div></div>
+        </div>
+      ))}
+      <div style={{ padding: 30, color: '#aaa', textAlign: 'center', fontSize: 13 }}>（示意：企业微信消息列表）</div>
+    </div>
+  );
+}
+
+function WcScan({ ctx }) {
+  const { at, A } = ctx;
+  return (
+    <div style={{ height: '100%', background: '#f5f6f8', color: 'var(--wc-ink)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ textAlign: 'center', fontWeight: 600, fontSize: 17, padding: '10px 0 14px', background: '#fff' }}>创建智能机器人</div>
+      <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
+        <div style={{ textAlign: 'center', marginTop: 10 }}>
+          <div style={{ width: 64, height: 64, borderRadius: 14, background: '#1f2329', color: '#fff', display: 'grid', placeItems: 'center', margin: '0 auto', fontWeight: 700 }}>im</div>
+          <div style={{ marginTop: 10, fontSize: 15 }}>imux 请求为你创建一个智能机器人</div>
+        </div>
+        <div style={{ background: '#fff', borderRadius: 10, padding: '4px 14px' }}>
+          {[['名称', 'imux · 开发助手 1'], ['用途', '接收和转发 IDE 会话消息'], ['可见范围', '仅自己']].map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #f0f0f0', fontSize: 15 }}>
+              <span style={{ color: '#888' }}>{k}</span><span>{v}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{ color: '#999', fontSize: 12, lineHeight: 1.6 }}>名称之后可以在企业微信里修改。</div>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => A.scan()} className={at('scan') ? 'hot' : ''}
+          style={{ background: '#3370ff', color: '#fff', border: 'none', borderRadius: 8, padding: '13px 0', fontSize: 16, cursor: 'pointer' }}>确认创建</button>
+      </div>
+    </div>
+  );
+}
+
+function WcChat({ ctx }) {
+  const { phone, setPhone, at, A, robot } = ctx;
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [phone.msgs.length]);
+  const canSendPair = at('pair');
+  const send = () => {
+    if (at('pair')) return A.pair();
+    if (at('remote-input')) return A['remote-input']();
+    if (at('unbound-msg')) return A['unbound-msg']();
+  };
+  const presetDraft = at('pair') ? PAIR_CODE : at('remote-input') ? '跑一下单测，失败的修掉' : at('unbound-msg') ? '还在吗？' : '';
+  const sendHot = at('pair') || at('remote-input') || at('unbound-msg');
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--wc-bg)', color: 'var(--wc-ink)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '8px 14px 10px', background: '#f7f7f7', borderBottom: '1px solid #e5e5e5' }}>
+        <span style={{ fontSize: 22, color: '#333', width: 24 }}>‹</span>
+        <div style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ fontWeight: 600, fontSize: 16 }}>imux · 开发助手 1</div>
+          <div style={{ fontSize: 11, color: '#8a8f99', marginTop: 1 }}>
+            {robot && robot.boundTab ? '已连接 IDE 会话' : robot && robot.status === 'idle' ? '在线 · 未连接会话' : '智能机器人'}
+          </div>
+        </div>
+        <span style={{ width: 24 }} />
+      </div>
+      <div ref={ref} style={{ flex: 1, overflow: 'auto', padding: '12px 12px 16px' }}>
+        {phone.msgs.map(m => <Bubble key={m.id} m={m} />)}
+      </div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px 10px', background: '#f7f7f7', borderTop: '1px solid #e5e5e5' }}>
+        <span style={{ width: 28, height: 28, borderRadius: 28, border: '1.5px solid #555', display: 'grid', placeItems: 'center', fontSize: 11, color: '#555', flex: 'none' }} title="语音：企业微信会转写成文字送达">))</span>
+        <div style={{ flex: 1, background: '#fff', borderRadius: 6, padding: '8px 10px', fontSize: 15, minHeight: 36, color: presetDraft ? '#1d1d1f' : '#aaa' }}>
+          {presetDraft || '发消息'}
+        </div>
+        <button onClick={send} className={sendHot ? 'hot' : ''} disabled={!sendHot}
+          style={{ background: sendHot ? '#3370ff' : '#c9cdd4', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 12px', fontSize: 14, cursor: sendHot ? 'pointer' : 'default' }}>发送</button>
+      </div>
+    </div>
+  );
+}
+
+function Bubble({ m }) {
+  if (m.kind === 'sys') return <div style={{ textAlign: 'center', color: '#999', fontSize: 12, margin: '8px 0 12px' }}>{m.text}</div>;
+  const mine = m.from === 'me';
+  const avatar = mine
+    ? <div style={{ width: 36, height: 36, borderRadius: 6, background: '#9fb7d9', flex: 'none' }} />
+    : <div style={{ width: 36, height: 36, borderRadius: 6, background: '#1f2329', color: '#fff', fontSize: 12, fontWeight: 700, display: 'grid', placeItems: 'center', flex: 'none' }}>im</div>;
+  const isStatus = m.kind === 'status' || m.kind === 'connect';
+  const bodyStyle = {
+    maxWidth: 250, padding: '9px 11px', borderRadius: 6, fontSize: 14.5, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+    background: mine ? 'var(--wc-me)' : '#fff',
+    ...(isStatus ? { background: m.kind === 'connect' ? '#eaf6ec' : '#fff7e8', border: '1px solid ' + (m.kind === 'connect' ? '#bfe3c6' : '#f3dcae'), fontSize: 13.5 } : {}),
+  };
+  return (
+    <div className="fadein" style={{ display: 'flex', gap: 8, margin: '10px 0', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-start' }}>
+      {avatar}
+      <div style={bodyStyle}>
+        {m.kind === 'local' && <div style={{ fontSize: 11.5, color: '#3370ff', marginBottom: 3 }}>电脑端输入：</div>}
+        {renderInline(m.text)}
+      </div>
+    </div>
+  );
+}
+function renderInline(text) {
+  return text.split(/(`[^`]+`)/g).map((p, i) => p.startsWith('`')
+    ? <code key={i} style={{ fontFamily: 'Menlo, monospace', fontSize: 12.5, background: 'rgba(0,0,0,.06)', padding: '0 3px', borderRadius: 3 }}>{p.slice(1, -1)}</code>
+    : <span key={i}>{p}</span>);
+}
+
+/* ---------- 底部场景步骤条 ---------- */
+function Stepper({ step, onNext, onReset }) {
+  const s = STEPS[step];
+  return (
+    <div style={{ background: '#1b1c1f', borderTop: '1px solid #2c2e33', padding: '12px 28px 14px' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        {STEPS.map((x, i) => (
+          <span key={x.id} style={{ fontSize: 11.5, padding: '3px 8px', borderRadius: 999,
+            background: i < step ? '#25392b' : i === step ? '#3a2f1c' : '#24262a',
+            color: i < step ? '#8fd197' : i === step ? '#f0b45a' : '#7d8189' }}>{i + 1}. {x.title}</span>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div style={{ flex: 1, lineHeight: 1.6 }}>
+          {s ? <><b style={{ color: '#f0b45a' }}>第 {step + 1} 步 · {s.title}</b><span style={{ color: '#aeb2ba', marginLeft: 10 }}>{s.note}</span>
+            <span style={{ color: '#6f737a', marginLeft: 10 }}>点橙色高亮处操作，或点“下一步”自动演示。</span></>
+            : <b style={{ color: '#8fd197' }}>演示完成。可以“重新开始”，或自由点击 IDE 与手机继续体验。</b>}
+        </div>
+        <button onClick={onReset} style={ideBtn}>重新开始</button>
+        <button onClick={e => { e.stopPropagation(); onNext(); }} disabled={!s} style={{ ...primaryBtn, opacity: s ? 1 : .4 }}>下一步 ›</button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

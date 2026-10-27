@@ -8,6 +8,8 @@ import com.github.izerui.imux.session.ListEntry
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.blocksResume
 import com.github.izerui.imux.settings.ImuxSettings
+import com.github.izerui.imux.terminal.SessionDecorations
+import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.terminal.handoffActionGroup
 import com.github.izerui.imux.terminal.promptRenameSessionTitle
@@ -17,6 +19,7 @@ import com.github.izerui.imux.terminal.sessionClipboardText
 import com.github.izerui.imux.turn.TurnNotifier
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -29,6 +32,7 @@ import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.ClickListener
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.PopupHandler
+import com.intellij.ui.RowIcon
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.render.RenderingHelper
 import com.intellij.ui.treeStructure.Tree
@@ -102,6 +106,18 @@ internal fun sessionStatusIcon(
         else -> EmptyIcon.ICON_16
     }
 
+/** 连着手机的会话在状态图标后多一格手机标记，与终端标签上的标记一致。 */
+internal fun withPhoneMarker(
+    icon: Icon?,
+    phoneConnected: Boolean,
+): Icon? {
+    if (!phoneConnected || icon == null) return icon
+    return RowIcon(2).apply {
+        setIcon(icon, 0)
+        setIcon(AgentIcons.phone, 1)
+    }
+}
+
 /**
  * 这次点击是否应该打开会话。
  *
@@ -138,6 +154,8 @@ private sealed interface NodeData {
         val unread: Boolean,
         /** 是否已在编辑器标签页中打开 */
         val opened: Boolean,
+        /** 是否连着手机（由会话装饰扩展提供） */
+        val phoneConnected: Boolean = false,
     ) : NodeData {
         override fun toString(): String = title
     }
@@ -226,7 +244,7 @@ private class EllipsizingCellRenderer : ColoredTreeCellRenderer() {
 
                 // 优先级：正在跑 > 未读 > 已打开 > 普通
                 is NodeData.Session -> {
-                    sessionStatusIcon(session!!.running, session.unread, session.opened)
+                    withPhoneMarker(sessionStatusIcon(session!!.running, session.unread, session.opened), session.phoneConnected)
                 }
 
                 is NodeData.PendingSession -> {
@@ -431,6 +449,8 @@ class AgentSessionTree(
         )
 
         monitor.addListener(parentDisposable) { reload() }
+        ApplicationManager.getApplication().messageBus.connect(parentDisposable)
+            .subscribe(SessionDecorationsListener.TOPIC, SessionDecorationsListener { reload() })
         ImuxSettings.getInstance().addLanguageListener(parentDisposable) {
             renderedContent = null
             reload()
@@ -584,6 +604,9 @@ class AgentSessionTree(
         val limit = limits.getValue(agentType)
         val openTabs = TerminalHost.getInstance(project).openTabKeys()
 
+        // 装饰按标签询问；会话 key → 标签 id 只对已打开的会话成立
+        val tabIdBySession = TerminalHost.getInstance(project).openTabsByTabId().entries.associate { (tabId, key) -> key to tabId }
+
         val nodes =
             entries.take(limit).map { entry ->
                 when (entry) {
@@ -604,6 +627,8 @@ class AgentSessionTree(
                             running = entry.session.id in monitor.runningIds && entry.session.id in openTabs,
                             unread = monitor.isUnread(entry.session.id),
                             opened = entry.session.id in openTabs,
+                            phoneConnected =
+                                tabIdBySession[entry.session.id]?.let { SessionDecorations.phoneConnected(project, it) } == true,
                         )
                     }
 

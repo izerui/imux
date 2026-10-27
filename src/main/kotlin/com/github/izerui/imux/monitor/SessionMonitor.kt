@@ -27,6 +27,7 @@ import com.github.izerui.imux.terminal.resolveShell
 import com.github.izerui.imux.turn.RunningSessions
 import com.github.izerui.imux.turn.RuntimeStatusTracker
 import com.github.izerui.imux.turn.TurnNotifier
+import com.github.izerui.imux.turn.publishTurnEvent
 import com.github.izerui.imux.turn.waitingNotificationWanted
 import com.github.izerui.imux.watch.SessionStoreWatcher
 import com.intellij.notification.NotificationGroupManager
@@ -750,6 +751,7 @@ class SessionMonitor(
                             duration,
                             ::openSessionFromNotification,
                         )
+                        publishTurnEvent(project) { it.turnCompleted(sessionId) }
                     }
 
                     if (outcome.waiting.isNotEmpty()) {
@@ -757,6 +759,8 @@ class SessionMonitor(
                         outcome.waiting.forEach { waiting ->
                             val session = model.sessionOf(waiting.sessionId)
                             markUnread(waiting.sessionId)
+                            // 人正看着就不弹气泡，但手机端仍需要知道会话停下了
+                            publishTurnEvent(project) { it.turnWaiting(waiting.sessionId, waiting.reason) }
 
                             // 人正看着它就别弹了，CLI 的选择框已经占在屏幕上
                             if (!waitingNotificationWanted(waiting.sessionId, selected)) return@forEach

@@ -78,15 +78,60 @@ internal fun oneShotAgentInvocation(
                     append(" --mode json")
                 }
         }
+    return shellInvocation(shell, cli, ideaMcpEnvironment(agentType, mcp.endpoint, mcp.guidance))
+}
+
+/**
+ * 持续对话（需求澄清）的命令：权限、IDEA MCP 注入与 [oneShotAgentInvocation] 相同，区别只在对话方式：
+ * - Claude：常驻进程，stdin 逐行写入 stream-json 的 user 消息，每轮读到 `result` 为止；不保存会话。
+ * - Pi：常驻进程，RPC 模式（stdin 写 `prompt` 命令，每轮读到 `agent_settled` 为止）；不保存会话。
+ * - Codex：每轮一次 `codex exec`，首轮不加 `--ephemeral`（需要会话文件才能续接），
+ *   之后以 [codexResumeId] 续接（`resume <id> -`，消息仍经 stdin 写入）。
+ */
+internal fun conversationInvocation(
+    shell: String,
+    agentType: AgentType,
+    projectPath: String,
+    mcp: AgentMcpConfig = AgentMcpConfig.NONE,
+    codexResumeId: String? = null,
+): OneShotAgentInvocation {
+    val dialect = dialectOf(shell)
+    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, mcp.endpoint, mcp.guidance)
+    val cli =
+        when (agentType) {
+            AgentType.CLAUDE ->
+                listOfNotNull(
+                    "claude -p --permission-mode bypassPermissions --tools default --no-session-persistence",
+                    ideaMcpArgument,
+                    "--input-format stream-json --output-format stream-json --verbose",
+                ).joinToString(" ")
+
+            AgentType.CODEX ->
+                listOfNotNull(
+                    "codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --color never",
+                    ideaMcpArgument,
+                    "--json -C ${quote(dialect, projectPath)}",
+                    codexResumeId?.let { "resume ${quote(dialect, it)} -" },
+                ).joinToString(" ")
+
+            AgentType.PI ->
+                buildString {
+                    append("pi --mode rpc --no-session")
+                    mcp.piExtensionScript?.let { append(" -e ${quote(dialect, it.toString())}") }
+                }
+        }
+    return shellInvocation(shell, cli, ideaMcpEnvironment(agentType, mcp.endpoint, mcp.guidance))
+}
+
+/** 经登录 shell 运行 [cli]（PATH 与用户终端一致），开头先输出 [AGENT_OUTPUT_MARKER]。 */
+private fun shellInvocation(shell: String, cli: String, environment: Map<String, String>): OneShotAgentInvocation {
+    val dialect = dialectOf(shell)
     val marker =
         when (dialect) {
             ShellDialect.POSIX -> "printf '%s\\n' ${quote(dialect, AGENT_OUTPUT_MARKER)}"
             ShellDialect.POWERSHELL -> "Write-Output ${quote(dialect, AGENT_OUTPUT_MARKER)}"
         }
-    return OneShotAgentInvocation(
-        command = listOf(shell) + shellArgs(dialect) + "$marker; $cli",
-        environment = ideaMcpEnvironment(agentType, mcp.endpoint, mcp.guidance),
-    )
+    return OneShotAgentInvocation(command = listOf(shell) + shellArgs(dialect) + "$marker; $cli", environment = environment)
 }
 
 internal const val AGENT_OUTPUT_MARKER = "__IMUX_AGENT_OUTPUT_BEGIN__"

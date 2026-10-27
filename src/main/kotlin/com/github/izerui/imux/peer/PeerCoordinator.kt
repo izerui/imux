@@ -1,6 +1,7 @@
 package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionTranscriptMessage
@@ -538,21 +539,7 @@ class PeerCoordinator internal constructor(
 
     private fun collectLatestConversation(sessionKey: String, maxConversationChars: Int = MAX_CONVERSATION_LENGTH): String {
         val session = model.sessionOf(sessionKey) ?: return ""
-        if (!Files.isRegularFile(session.filePath)) return ""
-        val sent = sentFeedback[sessionKey]?.toList().orEmpty()
-        return scanTail(
-            session.filePath,
-            initialTailBytes = CONVERSATION_TAIL_BYTES,
-            maxTailBytes = CONVERSATION_TAIL_BYTES,
-        ) { lines ->
-            latestConversation(
-                lines.mapNotNull {
-                    transcriptMessage(it, session.agentType, MAX_MESSAGE_LENGTH, includeToolContent = true)
-                        ?.let { message -> markSentFeedback(message, sent) }
-                },
-                maxConversationChars,
-            )
-        }.orEmpty()
+        return latestConversationOf(session, sentFeedback[sessionKey]?.toList().orEmpty(), maxConversationChars)
     }
 
     private suspend fun injectFeedback(
@@ -702,8 +689,6 @@ class PeerCoordinator internal constructor(
         private val LOG = logger<PeerCoordinator>()
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"
         private const val MAX_CONVERSATION_LENGTH = 1_000_000
-        private const val MAX_MESSAGE_LENGTH = 100_000
-        private const val CONVERSATION_TAIL_BYTES = 32L * 1024 * 1024
         private const val CLI_TIMEOUT_SECONDS = 300L
         private const val MAX_FEEDBACK_HINTS = 200
         private const val MAX_REMEMBERED_FEEDBACK = 200
@@ -831,6 +816,31 @@ internal fun latestConversation(
     return selected.joinToString("\n\n")
 }
 
+/** 读会话文件末尾的最近对话，供结对编程使用。文件不存在返回空串。 */
+internal fun latestConversationOf(
+    session: AgentSession,
+    sentFeedback: List<String>,
+    maxChars: Int,
+): String {
+    if (!Files.isRegularFile(session.filePath)) return ""
+    return scanTail(
+        session.filePath,
+        initialTailBytes = CONVERSATION_TAIL_BYTES,
+        maxTailBytes = CONVERSATION_TAIL_BYTES,
+    ) { lines ->
+        latestConversation(
+            lines.mapNotNull {
+                transcriptMessage(it, session.agentType, MAX_TRANSCRIPT_MESSAGE_LENGTH, includeToolContent = true)
+                    ?.let { message -> markSentFeedback(message, sentFeedback) }
+            },
+            maxChars,
+        )
+    }.orEmpty()
+}
+
+internal const val CONVERSATION_TAIL_BYTES = 32L * 1024 * 1024
+internal const val MAX_TRANSCRIPT_MESSAGE_LENGTH = 100_000
+
 
 /**
  * 发进主会话的反馈在会话文件里是 user 消息，原样标成 User 的话，副驾驶会把自己上一轮的话
@@ -883,7 +893,7 @@ internal data class PeerTask(
  * 那段文字一直在屏幕上，直到助手说出新的话。
  */
 internal fun peerTask(
-    session: com.github.izerui.imux.model.AgentSession,
+    session: AgentSession,
     isSentFeedback: (String) -> Boolean = { false },
 ): PeerTask =
     runCatching {

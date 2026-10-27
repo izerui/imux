@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.clarification.ClarificationService
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.peer.PeerProgressEvent
@@ -20,6 +21,7 @@ import com.intellij.openapi.actionSystem.impl.ActionButton
 import com.intellij.openapi.application.ApplicationActivationListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
@@ -51,6 +53,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.awt.Component
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.BorderLayout
@@ -186,13 +189,14 @@ class AgentTerminalFileEditor(
         }
     private val peerReviewOnceLink: ActionLink =
         ActionLink(ImuxBundle.message("action.peer.once.hint")) {
-            val targets = ImuxSettings.getInstance().enabledAgentTypes
-            if (targets.isEmpty()) return@ActionLink
-            val dialog = ReviewOnceDialog(project, targets, virtualFile.agentType)
-            if (!dialog.showAndGet()) return@ActionLink
-            val coordinator = SessionMonitor.getInstance(project).peerCoordinator
-            val instruction = dialog.instruction.takeIf { it.isNotBlank() }
-            coordinator.reviewOnce(virtualFile.sessionKey, dialog.selectedAgent, instruction)
+            showReviewOnceDialog(project, virtualFile)
+        }.apply {
+            isFocusable = false
+            border = JBUI.Borders.emptyLeft(12)
+        }
+    private val clarifyLink: ActionLink =
+        ActionLink(ImuxBundle.message("clarify.action.text")) {
+            ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType)
         }.apply {
             isFocusable = false
             border = JBUI.Borders.emptyLeft(12)
@@ -216,6 +220,7 @@ class AgentTerminalFileEditor(
             add(peerLabel)
             add(peerEnableLink)
             add(peerReviewOnceLink)
+            add(clarifyLink)
             add(peerDismissLink)
             add(peerCancelButton)
             add(peerCloseButton)
@@ -270,6 +275,7 @@ class AgentTerminalFileEditor(
             peerCloseButton.text = ImuxBundle.message("action.peer.close")
             peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
             peerReviewOnceLink.text = ImuxBundle.message("action.peer.once.hint")
+            clarifyLink.text = ImuxBundle.message("clarify.action.text")
             peerDismissLink.text = ImuxBundle.message("action.peer.enable.dismiss")
             refreshPeerBanner()
         }
@@ -279,6 +285,14 @@ class AgentTerminalFileEditor(
             if (sessionKey == virtualFile.sessionKey) refreshPeerBanner()
         }
         refreshPeerBanner()
+
+        // 会话装饰变化（例如连上或断开手机）时，让平台重新取本标签的图标。
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            SessionDecorationsListener.TOPIC,
+            SessionDecorationsListener {
+                if (!disposed && !project.isDisposed) FileEditorManager.getInstance(project).updateFilePresentation(virtualFile)
+            },
+        )
 
         // 终端输出在应用后台仍会为每次光标变化排 EDT 滚动任务。激活时先同步到
         // 最新位置，随后积压任务因不能向上回滚而全部成为 no-op，避免逐次追到底部。
@@ -387,9 +401,21 @@ class AgentTerminalFileEditor(
                 }
             }
         this.terminalLayer = terminalLayer
+        // 顶部依次是结对编程横幅与其它功能的装饰横幅（例如手机连接提示）。
+        val banners =
+            JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                add(peerBanner)
+                SessionDecorations.banners(project, virtualFile, this@AgentTerminalFileEditor).forEach { banner ->
+                    add(banner)
+                    trailOutsideClicks.attach(banner)
+                }
+                components.forEach { (it as? JComponent)?.alignmentX = Component.LEFT_ALIGNMENT }
+            }
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(peerBanner, BorderLayout.NORTH)
+            add(banners, BorderLayout.NORTH)
             add(terminalLayer, BorderLayout.CENTER)
         }
     }
@@ -402,16 +428,21 @@ class AgentTerminalFileEditor(
             peerLabel.isVisible = false
             peerCancelButton.isVisible = false
             peerCloseButton.isVisible = false
-            peerBanner.isVisible = !virtualFile.peerBannerDismissed
-            peerEnableLink.isVisible = true
-            peerReviewOnceLink.isVisible = true
-            peerDismissLink.isVisible = true
+            // 横幅始终在：先聊再做不随结对编程的「不再提示」消失；不再提示只收起结对编程自己的内容
+            peerBanner.isVisible = true
+            peerIcon.isVisible = !virtualFile.peerBannerDismissed
+            peerEnableLink.isVisible = !virtualFile.peerBannerDismissed
+            peerReviewOnceLink.isVisible = !virtualFile.peerBannerDismissed
+            peerDismissLink.isVisible = !virtualFile.peerBannerDismissed
+            clarifyLink.isVisible = true
             peerEnableLink.text = ImuxBundle.message("action.peer.enable.hint")
         } else {
             peerBanner.isVisible = true
             peerEnableLink.isVisible = false
             peerReviewOnceLink.isVisible = false
             peerDismissLink.isVisible = false
+            peerIcon.isVisible = true
+            clarifyLink.isVisible = true
             peerLabel.isVisible = true
             peerCancelButton.isVisible = status.running
             peerCloseButton.isVisible = !status.running
@@ -607,6 +638,7 @@ class AgentTerminalFileEditor(
             .getInstance(project)
             .trailStore
             .releaseOwner(virtualFile.tabId)
+        project.serviceIfCreated<ClarificationService>()?.releaseOwner(virtualFile.tabId)
         TerminalHost.getInstance(project).closeSession(virtualFile)
         com.github.izerui.imux.monitor.SessionMonitor
             .getInstance(project)
@@ -619,6 +651,20 @@ class AgentTerminalFileEditor(
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30
     }
+}
+
+internal fun showReviewOnceDialog(project: Project, file: AgentTerminalVirtualFile) {
+    if (project.isDisposed) return
+    val targets = ImuxSettings.getInstance().enabledAgentTypes
+    if (targets.isEmpty()) return
+    val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+    if (coordinator.boundTarget(file.sessionKey) != null) return
+    val dialog = ReviewOnceDialog(project, targets, file.agentType)
+    if (!dialog.showAndGet() || project.isDisposed) return
+    // 弹窗期间标签页可能关闭或迁移；确认后重新校验实例，并使用此刻的会话 key。
+    if (TerminalHost.getInstance(project).fileFor(file.terminalView) !== file) return
+    val instruction = dialog.instruction.takeIf { it.isNotBlank() }
+    coordinator.reviewOnce(file.sessionKey, dialog.selectedAgent, instruction)
 }
 
 private class ReviewOnceDialog(

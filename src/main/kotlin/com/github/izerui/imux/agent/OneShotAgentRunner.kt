@@ -39,9 +39,11 @@ internal fun runOneShotAgent(
     claudeHome: () -> Path? = { runCatching { AgentHomes.current().claude }.getOrNull() },
     onProgress: (AgentProgressEvent) -> Unit = {},
     descendantPollMillis: Long = DESCENDANT_POLL_MILLIS,
+    onCodexThread: (String) -> Unit = {},
+    start: ProcessStarter = ProcessStarter.DEFAULT,
 ): String {
     var tracked: TrackedProcess? = null
-    val parser = AgentJsonEventParser(agentType, onProgress = { event ->
+    val parser = AgentJsonEventParser(agentType, onCodexThread = onCodexThread, onProgress = { event ->
         // 工具开始/结束时 CLI 还活着，它启动的后台进程此刻一定能从父进程找到：立即记下，
         // 不必等定时扫描（CLI 若紧接着退出，下一次扫描就来不及了）
         if (event.kind == AgentProgressKind.TOOL_STARTED || event.kind == AgentProgressKind.TOOL_FINISHED) {
@@ -50,11 +52,7 @@ internal fun runOneShotAgent(
         onProgress(event)
     })
     try {
-        val started =
-            ProcessBuilder(invocation.command)
-                .directory(cwd.toFile())
-                .apply { environment().putAll(invocation.environment) }
-                .start()
+        val started = start.start(invocation, cwd)
         tracked = TrackedProcess(started)
         // CLI 存活期间就开始记录子进程：它先退出时，工具启动的后台进程已被托管，事后查不到
         tracked.watchDescendants(descendantPollMillis)
@@ -157,6 +155,20 @@ internal fun runOneShotAgent(
     }
 }
 
+/** 启动 CLI 进程；测试注入假进程。 */
+internal fun interface ProcessStarter {
+    fun start(invocation: OneShotAgentInvocation, cwd: Path): Process
+
+    companion object {
+        val DEFAULT = ProcessStarter { invocation, cwd ->
+            ProcessBuilder(invocation.command)
+                .directory(cwd.toFile())
+                .apply { environment().putAll(invocation.environment) }
+                .start()
+        }
+    }
+}
+
 /**
  * 删除 Claude 为这次调用写下的临时目录 `<claudeHome>/projects/<任意项目>/<sessionId>/`。
  *
@@ -192,10 +204,10 @@ private fun appendCapped(output: StringBuilder, line: String): Boolean {
     return true
 }
 
-private fun daemon(name: String, body: () -> Unit) {
+internal fun daemon(name: String, body: () -> Unit) {
     Thread(body, name).apply { isDaemon = true }.start()
 }
 
-private val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-private const val MAX_STDERR_CHARS = 4_000
+internal val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+internal const val MAX_STDERR_CHARS = 4_000
 private const val DRAIN_TIMEOUT_SECONDS = 2L

@@ -61,6 +61,14 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
 
+    <!-- 会话装饰：其它功能给终端标签、会话树、终端顶部加的标记与横幅。现有代码只认这个接口。 -->
+    <extensionPoints>
+        <extensionPoint
+                qualifiedName="com.github.izerui.imux.sessionDecorator"
+                interface="com.github.izerui.imux.terminal.SessionDecorator"
+                dynamic="true"/>
+    </extensionPoints>
+
     <extensions defaultExtensionNs="com.intellij">
         <applicationConfigurable
                 parentId="tools"
@@ -83,6 +91,13 @@
                 instance="com.github.izerui.imux.settings.ImuxLspConfigurable"
                 id="com.github.izerui.imux.settings.lsp"
                 displayName="LSP"/>
+
+        <applicationConfigurable
+                parentId="com.github.izerui.imux.settings"
+                instance="com.github.izerui.imux.bridge.ui.RobotsConfigurable"
+                id="com.github.izerui.imux.settings.bridge"
+                key="bridge.settings.displayName"
+                bundle="messages.ImuxBundle"/>
 
         <toolWindow
                 id="imux"
@@ -124,6 +139,7 @@
         <!-- 会话轮次完成时的提醒气泡；用户可在 IDE 设置里关闭 -->
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
         <notificationGroup id="imux.ideaMcp" displayType="BALLOON"/>
+        <notificationGroup id="imux.phoneBridge" displayType="BALLOON"/>
 
         <!--
           必须注册：工具窗口的内容是懒加载的，监听逻辑若只在 createToolWindowContent
@@ -132,11 +148,25 @@
         <postStartupActivity
                 implementation="com.github.izerui.imux.monitor.ImuxStartupActivity"/>
 
+        <!-- 终端会话通讯桥接：仅在开关打开时启动，见 docs/terminal-channel-bridge-feasibility.md -->
+        <postStartupActivity
+                implementation="com.github.izerui.imux.bridge.BridgeStartupActivity"/>
+        <postStartupActivity
+                implementation="com.github.izerui.imux.bridge.ui.BridgeNotificationsActivity"/>
+
         <!--
           接收 pi 扩展的会话上报。pi 的会话切换（/new、/resume、/fork）无法从进程外
           观测，只能由它自己上报，见 PiSessionReportHandler 的说明。
         -->
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
+
+        <statusBarWidgetFactory
+                id="imux.phoneBridge"
+                implementation="com.github.izerui.imux.bridge.ui.PhoneStatusWidgetFactory"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.github.izerui.imux">
+        <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
     </extensions>
 
     <actions>
@@ -176,6 +206,23 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
         <action
+                id="imux.ReviewOnce"
+                class="com.github.izerui.imux.terminal.ReviewOnceAction"
+                text="Review Once"
+                description="Choose an agent to review this session once"
+                icon="AllIcons.Toolwindows.ToolWindowInspection">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="after"
+                          relative-to-action="imux.PeerProgramming"/>
+        </action>
+        <action
+                id="imux.ClarifyRequirement"
+                class="com.github.izerui.imux.terminal.ClarifyRequirementAction"
+                text="Talk First"
+                description="Before starting, talk it through with the agent: it combines the project's code and web knowledge to ask you step by step, fills in directions you haven't considered, and delivers an execution plan"
+                icon="AllIcons.Actions.IntentionBulb">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </action>
+        <action
                 id="imux.ToggleSessionTrail"
                 class="com.github.izerui.imux.terminal.ToggleSessionTrailAction"
                 text="Toggle Session Trail Panel"
@@ -189,5 +236,11 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="before"
                           relative-to-action="imux.CopySessionIdentity"/>
         </action>
+        <group
+                id="imux.bridge.ConnectToPhone"
+                class="com.github.izerui.imux.bridge.ui.ConnectToPhoneGroup"
+                popup="true">
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+        </group>
     </actions>
 </idea-plugin>

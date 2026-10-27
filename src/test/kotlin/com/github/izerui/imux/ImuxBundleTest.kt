@@ -124,6 +124,27 @@ class ImuxBundleTest {
     }
 
     @Test
+    fun `zh_CN 先聊再做的关键文案与命名一致`() {
+        fun zh(key: String) = ImuxBundle.message(PluginLanguage.SIMPLIFIED_CHINESE, key)
+        assertEquals("先聊再做", zh("clarify.action.text"))
+        assertEquals("先聊再做 · {0}", zh("clarify.dialog.title"))
+        assertEquals("你想探讨什么？", zh("clarify.input.title"))
+        assertEquals("开始聊", zh("clarify.input.start"))
+        assertEquals("正在回复…", zh("clarify.progress.responding"))
+        assertEquals("我的回答", zh("clarify.question.review.tab"))
+        assertEquals("看一眼", zh("clarify.question.review"))
+        assertEquals("好，接着聊", zh("clarify.question.submit"))
+        assertEquals("接着说", zh("clarify.question.next"))
+        assertEquals("我的回答", zh("clarify.review.title"))
+        assertEquals("讨论成果（可修改）", zh("clarify.result.title"))
+        assertEquals("继续聊", zh("clarify.result.back"))
+        assertEquals("发给 Agent", zh("clarify.result.send"))
+        assertEquals("整理已有内容", zh("clarify.failed.fallback"))
+        assertEquals("先聊再做", zh("clarify.notify.title"))
+        assertEquals("一个目标、一段描述或文档路径", zh("clarify.input.placeholder"))
+    }
+
+    @Test
     fun `unknown persisted language falls back to English`() {
         assertEquals(PluginLanguage.ENGLISH, PluginLanguage.fromId("future-language"))
         assertEquals(PluginLanguage.ENGLISH, PluginLanguage.fromId(null))
