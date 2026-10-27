@@ -12,7 +12,9 @@ import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.terminal.SessionDecorations
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -73,6 +75,12 @@ class RobotManager(parentScope: CoroutineScope) {
         store.book().bindings.forEach { saved ->
             val target = restoredTarget(saved) ?: return@forEach
             hub.bindings.bind(RobotId(saved.robotId), target)
+        }
+        // 机器人、状态或绑定变化时，让标签、会话树、提示条、状态栏刷新
+        scope.launch {
+            revision.collect {
+                ApplicationManager.getApplication().invokeLater({ SessionDecorations.changed() }, ModalityState.any())
+            }
         }
     }
 

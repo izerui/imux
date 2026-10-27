@@ -136,6 +136,7 @@ class TerminalBridgeService(
                     hub.bindings.reattach(binding.robotId, change.tabId)
                     tails.remove(binding.target.tabId)
                     migratedAt.remove(binding.target.tabId)
+                    RobotManager.getInstance().syncBindings()
                 }
                 TabChange.Release -> release(binding)
             }

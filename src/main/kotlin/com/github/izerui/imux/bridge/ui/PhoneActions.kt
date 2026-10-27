@@ -47,20 +47,13 @@ internal fun sessionTitle(
     file: AgentTerminalVirtualFile,
 ): String = file.sessionId?.let { SessionMonitor.getInstance(project).model.sessionOf(it)?.title } ?: file.tabTitle
 
-internal class BindRobotAction(
-    private val robotId: String,
-    label: String,
-    private val selectable: Boolean,
-) : DumbAwareAction(label) {
-    override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = selectable
-    }
-
-    override fun actionPerformed(e: AnActionEvent) {
-        val project = e.project ?: return
-        val file = terminalFile(e) ?: return
+internal object PhoneOperations {
+    /** 把机器人绑到这个终端：需要时确认替换，通知旧会话断开、新会话已连接，并持久化。 */
+    fun bind(
+        project: Project,
+        file: AgentTerminalVirtualFile,
+        robotId: String,
+    ) {
         val robot = RobotManager.getInstance().robot(robotId) ?: return
         val hub = BridgeHub.getInstance()
         val title = sessionTitle(project, file)
@@ -86,6 +79,37 @@ internal class BindRobotAction(
         }
         BridgeNotifications.info(project, ImuxBundle.message("bridge.notify.connected", title, robot.name))
     }
+
+    /** 断开这个机器人的会话连接，通知手机并持久化。 */
+    fun disconnect(
+        project: Project,
+        robotId: String,
+    ) {
+        val hub = BridgeHub.getInstance()
+        val binding = hub.bindings.unbind(RobotId(robotId)) ?: return
+        RobotManager.getInstance().syncBindings()
+        val title = BridgeLifecycle.sessionTitle(binding)
+        hub.launch { hub.router.onReleased(binding, title) }
+        BridgeNotifications.info(project, ImuxBundle.message("bridge.notify.disconnected", title))
+    }
+}
+
+internal class BindRobotAction(
+    private val robotId: String,
+    label: String,
+    private val selectable: Boolean,
+) : DumbAwareAction(label) {
+    override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+    override fun update(e: AnActionEvent) {
+        e.presentation.isEnabled = selectable
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val file = terminalFile(e) ?: return
+        PhoneOperations.bind(project, file, robotId)
+    }
 }
 
 internal class DisconnectPhoneAction(private val robotId: String) : DumbAwareAction(ImuxBundle.message("bridge.action.disconnect")) {
@@ -93,12 +117,7 @@ internal class DisconnectPhoneAction(private val robotId: String) : DumbAwareAct
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val hub = BridgeHub.getInstance()
-        val binding = hub.bindings.unbind(RobotId(robotId)) ?: return
-        RobotManager.getInstance().syncBindings()
-        val title = BridgeLifecycle.sessionTitle(binding)
-        hub.launch { hub.router.onReleased(binding, title) }
-        BridgeNotifications.info(project, ImuxBundle.message("bridge.notify.disconnected", title))
+        PhoneOperations.disconnect(project, robotId)
     }
 }
 

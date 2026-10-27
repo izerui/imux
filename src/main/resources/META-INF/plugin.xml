@@ -161,6 +161,10 @@
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
     </extensions>
 
+    <extensions defaultExtensionNs="com.github.izerui.imux">
+        <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
+    </extensions>
+
     <actions>
         <group
                 id="imux.ProjectNewAgent"
