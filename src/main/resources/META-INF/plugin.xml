@@ -61,6 +61,14 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
 
+    <!-- 会话装饰：其它功能给终端标签、会话树、终端顶部加的标记与横幅。现有代码只认这个接口。 -->
+    <extensionPoints>
+        <extensionPoint
+                qualifiedName="com.github.izerui.imux.sessionDecorator"
+                interface="com.github.izerui.imux.terminal.SessionDecorator"
+                dynamic="true"/>
+    </extensionPoints>
+
     <extensions defaultExtensionNs="com.intellij">
         <applicationConfigurable
                 parentId="tools"
