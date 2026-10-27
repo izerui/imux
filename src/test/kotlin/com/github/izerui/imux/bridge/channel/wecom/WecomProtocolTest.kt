@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.channel.wecom
 
+import com.github.izerui.imux.bridge.core.AttachmentKind
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -98,5 +99,33 @@ class WecomProtocolTest {
     @Test
     fun `errcode 为非数字字符串返回 Unknown`() {
         assertEquals(WecomFrame.Unknown, WecomProtocol.parse("""{"headers":{"req_id":"r1"},"errcode":"oops","errmsg":"ok"}"""))
+    }
+
+    @Test
+    fun `解析图片、文件、视频与图文混排中的媒体引用`() {
+        fun body(json: String) = """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"m","chattype":"single","from":{"userid":"u"},$json}}"""
+        val image = WecomProtocol.parse(body(""""msgtype":"image","image":{"url":"https://i","aeskey":"k1"}""")) as WecomFrame.Message
+        assertEquals(listOf(WecomMediaRef(AttachmentKind.IMAGE, "https://i", "k1")), image.media)
+        assertNull(image.text)
+        val file = WecomProtocol.parse(body(""""msgtype":"file","file":{"url":"https://f","aeskey":"k2"}""")) as WecomFrame.Message
+        assertEquals(listOf(WecomMediaRef(AttachmentKind.FILE, "https://f", "k2")), file.media)
+        val video = WecomProtocol.parse(body(""""msgtype":"video","video":{"url":"https://v","aeskey":"k3"}""")) as WecomFrame.Message
+        assertEquals(listOf(WecomMediaRef(AttachmentKind.VIDEO, "https://v", "k3")), video.media)
+        val mixed =
+            WecomProtocol.parse(
+                body(""""msgtype":"mixed","mixed":{"msg_item":[{"msgtype":"text","text":{"content":"看"}},{"msgtype":"image","image":{"url":"https://a","aeskey":"ka"}},{"msgtype":"image","image":{"url":"https://b","aeskey":"kb"}}]}"""),
+            ) as WecomFrame.Message
+        assertEquals("看", mixed.text)
+        assertEquals(listOf(WecomMediaRef(AttachmentKind.IMAGE, "https://a", "ka"), WecomMediaRef(AttachmentKind.IMAGE, "https://b", "kb")), mixed.media)
+    }
+
+    @Test
+    fun `缺 url 或 aeskey 的媒体与兼容来源消息不产生媒体引用`() {
+        fun body(json: String) = """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"m","chattype":"single","from":{"userid":"u"},$json}}"""
+        assertEquals(emptyList<WecomMediaRef>(), (WecomProtocol.parse(body(""""msgtype":"image","image":{"url":"https://i"}""")) as WecomFrame.Message).media)
+        assertEquals(
+            emptyList<WecomMediaRef>(),
+            (WecomProtocol.parse(body(""""msgtype":"image","image":{"url":"https://i","aeskey":"k"},"compat_info":{"source":"x"}""")) as WecomFrame.Message).media,
+        )
     }
 }

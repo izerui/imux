@@ -1,5 +1,7 @@
 package com.github.izerui.imux.bridge.channel.wecom
 
+import com.github.izerui.imux.bridge.channel.HttpFileDownload
+import com.github.izerui.imux.bridge.channel.JdkHttpFileDownload
 import com.github.izerui.imux.bridge.channel.ChannelConnection
 import com.github.izerui.imux.bridge.channel.ConnectionListener
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
@@ -49,6 +51,7 @@ class WecomConnection(
     private val backoff: (Int) -> Long = ::wecomBackoffMillis,
     private val limiter: SlidingWindowLimiter = SlidingWindowLimiter(30, 60_000, now),
     private val maxRateWaitMillis: Long = 20_000,
+    private val download: HttpFileDownload = JdkHttpFileDownload(),
 ) : ChannelConnection {
     override val maxTextBytes: Int = 20_000
 
@@ -261,13 +264,15 @@ class WecomConnection(
         frame: WecomFrame.Message,
         sink: InboundSink,
     ) {
-        val text = frame.text ?: return
+        // 既没有文字也没有附件（兼容来源、缺字段等）才丢弃；附件在路由器确认本人、已绑定后才下载
+        if (frame.text == null && frame.media.isEmpty()) return
         if (!frame.single || frame.fromUserId.isEmpty() || frame.msgId.isEmpty()) return
         synchronized(seen) {
             if (!seen.add(frame.msgId)) return
             while (seen.size > SEEN_CAPACITY) seen.remove(seen.first())
         }
-        sink.accept(InboundMessage(robotId, frame.msgId, frame.fromUserId, frame.fromUserId, text))
+        val attachments = frame.media.map { WecomAttachment(it.kind, it.url, it.aesKey, download) }
+        sink.accept(InboundMessage(robotId, frame.msgId, frame.fromUserId, frame.fromUserId, frame.text.orEmpty(), attachments))
     }
 
     private companion object {

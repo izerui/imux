@@ -1,9 +1,17 @@
 package com.github.izerui.imux.bridge.channel.wecom
 
+import com.github.izerui.imux.bridge.core.AttachmentKind
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.util.Random
+
+/** 消息里的一个媒体：只记引用，下载与解密由 [WecomAttachment] 按需进行。 */
+data class WecomMediaRef(
+    val kind: AttachmentKind,
+    val url: String,
+    val aesKey: String,
+)
 
 sealed interface WecomFrame {
     data class Ack(
@@ -12,13 +20,14 @@ sealed interface WecomFrame {
         val errmsg: String?,
     ) : WecomFrame
 
-    /** [text] 为 null 表示没有可提交给终端的正文（图片、文件、兼容来源等）。 */
+    /** [text] 为 null 表示没有文字；[media] 为消息里的图片、文件、视频引用。 */
     data class Message(
         val reqId: String,
         val msgId: String,
         val single: Boolean,
         val fromUserId: String,
         val text: String?,
+        val media: List<WecomMediaRef> = emptyList(),
     ) : WecomFrame
 
     data object Kicked : WecomFrame
@@ -117,13 +126,40 @@ object WecomProtocol {
                     else -> null
                 }
             }
+        val media =
+            if (body.has("compat_info")) {
+                emptyList()
+            } else {
+                when (body.str("msgtype")) {
+                    "image" -> listOfNotNull(mediaRef(AttachmentKind.IMAGE, body.obj("image")))
+                    "file" -> listOfNotNull(mediaRef(AttachmentKind.FILE, body.obj("file")))
+                    "video" -> listOfNotNull(mediaRef(AttachmentKind.VIDEO, body.obj("video")))
+                    "mixed" ->
+                        body.obj("mixed")?.get("msg_item")?.takeIf(JsonElement::isJsonArray)?.asJsonArray
+                            ?.mapNotNull { item -> item.takeIf(JsonElement::isJsonObject)?.asJsonObject }
+                            ?.filter { it.str("msgtype") == "image" }
+                            ?.mapNotNull { mediaRef(AttachmentKind.IMAGE, it.obj("image")) }
+                            .orEmpty()
+                    else -> emptyList()
+                }
+            }
         return WecomFrame.Message(
             reqId = reqId,
             msgId = body.str("msgid").orEmpty(),
             single = body.str("chattype") == "single",
             fromUserId = body.obj("from")?.str("userid").orEmpty(),
             text = text,
+            media = media,
         )
+    }
+
+    private fun mediaRef(
+        kind: AttachmentKind,
+        obj: JsonObject?,
+    ): WecomMediaRef? {
+        val url = obj?.str("url")?.takeIf(String::isNotBlank) ?: return null
+        val aesKey = obj.str("aeskey")?.takeIf(String::isNotBlank) ?: return null
+        return WecomMediaRef(kind, url, aesKey)
     }
 
     private fun frame(

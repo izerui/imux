@@ -1,9 +1,12 @@
 package com.github.izerui.imux.bridge.channel.wecom
 
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
+import com.github.izerui.imux.bridge.channel.DownloadResult
 import com.github.izerui.imux.bridge.channel.FrameListener
 import com.github.izerui.imux.bridge.channel.FrameTransport
+import com.github.izerui.imux.bridge.channel.HttpFileDownload
 import com.github.izerui.imux.bridge.channel.SlidingWindowLimiter
+import com.github.izerui.imux.bridge.core.AttachmentKind
 import com.github.izerui.imux.bridge.core.DeliveryResult
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
@@ -85,6 +88,7 @@ class WecomConnectionTest {
         backoff = { 0L },
         limiter = limiter,
         maxRateWaitMillis = 50,
+        download = HttpFileDownload { _, _ -> DownloadResult.Failed("test") },
     )
 
     private fun startAndAwaitOnline(conn: WecomConnection) =
@@ -237,5 +241,16 @@ class WecomConnectionTest {
         assertEquals(1_000L, wecomBackoffMillis(1))
         assertEquals(2_000L, wecomBackoffMillis(2))
         assertEquals(30_000L, wecomBackoffMillis(10))
+    }
+
+    @Test
+    fun `只有附件的单聊消息也转交，附件按需取回`() {
+        startAndAwaitOnline(connection())
+        transports.first().emit(
+            """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"m9","chattype":"single","from":{"userid":"u1"},"msgtype":"image","image":{"url":"https://i","aeskey":"k"}}}""",
+        )
+        val message = received.single()
+        assertEquals("", message.text)
+        assertEquals(listOf(AttachmentKind.IMAGE), message.attachments.map { it.kind })
     }
 }
