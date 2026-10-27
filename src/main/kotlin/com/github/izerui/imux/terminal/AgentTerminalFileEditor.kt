@@ -285,6 +285,14 @@ class AgentTerminalFileEditor(
         }
         refreshPeerBanner()
 
+        // 会话装饰变化（例如连上或断开手机）时，让平台重新取本标签的图标。
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            SessionDecorationsListener.TOPIC,
+            SessionDecorationsListener {
+                if (!disposed && !project.isDisposed) FileEditorManager.getInstance(project).updateFilePresentation(virtualFile)
+            },
+        )
+
         // 终端输出在应用后台仍会为每次光标变化排 EDT 滚动任务。激活时先同步到
         // 最新位置，随后积压任务因不能向上回滚而全部成为 no-op，避免逐次追到底部。
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(
