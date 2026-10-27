@@ -3,17 +3,22 @@ package com.github.izerui.imux.bridge.channel
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
+import java.io.InputStream
 import java.net.URI
 import java.net.URLDecoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.net.http.WebSocket
 import java.nio.file.Files
 import java.nio.file.Path
@@ -138,7 +143,10 @@ fun interface HttpFileDownload {
     ): DownloadResult
 }
 
-/** 不显式设代理：JDK 走默认 ProxySelector，IDE 中即 IDE 的代理设置。 */
+/**
+ * 不显式设代理：JDK 走默认 ProxySelector，IDE 中即 IDE 的代理设置。
+ * [timeout] 限制整次下载（响应头加正文）；超时返回 `Failed("timeout")`，调用方的取消照常抛出。
+ */
 class JdkHttpFileDownload(
     private val client: HttpClient =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).followRedirects(HttpClient.Redirect.NORMAL).build(),
@@ -151,60 +159,82 @@ class JdkHttpFileDownload(
         maxBytes: Long,
     ): DownloadResult =
         withContext(Dispatchers.IO) {
-            val response =
-                try {
-                    val request = HttpRequest.newBuilder(URI(url)).timeout(timeout).GET().build()
-                    client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()).await()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    return@withContext DownloadResult.Failed(e.javaClass.simpleName)
-                }
-            response.body().use { input ->
-                if (response.statusCode() !in 200..299) return@withContext DownloadResult.Failed("HTTP ${response.statusCode()}")
-                if (response.headers().firstValueAsLong("Content-Length").orElse(-1) > maxBytes) return@withContext DownloadResult.TooLarge
-                val file = if (tempDir != null) Files.createTempFile(tempDir, "imux-", ".part") else Files.createTempFile("imux-", ".part")
-                try {
-                    var total = 0L
-                    var tooLarge = false
-                    Files.newOutputStream(file).use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            ensureActive()
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            total += read
-                            if (total > maxBytes) {
-                                tooLarge = true
-                                break
-                            }
-                            output.write(buffer, 0, read)
-                        }
-                    }
-                    if (tooLarge) {
-                        Files.deleteIfExists(file)
-                        return@withContext DownloadResult.TooLarge
-                    }
-                    DownloadResult.Ok(file, contentDispositionFileName(response.headers().firstValue("Content-Disposition").orElse(null)))
-                } catch (e: CancellationException) {
-                    Files.deleteIfExists(file)
-                    throw e
-                } catch (e: IOException) {
-                    Files.deleteIfExists(file)
-                    DownloadResult.Failed(e.javaClass.simpleName)
-                }
+            // 只有本层的超时会得到 null；外层取消照常以 CancellationException 抛出
+            withTimeoutOrNull(timeout.toMillis()) { fetch(url, maxBytes) } ?: DownloadResult.Failed("timeout")
+        }
+
+    private suspend fun fetch(
+        url: String,
+        maxBytes: Long,
+    ): DownloadResult {
+        val response =
+            try {
+                val request = HttpRequest.newBuilder(URI(url)).timeout(timeout).GET().build()
+                client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()).await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return failure(e)
             }
+        return response.body().use { input ->
+            if (response.statusCode() !in 200..299) return DownloadResult.Failed("HTTP ${response.statusCode()}")
+            if (response.headers().firstValueAsLong("Content-Length").orElse(-1) > maxBytes) return DownloadResult.TooLarge
+            var file: Path? = null
+            var kept = false
+            try {
+                val part = if (tempDir != null) Files.createTempFile(tempDir, "imux-", ".part") else Files.createTempFile("imux-", ".part")
+                file = part
+                // 阻塞的 read 不响应协程取消：runInterruptible 在取消时中断读线程，read 随即以 IOException 返回
+                val withinLimit = runInterruptible { copyAtMost(input, part, maxBytes) }
+                if (!withinLimit) return DownloadResult.TooLarge
+                kept = true
+                DownloadResult.Ok(part, contentDispositionFileName(response.headers().firstValue("Content-Disposition").orElse(null)))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IOException) {
+                // 因取消被中断时按取消处理，不当作下载失败
+                currentCoroutineContext().ensureActive()
+                failure(e)
+            } finally {
+                if (!kept) file?.let { runCatching { Files.deleteIfExists(it) } }
+            }
+        }
+    }
+
+    /** 请求级超时（只管等响应头）与整体超时一样报 "timeout"。 */
+    private fun failure(e: Exception): DownloadResult.Failed =
+        DownloadResult.Failed(if (e is HttpTimeoutException) "timeout" else e.javaClass.simpleName)
+
+    /** 把正文写入 [file]；超过 [maxBytes] 时停止并返回 false。 */
+    private fun copyAtMost(
+        input: InputStream,
+        file: Path,
+        maxBytes: Long,
+    ): Boolean =
+        Files.newOutputStream(file).use { output ->
+            val buffer = ByteArray(64 * 1024)
+            var total = 0L
+            var read = input.read(buffer)
+            while (read >= 0) {
+                total += read
+                if (total > maxBytes) return@use false
+                output.write(buffer, 0, read)
+                read = input.read(buffer)
+            }
+            true
         }
 }
 
-/** 取 Content-Disposition 里的文件名：优先 RFC 5987 的 `filename*=charset''百分号编码`，其次 `filename=`。 */
+/** 取 Content-Disposition 里的文件名：优先 RFC 5987 的 `filename*=charset'语言'百分号编码`，其次 `filename=`。 */
 fun contentDispositionFileName(header: String?): String? {
     if (header == null) return null
     val parts = header.split(';').map(String::trim)
     parts.firstOrNull { it.startsWith("filename*=", ignoreCase = true) }?.let { part ->
         val value = part.substringAfter('=').trim().removeSurrounding("\"")
-        val charset = value.substringBefore("''", "UTF-8").ifEmpty { "UTF-8" }
-        val encoded = value.substringAfter("''", value)
+        // charset'lang'value：按前两个单引号切分，语言标签可为空
+        val quoted = value.split('\'', limit = 3)
+        val charset = if (quoted.size == 3) quoted[0].ifEmpty { "UTF-8" } else "UTF-8"
+        val encoded = if (quoted.size == 3) quoted[2] else value
         runCatching { URLDecoder.decode(encoded.replace("+", "%2B"), charset) }.getOrNull()?.takeIf(String::isNotBlank)?.let { return it }
     }
     return parts.firstOrNull { it.startsWith("filename=", ignoreCase = true) }
