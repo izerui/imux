@@ -6,18 +6,22 @@ import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.robot.RobotManager
+import com.github.izerui.imux.terminal.BannerColors
+import com.github.izerui.imux.terminal.StatusDotIcon
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.ui.Messages
+import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.table.JBTable
 import kotlinx.coroutines.launch
+import javax.swing.JTable
 import javax.swing.Timer
 import javax.swing.table.AbstractTableModel
 
@@ -33,6 +37,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             JBTable(model).apply {
                 setShowGrid(false)
                 emptyText.text = ImuxBundle.message("bridge.settings.empty")
+                columnModel.getColumn(STATUS_COLUMN).cellRenderer = StatusRenderer()
             }.also { this.table = it }
         val decorated =
             ToolbarDecorator.createDecorator(table)
@@ -162,6 +167,26 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         refresh()
     }
 
+    /** 状态列前加圆点，与横幅、原型一致。 */
+    private inner class StatusRenderer : ColoredTableCellRenderer() {
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            icon =
+                when (model.rows.getOrNull(row)?.tone) {
+                    RowTone.OK -> StatusDotIcon(BannerColors.ONLINE)
+                    RowTone.ATTENTION -> StatusDotIcon(BannerColors.PROBLEM)
+                    else -> null
+                }
+            append(value?.toString().orEmpty())
+        }
+    }
+
     private class RobotTableModel : AbstractTableModel() {
         var rows: List<RobotRow> = emptyList()
             set(value) {
@@ -201,3 +226,6 @@ internal fun sameRobotsInOrder(
     before: List<RobotRow>,
     after: List<RobotRow>,
 ): Boolean = before.map { it.id } == after.map { it.id }
+
+/** 表格列顺序：机器人、渠道、状态、当前连接的会话。 */
+private const val STATUS_COLUMN = 2

@@ -18,7 +18,8 @@ class RobotRowsTest {
             override fun status(
                 status: ConnectionStatus?,
                 paired: Boolean,
-            ) = if (!paired) "pairing" else (status?.toString() ?: "none")
+                bound: Boolean,
+            ) = if (!paired) "pairing" else (status?.toString() ?: "none") + if (bound) "+bound" else ""
         }
 
     @Test
@@ -39,11 +40,22 @@ class RobotRowsTest {
             )
         assertEquals(
             listOf(
-                RobotRow("a", "开发助手 1", "wecom", "Online", "修复终端滚动"),
-                RobotRow("b", "开发助手 2", "wecom", "pairing", null),
+                RobotRow("a", "开发助手 1", "wecom", "Online+bound", "修复终端滚动", RowTone.OK),
+                RobotRow("b", "开发助手 2", "wecom", "pairing", null, RowTone.NONE),
             ),
             rows,
         )
+    }
+
+    @Test
+    fun `状态圆点：在线且已配对为绿点，待配对、连接中、失败、被接管为黄点，已停止或未连接不画`() {
+        assertEquals(RowTone.OK, rowTone(ConnectionStatus.Online, paired = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Online, paired = false))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Connecting, paired = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Failed("x"), paired = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Kicked, paired = true))
+        assertEquals(RowTone.NONE, rowTone(ConnectionStatus.Stopped, paired = true))
+        assertEquals(RowTone.NONE, rowTone(null, paired = true))
     }
 
     @Test

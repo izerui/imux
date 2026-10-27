@@ -6,12 +6,16 @@ import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.robot.ChannelKind
 import com.github.izerui.imux.bridge.robot.RobotRecord
 
+/** 状态列圆点：绿点表示可用，黄点表示需要处理（待配对、连接中、失败、被接管），已停止不画。 */
+enum class RowTone { OK, ATTENTION, NONE }
+
 data class RobotRow(
     val id: String,
     val name: String,
     val channel: String,
     val status: String,
     val session: String?,
+    val tone: RowTone = RowTone.NONE,
 )
 
 interface RowLabels {
@@ -20,8 +24,19 @@ interface RowLabels {
     fun status(
         status: ConnectionStatus?,
         paired: Boolean,
+        bound: Boolean,
     ): String
 }
+
+fun rowTone(
+    status: ConnectionStatus?,
+    paired: Boolean,
+): RowTone =
+    when {
+        status == ConnectionStatus.Online && paired -> RowTone.OK
+        status == null || status == ConnectionStatus.Stopped -> RowTone.NONE
+        else -> RowTone.ATTENTION
+    }
 
 fun robotRows(
     robots: List<RobotRecord>,
@@ -31,12 +46,16 @@ fun robotRows(
     labels: RowLabels,
 ): List<RobotRow> =
     robots.map { robot ->
+        val status = statusOf(robot.id)
+        val paired = robot.owner() != null
+        val binding = bindingOf(robot.id)
         RobotRow(
             id = robot.id,
             name = robot.name,
             channel = labels.channel(robot.kind),
-            status = labels.status(statusOf(robot.id), paired = robot.owner() != null),
-            session = bindingOf(robot.id)?.let(titleOf),
+            status = labels.status(status, paired, bound = binding != null),
+            session = binding?.let(titleOf),
+            tone = rowTone(status, paired),
         )
     }
 
@@ -59,8 +78,14 @@ fun statusLabel(
 object BundleRowLabels : RowLabels {
     override fun channel(kind: ChannelKind) = channelLabel(kind)
 
+    // 列表比横幅多区分“在线 · 空闲”与“已连接会话”（原型的状态列）
     override fun status(
         status: ConnectionStatus?,
         paired: Boolean,
-    ) = statusLabel(status, paired)
+        bound: Boolean,
+    ) = when {
+        status == ConnectionStatus.Online && paired && bound -> ImuxBundle.message("bridge.robot.status.bound")
+        status == ConnectionStatus.Online && paired -> ImuxBundle.message("bridge.robot.status.idle")
+        else -> statusLabel(status, paired)
+    }
 }

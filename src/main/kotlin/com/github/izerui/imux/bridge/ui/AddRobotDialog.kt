@@ -14,17 +14,26 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.github.izerui.imux.terminal.BannerColors
+import com.github.izerui.imux.terminal.StatusDotIcon
+import com.intellij.openapi.util.text.StringUtil
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.dsl.builder.AlignY
+import com.intellij.ui.dsl.builder.Row
+import com.intellij.ui.dsl.builder.RowLayout
+import com.intellij.ui.dsl.builder.TopGap
+import com.intellij.ui.dsl.builder.panel
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.GridBagLayout
 import java.awt.Font
-import javax.swing.BoxLayout
-import javax.swing.ButtonGroup
 import javax.swing.ImageIcon
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -53,7 +62,7 @@ internal fun pairWait(
     }
 
 /**
- * 添加机器人：选渠道 → 扫码 →（需要时）配对 → 完成。
+ * 添加机器人：选渠道 → 扫码 →（需要时）配对，配对成功留在配对页显示完成态。
  * 传入 [pairRobotId] 时直接进入配对卡片，为已保存但未认主的机器人重新配对。
  * 网络与轮询在 RobotManager 的协程里进行，界面状态经 invokeLater(ModalityState.any()) 刷新。
  */
@@ -64,17 +73,27 @@ class AddRobotDialog(
     private val manager = RobotManager.getInstance()
     private val cards = CardLayout()
     private val root = JPanel(cards)
-    private val radios = ChannelKind.entries.associateWith { JBRadioButton(label(it)) }
+    private val radios = mutableMapOf<ChannelKind, JBRadioButton>()
     private val qrLabel = JBLabel()
+    private val qrTitle = JBLabel().apply { font = JBFont.label().asBold() }
+    private val qrSteps = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     private val qrStatus = JBLabel()
     private val enabledHint = JBLabel()
     private val verifyField = JBTextField(8)
     private val verifyButton = JButton(ImuxBundle.message("bridge.add.verifyCode.submit"))
     private val verifyPanel = JPanel()
     private val retryButton = JButton(ImuxBundle.message("bridge.add.retry"))
+    private val pairTitle = JBLabel().apply { font = JBFont.label().asBold() }
     private val pairCode = JBLabel()
     private val pairInstruction = JBLabel()
     private val pairStatus = JBLabel()
+
+    /** 当前配对码，配对成功后划掉显示；扫码即认主的渠道没有配对码。 */
+    private var shownCode = ""
+    private var paired = false
+
+    // 配对说明、配对码、有效期说明、重新生成按钮；扫码即认主时完成页只留标题与状态
+    private lateinit var codeRows: List<Row>
     private val renewButton = JButton(ImuxBundle.message("bridge.add.pair.renew"))
     private var job: Job? = null
     private var driver: OnboardingDriver? = null
@@ -87,7 +106,7 @@ class AddRobotDialog(
     @Volatile
     private var shownPairWait: PairWait? = null
 
-    private enum class Card { CHANNEL, QR, PAIR, DONE }
+    private enum class Card { CHANNEL, QR, PAIR }
 
     init {
         title = ImuxBundle.message("bridge.add.title")
@@ -97,15 +116,22 @@ class AddRobotDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val group = ButtonGroup()
+        // 版式与文案对齐 docs/prototypes/terminal-channel-bridge.html 的“添加机器人 / 扫码 / 配对”三页
         val channelPanel =
-            JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                add(JBLabel(ImuxBundle.message("bridge.add.pickChannel")))
-                radios.forEach { (kind, radio) ->
-                    radio.isEnabled = ChannelFactories.forKind(kind) != null
-                    group.add(radio)
-                    add(radio)
+            panel {
+                row { label(ImuxBundle.message("bridge.add.title")).bold() }
+                row { comment(ImuxBundle.message("bridge.add.subtitle")) }
+                buttonsGroup {
+                    ChannelKind.entries.chunked(2).forEach { kinds ->
+                        row {
+                            kinds.forEach { kind ->
+                                radioButton(label(kind))
+                                    .comment(ImuxBundle.message("bridge.channel.${kind.id}.desc"))
+                                    .enabled(ChannelFactories.forKind(kind) != null)
+                                    .applyToComponent { radios[kind] = this }
+                            }
+                        }.layout(RowLayout.PARENT_GRID).topGap(TopGap.SMALL)
+                    }
                 }
             }
         radios.getValue(ChannelKind.WECOM).isSelected = true
@@ -120,38 +146,38 @@ class AddRobotDialog(
         retryButton.addActionListener { startScan() }
         retryButton.isVisible = false
         val qrPanel =
-            JPanel(BorderLayout(JBUI.scale(16), 0)).apply {
-                add(qrLabel, BorderLayout.WEST)
-                add(
-                    JPanel().apply {
-                        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                        add(enabledHint)
-                        add(qrStatus)
-                        add(verifyPanel)
-                        add(retryButton)
-                    },
-                    BorderLayout.CENTER,
-                )
+            panel {
+                row {
+                    cell(qrLabel).align(AlignY.TOP)
+                    panel {
+                        row { cell(qrTitle) }
+                        row { cell(qrSteps) }
+                        row { cell(qrStatus) }.topGap(TopGap.SMALL)
+                        row { cell(enabledHint) }
+                        row { cell(verifyPanel) }
+                        row { cell(retryButton) }
+                    }.align(AlignY.TOP)
+                }
             }
 
-        pairCode.font = pairCode.font.deriveFont(Font.BOLD, JBUI.scaleFontSize(32f).toFloat())
+        pairCode.font = JBFont.create(Font(Font.MONOSPACED, Font.BOLD, 30))
         renewButton.addActionListener { robotId?.let(::renew) }
         val pairPanel =
-            JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                add(JBLabel(ImuxBundle.message("bridge.add.pair.title")))
-                add(pairInstruction)
-                add(pairCode)
-                add(pairStatus)
-                add(renewButton)
+            panel {
+                row { cell(pairTitle) }
+                val instruction = row { cell(pairInstruction) }.topGap(TopGap.SMALL)
+                val code = row { cell(pairCode) }
+                val note = row { comment(ImuxBundle.message("bridge.add.pair.note")) }
+                row { cell(pairStatus) }.topGap(TopGap.SMALL)
+                val renew = row { cell(renewButton) }
+                codeRows = listOf(instruction, code, note, renew)
             }
-        val donePanel = JPanel().apply { add(JBLabel(ImuxBundle.message("bridge.add.pair.done"))) }
 
+        // 选渠道页按原样靠左上排；扫码、配对页内容居中
         root.add(channelPanel, Card.CHANNEL.name)
-        root.add(qrPanel, Card.QR.name)
-        root.add(pairPanel, Card.PAIR.name)
-        root.add(donePanel, Card.DONE.name)
-        root.preferredSize = JBUI.size(520, 300)
+        root.add(centered(qrPanel), Card.QR.name)
+        root.add(centered(pairPanel), Card.PAIR.name)
+        root.preferredSize = JBUI.size(560, 320)
         return root
     }
 
@@ -165,8 +191,8 @@ class AddRobotDialog(
                 isOKActionEnabled = false
                 startScan()
             }
-            Card.DONE -> super.doOKAction()
-            else -> Unit
+            Card.PAIR -> if (paired) super.doOKAction()
+            Card.QR -> Unit
         }
     }
 
@@ -178,6 +204,8 @@ class AddRobotDialog(
     private fun startScan() {
         job?.cancel()
         qrLabel.icon = null
+        qrTitle.text = ImuxBundle.message("bridge.add.scan", channelLabel(kind))
+        qrSteps.text = html(ImuxBundle.message("bridge.add.scan.steps", channelLabel(kind)))
         retryButton.isVisible = false
         verifyPanel.isVisible = false
         val factory = ChannelFactories.forKind(kind) ?: return
@@ -188,19 +216,19 @@ class AddRobotDialog(
 
     private fun render(state: DriverState) {
         when (state) {
-            DriverState.Starting -> qrStatus.text = ImuxBundle.message("bridge.add.scan.starting")
+            DriverState.Starting -> setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.starting"), BannerColors.PROBLEM)
             is DriverState.Qr -> {
                 qrLabel.icon = ImageIcon(qrImage(state.content, JBUI.scale(200)))
-                qrStatus.text = ImuxBundle.message("bridge.add.scan", label(kind)) + " · " + ImuxBundle.message("bridge.add.scan.waiting")
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.waiting"), BannerColors.PROBLEM)
             }
             DriverState.NeedVerifyCode -> verifyPanel.isVisible = true
             DriverState.TimedOut -> {
-                qrStatus.text = ImuxBundle.message("bridge.add.scan.timeout")
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.timeout"), BannerColors.PROBLEM)
                 retryButton.isVisible = true
             }
             is DriverState.Error -> {
                 val reason = if (state.detail != null) ImuxBundle.message(state.messageKey, state.detail) else ImuxBundle.message(state.messageKey)
-                qrStatus.text = ImuxBundle.message("bridge.add.failed", reason)
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", reason), BannerColors.PROBLEM)
                 retryButton.isVisible = true
             }
             is DriverState.Done -> created(state.step)
@@ -214,13 +242,14 @@ class AddRobotDialog(
                 try {
                     val record = manager.add(kind, result.credentials, result.ownerId, name)
                     robotId = record.id
+                    ui { pairTitle.text = ImuxBundle.message("bridge.add.pair.created", record.name) }
                     if (record.owner() == null) ui { showPair(record.pairCode.orEmpty()) }
                     awaitPaired(record.id)
                 } catch (e: kotlin.coroutines.cancellation.CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     ui {
-                        qrStatus.text = ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName)
+                        setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName), BannerColors.PROBLEM)
                         retryButton.isVisible = true
                     }
                 }
@@ -233,6 +262,7 @@ class AddRobotDialog(
         kind = record.kind
         robotId = id
         isOKActionEnabled = false
+        pairTitle.text = ImuxBundle.message("bridge.add.pair.repair", record.name)
         if (record.owner() != null) {
             finish()
             return
@@ -277,8 +307,10 @@ class AddRobotDialog(
     }
 
     private fun showPair(code: String) {
-        pairInstruction.text = ImuxBundle.message("bridge.add.pair.instruction", label(kind))
-        pairCode.text = code.chunked(3).joinToString(" ")
+        shownCode = code
+        pairInstruction.text = ImuxBundle.message("bridge.add.pair.instruction", channelLabel(kind))
+        pairCode.text = spaced(code)
+        pairTitle.icon = StatusDotIcon(BannerColors.ONLINE)
         showPairState(PairWait.WAITING, null)
         show(Card.PAIR)
     }
@@ -289,19 +321,40 @@ class AddRobotDialog(
     ) {
         shownPairWait = wait
         pairCode.isEnabled = wait == PairWait.WAITING
-        pairStatus.text =
+        val text =
             when (wait) {
                 PairWait.INVALIDATED -> ImuxBundle.message("bridge.add.pair.invalidated")
                 PairWait.EXPIRED -> ImuxBundle.message("bridge.add.pair.expired")
                 PairWait.DISCONNECTED -> ImuxBundle.message("bridge.add.pair.disconnected", statusLabel(status, paired = false))
                 else -> ImuxBundle.message("bridge.add.pair.waiting")
             }
+        // 原型：等待与异常都是黄点
+        setStatus(pairStatus, text, BannerColors.PROBLEM)
     }
 
+    /** 配对成功：留在配对页，划掉配对码、绿点提示可以连接会话（原型的完成态）。 */
     private fun finish() {
-        show(Card.DONE)
+        paired = true
+        shownPairWait = PairWait.PAIRED
+        pairTitle.icon = StatusDotIcon(BannerColors.ONLINE)
+        // 扫码即认主的渠道没有配对码，只留标题与状态；重新生成按钮一律收起
+        codeRows.forEach { it.visible(shownCode.isNotEmpty()) }
+        codeRows.last().visible(false)
+        pairCode.isEnabled = false
+        pairCode.text = "<html><s>" + spaced(shownCode) + "</s></html>"
+        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), BannerColors.ONLINE)
+        show(Card.PAIR)
         setOKButtonText(CommonBundle.getOkButtonText())
         isOKActionEnabled = true
+    }
+
+    private fun setStatus(
+        label: JBLabel,
+        text: String,
+        color: JBColor,
+    ) {
+        label.icon = StatusDotIcon(color)
+        label.text = text
     }
 
     private fun ensureBridgeEnabled(): Boolean {
@@ -316,6 +369,15 @@ class AddRobotDialog(
         step = card
         cards.show(root, card.name)
     }
+
+    /** 内容作为一个整体在对话框里水平、垂直居中，不贴左上角留出大片空白。 */
+    private fun centered(content: JComponent): JComponent = JPanel(GridBagLayout()).apply { add(content) }
+
+    /** 原型里配对码逐位隔开，便于对照着在手机上输入。 */
+    private fun spaced(code: String): String = code.toList().joinToString(" ")
+
+    /** 多行说明用 HTML 换行；先转义，文案里的尖括号不会被当成标签。 */
+    private fun html(text: String): String = "<html>" + StringUtil.escapeXmlEntities(text).replace("\n", "<br>") + "</html>"
 
     private fun label(kind: ChannelKind): String =
         channelLabel(kind) + if (ChannelFactories.forKind(kind) == null) "（" + ImuxBundle.message("bridge.channel.later") + "）" else ""
