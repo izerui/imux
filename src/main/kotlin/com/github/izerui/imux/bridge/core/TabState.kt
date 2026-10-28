@@ -30,6 +30,39 @@ internal class TabState {
 
     private val remoteEchoes = ArrayDeque<String>()
 
+    /** 后台调用的说明，按工具调用 id；等结果给出任务 id 时取走。 */
+    private val launches = HashMap<String, String>()
+
+    /** 见过的后台任务的说明，按任务 id；续跑时沿用。 */
+    private val taskNames = HashMap<String, String>()
+
+    /** 还在运行的后台任务，按开始顺序。不随轮次清空：后台任务本来就跨轮运行。 */
+    private val running = LinkedHashSet<String>()
+
+    fun backgroundLaunched(
+        toolUseId: String,
+        description: String?,
+    ) {
+        if (!description.isNullOrBlank()) launches[toolUseId] = description
+    }
+
+    fun backgroundStarted(
+        taskId: String,
+        toolUseId: String?,
+        description: String?,
+    ) {
+        val name = toolUseId?.let { launches.remove(it) } ?: description?.takeIf { it.isNotBlank() }
+        if (name != null) taskNames[taskId] = name
+        running += taskId
+    }
+
+    fun backgroundEnded(taskId: String) {
+        running -= taskId
+    }
+
+    /** 还在运行的后台任务的说明；没有说明的记为 null，由调用方给个统称。 */
+    fun runningBackground(): List<String?> = running.map { taskNames[it] }
+
     /** 有人说话或注入消息开启了新一轮（也可能是轮次进行中插话）：没结算的过程说明丢弃。 */
     fun startTurn() {
         turn++

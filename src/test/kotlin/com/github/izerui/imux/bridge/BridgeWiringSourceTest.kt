@@ -59,7 +59,9 @@ class BridgeWiringSourceTest {
         assertTrue("信号到达时就同步记下读取边界，不等进协程", mark >= 0)
         assertTrue("再交给轮询器按边界结算（顺序由 TabPollerTest 验证）", launch > mark)
         val router = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgeRouter.kt")
-        assertTrue("完成入口只发待发结果", router.bodyAfter("suspend fun onTurnCompleted(tabId: String, turn: Long,)", '{').contains("sendReply(tabId, reply)"))
+        val onCompleted = router.bodyAfter("suspend fun onTurnCompleted(tabId: String, turn: Long,)", '{')
+        assertTrue("完成入口只发待发结果", onCompleted.contains("sendReply(tabId, tab(tabId) { takeReply() })"))
+        assertTrue("结算后还有后台任务时补一条提示", onCompleted.contains("sendBackgroundRunning(tabId)"))
         val ports = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgePorts.kt").normalized
         assertTrue("文案接口不再有完成通知", !ports.contains("fun completed("))
     }

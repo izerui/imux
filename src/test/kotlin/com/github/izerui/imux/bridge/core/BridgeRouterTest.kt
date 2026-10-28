@@ -63,6 +63,8 @@ class BridgeRouterTest {
 
         override fun transcriptRestarted() = "RESTARTED"
 
+        override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"
+
         override fun connected(
             project: String,
             agent: String,
@@ -251,6 +253,49 @@ class BridgeRouterTest {
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("电脑上补一句")))
             assertEquals(listOf("好的\n```\ncode\n```", "LOCAL:\n电脑上补一句"), sentTexts())
+        }
+
+    @Test
+    fun `一轮结束时还有后台任务：回复之后补一条；任务结束后的那一轮不再提示`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent.UserText("跑一下构建"),
+                    SessionEvent.BackgroundLaunched("t1", "完整构建"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.BackgroundStarted("b1", "t1"),
+                    SessionEvent.BackgroundStarted("a1", null, "评审子代理"),
+                    SessionEvent.AssistantText("构建已在后台运行"),
+                    SessionEvent.TurnEnded,
+                ),
+            )
+            // 构建结束：通知开启新一轮，助手回应
+            router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("b1"), SessionEvent.TurnStarted, SessionEvent.AssistantText("构建通过"), SessionEvent.TurnEnded))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("a1"), SessionEvent.TurnStarted, SessionEvent.AssistantText("评审完成")))
+            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
+            assertEquals(
+                listOf("LOCAL:\n跑一下构建", "构建已在后台运行", "BG(完整构建,评审子代理)", "构建通过", "BG(评审子代理)", "评审完成"),
+                sentTexts(),
+            )
+        }
+
+    @Test
+    fun `续跑的后台子代理沿用上次的说明`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent.BackgroundStarted("a1", null, "评审子代理"),
+                    SessionEvent.BackgroundEnded("a1"),
+                    SessionEvent.BackgroundStarted("a1", null),
+                    SessionEvent.AssistantText("已让它继续"),
+                    SessionEvent.TurnEnded,
+                ),
+            )
+            assertEquals(listOf("已让它继续", "BG(评审子代理)"), sentTexts())
         }
 
     @Test

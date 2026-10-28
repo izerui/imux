@@ -63,6 +63,8 @@ class TabPollerTest {
 
         override fun transcriptRestarted() = "RESTARTED"
 
+        override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"
+
         override fun connected(
             project: String,
             agent: String,
@@ -112,6 +114,17 @@ class TabPollerTest {
             bindings.bind(robot, SessionTarget("/p", "tab", AgentType.PI, "s1"))
             poller.poll("tab")
             sent.clear()
+        }
+
+    @Test
+    fun `结对审查开始：先结算发出本轮结论，再推审查开始，之后迟到的完成信号不重复发`() =
+        runBlocking {
+            start()
+            write(user("第一句"), assistant("第一轮结论"))
+            val mark = tails.mark("tab")
+            poller.afterTurn("tab", "审查中")
+            poller.completed("tab", mark)
+            assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "审查中"), sent)
         }
 
     @Test

@@ -25,6 +25,12 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun transcriptRestarted() = ImuxBundle.message("bridge.status.transcriptRestarted")
 
+    override fun backgroundRunning(tasks: List<String?>) =
+        ImuxBundle.message(
+            "bridge.status.backgroundRunning",
+            tasks.joinToString("\n") { "• " + (it ?: ImuxBundle.message("bridge.status.backgroundTask")) },
+        )
+
     override fun connected(
         project: String,
         agent: String,

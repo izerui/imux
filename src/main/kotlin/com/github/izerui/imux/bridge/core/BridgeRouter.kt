@@ -213,7 +213,13 @@ class BridgeRouter(
                 }
                 SessionEvent.ToolStarted -> tab(tabId) { toolStarted() }
                 SessionEvent.TurnStarted -> tab(tabId) { startTurn() }
-                SessionEvent.TurnEnded -> sendReply(tabId, tab(tabId) { endByMarker() })
+                SessionEvent.TurnEnded -> {
+                    sendReply(tabId, tab(tabId) { endByMarker() })
+                    sendBackgroundRunning(tabId)
+                }
+                is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
+                is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
+                is SessionEvent.BackgroundEnded -> tab(tabId) { backgroundEnded(event.taskId) }
             }
         }
         sendReply(tabId, tab(tabId) { takeIfSettled() })
@@ -230,8 +236,21 @@ class BridgeRouter(
         tabId: String,
         turn: Long,
     ) {
-        val reply = tab(tabId) { if (completeByIde(turn)) takeReply() else null }
-        sendReply(tabId, reply)
+        val completed = tab(tabId) { completeByIde(turn) }
+        if (!completed) return
+        sendReply(tabId, tab(tabId) { takeReply() })
+        sendBackgroundRunning(tabId)
+    }
+
+    /**
+     * 一轮结算后还有后台任务在运行：回复之后补一条，远程用户才知道这个会话还没真正做完。
+     * 任务结束时 CLI 会再开一轮回应它，那一轮的回复照常发出，所以结束不另行提示。
+     */
+    private suspend fun sendBackgroundRunning(tabId: String) {
+        val tasks = tab(tabId) { runningBackground() }
+        if (tasks.isEmpty()) return
+        val binding = bindings.bindingForTab(tabId) ?: return
+        send(binding, texts.backgroundRunning(tasks))
     }
 
     /** 发出本轮回复；换绑后旧绑定攒下的作废，不落到新目标的聊天里（切换空档漏消息可接受）。 */
@@ -251,6 +270,15 @@ class BridgeRouter(
         tabId: String,
         block: TabState.() -> T,
     ): T = synchronized(lock) { tabs.getOrPut(tabId) { TabState() }.block() }
+
+    /** 推一条状态（例如结对审查开始、结束）到绑定这个标签的手机。 */
+    suspend fun onStatus(
+        tabId: String,
+        text: String,
+    ) {
+        val binding = bindings.bindingForTab(tabId) ?: return
+        send(binding, text)
+    }
 
     suspend fun onWaiting(
         tabId: String,

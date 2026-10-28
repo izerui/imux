@@ -21,6 +21,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.view.TerminalView
@@ -33,6 +34,7 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.EventListener
+import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.atomic.AtomicInteger
@@ -64,6 +66,63 @@ data class PeerOutcome(
     /** 单次审查时用户填的审查要求；失败后「重试」要原样带上。持续结对时为 null。 */
     val instruction: String? = null,
 )
+
+/** 审查为什么在没有结果的情况下停了。 */
+enum class PeerStopReason {
+    /** 用户在 IDE 里取消了这一轮审查。 */
+    CANCELLED,
+
+    /** 用户停止了结对。 */
+    UNBOUND,
+
+    /** 主会话开始了新一轮（用户又发了消息），这一轮审查作废。 */
+    TURN_STARTED,
+
+    /** 自动审查已连续达到轮数上限，这一轮不再审查。 */
+    MAX_ROUNDS,
+
+    /** 审查结束了但没有结论能交出去（例如终端已关闭、意见没送到）。 */
+    INTERRUPTED,
+}
+
+/**
+ * 审查过程中对外报告的节点，供手机桥接告诉远程用户回复之后是否还有审查在进行、审查怎么结束的。
+ *
+ * 每个 [Started] 之后恰好跟一个 [Finished] 或 [Stopped]；[Stopped] 的 [PeerStopReason.MAX_ROUNDS] 没有对应的 [Started]。
+ * 都在 EDT 上发出；持续结对时 [Started] 与上限的 [Stopped] 在主会话的轮次完成信号之前发出。
+ */
+sealed interface PeerReviewEvent {
+    val sessionKey: String
+    val targetAgentType: AgentType
+
+    data class Started(
+        override val sessionKey: String,
+        override val targetAgentType: AgentType,
+        val round: Int,
+        val oneShot: Boolean,
+    ) : PeerReviewEvent
+
+    /** [feedback] 是意见原文（仅 FEEDBACK）；[autoInjected] 为 true 表示意见已作为新一轮发给主会话，否则只填进了输入框。 */
+    data class Finished(
+        override val sessionKey: String,
+        val outcome: PeerOutcome,
+        val feedback: String? = null,
+        val autoInjected: Boolean = false,
+    ) : PeerReviewEvent {
+        override val targetAgentType get() = outcome.targetAgentType
+    }
+
+    data class Stopped(
+        override val sessionKey: String,
+        override val targetAgentType: AgentType,
+        val reason: PeerStopReason,
+        val maxRounds: Int = 0,
+    ) : PeerReviewEvent
+}
+
+fun interface PeerReviewListener : EventListener {
+    fun reviewEvent(event: PeerReviewEvent)
+}
 
 internal data class PeerMcpConfig(
     val endpoint: IdeaMcpEndpoint?,
@@ -132,12 +191,20 @@ class PeerCoordinator internal constructor(
     private val oneShotSessions = ConcurrentHashMap<String, OneShotInfo>()
     private val outcomes = ConcurrentHashMap<String, PeerOutcome>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
+    private val reviewDispatcher = EventDispatcher.create(PeerReviewListener::class.java)
 
     fun addStateListener(
         parentDisposable: Disposable,
         listener: PeerStateListener,
     ) {
         stateDispatcher.addListener(listener, parentDisposable)
+    }
+
+    fun addReviewListener(
+        parentDisposable: Disposable,
+        listener: PeerReviewListener,
+    ) {
+        reviewDispatcher.addListener(listener, parentDisposable)
     }
 
     fun status(sessionKey: String): PeerStatus? =
@@ -176,9 +243,11 @@ class PeerCoordinator internal constructor(
     fun unbind(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
+        val target = bindings[sessionKey]?.targetAgentType
         val cancelledRun = unbindInner(sessionKey)
         outcomes.remove(sessionKey)
         cancelledRun?.killProcess()
+        announceStopped(sessionKey, target, cancelledRun, PeerStopReason.UNBOUND)
         LOG.info("结对编程：解绑 $sessionKey")
         notifyStateChanged(sessionKey)
     }
@@ -198,6 +267,7 @@ class PeerCoordinator internal constructor(
         val result = guard.tryStart(generation, { bindings[sessionKey]?.generation }) ?: return
         result.cancelled?.killProcess()
         LOG.info("结对编程：单次审查 sessionKey=$sessionKey agent=${targetAgentType.displayName}")
+        announce(PeerReviewEvent.Started(sessionKey, targetAgentType, round = (roundCounts[sessionKey]?.get() ?: 0) + 1, oneShot = true))
         launchReview(sessionKey, result.run, guard)
     }
 
@@ -238,10 +308,12 @@ class PeerCoordinator internal constructor(
         if (injectedRounds >= maxRounds) {
             guard.cancelAndDetach()?.killProcess()
             LOG.info("结对编程：已达安全上限 $maxRounds 轮，不再启动副驾驶 sessionKey=$sessionKey")
+            bindings[sessionKey]?.let { announce(PeerReviewEvent.Stopped(sessionKey, it.targetAgentType, PeerStopReason.MAX_ROUNDS, maxRounds)) }
             notifyStateChanged(sessionKey)
             return
         }
         LOG.info("结对编程：主会话轮次完成 sessionKey=$sessionKey")
+        bindings[sessionKey]?.let { announce(PeerReviewEvent.Started(sessionKey, it.targetAgentType, round = injectedRounds + 1, oneShot = false)) }
         launchReview(sessionKey, result.run, guard)
     }
 
@@ -257,6 +329,8 @@ class PeerCoordinator internal constructor(
                         if (runToKill != null && run.passed) {
                             passedSessions.add(sessionKey)
                         }
+                        // 没被取消、自己跑完却没有交出结论（意见没送到、提前退出）：也要告诉远程用户审查已经停了
+                        if (runToKill != null) announceStopped(sessionKey, bindings[sessionKey]?.targetAgentType, run, PeerStopReason.INTERRUPTED)
                         if (runToKill != null && oneShotSessions.remove(sessionKey) != null) {
                             if (run.passed) {
                                 try { (onOneShotPassed ?: ::notifyOneShotPassed).invoke() }
@@ -277,10 +351,12 @@ class PeerCoordinator internal constructor(
     fun cancelCurrentRun(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
+        val target = bindings[sessionKey]?.targetAgentType
         val wasOneShot = oneShotSessions.remove(sessionKey) != null
         roundCounts[sessionKey]?.set(0)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()
+        announceStopped(sessionKey, target, cancelledRun, PeerStopReason.CANCELLED)
         if (wasOneShot) {
             unbindInner(sessionKey)?.killProcess()
         }
@@ -291,9 +367,11 @@ class PeerCoordinator internal constructor(
     fun onTurnStarted(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed || !bindings.containsKey(sessionKey)) return
+        val target = bindings[sessionKey]?.targetAgentType
         if (oneShotSessions.remove(sessionKey) != null) {
             val cancelledRun = unbindInner(sessionKey)
             cancelledRun?.killProcess()
+            announceStopped(sessionKey, target, cancelledRun, PeerStopReason.TURN_STARTED)
             notifyStateChanged(sessionKey)
             return
         }
@@ -302,6 +380,7 @@ class PeerCoordinator internal constructor(
         passedSessions.remove(sessionKey)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()
+        announceStopped(sessionKey, target, cancelledRun, PeerStopReason.TURN_STARTED)
         notifyStateChanged(sessionKey)
     }
 
@@ -446,7 +525,7 @@ class PeerCoordinator internal constructor(
                     LOG.warn("结对编程：上下文溢出但对话已无法进一步缩减")
                     withContext(edt) {
                         val detail = error.message ?: error.javaClass.simpleName
-                        if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.FAILED, detail))
+                        if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FAILED, detail))
                         if (!project.isDisposed) notifyCliError(currentBinding, detail)
                     }
                     return
@@ -462,7 +541,7 @@ class PeerCoordinator internal constructor(
                 LOG.warn("结对编程：CLI 调用失败", error)
                 withContext(edt) {
                     val detail = error.message ?: error.javaClass.simpleName
-                    if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.FAILED, detail))
+                    if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FAILED, detail))
                     if (!project.isDisposed) notifyCliError(currentBinding, detail)
                 }
                 return
@@ -481,20 +560,21 @@ class PeerCoordinator internal constructor(
                 if (isExplicitPass) outcome(PeerOutcomeKind.PASSED)
                 else outcome(PeerOutcomeKind.FAILED, ImuxBundle.message("action.peer.notice.empty"))
             withContext(edt) {
-                if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, result)
+                if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, result)
             }
             return
         }
 
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
+            val autoInject = peerAutoInject()
             val delivered =
-                if (peerAutoInject()) {
+                if (autoInject) {
                     injectFeedback(mainSessionKey, feedback, run, guard)
                 } else {
                     stageFeedback(mainSessionKey, feedback)
                 }
-            if (delivered) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.FEEDBACK))
+            if (delivered) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)
         }
     }
 
@@ -509,10 +589,37 @@ class PeerCoordinator internal constructor(
 
     private fun recordOutcome(
         sessionKey: String,
+        run: PeerRun,
         outcome: PeerOutcome,
+        feedback: String? = null,
+        autoInjected: Boolean = false,
     ) {
         outcomes[sessionKey] = outcome
+        run.concluded = true
+        announce(PeerReviewEvent.Finished(sessionKey, outcome, feedback, autoInjected))
         notifyStateChanged(sessionKey)
+    }
+
+    /** [run] 是被停下的那一轮；它还没报告过结局时才报告，没有在途审查（null）就什么也不说。 */
+    private fun announceStopped(
+        sessionKey: String,
+        target: AgentType?,
+        run: PeerRun?,
+        reason: PeerStopReason,
+    ) {
+        if (run == null || run.concluded || target == null) return
+        run.concluded = true
+        announce(PeerReviewEvent.Stopped(sessionKey, target, reason))
+    }
+
+    private fun announce(event: PeerReviewEvent) {
+        if (disposed) return
+        try {
+            reviewDispatcher.multicaster.reviewEvent(event)
+        } catch (e: Exception) {
+            if (e is ControlFlowException || e is CancellationException) throw e
+            LOG.warn("结对编程：审查事件监听出错，已忽略", e)
+        }
     }
 
     private fun notifyStateChanged(sessionKey: String) {

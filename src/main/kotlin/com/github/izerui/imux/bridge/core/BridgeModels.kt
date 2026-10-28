@@ -83,6 +83,25 @@ sealed interface SessionEvent {
      * 与 IDE“本轮完成”是同一件事，但按记录顺序到达：即使与下一轮开头在同一次读取里，结论也先发出。
      */
     data object TurnEnded : SessionEvent
+
+    /** 助手发起了一个后台运行的工具调用（后台命令、后台子代理），[description] 是它的说明，等结果里给出任务 id。 */
+    data class BackgroundLaunched(
+        val toolUseId: String,
+        val description: String?,
+    ) : SessionEvent
+
+    /**
+     * 后台任务开始运行：后台调用的结果里给出了任务 id，或者一个已结束的后台子代理被续跑。
+     * [toolUseId] 对应 [BackgroundLaunched]，用来取说明；续跑时为 null，沿用这个任务上次的说明。
+     */
+    data class BackgroundStarted(
+        val taskId: String,
+        val toolUseId: String?,
+        val description: String? = null,
+    ) : SessionEvent
+
+    /** CLI 报告后台任务结束（完成、失败或被停止）。 */
+    data class BackgroundEnded(val taskId: String) : SessionEvent
 }
 
 enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }

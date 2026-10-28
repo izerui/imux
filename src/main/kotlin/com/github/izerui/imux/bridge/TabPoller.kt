@@ -51,6 +51,28 @@ internal class TabPoller(
         }
     }
 
+    /**
+     * 说的是主会话刚结束那一轮的状态（例如已达审查上限、不再审查）：先把这一轮的回复结算发出，再推状态，
+     * 手机上状态永远排在它所说的那条回复之后。这类状态只在主会话刚完成时发出，此刻读到的都属于这一轮。
+     */
+    suspend fun afterTurn(
+        tabId: String,
+        text: String,
+    ) = lock(tabId).withLock {
+        if (!enabled()) return@withLock
+        deliver(tabId, tails.read(tabId))
+        router.onTurnCompleted(tabId, router.currentTurn(tabId))
+        router.onStatus(tabId, text)
+    }
+
+    /** 与轮次无关的状态（审查结果、取消）：排在这个标签已在发送的内容之后。 */
+    suspend fun status(
+        tabId: String,
+        text: String,
+    ) = lock(tabId).withLock {
+        if (enabled()) router.onStatus(tabId, text)
+    }
+
     /** IDE 报告等待确认：先读出之前的内容，再推等待提示。 */
     suspend fun waiting(
         tabId: String,

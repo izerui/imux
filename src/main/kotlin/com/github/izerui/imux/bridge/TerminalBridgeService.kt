@@ -6,6 +6,7 @@ import com.github.izerui.imux.bridge.terminal.tabChangeFor
 import com.github.izerui.imux.bridge.transcript.SessionFile
 import com.github.izerui.imux.bridge.transcript.TailRegistry
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.peer.PeerReviewEvent
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.TurnEventsListener
 import com.intellij.openapi.Disposable
@@ -88,6 +89,7 @@ class TerminalBridgeService(
                 }
             },
         )
+        SessionMonitor.getInstance(project).peerCoordinator.addReviewListener(this) { event -> onPeerReview(event) }
         scope.launch(Dispatchers.IO) {
             while (isActive) {
                 val enabled = BridgeSettings.getInstance().state.enabled
@@ -114,6 +116,21 @@ class TerminalBridgeService(
         // 恢复的绑定可能指向 "restored:<sessionId>" 占位标签；如果会话标签已经打开，
         // 需要立即对账一次以触发 Reattach，否则直到下次标签变化才会挂接。
         ApplicationManager.getApplication().invokeLater({ if (!project.isDisposed) onSessionsChanged() }, ModalityState.any())
+    }
+
+    /**
+     * 开着结对时，把审查的开始与结局推给绑定这个标签的手机，远程用户看得到回复之后是不是还有审查在进行。
+     * 在 EDT 调用。持续结对的审查开始、到上限在主会话轮次完成信号之前发出，所以走 [TabPoller.afterTurn]，排在本轮回复之后。
+     */
+    private fun onPeerReview(event: PeerReviewEvent) {
+        if (!BridgeSettings.getInstance().state.enabled) return
+        val text = peerReviewText(event) ?: return
+        val tabId = tabIdOf(event.sessionKey) ?: return
+        if (hub.bindings.bindingForTab(tabId) == null) return
+        val followsTurn = event.followsTurn()
+        scope.launch(Dispatchers.IO) {
+            if (followsTurn) poller.afterTurn(tabId, text) else poller.status(tabId, text)
+        }
     }
 
     /** 在 EDT 调用（TerminalHost 的回调线程）。 */

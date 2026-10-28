@@ -199,4 +199,71 @@ class TranscriptDecodersTest {
         assertSame(CodexTranscriptDecoder, TranscriptDecoders.forAgent(AgentType.CODEX))
         assertSame(PiTranscriptDecoder, TranscriptDecoders.forAgent(AgentType.PI))
     }
+
+    @Test
+    fun `Claude 后台命令与后台子代理：发起、开始、续跑与结束通知`() {
+        val launch =
+            """{"type":"assistant","message":{"role":"assistant","content":[""" +
+                """{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pnpm build","description":"完整构建","run_in_background":true}}]}}"""
+        assertEquals(listOf(SessionEvent.BackgroundLaunched("t1", "完整构建"), SessionEvent.ToolStarted), ClaudeTranscriptDecoder.decode(launch))
+
+        val bash =
+            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b9"}]},""" +
+                """"toolUseResult":{"stdout":"","backgroundTaskId":"b9"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundStarted("b9", "t1", null)), ClaudeTranscriptDecoder.decode(bash))
+
+        val agent =
+            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":[]}]},""" +
+                """"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a7","description":"评审"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundStarted("a7", "t2", "评审")), ClaudeTranscriptDecoder.decode(agent))
+
+        val resumed =
+            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":[]}]},""" +
+                """"toolUseResult":{"success":true,"resumedAgentId":"a7"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundStarted("a7", null)), ClaudeTranscriptDecoder.decode(resumed))
+
+        val finishedAgent =
+            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"done"}]},""" +
+                """"toolUseResult":{"status":"completed","agentId":"a8"}}"""
+        assertTrue("同步跑完的子代理不算后台任务", ClaudeTranscriptDecoder.decode(finishedAgent).isEmpty())
+
+        val notification =
+            """{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":""" +
+                """"<task-notification>\n<task-id>b9</task-id>\n<status>completed</status>\n<summary>Background command done</summary>\n</task-notification>"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundEnded("b9")), ClaudeTranscriptDecoder.decode(notification))
+
+        val queued =
+            """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a7</task-id>\n<status>completed</status>\n</task-notification>"}"""
+        assertEquals(listOf(SessionEvent.BackgroundEnded("a7")), ClaudeTranscriptDecoder.decode(queued))
+
+        val waiting =
+            """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a7</task-id>\n<summary>Agent \"评审\" is waiting on its own background work</summary>\n</task-notification>"}"""
+        assertTrue("子代理还在等自己的后台工作，不算结束", ClaudeTranscriptDecoder.decode(waiting).isEmpty())
+    }
+
+    @Test
+    fun `Codex 子代理：spawn 开始，结束通知、wait 结果或 close 结束`() {
+        val spawn =
+            """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"agent_id\":\"ag1\",\"nickname\":\"Boyle\"}"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundStarted("ag1", null, "Boyle")), CodexTranscriptDecoder.decode(spawn))
+
+        val notification =
+            """{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text",""" +
+                """"text":"<subagent_notification>\n{\"agent_path\":\"ag1\",\"status\":{\"completed\":\"ok\"}}\n</subagent_notification>"}]}}"""
+        assertEquals(listOf(SessionEvent.BackgroundEnded("ag1")), CodexTranscriptDecoder.decode(notification))
+
+        val waited =
+            """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":"{\"status\":{\"ag2\":{\"errored\":\"429\"},\"ag3\":{\"running\":null}}}"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundEnded("ag2")), CodexTranscriptDecoder.decode(waited))
+
+        val timedOut = """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c3","output":"{\"status\":{},\"timed_out\":true}"}}"""
+        assertTrue(CodexTranscriptDecoder.decode(timedOut).isEmpty())
+
+        val close =
+            """{"type":"response_item","payload":{"type":"function_call","name":"close_agent","arguments":"{\"target\":\"ag4\"}","call_id":"c4"}}"""
+        assertEquals(listOf(SessionEvent.BackgroundEnded("ag4"), SessionEvent.ToolStarted), CodexTranscriptDecoder.decode(close))
+
+        val plainOutput = """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c5","output":"Process exited with code 0"}}"""
+        assertTrue("普通命令输出不产生事件", CodexTranscriptDecoder.decode(plainOutput).isEmpty())
+    }
 }

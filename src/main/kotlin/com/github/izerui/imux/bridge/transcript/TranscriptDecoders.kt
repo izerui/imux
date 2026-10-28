@@ -30,12 +30,14 @@ object TranscriptDecoders {
 object ClaudeTranscriptDecoder : TranscriptDecoder {
     override fun decode(line: String): List<SessionEvent> {
         val root = parseObject(line) ?: return emptyList()
+        // 后台任务在主会话忙时结束：通知先排进队列，这一刻任务已经结束
+        if (root.string("type") == "queue-operation") return listOfNotNull(root.string("content")?.let(::backgroundEnded))
         // 子代理、注入的元数据与压缩摘要都不是这条会话里人和助手说的话
         if (root.flag("isSidechain") || root.flag("isMeta") || root.flag("isCompactSummary")) return emptyList()
         val message = root.obj("message") ?: return emptyList()
         val content = message.get("content") ?: return emptyList()
         return when (message.string("role")) {
-            "user" -> userEvents(content, humanOrigin(root))
+            "user" -> backgroundStarted(root, content) + userEvents(content, humanOrigin(root))
             // 一条消息的各个块分行写入且都带 stop_reason；只在含正文的那一行标记结束，结论才在结束之前。
             // 除了还要调工具（tool_use、pause_turn），其余收尾都算本轮结束：end_turn 之外，
             // 输出超长截断、API 报错也会带着正文停下，漏标的话这一轮就没有结论发出
@@ -69,12 +71,40 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         }
     }
 
+    /**
+     * 后台调用的结果：后台命令给出 `backgroundTaskId`，后台子代理给出 `agentId`（状态 `async_launched`），
+     * 用 SendMessage 续跑已结束的子代理给出 `resumedAgentId`。
+     */
+    private fun backgroundStarted(
+        root: JsonObject,
+        content: JsonElement,
+    ): List<SessionEvent> {
+        val result = root.obj("toolUseResult") ?: return emptyList()
+        val toolUseId = blocks(content).firstOrNull { it.string("type") == "tool_result" }?.string("tool_use_id")
+        val taskId =
+            result.string("backgroundTaskId")
+                ?: result.string("agentId")?.takeIf { result.string("status") == "async_launched" }
+                ?: return listOfNotNull(result.string("resumedAgentId")?.let { SessionEvent.BackgroundStarted(it, null) })
+        return listOf(SessionEvent.BackgroundStarted(taskId, toolUseId, result.string("description")))
+    }
+
+    /**
+     * 后台任务的结束通知。子代理停下时自己的后台工作还在跑，通知里写明在等它们，之后还会再通知一次，这次不算结束。
+     */
+    private fun backgroundEnded(text: String): SessionEvent? {
+        if (!text.contains(TASK_NOTIFICATION)) return null
+        if (text.contains(WAITING_ON_CHILDREN)) return null
+        val taskId = TASK_ID.find(text)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return SessionEvent.BackgroundEnded(taskId)
+    }
+
     private fun userText(
         text: String,
         human: Boolean,
     ): SessionEvent? {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return null
+        if (!human) backgroundEnded(trimmed)?.let { return it }
         // 不是输入的（后台任务通知等）：不转发，但它们会开启新一轮
         if (!human) return SessionEvent.TurnStarted
         // 输入的斜杠命令记成 <command-name> 标记，转成原样的“/命令 参数”
@@ -89,17 +119,27 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
 
     private fun assistantEvents(content: JsonElement): List<SessionEvent> {
         if (content.isJsonPrimitive) return listOfNotNull(assistantText(content.asString))
-        return blocks(content).mapNotNull { block ->
+        return blocks(content).flatMap { block ->
             when (block.string("type")) {
-                "text" -> block.string("text")?.let(::assistantText)
-                "tool_use" -> SessionEvent.ToolStarted
-                else -> null
+                "text" -> listOfNotNull(block.string("text")?.let(::assistantText))
+                "tool_use" -> listOfNotNull(backgroundLaunched(block), SessionEvent.ToolStarted)
+                else -> emptyList()
             }
         }
     }
 
+    private fun backgroundLaunched(toolUse: JsonObject): SessionEvent? {
+        val input = toolUse.obj("input") ?: return null
+        if (!input.flag("run_in_background")) return null
+        val id = toolUse.string("id") ?: return null
+        return SessionEvent.BackgroundLaunched(id, input.string("description") ?: input.string("command")?.lineSequence()?.firstOrNull())
+    }
+
     // 与 SessionTitleRegenerator 中的私有常量同值；那边是标题逻辑的私有细节，不跨包引用
     private const val CLAUDE_INTERRUPTED_PREFIX = "[Request interrupted by user"
+    private const val TASK_NOTIFICATION = "<task-notification>"
+    private const val WAITING_ON_CHILDREN = "is waiting on its own background work"
+    private val TASK_ID = Regex("<task-id>([^<]*)</task-id>")
 }
 
 object CodexTranscriptDecoder : TranscriptDecoder {
@@ -113,10 +153,42 @@ object CodexTranscriptDecoder : TranscriptDecoder {
         // 漏认一种，它前面的过程说明就会混进最终回复
         return when {
             type == "message" -> messageEvents(payload)
+            type == "function_call" -> listOfNotNull(closedAgent(payload), SessionEvent.ToolStarted)
             type.endsWith("_call") -> listOf(SessionEvent.ToolStarted)
+            type == "function_call_output" -> agentOutput(payload)
             else -> emptyList()
         }
     }
+
+    /** 主会话用 close_agent 关掉了一个子代理。 */
+    private fun closedAgent(call: JsonObject): SessionEvent? {
+        if (call.string("name") != "close_agent") return null
+        val target = call.string("arguments")?.let(::parseObject)?.string("target") ?: return null
+        return SessionEvent.BackgroundEnded(target)
+    }
+
+    /**
+     * 子代理相关的工具结果：spawn_agent 返回 `{agent_id, nickname}`，子代理开始在后台运行；
+     * wait_agent 返回 `{status: {子代理 id: {completed|errored: …}}}`，列出的子代理已经结束。
+     */
+    private fun agentOutput(output: JsonObject): List<SessionEvent> {
+        val result = output.string("output")?.let(::parseObject) ?: return emptyList()
+        result.string("agent_id")?.let { return listOf(SessionEvent.BackgroundStarted(it, null, result.string("nickname"))) }
+        val status = result.obj("status") ?: return emptyList()
+        return status.entrySet().filter { (_, value) -> value.isJsonObject && value.asJsonObject.keySet().any { it in AGENT_FINISHED } }.map { SessionEvent.BackgroundEnded(it.key) }
+    }
+
+    /** 子代理结束时注入给主会话的通知：`<subagent_notification>{"agent_path": 子代理 id, "status": …}</subagent_notification>`。 */
+    private fun subagentEnded(payload: JsonObject): List<SessionEvent> =
+        blocks(payload.get("content")).mapNotNull { block ->
+            val text = block.string("text")?.trim() ?: return@mapNotNull null
+            if (!text.startsWith(SUBAGENT_NOTIFICATION)) return@mapNotNull null
+            val body = text.removePrefix(SUBAGENT_NOTIFICATION).substringBefore("</subagent_notification>").trim()
+            parseObject(body)?.string("agent_path")?.let(SessionEvent::BackgroundEnded)
+        }
+
+    private const val SUBAGENT_NOTIFICATION = "<subagent_notification>"
+    private val AGENT_FINISHED = setOf("completed", "errored", "shutdown")
 
     /**
      * 用户输入以 Codex 自己记的用户消息事件（item_completed 里的 UserMessage，0.146 起）为准。
@@ -153,10 +225,11 @@ object CodexTranscriptDecoder : TranscriptDecoder {
                         .joinToString("\n")
                 listOfNotNull(assistantText(text))
             }
+            // 用户消息只看子代理结束通知；输入以 item_completed 为准，见 eventMsg
+            "user" -> subagentEnded(payload)
             else -> emptyList()
         }
     }
-
 }
 
 object PiTranscriptDecoder : TranscriptDecoder {
