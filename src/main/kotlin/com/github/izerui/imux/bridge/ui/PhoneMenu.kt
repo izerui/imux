@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.robot.RobotRecord
 
@@ -28,12 +29,19 @@ interface MenuLabels {
 
     fun unpaired(name: String): String
 
+    /** 空闲但不在线（连接中、失败、被接管……）：如实写出状态，不标“空闲”。 */
+    fun offline(
+        name: String,
+        status: ConnectionStatus?,
+    ): String
+
     fun current(name: String): String
 }
 
 fun phoneMenuModel(
     robots: List<RobotRecord>,
     bindingOf: (String) -> Binding?,
+    statusOf: (String) -> ConnectionStatus?,
     thisTabId: String,
     titleOf: (Binding) -> String,
     labels: MenuLabels,
@@ -50,6 +58,8 @@ fun phoneMenuModel(
                     PhoneMenuEntry.Robot(robot.id, labels.current(robot.name), false)
                 }
                 binding != null -> PhoneMenuEntry.Robot(robot.id, labels.bound(robot.name, titleOf(binding)), true)
+                // 不在线也可以先连上，恢复在线后自动收发；只是不能谎称“空闲”
+                statusOf(robot.id) != ConnectionStatus.Online -> PhoneMenuEntry.Robot(robot.id, labels.offline(robot.name, statusOf(robot.id)), true)
                 else -> PhoneMenuEntry.Robot(robot.id, labels.idle(robot.name), true)
             }
     }
@@ -68,6 +78,11 @@ object BundleMenuLabels : MenuLabels {
     ) = ImuxBundle.message("bridge.action.robot.bound", name, session)
 
     override fun unpaired(name: String) = ImuxBundle.message("bridge.action.robot.unpaired", name)
+
+    override fun offline(
+        name: String,
+        status: ConnectionStatus?,
+    ) = ImuxBundle.message("bridge.action.robot.status", name, statusLabel(status, paired = true))
 
     override fun current(name: String) = ImuxBundle.message("bridge.action.robot.current", name)
 }

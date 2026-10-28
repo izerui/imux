@@ -56,4 +56,11 @@ class TailStartPolicyTest {
     fun `绑定尚无会话时不复用`() {
         assertFalse(reuseTail(entryEpoch = 3, entrySessionId = "s1", bindingEpoch = 3, bindingSessionId = null))
     }
+
+    @Test
+    fun `复制历史的截止时间取创建与迁移中较早者，再留 2 秒余量`() {
+        org.junit.Assert.assertEquals(now.minusSeconds(32), copiedHistoryBefore(createdAt = now.minusSeconds(30), migratedAt = now))
+        // 不支持创建时间的文件系统退回修改时间，可能晚于迁移：以迁移时间为准
+        org.junit.Assert.assertEquals(now.minusSeconds(2), copiedHistoryBefore(createdAt = now.plusSeconds(90), migratedAt = now))
+    }
 }

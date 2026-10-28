@@ -5,6 +5,7 @@ import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.bridge.terminal.TabChange
 import com.github.izerui.imux.bridge.terminal.tabChangeFor
 import com.github.izerui.imux.bridge.transcript.TranscriptDecoders
+import com.github.izerui.imux.bridge.transcript.TailPoll
 import com.github.izerui.imux.bridge.transcript.TranscriptTail
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.TerminalHost
@@ -49,9 +50,15 @@ class TerminalBridgeService(
     private val projectPath = project.basePath ?: System.getProperty("user.home")
     private val hub get() = BridgeHub.getInstance()
     private val tails = ConcurrentHashMap<String, TailEntry>()
+    // 读取（尾随器、开关代次、迁移记录）共用一把锁，只做本地读文件；发往手机按标签各一把锁，
+    // 一个标签限频等待或网络卡住时，不拖住其它标签的轮询
     private val pollLock = Mutex()
+    private val tabLocks = ConcurrentHashMap<String, Mutex>()
     private val seenTabs = ConcurrentHashMap.newKeySet<String>()
-    private val migratedAt = ConcurrentHashMap<String, Instant>()
+    private val migratedAt = ConcurrentHashMap<String, Migration>()
+
+    /** 绑定标签最近一次的显示名，标签关闭发断开提示时用。 */
+    private val knownTitles = ConcurrentHashMap<String, String>()
 
     @Volatile
     private var projectClosing = false
@@ -84,9 +91,11 @@ class TerminalBridgeService(
                     if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
                     // 先把最后的回复读出来，再把本轮最终回复作为一条推送；不另发“本轮完成”通知
+                    // 记下信号这一刻的读取边界：只读到这里再结算，信号就落在它所属的那一轮；
+                    // 之后写下的下一轮内容留给后续轮询，迟到的信号不会把新一轮的过程说明当结论发出
+                    val mark = tails[tabId]?.tail?.let { ReadMark(it, it.size()) }
                     scope.launch(Dispatchers.IO) {
-                        pollTab(tabId)
-                        hub.router.onTurnCompleted(tabId)
+                        pollTab(tabId, mark) { hub.router.onTurnCompleted(tabId, hub.router.currentTurn(tabId)) }
                     }
                 }
 
@@ -97,8 +106,7 @@ class TerminalBridgeService(
                     if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
                     scope.launch(Dispatchers.IO) {
-                        pollTab(tabId)
-                        hub.router.onWaiting(tabId, reason)
+                        pollTab(tabId) { hub.router.onWaiting(tabId, reason) }
                     }
                 }
             },
@@ -109,12 +117,17 @@ class TerminalBridgeService(
                 pollLock.withLock { observeSwitch() }
                 if (enabled) {
                     for (binding in boundHere()) {
-                        try {
-                            pollTab(binding.target.tabId)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            LOG.warn("轮询标签 ${binding.target.tabId} 失败", e)
+                        val tabId = binding.target.tabId
+                        // 上一次还在发送的标签这轮跳过，等它发完再读
+                        if (tabLock(tabId).isLocked) continue
+                        launch {
+                            try {
+                                pollTab(tabId)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                LOG.warn("轮询标签 $tabId 失败", e)
+                            }
                         }
                     }
                 }
@@ -131,6 +144,7 @@ class TerminalBridgeService(
         val open = TerminalHost.getInstance(project).openTabsByTabId()
         seenTabs += open.keys
         for (binding in boundHere()) {
+            if (binding.target.tabId in open) knownTitles[binding.target.tabId] = BridgeLifecycle.sessionTitle(binding)
             when (val change = tabChangeFor(binding, open, seenTabs, projectClosing)) {
                 TabChange.Keep -> Unit
                 is TabChange.Reattach -> {
@@ -150,37 +164,57 @@ class TerminalBridgeService(
         RobotManager.getInstance().syncBindings()
         tails.remove(binding.target.tabId)
         migratedAt.remove(binding.target.tabId)
-        val title = titleOf(binding.target.sessionId)
+        // 标签关闭后已取不到标签标题，用它还开着时记下的名字
+        val title = knownTitles.remove(binding.target.tabId) ?: BridgeLifecycle.sessionTitle(binding)
         scope.launch(Dispatchers.IO) { hub.router.onReleased(binding, title) }
     }
 
     private fun onMigrated(to: String) {
         val tabId = tabIdOf(to) ?: return
-        if (hub.bindings.migrateSession(tabId, to) != null) {
-            RobotManager.getInstance().syncBindings()
-            tails.remove(tabId)
-            migratedAt[tabId] = Instant.now()
+        val binding = hub.bindings.migrateSession(tabId, to) ?: return
+        RobotManager.getInstance().syncBindings()
+        tails.remove(tabId)
+        migratedAt[tabId] = Migration(binding.epoch, Instant.now())
+    }
+
+    private fun tabLock(tabId: String): Mutex = tabLocks.computeIfAbsent(tabId) { Mutex() }
+
+    /** 读出这个标签的新事件交给路由器，再执行 [then]；同一标签的读取与发送按顺序进行。 */
+    private suspend fun pollTab(
+        tabId: String,
+        mark: ReadMark? = null,
+        then: suspend () -> Unit = {},
+    ) {
+        tabLock(tabId).withLock {
+            val poll = readTab(tabId, mark)
+            if (poll != null) {
+                if (poll.restarted) hub.router.onTranscriptRestarted(tabId)
+                if (poll.events.isNotEmpty()) hub.router.onSessionEvents(tabId, poll.events)
+            }
+            then()
         }
     }
 
-    private suspend fun pollTab(tabId: String) {
+    private suspend fun readTab(
+        tabId: String,
+        mark: ReadMark?,
+    ): TailPoll? {
         pollLock.withLock {
             observeSwitch()
-            if (!BridgeSettings.getInstance().state.enabled) return
+            if (!BridgeSettings.getInstance().state.enabled) return null
             // 以当前绑定为准：换绑（代次变了）或迁移（会话变了）后的旧尾随器一律丢弃重建，
             // 新绑定从当前记录边界开始，不倒灌期间产生的历史
-            val binding = hub.bindings.bindingForTab(tabId) ?: return
+            val binding = hub.bindings.bindingForTab(tabId) ?: return null
             val cached = tails[tabId]
             val tail =
                 if (cached != null && reuseTail(cached.epoch, cached.sessionId, binding.epoch, binding.target.sessionId)) {
                     cached.tail
                 } else {
                     tails.remove(tabId)
-                    newTail(binding) ?: return
+                    newTail(binding) ?: return null
                 }
-            val poll = tail.poll()
-            if (poll.restarted) hub.router.onTranscriptRestarted(tabId)
-            if (poll.events.isNotEmpty()) hub.router.onSessionEvents(tabId, poll.events)
+            // 边界只对记下它的那个尾随器有效；期间重建过就照常读
+            return tail.poll(mark?.takeIf { it.tail === tail }?.upTo)
         }
     }
 
@@ -203,9 +237,16 @@ class TerminalBridgeService(
         val sessionId = binding.target.sessionId ?: return null
         val session = SessionMonitor.getInstance(project).model.sessionOf(sessionId) ?: return null
         val tabId = binding.target.tabId
-        val migrated = migratedAt[tabId]
-        val tail = TranscriptTail(session.filePath, TranscriptDecoders.forAgent(binding.target.agentType))
-        if (!readFromStart(session.createdAt, migrated)) tail.startAtEnd()
+        // 只认本次绑定期间记下的迁移；换绑、断开后残留的旧值不能让新绑定从头读
+        val migrated = migratedAt[tabId]?.takeIf { it.epoch == binding.epoch }
+        val fromStart = readFromStart(session.createdAt, migrated?.at)
+        val tail =
+            TranscriptTail(
+                session.filePath,
+                TranscriptDecoders.forAgent(binding.target.agentType),
+                skipBefore = if (fromStart) copiedHistoryBefore(session.createdAt, migrated!!.at) else null,
+            )
+        if (!fromStart) tail.startAtEnd()
         // 建立期间绑定可能已在 EDT 上迁移或换绑：此时不登记、不消费迁移时间，留给下次轮询按新绑定重建
         val current = hub.bindings.bindingForTab(tabId) ?: return null
         if (!reuseTail(binding.epoch, sessionId, current.epoch, current.target.sessionId)) return null
@@ -220,9 +261,6 @@ class TerminalBridgeService(
 
     private fun tabIdOf(sessionKey: String): String? =
         TerminalHost.getInstance(project).openTabsByTabId().entries.firstOrNull { it.value == sessionKey }?.key
-
-    private fun titleOf(sessionId: String?): String =
-        sessionId?.let { SessionMonitor.getInstance(project).model.sessionOf(it)?.title } ?: sessionId?.take(8).orEmpty()
 
     override fun dispose() = Unit
 
@@ -254,6 +292,18 @@ internal class SwitchWatch {
 }
 
 
+/** IDE 信号发出那一刻某个尾随器所在文件的大小。 */
+private class ReadMark(
+    val tail: TranscriptTail,
+    val upTo: Long?,
+)
+
+/** 会话迁移的时间，连同当时的绑定代次：只对同一次绑定有效。 */
+private data class Migration(
+    val epoch: Long,
+    val at: Instant,
+)
+
 /** 尾随器连同建立它时的绑定代次与会话一起缓存。 */
 private class TailEntry(
     val epoch: Long,
@@ -281,3 +331,13 @@ internal fun readFromStart(createdAt: Instant, migratedAt: Instant?): Boolean {
     if (migratedAt == null) return false
     return !createdAt.isBefore(migratedAt.minusSeconds(60))
 }
+
+/**
+ * 从头读时，早于这个时间的行是复制来的历史。fork 或交给 daemon 生成的新文件会带着原会话的全部历史
+ * （保留原时间戳），这些行都写在文件创建之前；新内容写在创建之后。取创建时间与迁移时间的较早者再留
+ * 2 秒余量：不支持创建时间的文件系统会退回修改时间，此时以迁移时间为准，最多漏掉迁移前的首轮。
+ */
+internal fun copiedHistoryBefore(
+    createdAt: Instant,
+    migratedAt: Instant,
+): Instant = minOf(createdAt, migratedAt).minusSeconds(2)

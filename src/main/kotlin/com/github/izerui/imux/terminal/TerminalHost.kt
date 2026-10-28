@@ -450,6 +450,9 @@ class TerminalHost(
      */
     fun openTabsByTabId(): Map<String, String> = files.values.associate { it.tabId to it.sessionKey }
 
+    /** 打开着的标签的标题；标签已关闭时为 null。 */
+    fun tabTitleOf(tabId: String): String? = files.values.firstOrNull { it.tabId == tabId }?.tabTitle
+
     /**
      * 当前开着标签页的 agent 种类。
      *

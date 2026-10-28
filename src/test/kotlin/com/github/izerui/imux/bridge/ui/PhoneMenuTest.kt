@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.ui
 
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
@@ -22,6 +23,11 @@ class PhoneMenuTest {
             override fun unpaired(name: String) = "$name/unpaired"
 
             override fun current(name: String) = "$name/current"
+
+            override fun offline(
+                name: String,
+                status: ConnectionStatus?,
+            ) = "$name/offline:$status"
         }
 
     private fun robot(
@@ -41,6 +47,7 @@ class PhoneMenuTest {
             phoneMenuModel(
                 listOf(robot("a"), robot("b"), robot("c"), robot("d", paired = false)),
                 bindingOf = { bindings[it] },
+                statusOf = { ConnectionStatus.Online },
                 thisTabId = "this",
                 titleOf = { "T:" + it.target.tabId },
                 labels = labels,
@@ -62,7 +69,30 @@ class PhoneMenuTest {
     fun `没有机器人`() {
         assertEquals(
             listOf(PhoneMenuEntry.NoRobots, PhoneMenuEntry.AddRobot),
-            phoneMenuModel(emptyList(), bindingOf = { null }, thisTabId = "t", titleOf = { "" }, labels = labels),
+            phoneMenuModel(emptyList(), bindingOf = { null }, statusOf = { null }, thisTabId = "t", titleOf = { "" }, labels = labels),
+        )
+    }
+
+    @Test
+    fun `空闲但不在线的机器人写明状态，仍可选择`() {
+        val statuses = mapOf("a" to ConnectionStatus.Kicked, "b" to ConnectionStatus.Online)
+        val entries =
+            phoneMenuModel(
+                listOf(robot("a"), robot("b"), robot("c")),
+                bindingOf = { null },
+                statusOf = { statuses[it] },
+                thisTabId = "this",
+                titleOf = { "" },
+                labels = labels,
+            )
+        assertEquals(
+            listOf(
+                PhoneMenuEntry.Robot("a", "bot-a/offline:Kicked", true),
+                PhoneMenuEntry.Robot("b", "bot-b/idle", true),
+                PhoneMenuEntry.Robot("c", "bot-c/offline:null", true),
+                PhoneMenuEntry.AddRobot,
+            ),
+            entries,
         )
     }
 }

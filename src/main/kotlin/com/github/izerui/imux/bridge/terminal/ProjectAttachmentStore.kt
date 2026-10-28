@@ -134,12 +134,25 @@ class ProjectAttachmentStore(
             buffer.copyOf(read)
         }
 
+    /**
+     * 写 exclude 的 git 目录。普通仓库是 `.git` 目录；worktree 与子模块里 `.git` 是写着 `gitdir: <路径>`
+     * 的文件，exclude 只在公共目录（gitdir 里 `commondir` 指向的位置，没有就是 gitdir 本身）生效。
+     */
+    private fun gitCommonDir(root: Path): Path? {
+        val git = root.resolve(".git")
+        if (Files.isDirectory(git)) return git
+        if (!Files.isRegularFile(git)) return null
+        val pointer = Files.readAllLines(git).firstOrNull { it.startsWith("gitdir:") } ?: return null
+        val gitDir = root.resolve(pointer.removePrefix("gitdir:").trim()).normalize()
+        val common = gitDir.resolve("commondir")
+        return if (Files.isRegularFile(common)) gitDir.resolve(Files.readString(common).trim()).normalize() else gitDir
+    }
+
     /** 尽力而为：附件已经保存，写 exclude 失败只记日志，不影响本次结果。加锁：并发保存时只追加一行。 */
     private fun ensureGitExclude(root: Path) {
         synchronized(EXCLUDE_LOCK) {
             try {
-                val git = root.resolve(".git")
-                if (!Files.isDirectory(git)) return
+                val git = gitCommonDir(root) ?: return
                 val exclude = git.resolve("info").resolve("exclude")
                 val lines = if (Files.exists(exclude)) Files.readAllLines(exclude) else emptyList()
                 if (lines.any { it.trim() == EXCLUDE_LINE }) return

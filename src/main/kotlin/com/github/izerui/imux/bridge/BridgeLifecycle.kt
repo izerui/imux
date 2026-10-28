@@ -1,8 +1,10 @@
 package com.github.izerui.imux.bridge
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.openapi.project.ProjectManager
 
 /** 开关切换与会话标题查询。两者都要跨项目查找，集中在这里。 */
@@ -30,9 +32,17 @@ object BridgeLifecycle {
             .forEach { TerminalBridgeService.getInstance(it).start() }
     }
 
+    /**
+     * 绑定会话在菜单、设置页和手机提示里的名字，各处共用：会话标题 → 标签标题 → 会话 id 前 8 位 →“未命名会话”。
+     * 刚打开、还没有会话记录的 CLI 只有标签标题，不能把内部的 tabId 露给用户。
+     */
     fun sessionTitle(binding: Binding): String {
-        val sessionId = binding.target.sessionId ?: return binding.target.tabId
+        val sessionId = binding.target.sessionId
         val project = ProjectManager.getInstance().openProjects.firstOrNull { it.basePath == binding.target.projectPath && !it.isDisposed }
-        return project?.let { SessionMonitor.getInstance(it).model.sessionOf(sessionId)?.title } ?: sessionId.take(8)
+        if (project != null) {
+            sessionId?.let { SessionMonitor.getInstance(project).model.sessionOf(it)?.title }?.let { return it }
+            TerminalHost.getInstance(project).tabTitleOf(binding.target.tabId)?.let { return it }
+        }
+        return sessionId?.take(8) ?: ImuxBundle.message("bridge.session.untitled")
     }
 }

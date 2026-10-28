@@ -130,6 +130,18 @@ class ProjectAttachmentStoreTest {
         }
 
     @Test
+    fun `git worktree 里 exclude 写到公共目录`() =
+        runBlocking {
+            val main = project()
+            val worktreeGitDir = Files.createDirectories(main.resolve(".git/worktrees/wt"))
+            Files.writeString(worktreeGitDir.resolve("commondir"), "../..\n")
+            val worktree = temp.newFolder().toPath()
+            Files.writeString(worktree.resolve(".git"), "gitdir: $worktreeGitDir\n")
+            store().place(target(worktree), FakeAttachment(png, null))
+            assertEquals(listOf(".imux/"), Files.readAllLines(main.resolve(".git/info/exclude")))
+        }
+
+    @Test
     fun `删除早于 7 天的日期目录，保留其它目录`() =
         runBlocking {
             val root = project()

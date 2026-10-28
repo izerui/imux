@@ -30,6 +30,7 @@ class ConnectToPhoneGroup : ActionGroup(), DumbAware {
         return phoneMenuModel(
             RobotManager.getInstance().robots(),
             bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
+            statusOf = RobotManager.getInstance()::statusOf,
             thisTabId = file.tabId,
             titleOf = BridgeLifecycle::sessionTitle,
             labels = BundleMenuLabels,

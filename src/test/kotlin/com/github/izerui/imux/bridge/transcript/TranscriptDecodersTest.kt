@@ -16,7 +16,7 @@ import org.junit.Test
 class TranscriptDecodersTest {
     @Test
     fun `Claude 区分用户文本、助手文本、工具调用与结果且保留换行`() {
-        val user = """{"type":"user","uuid":"u1","message":{"role":"user","content":"第一行\n第二行"}}"""
+        val user = """{"type":"user","uuid":"u1","origin":{"kind":"human"},"message":{"role":"user","content":"第一行\n第二行"}}"""
         val assistant =
             """{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[""" +
                 """{"type":"thinking","thinking":"内部推理"},""" +
@@ -69,12 +69,61 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `Claude 命令与后台任务通知等注入消息不转发，只标记新一轮开始`() {
-        val command = """{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"""
+    fun `带正文停下的其它收尾也算本轮结束：Claude 截断或报错，Pi 截断或出错`() {
+        fun claude(stop: String) =
+            """{"type":"assistant","message":{"role":"assistant","stop_reason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
+        for (stop in listOf("max_tokens", "stop_sequence", "refusal")) {
+            assertEquals(stop, listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), ClaudeTranscriptDecoder.decode(claude(stop)))
+        }
+        assertEquals("还要继续调工具", listOf(SessionEvent(ASSISTANT_TEXT, "结论")), ClaudeTranscriptDecoder.decode(claude("pause_turn")))
+        val streaming = """{"type":"assistant","message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":"结论"}]}}"""
+        assertEquals("还没写完的行没有 stop_reason", listOf(SessionEvent(ASSISTANT_TEXT, "结论")), ClaudeTranscriptDecoder.decode(streaming))
+
+        fun pi(stop: String) =
+            """{"type":"message","message":{"role":"assistant","stopReason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
+        for (stop in listOf("length", "error")) {
+            assertEquals(stop, listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), PiTranscriptDecoder.decode(pi(stop)))
+        }
+    }
+
+    @Test
+    fun `Claude 没有标成输入的（命令输出、后台任务通知）不转发，只标记新一轮开始`() {
+        val command = """{"type":"user","message":{"role":"user","content":"<local-command-stdout>已清空</local-command-stdout>"}}"""
         val notification =
-            """{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<task-notification>\n<status>completed</status>\n</task-notification>"}]}}"""
+            """{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":[{"type":"text","text":"<task-notification>\n<status>completed</status>\n</task-notification>"}]}}"""
         assertEquals(listOf(SessionEvent(TURN_STARTED, "")), ClaudeTranscriptDecoder.decode(command))
         assertEquals(listOf(SessionEvent(TURN_STARTED, "")), ClaudeTranscriptDecoder.decode(notification))
+    }
+
+    @Test
+    fun `Claude 按来源字段区分人输入：人输入照常转发（含尖括号代码），斜杠命令转成原样，任务通知只开启新一轮`() {
+        fun line(
+            kind: String,
+            content: String,
+        ) = """{"type":"user","origin":{"kind":"$kind"},"message":{"role":"user","content":${com.google.gson.JsonPrimitive(content)}}}"""
+        assertEquals(listOf(SessionEvent(USER_TEXT, "跑一下测试")), ClaudeTranscriptDecoder.decode(line("human", "跑一下测试")))
+        assertEquals(
+            listOf(SessionEvent(USER_TEXT, "<task-notification>写在代码里</task-notification>")),
+            ClaudeTranscriptDecoder.decode(line("human", "<task-notification>写在代码里</task-notification>")),
+        )
+        assertEquals(
+            listOf(SessionEvent(USER_TEXT, "/codex:review --wait")),
+            ClaudeTranscriptDecoder.decode(
+                line("human", "<command-message>codex:review</command-message>\n<command-name>/codex:review</command-name>\n<command-args>--wait</command-args>"),
+            ),
+        )
+        assertEquals(
+            listOf(SessionEvent(TURN_STARTED, "")),
+            ClaudeTranscriptDecoder.decode(line("task-notification", "<task-notification>\n<status>completed</status>\n</task-notification>")),
+        )
+    }
+
+    @Test
+    fun `人写的 HTML 与自定义标签照常是用户输入，不当成注入消息`() {
+        for (text in listOf("<div>你好</div>", "<my-component>内容</my-component>", "<user_card>x</user_card>")) {
+            val line = """{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"$text"}}"""
+            assertEquals(text, listOf(SessionEvent(USER_TEXT, text)), ClaudeTranscriptDecoder.decode(line))
+        }
     }
 
     @Test
@@ -100,27 +149,33 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `Codex 只读 response_item 并过滤环境与 AGENTS 注入`() {
-        val user =
+    fun `Codex 用户输入以它自己记的用户消息事件为准，发给模型的注入不转发`() {
+        // item_completed 里的 UserMessage，只含从输入框提交的内容（可能带图片）
+        val userMessage =
+            """{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u1","content":[""" +
+                """{"type":"text","text":"<my-component>修一下</my-component>","text_elements":[]},{"type":"local_image","path":"/tmp/a.png"}]}}}"""
+        // response_item 里的用户消息混着环境、AGENTS、子代理通知、贴图标签，一律不当输入
+        val injected =
             """{"type":"response_item","payload":{"type":"message","role":"user","content":[""" +
-                """{"type":"input_text","text":"<environment_context>x</environment_context>"},""" +
-                """{"type":"input_text","text":"修一下\n测试"}]}}"""
-        val agents =
-            """{"type":"response_item","payload":{"type":"message","role":"user","content":[""" +
-                """{"type":"input_text","text":"# AGENTS.md instructions for /p"}]}}"""
+                """{"type":"input_text","text":"<environment_context>x</environment_context>"},{"type":"input_text","text":"# AGENTS.md instructions for /p"},""" +
+                """{"type":"input_text","text":"<image name=[Image #1]>"},{"type":"input_text","text":"</image>"},{"type":"input_text","text":"修一下"}]}}"""
+        val started = """{"type":"event_msg","payload":{"type":"task_started"}}"""
         val assistant =
             """{"type":"response_item","payload":{"type":"message","role":"assistant","content":[""" +
                 """{"type":"output_text","text":"好的"}]}}"""
         val call = """{"type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"c1","arguments":"{}"}}"""
         val output = """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}"""
         val mirror = """{"type":"event_msg","payload":{"type":"agent_message","message":"好的"}}"""
+        val otherItem = """{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"text","text":"好的"}]}}}"""
 
-        assertEquals(listOf(SessionEvent(USER_TEXT, "修一下\n测试")), CodexTranscriptDecoder.decode(user))
-        assertEquals("只有注入时不转发，只标记新一轮开始", listOf(SessionEvent(TURN_STARTED, "")), CodexTranscriptDecoder.decode(agents))
+        assertEquals(listOf(SessionEvent(USER_TEXT, "<my-component>修一下</my-component>")), CodexTranscriptDecoder.decode(userMessage))
+        assertTrue(CodexTranscriptDecoder.decode(injected).isEmpty())
+        assertEquals("子代理通知等注入开启的一轮也有 task_started", listOf(SessionEvent(TURN_STARTED, "")), CodexTranscriptDecoder.decode(started))
         assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "好的")), CodexTranscriptDecoder.decode(assistant))
         assertEquals(listOf(SessionEvent(TOOL_STARTED, "shell", "c1")), CodexTranscriptDecoder.decode(call))
         assertEquals(listOf(SessionEvent(TOOL_FINISHED, "", "c1")), CodexTranscriptDecoder.decode(output))
-        assertTrue("event_msg 是镜像，不能重复转发", CodexTranscriptDecoder.decode(mirror).isEmpty())
+        assertTrue("助手消息的镜像不能重复转发", CodexTranscriptDecoder.decode(mirror).isEmpty())
+        assertTrue(CodexTranscriptDecoder.decode(otherItem).isEmpty())
     }
 
     @Test

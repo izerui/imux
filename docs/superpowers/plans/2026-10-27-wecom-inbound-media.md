@@ -19,7 +19,7 @@
 - 附件上限：`100L * 1024 * 1024` 字节。
 - 下载超时 60 秒；连接超时 15 秒。
 - 解密：AES-256-CBC，密钥为 `aeskey` 的 base64 解码（32 字节，允许缺少结尾 `=`），IV 取密钥前 16 字节，`NoPadding` 解密后手工去除 PKCS#7 填充：末字节值 n 满足 1 ≤ n ≤ 32 且末 n 字节都等于 n。
-- 保存目录：`<项目根>/.imux/attachments/YYYY-MM-DD/`（本地日期）；文件名最长 120 字符；同名编号 `a.png`、`a-1.png`、`a-2.png`；返回相对项目根、分隔符为 `/` 的路径。
+- 保存目录：`<项目根>/.imux/attachments/YYYY-MM-DD/`（本地日期）；文件名最长 120 字符；扩展名前加 4 位随机后缀（`a-k3f9.png`），先原子占名再改名，同名并发互不覆盖（实现时由编号改为随机后缀，见设计规格）；返回相对项目根、分隔符为 `/` 的路径。
 - 清理：每次保存后删除 `.imux/attachments/` 下目录名日期早于“今天减 7 天”的日期目录；目录名不是日期的不动。
 - git：项目根有 `.git` 目录且 `.git/info/exclude` 中没有 `.imux/` 行时追加一行 `.imux/`；`.git` 不是目录时跳过。
 - 文案 10 种语言都要提供：`ImuxBundle.properties`、`_zh_CN`、`_zh_TW`、`_ja`、`_ko`、`_de`、`_es`、`_fr`、`_pt_BR`、`_ru`，位于 `src/main/resources/messages/`。

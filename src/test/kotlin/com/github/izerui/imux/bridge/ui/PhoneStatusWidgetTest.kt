@@ -26,6 +26,11 @@ class PhoneStatusWidgetTest {
     }
 
     @Test
+    fun `连着会话的机器人有异常时先报异常`() {
+        assertEquals("BAD", statusBarText(true, 2, 1, connected = { "C$it" }, idle = "IDLE", problems = 1, problem = "BAD"))
+    }
+
+    @Test
     fun `注册了状态栏组件并在装饰变化时刷新`() {
         val xml = File("src/main/resources/META-INF/plugin.xml").readText()
         assertTrue(xml.contains("com.github.izerui.imux.bridge.ui.PhoneStatusWidgetFactory"))

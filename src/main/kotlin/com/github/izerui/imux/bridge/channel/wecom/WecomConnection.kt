@@ -135,8 +135,11 @@ class WecomConnection(
         val myJob = coroutineContext.job
         var attempt = 0
         var authFailures = 0
+        var lastFailure: String? = null
         while (myJob.isActive) {
-            if (myJob.isActive) listener.statusChanged(ConnectionStatus.Connecting)
+            val failure = lastFailure
+            val status = if (attempt >= REPORT_RETRYING_AFTER && failure != null) ConnectionStatus.Retrying(failure) else ConnectionStatus.Connecting
+            if (myJob.isActive) listener.statusChanged(status)
             // 认证真正通过（上线）才清零失败计数；认证前的网络中断不算，否则“认证失败、断网”交替时永远到不了上限
             when (val end =
                 runSession(sink, listener) {
@@ -148,13 +151,14 @@ class WecomConnection(
                     return
                 }
                 is SessionEnd.AuthFailed -> {
+                    lastFailure = end.reason
                     authFailures++
                     if (authFailures >= MAX_AUTH_FAILURES) {
                         if (myJob.isActive) listener.statusChanged(ConnectionStatus.Failed(end.reason))
                         return
                     }
                 }
-                is SessionEnd.Dropped -> Unit
+                is SessionEnd.Dropped -> lastFailure = end.reason
             }
             attempt++
             delay(backoff(attempt))
@@ -277,6 +281,9 @@ class WecomConnection(
 
     private companion object {
         const val MAX_AUTH_FAILURES = 5
+
+        // 连续这么多次没连上（上线即清零），状态从“连接中”改报“连接失败，正在重试”
+        const val REPORT_RETRYING_AFTER = 5
         const val MAX_MISSED_PINGS = 2
         const val SEEN_CAPACITY = 1000
     }

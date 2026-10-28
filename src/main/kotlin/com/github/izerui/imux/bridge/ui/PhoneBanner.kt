@@ -28,6 +28,7 @@ import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.RowIcon
@@ -165,7 +166,9 @@ class PhoneBanner(
             dot.color = if (next.problem == null) BannerColors.ONLINE else BannerColors.PROBLEM
             icons.icon = RowIcon(dot, AgentIcons.phone)
             val title = ImuxBundle.message("bridge.banner.connected", next.channel, next.robotName)
-            toolTipText = "<html>$title<br>${ImuxBundle.message("bridge.banner.hint")}</html>"
+            // 机器人异常时提示里也写出状态，不能只说“已连接”
+            val problem = next.problem?.let { " · " + StringUtil.escapeXmlEntities(it) }.orEmpty()
+            toolTipText = "<html>${StringUtil.escapeXmlEntities(title)}$problem<br>${ImuxBundle.message("bridge.banner.hint")}</html>"
         } else {
             icons.icon = AgentIcons.phone
             toolTipText = ImuxBundle.message("bridge.banner.hint")
@@ -203,6 +206,7 @@ class PhoneBanner(
         phoneMenuModel(
             RobotManager.getInstance().robots(),
             bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
+            statusOf = RobotManager.getInstance()::statusOf,
             thisTabId = file.tabId,
             titleOf = BridgeLifecycle::sessionTitle,
             labels = BundleMenuLabels,
@@ -251,6 +255,7 @@ class PhoneBanner(
         phoneMenuModel(
             RobotManager.getInstance().robots(),
             bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
+            statusOf = RobotManager.getInstance()::statusOf,
             thisTabId = file.tabId,
             titleOf = BridgeLifecycle::sessionTitle,
             labels = BundleMenuLabels,

@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.TerminalBridgeService
 import com.github.izerui.imux.bridge.core.BindResult
@@ -77,7 +78,15 @@ internal object PhoneOperations {
             replaced?.let { hub.router.onReleased(it, BridgeLifecycle.sessionTitle(it)) }
             hub.router.onBound(result.binding, project.name, file.agentType.displayName, title)
         }
-        BridgeNotifications.info(project, ImuxBundle.message("bridge.notify.connected", title, robot.name))
+        // 机器人不在线时如实说明：会话已连上，但要等机器人恢复在线才能收发
+        val status = RobotManager.getInstance().statusOf(robotId)
+        val notice =
+            if (status == ConnectionStatus.Online) {
+                ImuxBundle.message("bridge.notify.connected", title, robot.name)
+            } else {
+                ImuxBundle.message("bridge.notify.connected.offline", title, robot.name, statusLabel(status, paired = true))
+            }
+        BridgeNotifications.info(project, notice)
     }
 
     /** 断开这个机器人的会话连接，通知手机并持久化。 */

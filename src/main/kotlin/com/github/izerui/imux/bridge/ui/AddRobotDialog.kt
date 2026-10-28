@@ -57,7 +57,7 @@ internal fun pairWait(
         robot.pairCode == null -> PairWait.INVALIDATED
         nowMillis > robot.pairCodeExpiresAtMillis -> PairWait.EXPIRED
         // 连接中或尚未开始连接都算还在等；失败、被接管、已停止就收不到配对码
-        status is ConnectionStatus.Failed || status == ConnectionStatus.Kicked || status == ConnectionStatus.Stopped -> PairWait.DISCONNECTED
+        status is ConnectionStatus.Failed || status is ConnectionStatus.Retrying || status == ConnectionStatus.Kicked || status == ConnectionStatus.Stopped -> PairWait.DISCONNECTED
         else -> PairWait.WAITING
     }
 

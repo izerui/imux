@@ -22,9 +22,13 @@ fun statusBarText(
     boundHere: Int,
     connected: (Int) -> String,
     idle: String,
+    problems: Int = 0,
+    problem: String = "",
 ): String =
     when {
         !enabled || robotCount == 0 -> ""
+        // 连着会话的机器人掉线、失败或被接管：先说异常，不能只报“已连接”
+        problems > 0 -> problem
         boundHere > 0 -> connected(boundHere)
         else -> idle
     }
@@ -64,13 +68,18 @@ private class PhoneStatusWidget(
         val enabled = BridgeSettings.getInstance().state.enabled
         if (!enabled) return ""
         val openTabIds = TerminalHost.getInstance(project).openTabsByTabId().keys
-        val bound = BridgeHub.getInstance().bindings.snapshot().count { it.target.tabId in openTabIds }
+        val manager = RobotManager.getInstance()
+        val bound = BridgeHub.getInstance().bindings.snapshot().filter { it.target.tabId in openTabIds }
+        // 与横幅、设置页同一判断
+        val problems = bound.count { rowTone(manager.statusOf(it.robotId.value), paired = true, bridgeEnabled = true) == RowTone.ATTENTION }
         return statusBarText(
             enabled,
-            RobotManager.getInstance().robots().size,
-            bound,
+            manager.robots().size,
+            bound.size,
             connected = { ImuxBundle.message("bridge.statusbar.connected", it) },
             idle = ImuxBundle.message("bridge.statusbar.idle"),
+            problems = problems,
+            problem = ImuxBundle.message("bridge.statusbar.problem"),
         )
     }
 

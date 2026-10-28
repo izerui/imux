@@ -40,6 +40,30 @@ class TranscriptTailTest {
     }
 
     @Test
+    fun `从头读时跳过早于截止时间的复制历史，没有时间戳的行照常解码`() {
+        val file = temp.newFile("s.jsonl").toPath()
+        Files.writeString(
+            file,
+            """{"timestamp":"2026-10-28T01:00:00Z","n":"copied"}""" + "\n" +
+                """{"n":"no-time"}""" + "\n" +
+                """{"timestamp":"2026-10-28T02:00:01Z","n":"new"}""" + "\n",
+        )
+        val tail = TranscriptTail(file, echo, skipBefore = java.time.Instant.parse("2026-10-28T02:00:00Z"))
+        assertEquals(listOf("""{"n":"no-time"}""", """{"timestamp":"2026-10-28T02:00:01Z","n":"new"}"""), texts(tail.poll()))
+    }
+
+    @Test
+    fun `给了读取边界时只读到那里，其后的内容留给下一次`() {
+        val file = temp.newFile("s.jsonl").toPath()
+        val tail = TranscriptTail(file, echo).apply { startAtEnd() }
+        append(file, "a\n".toByteArray())
+        val mark = tail.size()
+        append(file, "b\nc\n".toByteArray())
+        assertEquals(listOf("a"), texts(tail.poll(mark)))
+        assertEquals(listOf("b", "c"), texts(tail.poll()))
+    }
+
+    @Test
     fun `半行保留到换行到达，跨写入的多字节字符不乱码`() {
         val file = temp.newFile("s.jsonl").toPath()
         val tail = TranscriptTail(file, echo).apply { startAtEnd() }

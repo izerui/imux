@@ -156,6 +156,17 @@ class WecomConnectionTest {
         }
 
     @Test
+    fun `连续 5 次连不上改报正在重试并带原因，仍继续重连`() =
+        runBlocking {
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_subscribe") null else 0 })
+            conn.start(InboundSink { }) { statuses += it }
+            withTimeout(5_000) { while (statuses.none { it is ConnectionStatus.Retrying }) delay(5) }
+            assertEquals(ConnectionStatus.Retrying("subscribe timeout"), statuses.first { it is ConnectionStatus.Retrying })
+            assertEquals(5, statuses.takeWhile { it !is ConnectionStatus.Retrying }.count { it == ConnectionStatus.Connecting })
+            withTimeout(2_000) { while (opens.get() < 7) delay(5) }
+        }
+
+    @Test
     fun `心跳连续两次未确认则重连`() =
         runBlocking {
             val conn = connection(heartbeatMillis = 20, acker = { cmd -> if (cmd == "ping") null else 0 })

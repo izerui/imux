@@ -16,6 +16,9 @@ sealed interface ConnectionStatus {
 
     data class Failed(val reason: String) : ConnectionStatus
 
+    /** 连续多次连不上，仍在自动重试；带上最近一次的原因，界面如实显示而不是一直“连接中”。 */
+    data class Retrying(val reason: String) : ConnectionStatus
+
     data object Stopped : ConnectionStatus
 }
 

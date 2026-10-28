@@ -43,10 +43,16 @@ class BridgeRouter(
     private val completedTabs = HashSet<String>()
 
     /**
-     * 会话记录里读到过本轮结束标记的标签：此后以记录为准，不再理会 IDE 的完成信号。
-     * 那个信号要等轮询之后才到，下一轮若已开始，它会把新一轮的过程说明当结论发出去。
+     * 当前这一轮已由会话记录里的结束标记收尾的标签。按轮次记：下一轮开始即清掉，
+     * 那一轮若没有结束标记，仍以 IDE 的完成信号兜底。
      */
     private val transcriptEnds = HashSet<String>()
+
+    /**
+     * 每个标签读到的第几轮，每开始一轮加一。IDE 的完成信号带着它发出时对应的轮次，
+     * 轮次已经过去（下一轮已开始）的迟到信号作废，不会把新一轮的过程说明当结论发出去。
+     */
+    private val turns = HashMap<String, Long>()
 
     private class PendingFinal(
         val epoch: Long,
@@ -144,6 +150,8 @@ class BridgeRouter(
             pendingFinal.clear()
             completedTabs.clear()
             pendingRemoteEcho.clear()
+            transcriptEnds.clear()
+            turns.clear()
         }
     }
 
@@ -249,13 +257,24 @@ class BridgeRouter(
         synchronized(lock) {
             completedTabs.remove(tabId)
             pendingFinal.remove(tabId)
+            transcriptEnds.remove(tabId)
+            turns[tabId] = (turns[tabId] ?: 0L) + 1
         }
     }
 
-    /** IDE 报告轮次完成：会话记录没有结束标记时，以它为准把本轮最终回复作为一条发出。 */
-    suspend fun onTurnCompleted(tabId: String) {
+    /** 这个标签当前读到的轮次，供 IDE 完成信号标明它属于哪一轮。 */
+    fun currentTurn(tabId: String): Long = synchronized(lock) { turns[tabId] ?: 0L }
+
+    /**
+     * IDE 报告第 [turn] 轮完成：这一轮会话记录里没有结束标记时，以它为准把最终回复作为一条发出。
+     * [turn] 不是当前轮（信号晚到，下一轮已经开始）或这一轮已由结束标记收尾时，什么也不做。
+     */
+    suspend fun onTurnCompleted(
+        tabId: String,
+        turn: Long,
+    ) {
         synchronized(lock) {
-            if (tabId in transcriptEnds) return
+            if (turn != (turns[tabId] ?: 0L) || tabId in transcriptEnds) return
             completedTabs += tabId
         }
         flushFinal(tabId)
@@ -320,6 +339,8 @@ class BridgeRouter(
                 pendingFinal.remove(tabId)
                 pendingRemoteEcho.remove(tabId)
                 completedTabs.remove(tabId)
+                transcriptEnds.remove(tabId)
+                turns.remove(tabId)
             }
         }
         val owner = ownerOf(binding.robotId) ?: return

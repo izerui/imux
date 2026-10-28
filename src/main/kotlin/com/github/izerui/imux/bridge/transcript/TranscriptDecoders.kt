@@ -32,10 +32,12 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val message = root.obj("message") ?: return emptyList()
         val content = message.get("content") ?: return emptyList()
         return when (message.str("role")) {
-            "user" -> userEvents(content)
-            // 一条消息的各个块分行写入且都带 stop_reason；只在含正文的那一行标记结束，结论才在结束之前
+            "user" -> userEvents(content, humanOrigin(root))
+            // 一条消息的各个块分行写入且都带 stop_reason；只在含正文的那一行标记结束，结论才在结束之前。
+            // 除了还要调工具（tool_use、pause_turn），其余收尾都算本轮结束：end_turn 之外，
+            // 输出超长截断、API 报错也会带着正文停下，漏标的话这一轮就没有结论发出
             "assistant" -> assistantEvents(content).let { events ->
-                if (message.str("stop_reason") == "end_turn" && events.any { it.kind == SessionEventKind.ASSISTANT_TEXT }) {
+                if (claudeTurnEnds(message.str("stop_reason")) && events.any { it.kind == SessionEventKind.ASSISTANT_TEXT }) {
                     events + SessionEvent(SessionEventKind.TURN_ENDED, "")
                 } else {
                     events
@@ -45,23 +47,42 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         }
     }
 
-    private fun userEvents(content: JsonElement): List<SessionEvent> {
-        if (content.isJsonPrimitive) return listOfNotNull(userText(content.asString))
+    /**
+     * 这条用户消息是不是从输入框提交的（人、副驾驶、手机）。Claude Code 在 `origin.kind` 里写明来源：
+     * 输入是 `human`；后台任务通知、命令输出等是别的值或没有。不兼容 2.1.28 以前还没有这个字段的版本。
+     */
+    private fun humanOrigin(root: JsonObject): Boolean = root.obj("origin")?.str("kind") == "human"
+
+    private fun userEvents(
+        content: JsonElement,
+        human: Boolean,
+    ): List<SessionEvent> {
+        if (content.isJsonPrimitive) return listOfNotNull(userText(content.asString, human))
         return blocks(content).mapNotNull { block ->
             when (block.str("type")) {
-                "text" -> block.str("text")?.let(::userText)
+                "text" -> block.str("text")?.let { userText(it, human) }
                 "tool_result" -> SessionEvent(SessionEventKind.TOOL_FINISHED, "", block.str("tool_use_id"))
                 else -> null
             }
         }
     }
 
-    private fun userText(text: String): SessionEvent? {
+    private fun userText(
+        text: String,
+        human: Boolean,
+    ): SessionEvent? {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return null
-        // 斜杠命令、后台任务通知等注入消息：不转发，但它们会开启新一轮
-        if (isWrappedMarkup(trimmed)) return SessionEvent(SessionEventKind.TURN_STARTED, "")
-        return SessionEvent(SessionEventKind.USER_TEXT, trimmed)
+        // 不是输入的（后台任务通知等）：不转发，但它们会开启新一轮
+        if (!human) return SessionEvent(SessionEventKind.TURN_STARTED, "")
+        // 输入的斜杠命令记成 <command-name> 标记，转成原样的“/命令 参数”
+        return SessionEvent(SessionEventKind.USER_TEXT, slashCommand(trimmed) ?: trimmed)
+    }
+
+    private fun slashCommand(text: String): String? {
+        val name = COMMAND_NAME.find(text)?.groupValues?.get(1)?.trim() ?: return null
+        val args = COMMAND_ARGS.find(text)?.groupValues?.get(1)?.trim().orEmpty()
+        return if (args.isEmpty()) name else "$name $args"
     }
 
     private fun assistantEvents(content: JsonElement): List<SessionEvent> {
@@ -82,10 +103,7 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
 object CodexTranscriptDecoder : TranscriptDecoder {
     override fun decode(line: String): List<SessionEvent> {
         val root = parseObject(line) ?: return emptyList()
-        // event_msg 里的 user_message/agent_message 是同一内容的镜像，只认 response_item；task_complete 标记本轮结束
-        if (root.str("type") == "event_msg" && root.obj("payload")?.str("type") == "task_complete") {
-            return listOf(SessionEvent(SessionEventKind.TURN_ENDED, ""))
-        }
+        if (root.str("type") == "event_msg") return eventMsg(root.obj("payload") ?: return emptyList())
         if (root.str("type") != "response_item") return emptyList()
         val payload = root.obj("payload") ?: return emptyList()
         val type = payload.str("type") ?: return emptyList()
@@ -99,19 +117,30 @@ object CodexTranscriptDecoder : TranscriptDecoder {
         }
     }
 
+    /**
+     * 用户输入以 Codex 自己记的用户消息事件（item_completed 里的 UserMessage，0.146 起）为准。
+     * 它只含从输入框提交的内容（人、副驾驶、手机）；response_item 里的用户消息还混着环境信息、
+     * AGENTS.md、子代理通知等发给模型的注入，不用来判断。task_started / task_complete 标记一轮的起止。
+     */
+    private fun eventMsg(payload: JsonObject): List<SessionEvent> =
+        when (payload.str("type")) {
+            "task_started" -> listOf(SessionEvent(SessionEventKind.TURN_STARTED, ""))
+            "task_complete" -> listOf(SessionEvent(SessionEventKind.TURN_ENDED, ""))
+            "item_completed" -> {
+                val item = payload.obj("item")
+                if (item?.str("type") != "UserMessage") {
+                    emptyList()
+                } else {
+                    val text = blocks(item.get("content")).filter { it.str("type") == "text" }.mapNotNull { it.str("text") }.joinToString("\n").trim()
+                    listOfNotNull(text.takeIf(String::isNotEmpty)?.let { SessionEvent(SessionEventKind.USER_TEXT, it) })
+                }
+            }
+            else -> emptyList()
+        }
+
     private fun messageEvents(payload: JsonObject): List<SessionEvent> {
         val content = payload.get("content") ?: return emptyList()
         return when (payload.str("role")) {
-            "user" -> {
-                val inputs = blocks(content).filter { it.str("type") == "input_text" }.mapNotNull { it.str("text")?.trim() }.filter(String::isNotEmpty)
-                val text = inputs.filter { !isWrappedMarkup(it) && !it.startsWith(CODEX_AGENTS_INSTRUCTIONS_PREFIX) }.joinToString("\n")
-                when {
-                    text.isNotEmpty() -> listOf(SessionEvent(SessionEventKind.USER_TEXT, text))
-                    // 只有环境、AGENTS 等注入：不转发，但开启了新一轮
-                    inputs.isNotEmpty() -> listOf(SessionEvent(SessionEventKind.TURN_STARTED, ""))
-                    else -> emptyList()
-                }
-            }
             // 过程说明（commentary）不是最终回复；只有 final_answer 或没有标注的才算
             "assistant" -> if (payload.str("phase") == "commentary") {
                 emptyList()
@@ -127,8 +156,6 @@ object CodexTranscriptDecoder : TranscriptDecoder {
         }
     }
 
-    // 与 SessionTitleRegenerator 中的私有常量同值
-    private const val CODEX_AGENTS_INSTRUCTIONS_PREFIX = "# AGENTS.md instructions"
 }
 
 object PiTranscriptDecoder : TranscriptDecoder {
@@ -156,8 +183,8 @@ object PiTranscriptDecoder : TranscriptDecoder {
                             else -> null
                         }
                     }
-                // stop 表示本轮正常结束；toolUse 还要继续，error/aborted 没有结论
-                if (message.str("stopReason") == "stop") events + SessionEvent(SessionEventKind.TURN_ENDED, "") else events
+                // stop 正常结束，length 截断、error 出错也已停下；toolUse 还要继续，aborted 是被打断
+                if (message.str("stopReason") in PI_TURN_ENDS) events + SessionEvent(SessionEventKind.TURN_ENDED, "") else events
             }
             "toolResult" -> listOf(SessionEvent(SessionEventKind.TOOL_FINISHED, "", message.str("toolCallId")))
             else -> emptyList()
@@ -165,11 +192,15 @@ object PiTranscriptDecoder : TranscriptDecoder {
     }
 }
 
+private val PI_TURN_ENDS = setOf("stop", "length", "error")
+
+private fun claudeTurnEnds(stopReason: String?): Boolean = stopReason != null && stopReason != "tool_use" && stopReason != "pause_turn"
+
 private fun assistantText(text: String): SessionEvent? =
     text.takeIf(String::isNotBlank)?.let { SessionEvent(SessionEventKind.ASSISTANT_TEXT, it) }
 
-/** 形如 `<command-name>…</command-name>` 的整段标记是 CLI 注入的，不是人写的。 */
-private fun isWrappedMarkup(text: String): Boolean = text.startsWith("<") && text.endsWith(">")
+private val COMMAND_NAME = Regex("""<command-name>(.*?)</command-name>""", RegexOption.DOT_MATCHES_ALL)
+private val COMMAND_ARGS = Regex("""<command-args>(.*?)</command-args>""", RegexOption.DOT_MATCHES_ALL)
 
 private fun parseObject(line: String): JsonObject? =
     runCatching { JsonParser.parseString(line) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
