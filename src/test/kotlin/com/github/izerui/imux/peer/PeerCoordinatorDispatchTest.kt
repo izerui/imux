@@ -1690,6 +1690,98 @@ class PeerCoordinatorDispatchTest {
         assertLiveProgress { it.reviewOnce("s1", AgentType.CODEX, null) }
     }
 
+    private fun outcomeAfter(output: String, start: (PeerCoordinator) -> Unit): PeerOutcome? {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val recorded = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> output },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key -> if (key == "s1" && coordinator.lastOutcome("s1") != null) recorded.countDown() }
+            start(coordinator)
+            assertTrue(recorded.await(5, TimeUnit.SECONDS))
+            return coordinator.lastOutcome("s1")
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `副驾驶输出为空时记为失败而不是通过`() {
+        val outcome = outcomeAfter("") { it.bind("s1", AgentType.CODEX); it.onTurnCompleted("s1") }
+        assertEquals(PeerOutcomeKind.FAILED, outcome?.kind)
+        assertTrue("带上原因", !outcome?.detail.isNullOrBlank())
+    }
+
+    @Test
+    fun `副驾驶只输出空白时记为失败而不是通过`() {
+        val outcome = outcomeAfter("  \n ") { it.bind("s1", AgentType.CODEX); it.onTurnCompleted("s1") }
+        assertEquals(PeerOutcomeKind.FAILED, outcome?.kind)
+    }
+
+    @Test
+    fun `单次审查的结果带上用户填的审查要求供重试使用`() {
+        val outcome = outcomeAfter("") { it.reviewOnce("s1", AgentType.CODEX, "重点看并发安全") }
+        assertEquals(PeerOutcomeKind.FAILED, outcome?.kind)
+        assertEquals("重点看并发安全", outcome?.instruction)
+    }
+
+    @Test
+    fun `持续结对的结果不带审查要求`() {
+        val outcome = outcomeAfter("PASS") { it.bind("s1", AgentType.CODEX); it.onTurnCompleted("s1") }
+        assertEquals(PeerOutcomeKind.PASSED, outcome?.kind)
+        assertEquals(null, outcome?.instruction)
+    }
+
+    @Test
+    fun `重新绑定伙伴时丢弃失败结果`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope) { _, _, _, _, _, _, _, _ -> throw IllegalStateException("调用超时") }
+        try {
+            coordinator.bind("s1", AgentType.CODEX)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertEquals(PeerOutcomeKind.FAILED, coordinator.lastOutcome("s1")?.kind)
+            coordinator.bind("s1", AgentType.CLAUDE)
+            assertEquals("换了伙伴，旧伙伴的失败与重试已过时", null, coordinator.lastOutcome("s1"))
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `重新绑定伙伴时保留通过结果`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope)
+        try {
+            coordinator.bind("s1", AgentType.CODEX)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            coordinator.bind("s1", AgentType.CLAUDE)
+            assertEquals("结果写明了是谁审的，换伙伴后仍然属实", PeerOutcomeKind.PASSED, coordinator.lastOutcome("s1")?.kind)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
     @Test
     fun `主会话开始新一轮工作时上一轮审查结果仍保留`() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

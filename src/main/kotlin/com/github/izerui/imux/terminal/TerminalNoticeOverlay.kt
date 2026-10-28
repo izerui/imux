@@ -93,6 +93,14 @@ internal class TerminalNoticeOverlay(
 
     init {
         Disposer.register(parent, this)
+        // 倒数只在看得见时进行：看不见时停掉定时器，重新显示时接着倒数
+        component.addHierarchyListener { event ->
+            val showingChanged = event.changeFlags and java.awt.event.HierarchyEvent.SHOWING_CHANGED.toLong() != 0L
+            if (showingChanged && component.isShowing && started && stack.hasCountdown() && !timer.isRunning) {
+                lastTick = System.currentTimeMillis()
+                timer.start()
+            }
+        }
     }
 
     fun sink(source: NoticeSource): NoticeSink =
@@ -148,7 +156,11 @@ internal class TerminalNoticeOverlay(
         val now = System.currentTimeMillis()
         val elapsed = now - lastTick
         lastTick = now
-        if (!component.isShowing || isHovered()) return
+        if (!component.isShowing) {
+            timer.stop()
+            return
+        }
+        if (isHovered()) return
         stack.tick(elapsed)
         render()
     }
@@ -323,14 +335,16 @@ internal class ToolPill(
         )
     }
 
-    fun update() {
+    /** 按功能的最新状态刷新；宽度变了返回 true，由图标组决定要不要重新布局。 */
+    fun update(): Boolean {
         val next = tool.state()
-        if (next == state) return
+        if (next == state) return false
+        val before = preferredSize.width
         state = next
         // 正在看的说明原地刷新，不关闭（审查进度每秒都在变）
         tip.setContent(next.title, next.description)
-        revalidate()
         repaint()
+        return preferredSize.width != before
     }
 
     fun showLabel(show: Boolean) {
@@ -489,10 +503,13 @@ internal class TerminalToolStrip(
         return component.preferredSize
     }
 
+    /** 只在有按钮宽度变化时重新布局；审查进行时每秒都会调用。 */
     fun refresh() {
-        pills.forEach { it.update() }
-        component.revalidate()
-        component.repaint()
+        val resized = pills.map { it.update() }.any { it }
+        if (resized) {
+            component.revalidate()
+            component.repaint()
+        }
     }
 
     private companion object {
@@ -508,8 +525,10 @@ internal class TerminalToolStrip(
 internal class ResultChip(private val onClick: (JComponent) -> Unit) : JBLabel() {
     var wanted = false
         private set
-    private var fullText = ""
-    private var shortText = ""
+    var fullText = ""
+        private set
+    var shortText = ""
+        private set
 
     init {
         border = JBUI.Borders.empty(0, 6, 0, 8)

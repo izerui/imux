@@ -79,8 +79,8 @@ class NoticeStack(private val ttlMillis: Long = DEFAULT_TTL_MILLIS) {
         source: NoticeSource,
         notice: Notice,
     ) {
+        // 不动关闭记录：一次性提示不代表同来源的常驻问题已解决，用户收起的问题不能因此重新冒出来
         flashes[source] = Flash(++sequence, notice, ttlMillis)
-        dismissed.remove(source)
     }
 
     /** 用户按了 ×。 */
@@ -113,9 +113,10 @@ class NoticeStack(private val ttlMillis: Long = DEFAULT_TTL_MILLIS) {
 
     private fun shown(source: NoticeSource): ShownNotice? {
         val notice = persistent[source]
-        if (notice != null) {
-            return if (dismissed[source] == notice.key) null else ShownNotice(source, notice.key, notice, flash = false, remainingFraction = 1f)
+        if (notice != null && dismissed[source] != notice.key) {
+            return ShownNotice(source, notice.key, notice, flash = false, remainingFraction = 1f)
         }
+        // 没有常驻提示，或常驻提示已被收起：一次性提示照常显示
         val flash = flashes[source] ?: return null
         return ShownNotice(source, "flash:${flash.id}", flash.notice, flash = true, remainingFraction = flash.remaining.toFloat() / ttlMillis)
     }

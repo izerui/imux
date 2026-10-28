@@ -75,6 +75,18 @@ class NoticeStackTest {
     }
 
     @Test
+    fun `收起常驻提示后，同来源的一次性提示照常显示且不让常驻提示回来`() {
+        // 单次审查失败 → 收起失败提示 → 开启结对发出「已就绪」
+        val stack = NoticeStack(ttlMillis = 1_000)
+        stack.setPersistent(NoticeSource.PAIR, notice("pair:failed:1", NoticeTone.WARNING))
+        stack.dismiss(NoticeSource.PAIR)
+        stack.flash(NoticeSource.PAIR, notice("pair:ready", NoticeTone.SUCCESS))
+        assertEquals("一次性提示看得到", listOf("pair:ready"), stack.visible().map { it.notice.key })
+        assertTrue(stack.tick(1_000))
+        assertTrue("一次性提示收起后，被收起的失败提示也不回来", stack.visible().isEmpty())
+    }
+
+    @Test
     fun `结果提示倒数满后收起`() {
         val stack = NoticeStack(ttlMillis = 1_000)
         stack.flash(NoticeSource.PAIR, notice("passed", NoticeTone.SUCCESS))

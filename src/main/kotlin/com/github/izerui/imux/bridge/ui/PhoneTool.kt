@@ -41,6 +41,11 @@ data class PhoneBannerModel(
     val problem: String?,
     /** 正在连接：不算问题，顶部给一条蓝色的“正在连接”，不能收起。 */
     val connecting: Boolean = false,
+    /**
+     * 问题的种类（Failed、Retrying、Kicked…），用作顶部提示的身份。不用 [problem]：它是本地化文字、还带失败原因，
+     * 切换语言或重试原因一变就成了“新问题”，用户收起的提示会反复冒出来。
+     */
+    val problemKind: String? = null,
 )
 
 fun phoneBannerModel(
@@ -55,7 +60,7 @@ fun phoneBannerModel(
     // 与设置页状态圆点同一判断：黄点即异常；连接中单独算，它会自己好
     val connecting = status == ConnectionStatus.Connecting
     val problem = if (!connecting && needsAttention(status)) statusText(status) else null
-    return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem, connecting)
+    return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem, connecting, problem?.let { status?.let { s -> s::class.simpleName } })
 }
 
 /** 手机按钮显示什么。开关关着也显示（未连接），点开菜单时再引导去设置里开启。 */
@@ -188,7 +193,7 @@ class PhoneTool(
                     )
                 is PhoneNoticeState.Problem ->
                     Notice(
-                        key = "phone:problem:${current.model.robotId.value}:${current.problem}",
+                        key = "phone:problem:${current.model.robotId.value}:${current.model.problemKind}",
                         tone = NoticeTone.WARNING,
                         text = ImuxBundle.message("bridge.notice.problem", robotLabel(current.model), current.problem),
                         actions =

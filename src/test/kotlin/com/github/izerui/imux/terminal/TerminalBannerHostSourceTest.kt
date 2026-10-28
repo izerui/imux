@@ -59,4 +59,31 @@ class TerminalBannerHostSourceTest {
         assertTrue(gotIt.contains(".show(target) { component, _ -> Point(component.width / 2, component.height) }"))
         assertTrue("不用挂在内部 Companion 上的锚点常量", !gotIt.contains("GotItTooltip.BOTTOM_MIDDLE"))
     }
+
+    @Test
+    fun `审查进度每秒刷新只在终端可见时进行，切回来时补一次`() {
+        val timer = editor.normalized.substringAfter("private val peerElapsedTimer =").substringBefore("private var toolsGotItCreated")
+        assertTrue(timer.contains("if (!disposed && terminalLayer?.isShowing == true) refreshPeer()"))
+        val create = editor.bodyAfter("private fun createEditorComponent()", '{')
+        assertTrue(create.contains("if (showingChanged && terminalLayer.isShowing && !disposed) refreshPeer()"))
+    }
+
+    @Test
+    fun `结果 chip 内容没变时不重新布局`() {
+        val chip = editor.bodyAfter("private fun refreshResultChip()", '{')
+        assertTrue(chip.contains("if (shown == chipShown) return"))
+        assertTrue("不再每次都刷新整个图标组", !chip.contains("toolStrip?.refresh()"))
+    }
+
+    @Test
+    fun `第一次说明气泡一个编辑器只创建一次`() {
+        val gotIt = editor.bodyAfter("private fun showToolsGotIt()", '{')
+        assertTrue(gotIt.contains("if (disposed || toolsGotItCreated || !target.isShowing) return"))
+        assertTrue(gotIt.indexOf("toolsGotItCreated = true") in 0 until gotIt.indexOf("GotItTooltip("))
+    }
+
+    @Test
+    fun `单次审查失败后重试带上原来的审查要求`() {
+        assertTrue(editor.normalized.contains("coordinator.reviewOnce(virtualFile.sessionKey, outcome.targetAgentType, outcome.instruction)"))
+    }
 }

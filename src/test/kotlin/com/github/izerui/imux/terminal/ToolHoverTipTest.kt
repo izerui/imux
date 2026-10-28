@@ -127,6 +127,17 @@ class ToolHoverTipTest {
     }
 
     @Test
+    fun `按钮状态没变时不要求重新布局，字变长时才要求`() {
+        val tool = MutableTool(running(1, "git diff"))
+        val pill = ToolPill(tool, tipWindow = FakeWindow())
+        assertFalse("没变", pill.update())
+        tool.state = tool.state.copy(description = "说明变了，宽度不变")
+        assertFalse("只有说明变化不影响宽度", pill.update())
+        tool.state = tool.state.copy(label = "审查中 1234567s")
+        assertTrue("字变长了", pill.update())
+    }
+
+    @Test
     fun `内容没变时不调整大小`() {
         val window = FakeWindow()
         val tool = MutableTool(running(1, "git diff"))

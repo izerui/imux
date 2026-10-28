@@ -208,10 +208,14 @@ class AgentTerminalFileEditor(
     /** 上一轮审查结果：结果提示收起后留在图标组左边，直到下一轮审查开始。 */
     private val resultChip = ResultChip { showPeerMenu(it) }
     private var toolStrip: TerminalToolStrip? = null
+    // 审查进行时每秒刷新进度；终端不可见时跳过，切回来时由 SHOWING_CHANGED 补一次
     private val peerElapsedTimer =
         Timer(1_000) {
-            if (!disposed) refreshPeer()
+            if (!disposed && terminalLayer?.isShowing == true) refreshPeer()
         }
+    private var toolsGotItCreated = false
+    /** 结果 chip 上次的内容；没变就不重新布局图标组（审查进行时每秒都会走到这里）。 */
+    private var chipShown: List<Any?>? = null
 
     /**
      * macOS 的 CloseContent（Command+W）从组件 DataContext 取 CloseTarget，平台默认目标
@@ -420,13 +424,19 @@ class AgentTerminalFileEditor(
                 }
             }
         this.terminalLayer = terminalLayer
+        terminalLayer.addHierarchyListener { event ->
+            val showingChanged = event.changeFlags and java.awt.event.HierarchyEvent.SHOWING_CHANGED.toLong() != 0L
+            if (showingChanged && terminalLayer.isShowing && !disposed) refreshPeer()
+        }
         return terminalLayer
     }
 
     /** 第一次看到浮动图标组时说明一次；平台按 id 记住已看过。 */
     private fun showToolsGotIt() {
         val target = toolStrip?.component ?: return
-        if (disposed || !target.isShowing) return
+        if (disposed || toolsGotItCreated || !target.isShowing) return
+        // 每次切回标签页都会走到这里；一个编辑器只建一次，看过之后平台按 id 不再显示
+        toolsGotItCreated = true
         GotItTooltip(TOOLS_GOT_IT_ID, ImuxBundle.message("terminal.tools.gotit.text"), this)
             .withHeader(ImuxBundle.message("terminal.tools.gotit.header"))
             // 平台的 BOTTOM_MIDDLE 挂在 @ApiStatus.Internal 的 Companion 上，这里自己算锚点
@@ -515,7 +525,7 @@ class AgentTerminalFileEditor(
                 if (coordinator.boundTarget(virtualFile.sessionKey) != null) {
                     coordinator.onTurnCompleted(virtualFile.sessionKey)
                 } else {
-                    coordinator.reviewOnce(virtualFile.sessionKey, outcome.targetAgentType, null)
+                    coordinator.reviewOnce(virtualFile.sessionKey, outcome.targetAgentType, outcome.instruction)
                 }
             }
         val stop = NoticeAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(virtualFile.sessionKey) }
@@ -569,8 +579,11 @@ class AgentTerminalFileEditor(
         } else {
             resultChip.setResult(false, "", "")
         }
-        // 文字随语言、结果变化，宽度要重新分配；真正显示哪一种由 doLayout 里的 fit 决定
-        toolStrip?.refresh()
+        // 文字随语言、结果变化时宽度要重新分配（真正显示哪一种由 doLayout 里的 fit 决定）；没变就不动布局
+        val shown = listOf(resultChip.wanted, resultChip.fullText, resultChip.shortText, resultChip.icon)
+        if (shown == chipShown) return
+        chipShown = shown
+        toolStrip?.component?.revalidate()
         terminalLayer?.revalidate()
     }
 

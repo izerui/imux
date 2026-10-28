@@ -47,6 +47,15 @@ class PhoneToolTest {
     }
 
     @Test
+    fun `问题提示的身份只看问题种类，不随原因文字变化`() {
+        val first = model(status = ConnectionStatus.Retrying("timeout"))!!
+        val second = model(status = ConnectionStatus.Retrying("connection reset"))!!
+        assertEquals(first.problemKind, second.problemKind)
+        assertTrue(first.problemKind != model(status = ConnectionStatus.Kicked)!!.problemKind)
+        assertNull("在线时没有问题种类", model()!!.problemKind)
+    }
+
+    @Test
     fun `连接中单独标出，不算问题`() {
         val connecting = model(status = ConnectionStatus.Connecting)!!
         assertTrue(connecting.connecting)

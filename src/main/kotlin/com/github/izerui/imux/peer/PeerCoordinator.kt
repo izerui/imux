@@ -61,6 +61,8 @@ data class PeerOutcome(
     val round: Int,
     val finishedAtMillis: Long,
     val detail: String? = null,
+    /** 单次审查时用户填的审查要求；失败后「重试」要原样带上。持续结对时为 null。 */
+    val instruction: String? = null,
 )
 
 internal data class PeerMcpConfig(
@@ -163,6 +165,8 @@ class PeerCoordinator internal constructor(
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val cancelledRun = unbindInner(sessionKey)
+        // 失败结果的「重试」绑定在当时的伙伴与方式上；重新绑定后它已过时，否则提示写着旧伙伴、重试却由新伙伴来审
+        outcomes.computeIfPresent(sessionKey) { _, outcome -> outcome.takeIf { it.kind != PeerOutcomeKind.FAILED } }
         bindings[sessionKey] = PeerBinding(targetAgentType)
         cancelledRun?.killProcess()
         LOG.info("结对编程：绑定 $sessionKey -> ${targetAgentType.displayName}")
@@ -399,7 +403,7 @@ class PeerCoordinator internal constructor(
         val round = completedRounds + 1
         run.startProgress(round)
         fun outcome(kind: PeerOutcomeKind, detail: String? = null) =
-            PeerOutcome(kind, currentBinding.targetAgentType, round, System.currentTimeMillis(), detail)
+            PeerOutcome(kind, currentBinding.targetAgentType, round, System.currentTimeMillis(), detail, oneShotInstruction)
         LOG.info("结对编程：已注入 $completedRounds 轮，调用 ${currentBinding.targetAgentType.cli}")
 
         if (!runIsCurrent(mainSessionKey, run, guard)) return
@@ -472,8 +476,12 @@ class PeerCoordinator internal constructor(
             LOG.info("结对编程：副驾驶无有效反馈，本轮结束")
             val isExplicitPass = rawOutput?.trim().orEmpty().let { it.isNotEmpty() && PASS_PATTERN.matches(it) }
             if (isExplicitPass) run.passed = true
+            // 只有明确的 PASS 才算通过；空输出（崩溃、截断、错误只写在 stderr）是没拿到结论，按失败处理并给出「重试」
+            val result =
+                if (isExplicitPass) outcome(PeerOutcomeKind.PASSED)
+                else outcome(PeerOutcomeKind.FAILED, ImuxBundle.message("action.peer.notice.empty"))
             withContext(edt) {
-                if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.PASSED))
+                if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, result)
             }
             return
         }
