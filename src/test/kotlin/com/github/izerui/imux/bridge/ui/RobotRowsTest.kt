@@ -37,6 +37,7 @@ class RobotRowsTest {
                 bindingOf = { if (it == "a") binding else null },
                 titleOf = { "修复终端滚动" },
                 labels = labels,
+                bridgeEnabled = true,
             )
         assertEquals(
             listOf(
@@ -48,14 +49,19 @@ class RobotRowsTest {
     }
 
     @Test
-    fun `状态圆点：在线且已配对为绿点，待配对、连接中、失败、被接管为黄点，已停止或未连接不画`() {
-        assertEquals(RowTone.OK, rowTone(ConnectionStatus.Online, paired = true))
-        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Online, paired = false))
-        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Connecting, paired = true))
-        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Failed("x"), paired = true))
-        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Kicked, paired = true))
-        assertEquals(RowTone.NONE, rowTone(ConnectionStatus.Stopped, paired = true))
-        assertEquals(RowTone.NONE, rowTone(null, paired = true))
+    fun `状态圆点：在线且已配对为绿点，待配对、连接中、失败、被接管为黄点，未连接不画`() {
+        assertEquals(RowTone.OK, rowTone(ConnectionStatus.Online, paired = true, bridgeEnabled = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Online, paired = false, bridgeEnabled = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Connecting, paired = true, bridgeEnabled = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Failed("x"), paired = true, bridgeEnabled = true))
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Kicked, paired = true, bridgeEnabled = true))
+        assertEquals(RowTone.NONE, rowTone(null, paired = true, bridgeEnabled = true))
+    }
+
+    @Test
+    fun `已停止：远程控制开着时为黄点，与横幅一致；关着时不画`() {
+        assertEquals(RowTone.ATTENTION, rowTone(ConnectionStatus.Stopped, paired = true, bridgeEnabled = true))
+        assertEquals(RowTone.NONE, rowTone(ConnectionStatus.Stopped, paired = true, bridgeEnabled = false))
     }
 
     @Test

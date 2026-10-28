@@ -61,7 +61,8 @@ fun phoneBannerModel(
     statusText: (ConnectionStatus?) -> String,
 ): PhoneBannerModel? {
     if (!enabled || binding == null || robot == null) return null
-    val problem = if (status == null || status == ConnectionStatus.Online) null else statusText(status)
+    // 与设置页状态圆点同一判断：黄点即异常
+    val problem = if (rowTone(status, paired = true, bridgeEnabled = true) == RowTone.ATTENTION) statusText(status) else null
     return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem)
 }
 

@@ -120,6 +120,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
                 titleOf = BridgeLifecycle::sessionTitle,
                 labels = BundleRowLabels,
+                bridgeEnabled = BridgeSettings.getInstance().state.enabled,
             )
         // 增删机器人会整表重建：按 id 把选中放回去
         if (table != null && selectedId != null && selected(table)?.id != selectedId) {
@@ -169,6 +170,10 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
 
     /** 状态列前加圆点，与横幅、原型一致。 */
     private inner class StatusRenderer : ColoredTableCellRenderer() {
+        // 每秒刷新、每行都画，图标只建两份复用
+        private val okDot = StatusDotIcon(BannerColors.ONLINE)
+        private val attentionDot = StatusDotIcon(BannerColors.PROBLEM)
+
         override fun customizeCellRenderer(
             table: JTable,
             value: Any?,
@@ -179,8 +184,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         ) {
             icon =
                 when (model.rows.getOrNull(row)?.tone) {
-                    RowTone.OK -> StatusDotIcon(BannerColors.ONLINE)
-                    RowTone.ATTENTION -> StatusDotIcon(BannerColors.PROBLEM)
+                    RowTone.OK -> okDot
+                    RowTone.ATTENTION -> attentionDot
                     else -> null
                 }
             append(value?.toString().orEmpty())

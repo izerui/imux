@@ -17,7 +17,6 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.github.izerui.imux.terminal.BannerColors
 import com.github.izerui.imux.terminal.StatusDotIcon
 import com.intellij.openapi.util.text.StringUtil
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBTextField
@@ -34,6 +33,7 @@ import kotlinx.coroutines.delay
 import java.awt.CardLayout
 import java.awt.GridBagLayout
 import java.awt.Font
+import javax.swing.Icon
 import javax.swing.ImageIcon
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -92,8 +92,11 @@ class AddRobotDialog(
     private var shownCode = ""
     private var paired = false
 
-    // 配对说明、配对码、有效期说明、重新生成按钮；扫码即认主时完成页只留标题与状态
-    private lateinit var codeRows: List<Row>
+    // 完成页只留标题、划掉的配对码（扫码即认主时没有）与状态，说明和按钮都收起
+    private lateinit var instructionRow: Row
+    private lateinit var codeRow: Row
+    private lateinit var noteRow: Row
+    private lateinit var renewRow: Row
     private val renewButton = JButton(ImuxBundle.message("bridge.add.pair.renew"))
     private var job: Job? = null
     private var driver: OnboardingDriver? = null
@@ -107,6 +110,13 @@ class AddRobotDialog(
     private var shownPairWait: PairWait? = null
 
     private enum class Card { CHANNEL, QR, PAIR }
+
+    private companion object {
+        /** 状态行超过这个宽度（未缩放像素）就换行；扫码页右栏在二维码旁边，按它取窄的。 */
+        const val STATUS_WIDTH = 300
+        val ONLINE_DOT = StatusDotIcon(BannerColors.ONLINE)
+        val PROBLEM_DOT = StatusDotIcon(BannerColors.PROBLEM)
+    }
 
     init {
         title = ImuxBundle.message("bridge.add.title")
@@ -165,12 +175,11 @@ class AddRobotDialog(
         val pairPanel =
             panel {
                 row { cell(pairTitle) }
-                val instruction = row { cell(pairInstruction) }.topGap(TopGap.SMALL)
-                val code = row { cell(pairCode) }
-                val note = row { comment(ImuxBundle.message("bridge.add.pair.note")) }
+                instructionRow = row { cell(pairInstruction) }.topGap(TopGap.SMALL)
+                codeRow = row { cell(pairCode) }
+                noteRow = row { comment(ImuxBundle.message("bridge.add.pair.note")) }
                 row { cell(pairStatus) }.topGap(TopGap.SMALL)
-                val renew = row { cell(renewButton) }
-                codeRows = listOf(instruction, code, note, renew)
+                renewRow = row { cell(renewButton) }
             }
 
         // 选渠道页按原样靠左上排；扫码、配对页内容居中
@@ -216,19 +225,19 @@ class AddRobotDialog(
 
     private fun render(state: DriverState) {
         when (state) {
-            DriverState.Starting -> setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.starting"), BannerColors.PROBLEM)
+            DriverState.Starting -> setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.starting"), PROBLEM_DOT)
             is DriverState.Qr -> {
                 qrLabel.icon = ImageIcon(qrImage(state.content, JBUI.scale(200)))
-                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.waiting"), BannerColors.PROBLEM)
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.waiting"), PROBLEM_DOT)
             }
             DriverState.NeedVerifyCode -> verifyPanel.isVisible = true
             DriverState.TimedOut -> {
-                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.timeout"), BannerColors.PROBLEM)
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.timeout"), PROBLEM_DOT)
                 retryButton.isVisible = true
             }
             is DriverState.Error -> {
                 val reason = if (state.detail != null) ImuxBundle.message(state.messageKey, state.detail) else ImuxBundle.message(state.messageKey)
-                setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", reason), BannerColors.PROBLEM)
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", reason), PROBLEM_DOT)
                 retryButton.isVisible = true
             }
             is DriverState.Done -> created(state.step)
@@ -249,7 +258,7 @@ class AddRobotDialog(
                     throw e
                 } catch (e: Exception) {
                     ui {
-                        setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName), BannerColors.PROBLEM)
+                        setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName), PROBLEM_DOT)
                         retryButton.isVisible = true
                     }
                 }
@@ -310,7 +319,8 @@ class AddRobotDialog(
         shownCode = code
         pairInstruction.text = ImuxBundle.message("bridge.add.pair.instruction", channelLabel(kind))
         pairCode.text = spaced(code)
-        pairTitle.icon = StatusDotIcon(BannerColors.ONLINE)
+        // 绿点只表示可用，等待配对时标题不带点，状态行的黄点说明进度
+        pairTitle.icon = null
         showPairState(PairWait.WAITING, null)
         show(Card.PAIR)
     }
@@ -329,20 +339,19 @@ class AddRobotDialog(
                 else -> ImuxBundle.message("bridge.add.pair.waiting")
             }
         // 原型：等待与异常都是黄点
-        setStatus(pairStatus, text, BannerColors.PROBLEM)
+        setStatus(pairStatus, text, PROBLEM_DOT)
     }
 
     /** 配对成功：留在配对页，划掉配对码、绿点提示可以连接会话（原型的完成态）。 */
     private fun finish() {
         paired = true
         shownPairWait = PairWait.PAIRED
-        pairTitle.icon = StatusDotIcon(BannerColors.ONLINE)
-        // 扫码即认主的渠道没有配对码，只留标题与状态；重新生成按钮一律收起
-        codeRows.forEach { it.visible(shownCode.isNotEmpty()) }
-        codeRows.last().visible(false)
+        pairTitle.icon = ONLINE_DOT
+        listOf(instructionRow, noteRow, renewRow).forEach { it.visible(false) }
+        codeRow.visible(shownCode.isNotEmpty())
         pairCode.isEnabled = false
         pairCode.text = "<html><s>" + spaced(shownCode) + "</s></html>"
-        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), BannerColors.ONLINE)
+        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), ONLINE_DOT)
         show(Card.PAIR)
         setOKButtonText(CommonBundle.getOkButtonText())
         isOKActionEnabled = true
@@ -351,10 +360,11 @@ class AddRobotDialog(
     private fun setStatus(
         label: JBLabel,
         text: String,
-        color: JBColor,
+        dot: Icon,
     ) {
-        label.icon = StatusDotIcon(color)
-        label.text = text
+        label.icon = dot
+        // 内容居中，超宽的一行会左右两头都被截掉：长文字限宽换行
+        label.text = if (label.getFontMetrics(label.font).stringWidth(text) > JBUI.scale(STATUS_WIDTH)) html(text, STATUS_WIDTH) else text
     }
 
     private fun ensureBridgeEnabled(): Boolean {
@@ -377,7 +387,13 @@ class AddRobotDialog(
     private fun spaced(code: String): String = code.toList().joinToString(" ")
 
     /** 多行说明用 HTML 换行；先转义，文案里的尖括号不会被当成标签。 */
-    private fun html(text: String): String = "<html>" + StringUtil.escapeXmlEntities(text).replace("\n", "<br>") + "</html>"
+    private fun html(
+        text: String,
+        width: Int? = null,
+    ): String {
+        val body = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")
+        return if (width == null) "<html>$body</html>" else "<html><div style='width:${width}px'>$body</div></html>"
+    }
 
     private fun label(kind: ChannelKind): String =
         channelLabel(kind) + if (ChannelFactories.forKind(kind) == null) "（" + ImuxBundle.message("bridge.channel.later") + "）" else ""
