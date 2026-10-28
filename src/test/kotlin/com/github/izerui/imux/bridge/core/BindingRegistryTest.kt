@@ -72,4 +72,22 @@ class BindingRegistryTest {
         assertNull(registry.reattach(a, "t1"))
         assertNull(registry.migrateSession("t1", "s-new"))
     }
+
+    @Test
+    fun `只有实际改动才通知持有者：绑定、解绑、迁移、挂接各一次，查询与无效操作不通知`() {
+        val registry = BindingRegistry()
+        var changes = 0
+        registry.onChanged = { changes++ }
+        val robot = RobotId("r")
+        registry.bind(robot, SessionTarget("/p", "t1", AgentType.CLAUDE, "s1"))
+        registry.bind(RobotId("other"), SessionTarget("/p", "t1", AgentType.CLAUDE, "s1"))
+        registry.migrateSession("t1", "s2")
+        registry.migrateSession("missing", "s3")
+        registry.reattach(robot, "t2")
+        registry.bindingOf(robot)
+        registry.snapshot()
+        registry.unbind(robot)
+        registry.unbind(robot)
+        assertEquals(4, changes)
+    }
 }

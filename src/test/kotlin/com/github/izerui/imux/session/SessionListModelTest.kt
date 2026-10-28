@@ -424,4 +424,19 @@ class SessionListModelTest {
             model.entries(AgentType.CODEX).map { (it as ListEntry.Existing).session.id },
         )
     }
+
+    @Test
+    fun `会话只改了标题也通知监听者：依赖标题显示的界面靠它刷新`() {
+        val model = model(FakeClock(base))
+        val original = session("s1", AgentType.CLAUDE, base)
+        scanResult = listOf(original)
+        model.refresh()
+        var notified = 0
+        model.addListener { notified++ }
+        model.refresh()
+        assertEquals("扫描结果没变不通知", 0, notified)
+        scanResult = listOf(original.copy(title = "改过的标题"))
+        model.refresh()
+        assertEquals(1, notified)
+    }
 }

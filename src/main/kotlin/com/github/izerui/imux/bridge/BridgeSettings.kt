@@ -9,8 +9,7 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 
 /**
- * 通讯桥接总开关。独立存储，不修改 ImuxSettings；默认关闭。
- * 设置界面在机器人管理计划中提供。
+ * 通讯桥接总开关。独立存储，不修改 ImuxSettings；默认关闭。只经 [BridgeLifecycle.setEnabled] 写入。
  */
 @Service(Service.Level.APP)
 @State(name = "ImuxBridgeSettings", storages = [Storage("imux-bridge.xml", roamingType = RoamingType.DISABLED)])

@@ -1,5 +1,7 @@
 package com.github.izerui.imux.bridge.robot
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
+import com.github.izerui.imux.bridge.core.RobotId
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.RoamingType
 import com.intellij.openapi.components.SerializablePersistentStateComponent
@@ -60,7 +62,7 @@ internal fun toBook(state: RobotStore.State): RobotBook {
             val kind = ChannelKind.of(xml.kind) ?: return@mapNotNull null
             if (xml.id.isBlank()) return@mapNotNull null
             RobotRecord(
-                id = xml.id,
+                id = RobotId(xml.id),
                 name = xml.name,
                 kind = kind,
                 ownerSenderId = xml.ownerSenderId,
@@ -82,7 +84,7 @@ internal fun fromBook(book: RobotBook): RobotStore.State =
         robots =
             book.robots.map {
                 RobotStore.RobotXml(
-                    id = it.id,
+                    id = it.id.value,
                     name = it.name,
                     kind = it.kind.id,
                     ownerSenderId = it.ownerSenderId,

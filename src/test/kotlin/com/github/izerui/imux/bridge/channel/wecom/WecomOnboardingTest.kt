@@ -61,7 +61,6 @@ class WecomOnboardingTest {
             assertEquals(OnboardingStep.Failed("bridge.onboarding.noCredentials"), missing.poll())
             assertEquals(OnboardingStep.Failed("bridge.onboarding.noQr"), WecomOnboarding(http("""{"data":{}}"""), plat = 1).start())
             assertEquals(OnboardingStep.Failed("bridge.onboarding.noQr"), WecomOnboarding(http(), plat = 1).poll())
-            assertEquals(OnboardingStep.Failed("bridge.onboarding.unsupported"), WecomOnboarding(http(), plat = 1).submitVerifyCode("1"))
         }
 
     @Test

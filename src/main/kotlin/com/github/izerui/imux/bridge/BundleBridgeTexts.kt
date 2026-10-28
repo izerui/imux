@@ -1,8 +1,8 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.ImuxBundle
-import com.github.izerui.imux.turn.waitingReason
 import com.github.izerui.imux.bridge.core.BridgeTexts
+import com.github.izerui.imux.turn.waitingReason
 
 internal object BundleBridgeTexts : BridgeTexts {
     override fun unbound() = ImuxBundle.message("bridge.reply.unbound")
@@ -31,11 +31,12 @@ internal object BundleBridgeTexts : BridgeTexts {
         sessionTitle: String,
     ) = ImuxBundle.message("bridge.status.connected", project, agent, sessionTitle)
 
-    override fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")
+    // 配对回复由机器人管理直接发出，不经过路由器，所以不在 BridgeTexts 接口里
+    fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")
 
-    override fun pairingExpired() = ImuxBundle.message("bridge.pairing.expired")
+    fun pairingExpired() = ImuxBundle.message("bridge.pairing.expired")
 
-    override fun pairingLocked() = ImuxBundle.message("bridge.pairing.locked")
+    fun pairingLocked() = ImuxBundle.message("bridge.pairing.locked")
 
     override fun attachmentLine(path: String) = ImuxBundle.message("bridge.attachment.line", path)
 

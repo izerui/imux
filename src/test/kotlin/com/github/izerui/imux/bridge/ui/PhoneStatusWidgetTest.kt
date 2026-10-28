@@ -27,7 +27,7 @@ class PhoneStatusWidgetTest {
 
     @Test
     fun `连着会话的机器人有异常时先报异常`() {
-        assertEquals("BAD", statusBarText(true, 2, 1, connected = { "C$it" }, idle = "IDLE", problems = 1, problem = "BAD"))
+        assertEquals("BAD", statusBarText(true, 2, 1, connected = { "C$it" }, idle = "IDLE", attentionCount = 1, attentionText = "BAD"))
     }
 
     @Test

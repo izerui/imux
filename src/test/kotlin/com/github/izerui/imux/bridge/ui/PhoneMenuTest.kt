@@ -1,10 +1,10 @@
 package com.github.izerui.imux.bridge.ui
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
-import com.github.izerui.imux.bridge.robot.ChannelKind
 import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
@@ -33,7 +33,7 @@ class PhoneMenuTest {
     private fun robot(
         id: String,
         paired: Boolean = true,
-    ) = if (paired) RobotRecord(id, "bot-$id", ChannelKind.WECOM, ownerSenderId = "u", ownerChatId = "u") else RobotRecord(id, "bot-$id", ChannelKind.WECOM, pairCode = "1")
+    ) = if (paired) RobotRecord(RobotId(id), "bot-$id", ChannelKind.WECOM, ownerSenderId = "u", ownerChatId = "u") else RobotRecord(RobotId(id), "bot-$id", ChannelKind.WECOM, pairCode = "1")
 
     private fun binding(
         id: String,
@@ -46,7 +46,7 @@ class PhoneMenuTest {
         val entries =
             phoneMenuModel(
                 listOf(robot("a"), robot("b"), robot("c"), robot("d", paired = false)),
-                bindingOf = { bindings[it] },
+                bindingOf = { bindings[it.value] },
                 statusOf = { ConnectionStatus.Online },
                 thisTabId = "this",
                 titleOf = { "T:" + it.target.tabId },
@@ -54,12 +54,12 @@ class PhoneMenuTest {
             )
         assertEquals(
             listOf(
-                PhoneMenuEntry.Robot("a", "bot-a/idle", true),
-                PhoneMenuEntry.Robot("b", "bot-b/bound:T:other", true),
-                PhoneMenuEntry.Robot("c", "bot-c/current", false),
-                PhoneMenuEntry.Robot("d", "bot-d/unpaired", false),
+                PhoneMenuEntry.Robot(RobotId("a"), "bot-a/idle", true),
+                PhoneMenuEntry.Robot(RobotId("b"), "bot-b/bound:T:other", true),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/current", false),
+                PhoneMenuEntry.Robot(RobotId("d"), "bot-d/unpaired", false),
                 PhoneMenuEntry.AddRobot,
-                PhoneMenuEntry.Disconnect("c"),
+                PhoneMenuEntry.Disconnect(RobotId("c")),
             ),
             entries,
         )
@@ -80,16 +80,16 @@ class PhoneMenuTest {
             phoneMenuModel(
                 listOf(robot("a"), robot("b"), robot("c")),
                 bindingOf = { null },
-                statusOf = { statuses[it] },
+                statusOf = { statuses[it.value] },
                 thisTabId = "this",
                 titleOf = { "" },
                 labels = labels,
             )
         assertEquals(
             listOf(
-                PhoneMenuEntry.Robot("a", "bot-a/offline:Kicked", true),
-                PhoneMenuEntry.Robot("b", "bot-b/idle", true),
-                PhoneMenuEntry.Robot("c", "bot-c/offline:null", true),
+                PhoneMenuEntry.Robot(RobotId("a"), "bot-a/offline:Kicked", true),
+                PhoneMenuEntry.Robot(RobotId("b"), "bot-b/idle", true),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/offline:null", true),
                 PhoneMenuEntry.AddRobot,
             ),
             entries,

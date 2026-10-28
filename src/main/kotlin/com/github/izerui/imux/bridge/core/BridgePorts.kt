@@ -44,7 +44,6 @@ interface BridgeTexts {
 
     fun localInputLabel(): String
 
-
     fun waiting(reason: String?): String
 
     fun released(sessionTitle: String): String
@@ -56,12 +55,6 @@ interface BridgeTexts {
         agent: String,
         sessionTitle: String,
     ): String
-
-    fun pairingSucceeded(): String
-
-    fun pairingExpired(): String
-
-    fun pairingLocked(): String
 
     /** 提交给终端的附件行，例如 `[附件] .imux/attachments/2026-10-27/a.png`。 */
     fun attachmentLine(path: String): String

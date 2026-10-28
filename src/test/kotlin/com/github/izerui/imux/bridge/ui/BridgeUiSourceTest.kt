@@ -55,38 +55,44 @@ class RobotsSettingsRecoverySourceTest {
     }
 
     @Test
-    fun `创建面板前停掉旧定时器`() {
+    fun `设置页随机器人、状态与绑定变化刷新，不定时轮询；重建面板前先退订旧的`() {
         val body = configurable.compact(configurable.bodyAfter("override fun createPanel(): DialogPanel", '{'))
-        assertTrue(body.indexOf("timer?.stop()") in 0 until body.indexOf("timer=Timer("))
+        assertTrue(body.indexOf("uiDisposable?.let(Disposer::dispose)") in 0 until body.indexOf("subscribe(SessionDecorationsListener.TOPIC,SessionDecorationsListener{refresh()})"))
+        assertTrue(!configurable.normalized.contains("Timer("))
+    }
+
+    @Test
+    fun `设置页开着时会话改名也刷新：订阅每个打开项目的会话列表变化，随面板一起退订`() {
+        val body = configurable.compact(configurable.bodyAfter("override fun createPanel(): DialogPanel", '{'))
+        assertTrue(body.contains("ProjectManager.getInstance().openProjects.filterNot{it.isDisposed}.forEach{project->SessionMonitor.getInstance(project).addListener(disposable){refresh()}}"))
     }
 
     @Test
     fun `配对入口续期配对码并等待认主`() {
-        val body = dialog.compact(dialog.bodyAfter("private fun startPairing(id: String)", '{'))
+        val body = dialog.compact(dialog.bodyAfter("private fun startPairing(id: RobotId)", '{'))
         assertTrue(body.contains("manager.renewPairCode(id)"))
         assertTrue(body.contains("awaitPaired(id)"))
     }
 
     @Test
-    fun `等待认主在机器人被删除时退出`() {
-        assertTrue(dialog.normalized.contains("@Volatile private var robotId: String? = null"))
-        val body = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: String)", '{'))
-        assertTrue(body.contains("pairWait(manager.robot(id),System.currentTimeMillis(),status)"))
-        assertTrue(body.contains("PairWait.GONE->return"))
+    fun `对话框的等待认主交给 awaitPairing，按中枢版本等事件，认主后进入完成页`() {
+        assertTrue(dialog.normalized.contains("@Volatile private var robotId: RobotId? = null"))
+        val body = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: RobotId)", '{'))
+        assertTrue(body.contains("awaitPairing(revision=BridgeHub.getInstance().revision,now=System::currentTimeMillis,robot={manager.robot(id)},status={manager.statusOf(id)})"))
+        assertTrue(body.contains("if(result==PairWait.PAIRED)ui{finish()}"))
     }
 
     @Test
     fun `配对码失效、过期或连接异常时说明原因，重新生成时一并重连`() {
-        val wait = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: String)", '{'))
-        assertTrue("与界面实际显示的状态比较，不同才刷新，且继续等待", wait.contains("if(wait!=shownPairWait)ui{showPairState(wait,status)}delay(500)"))
-        val state = dialog.compact(dialog.bodyAfter("private fun showPairState(", '{'))
-        assertTrue("显示即记录，重新生成改回等待时也随之更新", state.contains("){shownPairWait=waitpairCode.isEnabled=wait==PairWait.WAITING"))
+        val wait = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: RobotId)", '{'))
+        assertTrue("先投递到 EDT，再与页面此刻的显示比较", wait.contains("{wait,status->ui{pairView.offer(wait,status)}}"))
+        val state = dialog.compact(dialog.bodyAfter("private fun renderPairState(", '{'))
         val show = dialog.compact(dialog.bodyAfter("private fun showPair(code: String)", '{'))
-        assertTrue("重新生成后经 showPairState 显示等待", show.contains("showPairState(PairWait.WAITING,null)"))
+        assertTrue("重新生成后经显示状态记录改回等待", show.contains("pairView.show(PairWait.WAITING,null)"))
         assertTrue(state.contains("bridge.add.pair.invalidated"))
         assertTrue(state.contains("bridge.add.pair.expired"))
         assertTrue(state.contains("bridge.add.pair.disconnected"))
-        val renew = dialog.compact(dialog.bodyAfter("private fun renew(id: String)", '{'))
+        val renew = dialog.compact(dialog.bodyAfter("private fun renew(id: RobotId)", '{'))
         assertTrue(renew.startsWith("{reconnectIfDown(id)manager.renewPairCode(id)"))
         assertTrue(dialog.compact(dialog.normalized).contains("renewButton.addActionListener{robotId?.let(::renew)}"))
     }

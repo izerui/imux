@@ -1,7 +1,9 @@
 package com.github.izerui.imux.bridge.channel.wecom
 
 import com.github.izerui.imux.bridge.core.AttachmentKind
-import com.google.gson.JsonElement
+import com.github.izerui.imux.bridge.json.obj
+import com.github.izerui.imux.bridge.json.objects
+import com.github.izerui.imux.bridge.json.string
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.util.Random
@@ -103,8 +105,8 @@ object WecomProtocol {
     }
 
     private fun doParse(root: JsonObject): WecomFrame {
-        val reqId = root.obj("headers")?.str("req_id").orEmpty()
-        val cmd = root.str("cmd")
+        val reqId = root.obj("headers")?.string("req_id").orEmpty()
+        val cmd = root.string("cmd")
         if (cmd == null) {
             val errcode = root["errcode"]?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.let { p ->
                 when {
@@ -113,22 +115,22 @@ object WecomProtocol {
                     else -> null
                 }
             } ?: return WecomFrame.Unknown
-            return WecomFrame.Ack(reqId, errcode, root.str("errmsg"))
+            return WecomFrame.Ack(reqId, errcode, root.string("errmsg"))
         }
         val body = root.obj("body") ?: return WecomFrame.Unknown
         return when (cmd) {
             "aibot_msg_callback" -> message(reqId, body)
             "aibot_event_callback" -> {
-                val eventType = body.obj("event")?.str("eventtype")
+                val eventType = body.obj("event")?.string("eventtype")
                 if (eventType == "disconnected_event") {
                     WecomFrame.Kicked
                 } else {
                     WecomFrame.Event(
                         eventType = eventType,
                         reqId = reqId,
-                        msgId = body.str("msgid").orEmpty(),
-                        single = body.str("chattype").let { it == null || it == "single" },
-                        fromUserId = body.obj("from")?.str("userid").orEmpty(),
+                        msgId = body.string("msgid").orEmpty(),
+                        single = body.string("chattype").let { it == null || it == "single" },
+                        fromUserId = body.obj("from")?.string("userid").orEmpty(),
                     )
                 }
             }
@@ -144,27 +146,25 @@ object WecomProtocol {
         val text = if (compat) null else textOf(body)
         val quote = if (compat) null else body.obj("quote")?.let(::textOf)?.takeIf(String::isNotBlank)
         val media =
-            if (body.has("compat_info")) {
+            if (compat) {
                 emptyList()
             } else {
-                when (body.str("msgtype")) {
+                when (body.string("msgtype")) {
                     "image" -> listOfNotNull(mediaRef(AttachmentKind.IMAGE, body.obj("image")))
                     "file" -> listOfNotNull(mediaRef(AttachmentKind.FILE, body.obj("file")))
                     "video" -> listOfNotNull(mediaRef(AttachmentKind.VIDEO, body.obj("video")))
                     "mixed" ->
-                        body.obj("mixed")?.get("msg_item")?.takeIf(JsonElement::isJsonArray)?.asJsonArray
-                            ?.mapNotNull { item -> item.takeIf(JsonElement::isJsonObject)?.asJsonObject }
-                            ?.filter { it.str("msgtype") == "image" }
-                            ?.mapNotNull { mediaRef(AttachmentKind.IMAGE, it.obj("image")) }
-                            .orEmpty()
+                        mixedItems(body)
+                            .filter { it.string("msgtype") == "image" }
+                            .mapNotNull { mediaRef(AttachmentKind.IMAGE, it.obj("image")) }
                     else -> emptyList()
                 }
             }
         return WecomFrame.Message(
             reqId = reqId,
-            msgId = body.str("msgid").orEmpty(),
-            single = body.str("chattype") == "single",
-            fromUserId = body.obj("from")?.str("userid").orEmpty(),
+            msgId = body.string("msgid").orEmpty(),
+            single = body.string("chattype") == "single",
+            fromUserId = body.obj("from")?.string("userid").orEmpty(),
             text = text,
             media = media,
             quote = quote,
@@ -173,25 +173,27 @@ object WecomProtocol {
 
     /** 消息或引用体里的文字：文本、语音转写、图文混排中的文字按原顺序拼接。 */
     private fun textOf(body: JsonObject): String? =
-        when (body.str("msgtype")) {
-            "text" -> body.obj("text")?.str("content")
-            "voice" -> body.obj("voice")?.str("content")
+        when (body.string("msgtype")) {
+            "text" -> body.obj("text")?.string("content")
+            "voice" -> body.obj("voice")?.string("content")
             "mixed" ->
-                body.obj("mixed")?.get("msg_item")?.takeIf(JsonElement::isJsonArray)?.asJsonArray
-                    ?.mapNotNull { item -> item.takeIf(JsonElement::isJsonObject)?.asJsonObject }
-                    ?.filter { it.str("msgtype") == "text" }
-                    ?.mapNotNull { it.obj("text")?.str("content") }
-                    ?.joinToString("\n")
-                    ?.takeIf(String::isNotEmpty)
+                mixedItems(body)
+                    .filter { it.string("msgtype") == "text" }
+                    .mapNotNull { it.obj("text")?.string("content") }
+                    .joinToString("\n")
+                    .takeIf(String::isNotEmpty)
             else -> null
         }
+
+    /** 图文混排里的各项。 */
+    private fun mixedItems(body: JsonObject): List<JsonObject> = body.obj("mixed")?.objects("msg_item").orEmpty()
 
     private fun mediaRef(
         kind: AttachmentKind,
         obj: JsonObject?,
     ): WecomMediaRef? {
-        val url = obj?.str("url")?.takeIf(String::isNotBlank) ?: return null
-        val aesKey = obj.str("aeskey")?.takeIf(String::isNotBlank) ?: return null
+        val url = obj?.string("url")?.takeIf(String::isNotBlank) ?: return null
+        val aesKey = obj.string("aeskey")?.takeIf(String::isNotBlank) ?: return null
         return WecomMediaRef(kind, url, aesKey)
     }
 
@@ -206,7 +208,4 @@ object WecomProtocol {
             if (body != null) add("body", JsonObject().apply(body))
         }.toString()
 
-    private fun JsonObject.str(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
-
-    private fun JsonObject.obj(key: String): JsonObject? = get(key)?.takeIf { it.isJsonObject }?.asJsonObject
 }

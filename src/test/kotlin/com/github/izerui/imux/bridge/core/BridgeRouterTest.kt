@@ -5,6 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,7 +39,7 @@ class BridgeRouterTest {
         override suspend fun send(message: OutboundMessage): DeliveryResult {
             sent += message
             afterSend()
-            return DeliveryResult.Accepted(null)
+            return DeliveryResult.Accepted
         }
     }
 
@@ -68,11 +69,8 @@ class BridgeRouterTest {
             sessionTitle: String,
         ) = "CONNECTED($project/$agent/$sessionTitle)"
 
-        override fun pairingSucceeded() = "PAIRED"
 
-        override fun pairingExpired() = "PAIR_EXPIRED"
 
-        override fun pairingLocked() = "PAIR_LOCKED"
 
         override fun attachmentLine(path: String) = "ATT($path)"
 
@@ -217,7 +215,6 @@ class BridgeRouterTest {
         runBlocking {
             assertEquals(InboundOutcome.UNBOUND, router.onInbound(inbound("1", "hi")))
             assertEquals(listOf("UNBOUND"), sentTexts())
-            assertEquals(null, channel.sent.single().bindingEpoch)
         }
 
     @Test
@@ -247,12 +244,12 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.USER_TEXT, "修一下 测试"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "好的\n```\ncode\n```"),
+                    SessionEvent.UserText("修一下 测试"),
+                    SessionEvent.AssistantText("好的\n```\ncode\n```"),
                 ),
             )
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "电脑上补一句")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("电脑上补一句")))
             assertEquals(listOf("好的\n```\ncode\n```", "LOCAL:\n电脑上补一句"), sentTexts())
         }
 
@@ -274,7 +271,7 @@ class BridgeRouterTest {
             port.result = SubmitResult.NOT_READY
             router.onInbound(inbound("1", "同一句"))
             channel.sent.clear()
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "同一句")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("同一句")))
             assertEquals(listOf("LOCAL:\n同一句"), sentTexts())
         }
 
@@ -285,9 +282,8 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Read", "t1"),
-                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Edit", "t2"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.ToolStarted,
                 ),
             )
             router.onWaiting("tab-1", "Edit")
@@ -297,7 +293,7 @@ class BridgeRouterTest {
     @Test
     fun `未绑定终端的事件不转发`() =
         runBlocking {
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "x")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("x")))
             router.onWaiting("tab-1", null)
             assertTrue(channel.sent.isEmpty())
         }
@@ -309,7 +305,7 @@ class BridgeRouterTest {
             val r = BridgeRouter(registry, { owner }, port, { small }, Texts)
             registry.bind(robot, target)
             small.afterSend = { registry.bind(robot, target.copy(tabId = "tab-2")) }
-            r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "行内容\n".repeat(40))))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("行内容\n".repeat(40))))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
             assertEquals(1, small.sent.size)
         }
@@ -321,16 +317,15 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看"),
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Read", "t1"),
-                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "现在改"),
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Edit", "t2"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "改好了"),
+                    SessionEvent.AssistantText("我先看看"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.AssistantText("现在改"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.AssistantText("改好了"),
                 ),
             )
             assertTrue("轮次完成前不推", channel.sent.isEmpty())
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "总结")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("总结")))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertEquals(listOf("改好了\n\n总结"), sentTexts())
         }
@@ -339,7 +334,7 @@ class BridgeRouterTest {
     fun `没有工具调用时推整段回复，完成信号重复不重发`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "答案")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertEquals(listOf("答案"), sentTexts())
@@ -350,7 +345,7 @@ class BridgeRouterTest {
         runBlocking {
             registry.bind(robot, target)
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "迟到的结论")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("迟到的结论")))
             assertEquals(listOf("迟到的结论"), sentTexts())
         }
 
@@ -363,11 +358,11 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "本轮结论"),
-                    SessionEvent(SessionEventKind.TURN_ENDED, ""),
+                    SessionEvent.AssistantText("本轮结论"),
+                    SessionEvent.TurnEnded,
                     // CLI 里排队的消息在本轮结束后立刻开始
-                    SessionEvent(SessionEventKind.USER_TEXT, "排队的下一句"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看"),
+                    SessionEvent.UserText("排队的下一句"),
+                    SessionEvent.AssistantText("我先看看"),
                 ),
             )
             assertEquals(listOf("本轮结论", "LOCAL:\n排队的下一句"), sentTexts())
@@ -378,9 +373,9 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Bash", "t1"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "下一轮结论"),
-                    SessionEvent(SessionEventKind.TURN_ENDED, ""),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.AssistantText("下一轮结论"),
+                    SessionEvent.TurnEnded,
                 ),
             )
             assertEquals(listOf("本轮结论", "LOCAL:\n排队的下一句", "下一轮结论"), sentTexts())
@@ -393,19 +388,18 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.USER_TEXT, "第一句"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "第一轮结论"),
-                    SessionEvent(SessionEventKind.TURN_ENDED, ""),
+                    SessionEvent.UserText("第一句"),
+                    SessionEvent.AssistantText("第一轮结论"),
+                    SessionEvent.TurnEnded,
                 ),
             )
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.USER_TEXT, "第二句"),
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Bash", "t1"),
-                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "第二轮结论"),
+                    SessionEvent.UserText("第二句"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.AssistantText("第二轮结论"),
                 ),
             )
             assertEquals("没有结束标记时不提前发", listOf("LOCAL:\n第一句", "第一轮结论", "LOCAL:\n第二句"), sentTexts())
@@ -417,7 +411,7 @@ class BridgeRouterTest {
     fun `记录没有结束标记的标签，仍以 IDE 完成信号发结论`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "结论")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("结论")))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertEquals(listOf("结论"), sentTexts())
         }
@@ -426,17 +420,16 @@ class BridgeRouterTest {
     fun `上一轮完成后，由注入消息开启的新一轮，过程说明不提前推送`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "第一轮结论")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("第一轮结论")))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             // 斜杠命令或后台任务完成通知开启了新一轮：没有人写的输入
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.TURN_STARTED, ""),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看日志"),
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Bash", "t1"),
-                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "第二轮结论"),
+                    SessionEvent.TurnStarted,
+                    SessionEvent.AssistantText("我先看看日志"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.AssistantText("第二轮结论"),
                 ),
             )
             assertEquals(listOf("第一轮结论"), sentTexts())
@@ -451,9 +444,9 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看日志"),
-                    SessionEvent(SessionEventKind.USER_TEXT, "顺便改一下 X"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "好的，已经一起改了"),
+                    SessionEvent.AssistantText("我先看看日志"),
+                    SessionEvent.UserText("顺便改一下 X"),
+                    SessionEvent.AssistantText("好的，已经一起改了"),
                 ),
             )
             assertEquals(listOf("LOCAL:\n顺便改一下 X"), sentTexts())
@@ -468,9 +461,9 @@ class BridgeRouterTest {
             router.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先等后台任务"),
-                    SessionEvent(SessionEventKind.TURN_STARTED, ""),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "后台任务完成了，结论是 Y"),
+                    SessionEvent.AssistantText("我先等后台任务"),
+                    SessionEvent.TurnStarted,
+                    SessionEvent.AssistantText("后台任务完成了，结论是 Y"),
                 ),
             )
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
@@ -481,7 +474,7 @@ class BridgeRouterTest {
     fun `等待确认立即推送，不带出未完成的回复`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "还没说完")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("还没说完")))
             router.onWaiting("tab-1", "Bash")
             assertEquals(listOf("WAIT(Bash)"), sentTexts())
         }
@@ -490,7 +483,7 @@ class BridgeRouterTest {
     fun `换绑后上一绑定的待发结果作废`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "旧结果")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("旧结果")))
             registry.unbind(robot)
             registry.bind(robot, target)
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
@@ -501,7 +494,7 @@ class BridgeRouterTest {
     fun `过程说明之后、未收到完成信号就断开：只发断开提示，之后也不补发`() =
         runBlocking {
             val bound = (registry.bind(robot, target) as BindResult.Bound).binding
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("我先看看")))
             registry.unbind(robot)
             router.onReleased(bound, "修复滚动")
             assertEquals(listOf("RELEASED(修复滚动)"), sentTexts())
@@ -515,11 +508,11 @@ class BridgeRouterTest {
     fun `断开后重新绑定，记录没有结束标记时重新以 IDE 完成信号发结论`() =
         runBlocking {
             val bound = (registry.bind(robot, target) as BindResult.Bound).binding
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "一"), SessionEvent(SessionEventKind.TURN_ENDED, "")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("一"), SessionEvent.TurnEnded))
             registry.unbind(robot)
             router.onReleased(bound, "修复滚动")
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "再来"), SessionEvent(SessionEventKind.ASSISTANT_TEXT, "二")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("再来"), SessionEvent.AssistantText("二")))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertEquals("二", sentTexts().last())
         }
@@ -528,9 +521,9 @@ class BridgeRouterTest {
     fun `关闭远程控制后，IDE 完成信号重新生效`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "一"), SessionEvent(SessionEventKind.TURN_ENDED, "")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("一"), SessionEvent.TurnEnded))
             router.discardPending()
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "再来"), SessionEvent(SessionEventKind.ASSISTANT_TEXT, "二")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("再来"), SessionEvent.AssistantText("二")))
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertEquals("二", sentTexts().last())
         }
@@ -562,7 +555,7 @@ class BridgeRouterTest {
     fun `换绑后旧绑定的清理晚到，不删新机器人已攒下的回复`() =
         runBlocking {
             val old = switchToB()
-            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "新回复")))
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("新回复")))
             switchRouter.onReleased(old, "修复滚动")
             switchRouter.onTurnCompleted("tab-1", switchRouter.currentTurn("tab-1"))
             assertEquals(listOf("RELEASED(修复滚动)"), channel.sent.map { it.text })
@@ -576,7 +569,7 @@ class BridgeRouterTest {
             switchRouter.onTurnCompleted("tab-1", switchRouter.currentTurn("tab-1"))
             switchRouter.onReleased(old, "修复滚动")
             // 完成之后才读到的回复是迟到的最终输出，应立即发出
-            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "迟到的回复")))
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("迟到的回复")))
             assertEquals(listOf("迟到的回复"), channelB.sent.map { it.text })
         }
 
@@ -586,7 +579,7 @@ class BridgeRouterTest {
             val old = switchToB()
             assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, switchRouter.onInbound(InboundMessage(robotB, "1", "me-b", "chat-b", "跑测试")))
             switchRouter.onReleased(old, "修复滚动")
-            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "跑测试")))
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent.UserText("跑测试")))
             assertTrue(channelB.sent.isEmpty())
         }
 
@@ -594,7 +587,7 @@ class BridgeRouterTest {
     fun `换绑机器人：旧机器人只收到断开提示，换绑前攒下的文字作废，不发给新机器人`() =
         runBlocking {
             val old = (registry.bind(robot, target) as BindResult.Bound).binding
-            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "结论前半")))
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("结论前半")))
             registry.unbind(robot)
             registry.bind(robotB, target)
             switchRouter.onReleased(old, "修复滚动")
@@ -607,16 +600,15 @@ class BridgeRouterTest {
     fun `换绑机器人：换绑前的过程说明在之后调用工具时清掉，不发给任何一方`() =
         runBlocking {
             val old = (registry.bind(robot, target) as BindResult.Bound).binding
-            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "我先看看")))
+            switchRouter.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("我先看看")))
             registry.unbind(robot)
             registry.bind(robotB, target)
             switchRouter.onReleased(old, "修复滚动")
             switchRouter.onSessionEvents(
                 "tab-1",
                 listOf(
-                    SessionEvent(SessionEventKind.TOOL_STARTED, "Bash", "t1"),
-                    SessionEvent(SessionEventKind.TOOL_FINISHED, "", "t1"),
-                    SessionEvent(SessionEventKind.ASSISTANT_TEXT, "结论"),
+                    SessionEvent.ToolStarted,
+                    SessionEvent.AssistantText("结论"),
                 ),
             )
             switchRouter.onTurnCompleted("tab-1", switchRouter.currentTurn("tab-1"))
@@ -628,7 +620,7 @@ class BridgeRouterTest {
     fun `关闭远程控制时丢弃未发出的回复`() =
         runBlocking {
             registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, "关闭前的回复")))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("关闭前的回复")))
             router.discardPending()
             router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertTrue(channel.sent.isEmpty())
@@ -658,7 +650,7 @@ class BridgeRouterTest {
             assertEquals(listOf("OFFLINE"), sentTexts())
             // 回显登记已清除：同样文本的本地输入应带标签转发
             channel.sent.clear()
-            r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "炸了")))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.UserText("炸了")))
             assertEquals(listOf("LOCAL:\n炸了"), channel.sent.map { it.text })
         }
 
@@ -772,6 +764,49 @@ class BridgeRouterTest {
         }
 
     @Test
+    fun `换绑提示按顺序发：被断开一方的提示还在等发送时，新连接的提示不抢先`() =
+        runBlocking {
+            val occupantRobot = RobotId("occupant")
+            val gate = CompletableDeferred<Unit>()
+            val order = mutableListOf<String>()
+
+            // 被断开一方的渠道卡在发送上（例如限频等待），直到放行
+            class Recording(
+                override val robotId: RobotId,
+                val held: Boolean,
+            ) : ChannelAdapter {
+                override val maxTextBytes = 1000
+
+                override suspend fun send(message: OutboundMessage): DeliveryResult {
+                    if (held) gate.await()
+                    order += "${robotId.value}:${message.text}"
+                    return DeliveryResult.Accepted
+                }
+            }
+            val channels = mapOf(robot to Recording(robot, held = false), occupantRobot to Recording(occupantRobot, held = true))
+            val r = BridgeRouter(registry, { owner }, port, { channels[it] }, Texts, notReadyRetryDelayMs = 0)
+            val occupant = (registry.bind(occupantRobot, target) as BindResult.Bound).binding
+            registry.unbind(occupantRobot)
+            val bound = (registry.bind(robot, target) as BindResult.Bound).binding
+
+            val job = launch { r.onRebound(listOf(occupant to "旧会话"), bound, "imux", "Codex", "新会话") }
+            repeat(5) { yield() }
+            assertEquals("断开提示还没发出，连接提示不能先发", emptyList<String>(), order)
+            gate.complete(Unit)
+            job.join()
+            assertEquals(listOf("occupant:RELEASED(旧会话)", "r1:CONNECTED(imux/Codex/新会话)"), order)
+        }
+
+    @Test
+    fun `绑定没成功时只发断开提示`() =
+        runBlocking {
+            val old = (registry.bind(robot, target) as BindResult.Bound).binding
+            registry.unbind(robot)
+            router.onRebound(listOf(old to "旧会话"), null, "imux", "Codex", "新会话")
+            assertEquals(listOf("RELEASED(旧会话)"), sentTexts())
+        }
+
+    @Test
     fun `已被换绑的旧绑定不再发送当前连接`() =
         runBlocking {
             val old = (registry.bind(robot, target) as BindResult.Bound).binding
@@ -792,7 +827,7 @@ class BridgeRouterTest {
             // 换回 tab-1 后，电脑上输入的同样文本应带标签转发，不被残留登记吞掉
             registry.bind(robot, target)
             channel.sent.clear()
-            r.onSessionEvents("tab-1", listOf(SessionEvent(SessionEventKind.USER_TEXT, "同一句")))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.UserText("同一句")))
             assertEquals(listOf("LOCAL:\n同一句"), sentTexts())
         }
 

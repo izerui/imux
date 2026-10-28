@@ -11,10 +11,10 @@ import kotlin.coroutines.cancellation.CancellationException
  * 入站：校验本人 → 平台消息去重 → 找绑定 → 交给终端端口。不判断 Agent 忙闲，
  * 排队还是插入由 CLI 自己决定；这里只保证按到达顺序逐条提交。
  * 终端未就绪时在提交锁内有限重试，每次尝试前都复核绑定，换绑或解绑后立即停止。
- * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在轮次完成时作为一条发出，
- * 中间的过程说明不推，避免逐条推送触发平台限频。一轮是否结束只看完成信号（与 IDE 的“本轮完成”提醒同源），
- * 轮次进行中有人插话或注入消息，此前攒的都是过程说明，直接丢弃；电脑端输入带标签单独转发；
- * 远程输入在记录中再次出现时不回显；等待确认立即推送。
+ * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在本轮结算时作为一条发出，
+ * 中间的过程说明不推，避免逐条推送触发平台限频。轮次的划分与结算规则在 [TabState]；
+ * 电脑端输入带标签单独转发；远程输入在记录中再次出现时不回显；等待确认立即推送。
+ * 同一标签的 [onSessionEvents]、[onTurnCompleted] 由调用方串行调用。
  * 只做简单转接：换绑、断开的空档里漏掉的内容不补（见 AGENTS.md 手机桥接约定）。
  */
 class BridgeRouter(
@@ -31,33 +31,13 @@ class BridgeRouter(
     /** 警告日志出口（core 不依赖 IDE 日志）；只传原因，不含路径、对端 id、正文与密钥。 */
     private val onWarning: (String) -> Unit = {},
 ) {
-    private val submitLock = Mutex()
+    /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
+    private val submitLocks = HashMap<RobotId, Mutex>()
     private val lock = Any()
     private val seen = HashMap<RobotId, LinkedHashSet<String>>()
-    private val pendingRemoteEcho = HashMap<String, ArrayDeque<String>>()
 
-    /** 每个标签本轮待发的最终回复，连同产生它时的绑定代次；换绑后作废。 */
-    private val pendingFinal = HashMap<String, PendingFinal>()
-
-    /** 已报完成、尚未开始下一轮的标签：此后读到的回复是迟到的最终输出，立即发出。 */
-    private val completedTabs = HashSet<String>()
-
-    /**
-     * 当前这一轮已由会话记录里的结束标记收尾的标签。按轮次记：下一轮开始即清掉，
-     * 那一轮若没有结束标记，仍以 IDE 的完成信号兜底。
-     */
-    private val transcriptEnds = HashSet<String>()
-
-    /**
-     * 每个标签读到的第几轮，每开始一轮加一。IDE 的完成信号带着它发出时对应的轮次，
-     * 轮次已经过去（下一轮已开始）的迟到信号作废，不会把新一轮的过程说明当结论发出去。
-     */
-    private val turns = HashMap<String, Long>()
-
-    private class PendingFinal(
-        val epoch: Long,
-        val text: StringBuilder,
-    )
+    /** 各终端标签的轮次与回显状态，只在 [lock] 内访问。 */
+    private val tabs = HashMap<String, TabState>()
 
     /** 加锁提交阶段的结果。 */
     private sealed interface SubmitPhase {
@@ -97,7 +77,7 @@ class BridgeRouter(
         val text = withQuote(message.quote, composed ?: return InboundOutcome.ATTACHMENT_FAILED)
 
         val phase =
-            submitLock.withLock {
+            submitLock(message.robotId).withLock {
                 // 加锁后复核绑定：排队期间可能已换绑或解绑
                 val current = bindings.bindingOf(message.robotId)
                 if (current == null) return@withLock SubmitPhase.BindingGone
@@ -106,18 +86,18 @@ class BridgeRouter(
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
-                rememberRemote(tabId, text)
+                tab(tabId) { expectEcho(text) }
                 try {
                     val phase = submitWithRetry(message.robotId, current, text)
                     // 未提交成功，清除回显登记
-                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) forgetRemote(tabId, text)
+                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) tab(tabId) { forgetEcho(text) }
                     phase
                 } catch (e: CancellationException) {
-                    forgetRemote(tabId, text)
+                    tab(tabId) { forgetEcho(text) }
                     unmarkSeen(message.robotId, message.externalMessageId)
                     throw e
                 } catch (_: Exception) {
-                    forgetRemote(tabId, text)
+                    tab(tabId) { forgetEcho(text) }
                     SubmitPhase.Done(SubmitResult.OFFLINE)
                 }
             }
@@ -146,13 +126,7 @@ class BridgeRouter(
 
     /** 远程控制关闭时调用：丢弃尚未发出的回复与轮次状态，重新开启后不补发关闭前的内容。 */
     fun discardPending() {
-        synchronized(lock) {
-            pendingFinal.clear()
-            completedTabs.clear()
-            pendingRemoteEcho.clear()
-            transcriptEnds.clear()
-            turns.clear()
-        }
+        synchronized(lock) { tabs.clear() }
     }
 
     /** 引用的文字用 Markdown 引用块放在正文前，Agent 才知道“这里”指的是哪段。 */
@@ -203,7 +177,7 @@ class BridgeRouter(
     }
 
     /**
-     * 须在 submitLock 内调用。终端未就绪时最多尝试 [NOT_READY_ATTEMPTS] 次；
+     * 须在这个机器人的提交锁内调用。终端未就绪时最多尝试 [NOT_READY_ATTEMPTS] 次；
      * 每次尝试前复核绑定代次，等待期间换绑或解绑则不再提交，按绑定已变处理。
      */
     private suspend fun submitWithRetry(
@@ -220,50 +194,33 @@ class BridgeRouter(
         return SubmitPhase.Done(SubmitResult.NOT_READY)
     }
 
-    /** 读取期间换绑的，事件交给当前绑定：宁可发到新机器人，也不丢。 */
+    /** 读取期间换绑的，事件交给当前绑定；攒下的回复按代次作废，发出时只认产生它的那次绑定。 */
     suspend fun onSessionEvents(
         tabId: String,
         events: List<SessionEvent>,
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
         for (event in events) {
-            when (event.kind) {
-                SessionEventKind.ASSISTANT_TEXT -> appendFinal(tabId, binding.epoch, event.text)
-                SessionEventKind.USER_TEXT -> {
-                    startTurn(tabId)
-                    if (!consumeRemoteEcho(tabId, event.text)) send(binding, texts.localInputLabel() + "\n" + event.text)
+            when (event) {
+                is SessionEvent.AssistantText -> tab(tabId) { appendReply(binding.epoch, event.text) }
+                is SessionEvent.UserText -> {
+                    val echo =
+                        tab(tabId) {
+                            startTurn()
+                            consumeEcho(event.text)
+                        }
+                    if (!echo) send(binding, texts.localInputLabel() + "\n" + event.text)
                 }
-                // 工具调用之前的文字只是过程说明，不推
-                SessionEventKind.TOOL_STARTED -> synchronized(lock) { pendingFinal.remove(tabId) }
-                SessionEventKind.TOOL_FINISHED -> Unit
-                SessionEventKind.TURN_STARTED -> startTurn(tabId)
-                SessionEventKind.TURN_ENDED -> {
-                    synchronized(lock) {
-                        transcriptEnds += tabId
-                        completedTabs += tabId
-                    }
-                    flushFinal(tabId)
-                }
+                SessionEvent.ToolStarted -> tab(tabId) { toolStarted() }
+                SessionEvent.TurnStarted -> tab(tabId) { startTurn() }
+                SessionEvent.TurnEnded -> sendReply(tabId, tab(tabId) { endByMarker() })
             }
         }
-        if (synchronized(lock) { tabId in completedTabs }) flushFinal(tabId)
-    }
-
-    /**
-     * 有人说话或注入消息开启了新一轮（也可能是轮次进行中插话）。已完成的轮次结论早已发出；
-     * 没收到完成信号时攒下的只是过程说明，丢弃，免得混进之后的最终回复。
-     */
-    private fun startTurn(tabId: String) {
-        synchronized(lock) {
-            completedTabs.remove(tabId)
-            pendingFinal.remove(tabId)
-            transcriptEnds.remove(tabId)
-            turns[tabId] = (turns[tabId] ?: 0L) + 1
-        }
+        sendReply(tabId, tab(tabId) { takeIfSettled() })
     }
 
     /** 这个标签当前读到的轮次，供 IDE 完成信号标明它属于哪一轮。 */
-    fun currentTurn(tabId: String): Long = synchronized(lock) { turns[tabId] ?: 0L }
+    fun currentTurn(tabId: String): Long = synchronized(lock) { tabs[tabId]?.turn ?: 0L }
 
     /**
      * IDE 报告第 [turn] 轮完成：这一轮会话记录里没有结束标记时，以它为准把最终回复作为一条发出。
@@ -273,33 +230,27 @@ class BridgeRouter(
         tabId: String,
         turn: Long,
     ) {
-        synchronized(lock) {
-            if (turn != (turns[tabId] ?: 0L) || tabId in transcriptEnds) return
-            completedTabs += tabId
-        }
-        flushFinal(tabId)
+        val reply = tab(tabId) { if (completeByIde(turn)) takeReply() else null }
+        sendReply(tabId, reply)
     }
 
-    private fun appendFinal(
+    /** 发出本轮回复；换绑后旧绑定攒下的作废，不落到新目标的聊天里（切换空档漏消息可接受）。 */
+    private suspend fun sendReply(
         tabId: String,
-        epoch: Long,
-        text: String,
+        reply: PendingReply?,
     ) {
-        synchronized(lock) {
-            // 换绑后旧绑定攒下的作废，重新开始
-            val current = pendingFinal[tabId]?.takeIf { it.epoch == epoch } ?: PendingFinal(epoch, StringBuilder()).also { pendingFinal[tabId] = it }
-            if (current.text.isNotEmpty()) current.text.append("\n\n")
-            current.text.append(text)
-        }
+        reply ?: return
+        val binding = bindings.bindingForTab(tabId) ?: return
+        if (binding.epoch != reply.epoch) return
+        send(binding, reply.text.toString())
     }
 
-    private suspend fun flushFinal(tabId: String) {
-        val pending = synchronized(lock) { pendingFinal.remove(tabId) } ?: return
-        val binding = bindings.bindingForTab(tabId) ?: return
-        // 换绑后旧结果作废，不落到新目标的聊天里（切换空档漏消息可接受）
-        if (binding.epoch != pending.epoch) return
-        send(binding, pending.text.toString())
-    }
+    private fun submitLock(robotId: RobotId): Mutex = synchronized(lock) { submitLocks.getOrPut(robotId) { Mutex() } }
+
+    private fun <T> tab(
+        tabId: String,
+        block: TabState.() -> T,
+    ): T = synchronized(lock) { tabs.getOrPut(tabId) { TabState() }.block() }
 
     suspend fun onWaiting(
         tabId: String,
@@ -312,6 +263,22 @@ class BridgeRouter(
     suspend fun onTranscriptRestarted(tabId: String) {
         val binding = bindings.bindingForTab(tabId) ?: return
         send(binding, texts.transcriptRestarted())
+    }
+
+    /**
+     * 一次连接或换绑要发的提示，在同一个协程里按顺序发出：先给每个被断开的会话发断开提示，
+     * 再给新会话发连接提示。前一条在限频上等待时后一条不能抢先，否则手机最后看到的是“已断开”。
+     * [bound] 为 null 表示这次绑定没成功，只发断开提示。
+     */
+    suspend fun onRebound(
+        released: List<Pair<Binding, String>>,
+        bound: Binding?,
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ) {
+        released.forEach { (binding, title) -> onReleased(binding, title) }
+        bound?.let { onBound(it, project, agent, sessionTitle) }
     }
 
     /** 用户把机器人绑到会话后，告诉本人当前连接到哪里。走正常的代次校验。 */
@@ -334,18 +301,12 @@ class BridgeRouter(
     ) {
         val tabId = binding.target.tabId
         synchronized(lock) {
-            // 换绑时新绑定先建立、旧绑定的清理后执行：标签已被接管时，缓存、回显登记与完成状态都属于新绑定
-            if (bindings.bindingForTab(tabId) == null) {
-                pendingFinal.remove(tabId)
-                pendingRemoteEcho.remove(tabId)
-                completedTabs.remove(tabId)
-                transcriptEnds.remove(tabId)
-                turns.remove(tabId)
-            }
+            // 换绑时新绑定先建立、旧绑定的清理后执行：标签已被接管时，它的状态属于新绑定
+            if (bindings.bindingForTab(tabId) == null) tabs.remove(tabId)
         }
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
-        deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, texts.released(sessionTitle)))
+        deliver(channel, OutboundMessage(binding.robotId, owner.chatId, texts.released(sessionTitle)))
     }
 
     /** 每段发送前都核对：分段途中换绑，剩余内容不落到新目标的聊天里。 */
@@ -358,7 +319,7 @@ class BridgeRouter(
         for (segment in TextSegmenter.split(text, channel.maxTextBytes)) {
             // 每段发送前都核对：分段途中被换绑，剩余内容不能落到新目标的聊天里
             if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
-            deliver(channel, OutboundMessage(binding.robotId, owner.chatId, binding.epoch, segment))
+            deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment))
         }
     }
 
@@ -368,7 +329,7 @@ class BridgeRouter(
         text: String,
     ) {
         val channel = channelOf(robotId) ?: return
-        deliver(channel, OutboundMessage(robotId, owner.chatId, bindingEpoch = null, text = text))
+        deliver(channel, OutboundMessage(robotId, owner.chatId, text))
     }
 
     private suspend fun deliver(
@@ -405,33 +366,8 @@ class BridgeRouter(
         seen[robotId]?.remove(externalMessageId)
     }
 
-    private fun rememberRemote(
-        tabId: String,
-        text: String,
-    ) = synchronized(lock) {
-        val queue = pendingRemoteEcho.getOrPut(tabId) { ArrayDeque() }
-        queue.addLast(normalize(text))
-        while (queue.size > ECHO_CAPACITY) queue.removeFirst()
-    }
-
-    private fun forgetRemote(
-        tabId: String,
-        text: String,
-    ) = synchronized(lock) {
-        pendingRemoteEcho[tabId]?.remove(normalize(text))
-    }
-
-    private fun consumeRemoteEcho(
-        tabId: String,
-        text: String,
-    ): Boolean = synchronized(lock) { pendingRemoteEcho[tabId]?.remove(normalize(text)) == true }
-
-    /** CLI 写入记录时可能调整空白；只按空白归一后的全文匹配，匹配不上就当电脑输入。 */
-    private fun normalize(text: String): String = text.trim().replace(Regex("\\s+"), " ")
-
     private companion object {
         const val SEEN_CAPACITY = 1000
-        const val ECHO_CAPACITY = 20
         const val NOT_READY_ATTEMPTS = 3
     }
 }

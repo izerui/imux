@@ -3,11 +3,10 @@ package com.github.izerui.imux.bridge.ui
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.BridgeSettings
-import com.github.izerui.imux.bridge.robot.RobotManager
+import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
@@ -19,17 +18,17 @@ import java.awt.event.MouseEvent
 fun statusBarText(
     enabled: Boolean,
     robotCount: Int,
-    boundHere: Int,
+    boundCount: Int,
     connected: (Int) -> String,
     idle: String,
-    problems: Int = 0,
-    problem: String = "",
+    attentionCount: Int = 0,
+    attentionText: String = "",
 ): String =
     when {
         !enabled || robotCount == 0 -> ""
         // 连着会话的机器人掉线、失败或被接管：先说异常，不能只报“已连接”
-        problems > 0 -> problem
-        boundHere > 0 -> connected(boundHere)
+        attentionCount > 0 -> attentionText
+        boundCount > 0 -> connected(boundCount)
         else -> idle
     }
 
@@ -52,14 +51,11 @@ class PhoneStatusWidgetFactory : StatusBarWidgetFactory {
 private class PhoneStatusWidget(
     private val project: Project,
 ) : StatusBarWidget, StatusBarWidget.TextPresentation {
-    private var statusBar: StatusBar? = null
-
     override fun ID(): String = PhoneStatusWidgetFactory.ID
 
     override fun getPresentation(): StatusBarWidget.WidgetPresentation = this
 
     override fun install(statusBar: StatusBar) {
-        this.statusBar = statusBar
         ApplicationManager.getApplication().messageBus.connect(this)
             .subscribe(SessionDecorationsListener.TOPIC, SessionDecorationsListener { statusBar.updateWidget(ID()) })
     }
@@ -71,15 +67,15 @@ private class PhoneStatusWidget(
         val manager = RobotManager.getInstance()
         val bound = BridgeHub.getInstance().bindings.snapshot().filter { it.target.tabId in openTabIds }
         // 与横幅、设置页同一判断
-        val problems = bound.count { rowTone(manager.statusOf(it.robotId.value), paired = true, bridgeEnabled = true) == RowTone.ATTENTION }
+        val attentionCount = bound.count { needsAttention(manager.statusOf(it.robotId)) }
         return statusBarText(
             enabled,
             manager.robots().size,
             bound.size,
             connected = { ImuxBundle.message("bridge.statusbar.connected", it) },
             idle = ImuxBundle.message("bridge.statusbar.idle"),
-            problems = problems,
-            problem = ImuxBundle.message("bridge.statusbar.problem"),
+            attentionCount = attentionCount,
+            attentionText = ImuxBundle.message("bridge.statusbar.problem"),
         )
     }
 
@@ -88,9 +84,8 @@ private class PhoneStatusWidget(
     override fun getTooltipText(): String = ImuxBundle.message("bridge.statusbar.tooltip")
 
     override fun getClickConsumer(): Consumer<MouseEvent> =
-        Consumer { ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java) }
+        Consumer { showRobotSettings(project) }
 
     override fun dispose() {
-        statusBar = null
     }
 }

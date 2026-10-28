@@ -2,9 +2,9 @@ package com.github.izerui.imux.bridge.channel.wecom
 
 import com.github.izerui.imux.bridge.channel.ChannelConnection
 import com.github.izerui.imux.bridge.channel.ChannelFactory
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ChannelOnboarding
 import com.github.izerui.imux.bridge.core.RobotId
-import com.github.izerui.imux.bridge.robot.ChannelKind
 import kotlinx.coroutines.CoroutineScope
 
 object WecomChannelFactory : ChannelFactory {

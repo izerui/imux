@@ -3,11 +3,12 @@ package com.github.izerui.imux.bridge.ui
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
+import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.robot.RobotRecord
 
 sealed interface PhoneMenuEntry {
     data class Robot(
-        val robotId: String,
+        val robotId: RobotId,
         val label: String,
         val enabled: Boolean,
     ) : PhoneMenuEntry
@@ -16,7 +17,7 @@ sealed interface PhoneMenuEntry {
 
     data object AddRobot : PhoneMenuEntry
 
-    data class Disconnect(val robotId: String) : PhoneMenuEntry
+    data class Disconnect(val robotId: RobotId) : PhoneMenuEntry
 }
 
 interface MenuLabels {
@@ -40,21 +41,21 @@ interface MenuLabels {
 
 fun phoneMenuModel(
     robots: List<RobotRecord>,
-    bindingOf: (String) -> Binding?,
-    statusOf: (String) -> ConnectionStatus?,
+    bindingOf: (RobotId) -> Binding?,
+    statusOf: (RobotId) -> ConnectionStatus?,
     thisTabId: String,
     titleOf: (Binding) -> String,
     labels: MenuLabels,
 ): List<PhoneMenuEntry> {
     val entries = mutableListOf<PhoneMenuEntry>()
-    var boundHere: String? = null
+    var currentRobot: RobotId? = null
     robots.forEach { robot ->
         val binding = bindingOf(robot.id)
         entries +=
             when {
                 robot.owner() == null -> PhoneMenuEntry.Robot(robot.id, labels.unpaired(robot.name), false)
                 binding?.target?.tabId == thisTabId -> {
-                    boundHere = robot.id
+                    currentRobot = robot.id
                     PhoneMenuEntry.Robot(robot.id, labels.current(robot.name), false)
                 }
                 binding != null -> PhoneMenuEntry.Robot(robot.id, labels.bound(robot.name, titleOf(binding)), true)
@@ -65,7 +66,7 @@ fun phoneMenuModel(
     }
     if (robots.isEmpty()) entries += PhoneMenuEntry.NoRobots
     entries += PhoneMenuEntry.AddRobot
-    boundHere?.let { entries += PhoneMenuEntry.Disconnect(it) }
+    currentRobot?.let { entries += PhoneMenuEntry.Disconnect(it) }
     return entries
 }
 

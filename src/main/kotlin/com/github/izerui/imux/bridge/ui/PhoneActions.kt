@@ -1,29 +1,25 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.bridge.BindingService
 import com.github.izerui.imux.bridge.BridgeHub
+import com.github.izerui.imux.bridge.RobotManager
+import com.github.izerui.imux.bridge.SessionTitles
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
-import com.github.izerui.imux.bridge.BridgeLifecycle
-import com.github.izerui.imux.bridge.TerminalBridgeService
-import com.github.izerui.imux.bridge.core.BindResult
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
-import com.github.izerui.imux.bridge.robot.RobotManager
-import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.terminal.frontend.view.TerminalView
-
-// ConnectToPhoneGroup 与 BridgeNotificationsActivity 各自在同名文件中，
-// plugin.xml 注册检查按文件名定位实现类。
 
 object BridgeNotifications {
     fun info(
@@ -43,41 +39,20 @@ internal fun terminalFile(event: AnActionEvent): AgentTerminalVirtualFile? {
     return TerminalHost.getInstance(project).fileFor(view)
 }
 
-internal fun sessionTitle(
-    project: Project,
-    file: AgentTerminalVirtualFile,
-): String = file.sessionId?.let { SessionMonitor.getInstance(project).model.sessionOf(it)?.title } ?: file.tabTitle
-
+/** 界面层的连接、断开：确认对话框与 IDE 提示在这里，绑定本身交给 [BindingService]。 */
 internal object PhoneOperations {
-    /** 把机器人绑到这个终端：需要时确认替换，通知旧会话断开、新会话已连接，并持久化。 */
+    /** 把机器人连到这个终端；机器人正连着别的会话时先确认替换。 */
     fun bind(
         project: Project,
         file: AgentTerminalVirtualFile,
-        robotId: String,
+        robotId: RobotId,
     ) {
         val robot = RobotManager.getInstance().robot(robotId) ?: return
-        val hub = BridgeHub.getInstance()
-        val title = sessionTitle(project, file)
-        val current = hub.bindings.bindingOf(RobotId(robotId))
-        if (current != null && current.target.tabId != file.tabId) {
-            val message = ImuxBundle.message("bridge.action.replace.message", robot.name, BridgeLifecycle.sessionTitle(current), title)
-            val choice =
-                Messages.showOkCancelDialog(project, message, ImuxBundle.message("bridge.action.replace.title"), ImuxBundle.message("bridge.action.replace.ok"), Messages.getCancelButton(), Messages.getQuestionIcon())
-            if (choice != Messages.OK) return
-        }
-        // 这个标签若已被另一个机器人占用，先让它断开
-        val other = hub.bindings.bindingForTab(file.tabId)?.takeIf { it.robotId.value != robotId }
-        other?.let { hub.bindings.unbind(it.robotId) }
+        val title = SessionTitles.of(project, file)
+        val current = BridgeHub.getInstance().bindings.bindingOf(robotId)
+        if (current != null && current.target.tabId != file.tabId && !confirmReplace(project, robot.name, SessionTitles.of(current), title)) return
         val target = SessionTarget(project.basePath ?: System.getProperty("user.home"), file.tabId, file.agentType, file.sessionId)
-        val result = hub.bindings.bind(RobotId(robotId), target) as? BindResult.Bound ?: return
-        TerminalBridgeService.getInstance(project).start()
-        RobotManager.getInstance().syncBindings()
-        val replaced = result.replaced?.takeIf { it.target.tabId != file.tabId }
-        hub.launch {
-            other?.let { hub.router.onReleased(it, BridgeLifecycle.sessionTitle(it)) }
-            replaced?.let { hub.router.onReleased(it, BridgeLifecycle.sessionTitle(it)) }
-            hub.router.onBound(result.binding, project.name, file.agentType.displayName, title)
-        }
+        BindingService.bind(project, robotId, target, title) ?: return
         // 机器人不在线时如实说明：会话已连上，但要等机器人恢复在线才能收发
         val status = RobotManager.getInstance().statusOf(robotId)
         val notice =
@@ -89,69 +64,53 @@ internal object PhoneOperations {
         BridgeNotifications.info(project, notice)
     }
 
-    /** 断开这个机器人的会话连接，通知手机并持久化。 */
+    /** 断开这个机器人的会话连接。 */
     fun disconnect(
         project: Project,
-        robotId: String,
+        robotId: RobotId,
     ) {
-        val hub = BridgeHub.getInstance()
-        val binding = hub.bindings.unbind(RobotId(robotId)) ?: return
-        RobotManager.getInstance().syncBindings()
-        val title = BridgeLifecycle.sessionTitle(binding)
-        hub.launch { hub.router.onReleased(binding, title) }
-        BridgeNotifications.info(project, ImuxBundle.message("bridge.notify.disconnected", title))
+        val binding = BindingService.unbind(robotId) ?: return
+        BridgeNotifications.info(project, ImuxBundle.message("bridge.notify.disconnected", SessionTitles.of(binding)))
     }
+
+    private fun confirmReplace(
+        project: Project,
+        robotName: String,
+        from: String,
+        to: String,
+    ): Boolean =
+        Messages.showOkCancelDialog(
+            project,
+            ImuxBundle.message("bridge.action.replace.message", robotName, from, to),
+            ImuxBundle.message("bridge.action.replace.title"),
+            ImuxBundle.message("bridge.action.replace.ok"),
+            Messages.getCancelButton(),
+            Messages.getQuestionIcon(),
+        ) == Messages.OK
 }
 
-internal class BindRobotAction(
-    private val robotId: String,
-    label: String,
-    private val selectable: Boolean,
-) : DumbAwareAction(label) {
-    override fun getActionUpdateThread() = ActionUpdateThread.EDT
+/** 菜单里的一项。[enabled] 为 false 时只作说明，点不了。 */
+internal fun phoneAction(
+    text: String,
+    enabled: Boolean = true,
+    run: (AnActionEvent) -> Unit = {},
+): AnAction =
+    object : DumbAwareAction(text) {
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = selectable
+        override fun update(e: AnActionEvent) {
+            e.presentation.isEnabled = enabled
+        }
+
+        override fun actionPerformed(e: AnActionEvent) = run(e)
     }
 
-    override fun actionPerformed(e: AnActionEvent) {
-        val project = e.project ?: return
-        val file = terminalFile(e) ?: return
-        PhoneOperations.bind(project, file, robotId)
-    }
-}
+/** 打开通讯机器人设置页。 */
+internal fun showRobotSettings(project: Project?) = ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
 
-internal class DisconnectPhoneAction(private val robotId: String) : DumbAwareAction(ImuxBundle.message("bridge.action.disconnect")) {
-    override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-    override fun actionPerformed(e: AnActionEvent) {
-        val project = e.project ?: return
-        PhoneOperations.disconnect(project, robotId)
-    }
-}
-
-internal class AddRobotAction : DumbAwareAction(ImuxBundle.message("bridge.action.add")) {
-    override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-    override fun actionPerformed(e: AnActionEvent) {
-        AddRobotDialog(e.project).show()
-    }
-}
-
-internal class OpenSettingsAction : DumbAwareAction(ImuxBundle.message("bridge.action.disabled")) {
-    override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-    override fun actionPerformed(e: AnActionEvent) {
-        ShowSettingsUtil.getInstance().showSettingsDialog(e.project, RobotsConfigurable::class.java)
-    }
-}
-
-internal class DisabledLabelAction(label: String) : DumbAwareAction(label) {
-    override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = false
-    }
-
-    override fun actionPerformed(e: AnActionEvent) = Unit
+/** 这个终端的连接菜单条目。只在远程控制开着时调用（会实例化中枢）。 */
+internal fun phoneMenuFor(tabId: String): List<PhoneMenuEntry> {
+    val manager = RobotManager.getInstance()
+    val hub = BridgeHub.getInstance()
+    return phoneMenuModel(manager.robots(), hub.bindings::bindingOf, manager::statusOf, tabId, SessionTitles::of, BundleMenuLabels)
 }

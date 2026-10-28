@@ -33,7 +33,7 @@ internal class RobotInboundQueues(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    // 与原单队列的 runCatching 一致：任何失败都只记下，队列继续
+                    // 一条消息处理失败不能让这个机器人之后的消息都卡住：记下，接着处理下一条
                     onFailure(e)
                 }
             }

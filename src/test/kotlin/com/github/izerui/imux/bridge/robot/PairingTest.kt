@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.robot
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.RobotOwner
@@ -9,7 +10,7 @@ import org.junit.Test
 import java.util.Random
 
 class PairingTest {
-    private val pending = RobotRecord("r", "bot", ChannelKind.WECOM, pairCode = "482713", pairCodeExpiresAtMillis = 1_000)
+    private val pending = RobotRecord(RobotId("r"), "bot", ChannelKind.WECOM, pairCode = "482713", pairCodeExpiresAtMillis = 1_000)
 
     private fun msg(text: String) = InboundMessage(RobotId("r"), "m1", "user-1", "user-1", text)
 
@@ -35,8 +36,8 @@ class PairingTest {
 
     @Test
     fun `作废后的配对码不再认主`() {
-        val book = RobotBook().add(pending).withPairCode("r", null, 0)
-        assertEquals(PairDecision.Ignore, Pairing.decide(book.robot("r")!!, msg("482713"), nowMillis = 0))
+        val book = RobotBook().add(pending).withPairCode(RobotId("r"), null, 0)
+        assertEquals(PairDecision.Ignore, Pairing.decide(book.robot(RobotId("r"))!!, msg("482713"), nowMillis = 0))
     }
 
     @Test

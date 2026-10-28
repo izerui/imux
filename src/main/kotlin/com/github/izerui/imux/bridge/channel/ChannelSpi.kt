@@ -3,7 +3,6 @@ package com.github.izerui.imux.bridge.channel
 import com.github.izerui.imux.bridge.core.ChannelAdapter
 import com.github.izerui.imux.bridge.core.InboundSink
 import com.github.izerui.imux.bridge.core.RobotId
-import com.github.izerui.imux.bridge.robot.ChannelKind
 import kotlinx.coroutines.CoroutineScope
 
 sealed interface ConnectionStatus {
@@ -20,15 +19,19 @@ sealed interface ConnectionStatus {
     data class Retrying(val reason: String) : ConnectionStatus
 
     data object Stopped : ConnectionStatus
+
+    /** 本地取不到凭据（钥匙串被清空等），连不上；只能移除后重新添加。 */
+    data object NoCredentials : ConnectionStatus
 }
+
+/** 连接在工作或正在建立：消息与配对码收得到，不需要重连。 */
+val ConnectionStatus?.isWorking: Boolean
+    get() = this == ConnectionStatus.Online || this == ConnectionStatus.Connecting
 
 sealed interface OnboardingStep {
     data class ShowQr(val content: String) : OnboardingStep
 
     data object Waiting : OnboardingStep
-
-    /** 普通微信等渠道可能要求输入手机上显示的数字。 */
-    data object NeedVerifyCode : OnboardingStep
 
     /** [ownerId] 为 null 表示扫码拿不到本人身份，需要配对码认主。 */
     data class Succeeded(
@@ -52,8 +55,6 @@ interface ChannelOnboarding {
     suspend fun start(): OnboardingStep
 
     suspend fun poll(): OnboardingStep
-
-    suspend fun submitVerifyCode(code: String): OnboardingStep
 }
 
 fun interface ConnectionListener {

@@ -1,5 +1,7 @@
 package com.github.izerui.imux.bridge.robot
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
+import com.github.izerui.imux.bridge.core.RobotId
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -10,8 +12,8 @@ class RobotStoreMappingTest {
             RobotBook(
                 robots =
                     listOf(
-                        RobotRecord("a", "开发助手 1", ChannelKind.WECOM, pairCode = "123456", pairCodeExpiresAtMillis = 10, createdAtMillis = 5),
-                        RobotRecord("b", "审查", ChannelKind.FEISHU, ownerSenderId = "o", ownerChatId = "o", createdAtMillis = 6),
+                        RobotRecord(RobotId("a"), "开发助手 1", ChannelKind.WECOM, pairCode = "123456", pairCodeExpiresAtMillis = 10, createdAtMillis = 5),
+                        RobotRecord(RobotId("b"), "审查", ChannelKind.FEISHU, ownerSenderId = "o", ownerChatId = "o", createdAtMillis = 6),
                     ),
                 bindings = listOf(SavedBinding("b", "/p", "codex", "s1")),
             )
@@ -31,7 +33,7 @@ class RobotStoreMappingTest {
                 bindings = listOf(RobotStore.BindingXml(robotId = "c", projectPath = "/p", agentCli = "codex", sessionId = "")),
             )
         val book = toBook(state)
-        assertEquals(listOf("c"), book.robots.map { it.id })
+        assertEquals(listOf("c"), book.robots.map { it.id.value })
         assertEquals(emptyList<SavedBinding>(), book.bindings)
     }
 }

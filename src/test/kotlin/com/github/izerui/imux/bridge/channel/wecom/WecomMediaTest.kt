@@ -103,6 +103,8 @@ class WecomMediaTest {
             val garbage = file(ByteArray(47) { 1 })
             assertTrue(WecomAttachment(AttachmentKind.FILE, "u", keyText, FakeDownload { DownloadResult.Ok(garbage, null) }).fetch(1_000) is FetchResult.Failed)
             assertFalse(Files.exists(garbage))
+            // 解密出的明文临时文件（与密文同目录、imux-*.bin）也不能留下
+            Files.list(big.parent).use { files -> assertEquals(emptyList<String>(), files.map { it.fileName.toString() }.filter { it.startsWith("imux-") }.toList()) }
         }
 
     @Test

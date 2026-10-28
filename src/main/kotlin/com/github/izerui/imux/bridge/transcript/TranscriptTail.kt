@@ -40,9 +40,6 @@ class TranscriptTail(
     private val pending = ByteArrayOutputStream()
     private var discarding = false
 
-    var skippedOversizeLines: Int = 0
-        private set
-
     /** 以当前文件末尾为边界，之前的历史不转发。文件尚不存在时边界为 0。 */
     fun startAtEnd() {
         val attrs = attributes()
@@ -51,6 +48,14 @@ class TranscriptTail(
         pending.reset()
         discarding = false
     }
+
+    /** 发现文件被替换或截短、从新末尾重新开始的次数。读取位置在两次重启之间才可比较。 */
+    @Volatile
+    var restarts: Int = 0
+        private set
+
+    /** 已经读过的字节位置（含留在缓冲里的半行）。 */
+    val readPosition: Long get() = position
 
     /** 文件当前大小；读不到时为 null。 */
     fun size(): Long? = attributes()?.size()
@@ -64,6 +69,7 @@ class TranscriptTail(
         val key = attrs.fileKey()
         val replaced = (fileKey != null && key != null && key != fileKey) || attrs.size() < position
         if (replaced) {
+            restarts++
             startAtEnd()
             return TailPoll(emptyList(), restarted = true)
         }
@@ -109,7 +115,6 @@ class TranscriptTail(
         if (pending.size() >= maxLineBytes) {
             pending.reset()
             discarding = true
-            skippedOversizeLines++
             return
         }
         pending.write(byte.toInt())

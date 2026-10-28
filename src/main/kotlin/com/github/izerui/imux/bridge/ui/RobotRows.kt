@@ -1,24 +1,25 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
-import com.github.izerui.imux.bridge.robot.ChannelKind
+import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.robot.RobotRecord
 
 /**
  * 状态圆点：绿点表示可用，黄点表示需要处理（待配对、连接中、失败、被接管）。
  * 已停止只在远程控制开着时算异常；关着时全部停止是正常的，不画。终端横幅也按这个判断。
  */
-enum class RowTone { OK, ATTENTION, NONE }
+enum class RobotHealth { OK, ATTENTION, NONE }
 
 data class RobotRow(
-    val id: String,
+    val id: RobotId,
     val name: String,
     val channel: String,
     val status: String,
     val session: String?,
-    val tone: RowTone = RowTone.NONE,
+    val health: RobotHealth = RobotHealth.NONE,
 )
 
 interface RowLabels {
@@ -31,22 +32,25 @@ interface RowLabels {
     ): String
 }
 
-fun rowTone(
+fun robotHealth(
     status: ConnectionStatus?,
     paired: Boolean,
     bridgeEnabled: Boolean,
-): RowTone =
+): RobotHealth =
     when {
-        status == ConnectionStatus.Online && paired -> RowTone.OK
-        status == null -> RowTone.NONE
-        status == ConnectionStatus.Stopped && !bridgeEnabled -> RowTone.NONE
-        else -> RowTone.ATTENTION
+        status == ConnectionStatus.Online && paired -> RobotHealth.OK
+        status == null -> RobotHealth.NONE
+        status == ConnectionStatus.Stopped && !bridgeEnabled -> RobotHealth.NONE
+        else -> RobotHealth.ATTENTION
     }
+
+/** 连着会话的机器人是否需要处理（横幅、状态栏用）：与设置页的黄点同一判断。 */
+fun needsAttention(status: ConnectionStatus?): Boolean = robotHealth(status, paired = true, bridgeEnabled = true) == RobotHealth.ATTENTION
 
 fun robotRows(
     robots: List<RobotRecord>,
-    statusOf: (String) -> ConnectionStatus?,
-    bindingOf: (String) -> Binding?,
+    statusOf: (RobotId) -> ConnectionStatus?,
+    bindingOf: (RobotId) -> Binding?,
     titleOf: (Binding) -> String,
     labels: RowLabels,
     bridgeEnabled: Boolean,
@@ -61,7 +65,7 @@ fun robotRows(
             channel = labels.channel(robot.kind),
             status = labels.status(status, paired, bound = binding != null),
             session = binding?.let(titleOf),
-            tone = rowTone(status, paired, bridgeEnabled),
+            health = robotHealth(status, paired, bridgeEnabled),
         )
     }
 
@@ -72,7 +76,7 @@ fun statusLabel(
     paired: Boolean,
 ): String =
     when {
-        status is ConnectionStatus.Failed && status.reason == "noCredentials" -> ImuxBundle.message("bridge.robot.status.noCredentials")
+        status == ConnectionStatus.NoCredentials -> ImuxBundle.message("bridge.robot.status.noCredentials")
         status is ConnectionStatus.Failed -> ImuxBundle.message("bridge.robot.status.failed", status.reason)
         status is ConnectionStatus.Retrying -> ImuxBundle.message("bridge.robot.status.retrying", status.reason)
         status == ConnectionStatus.Kicked -> ImuxBundle.message("bridge.robot.status.kicked")

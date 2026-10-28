@@ -1,11 +1,7 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
-import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.BridgeSettings
-import com.github.izerui.imux.bridge.core.RobotId
-import com.github.izerui.imux.bridge.robot.RobotManager
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -25,21 +21,17 @@ class ConnectToPhoneGroup : ActionGroup(), DumbAware {
     override fun getChildren(event: AnActionEvent?): Array<AnAction> {
         val e = event ?: return emptyArray()
         val file = terminalFile(e) ?: return emptyArray()
-        if (!BridgeSettings.getInstance().state.enabled) return arrayOf(OpenSettingsAction())
-        val hub = BridgeHub.getInstance()
-        return phoneMenuModel(
-            RobotManager.getInstance().robots(),
-            bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
-            statusOf = RobotManager.getInstance()::statusOf,
-            thisTabId = file.tabId,
-            titleOf = BridgeLifecycle::sessionTitle,
-            labels = BundleMenuLabels,
-        ).flatMap { entry ->
+        if (!BridgeSettings.getInstance().state.enabled) {
+            return arrayOf(phoneAction(ImuxBundle.message("bridge.action.disabled")) { showRobotSettings(it.project) })
+        }
+        return phoneMenuFor(file.tabId).flatMap { entry ->
             when (entry) {
-                is PhoneMenuEntry.Robot -> listOf(BindRobotAction(entry.robotId, entry.label, entry.enabled))
-                PhoneMenuEntry.NoRobots -> listOf(DisabledLabelAction(ImuxBundle.message("bridge.action.none")))
-                PhoneMenuEntry.AddRobot -> listOf(Separator.getInstance(), AddRobotAction())
-                is PhoneMenuEntry.Disconnect -> listOf(DisconnectPhoneAction(entry.robotId))
+                is PhoneMenuEntry.Robot ->
+                    listOf(phoneAction(entry.label, entry.enabled) { e -> e.project?.let { PhoneOperations.bind(it, file, entry.robotId) } })
+                PhoneMenuEntry.NoRobots -> listOf(phoneAction(ImuxBundle.message("bridge.action.none"), enabled = false))
+                PhoneMenuEntry.AddRobot -> listOf(Separator.getInstance(), phoneAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(it.project).show() })
+                is PhoneMenuEntry.Disconnect ->
+                    listOf(phoneAction(ImuxBundle.message("bridge.action.disconnect")) { e -> e.project?.let { PhoneOperations.disconnect(it, entry.robotId) } })
             }
         }.toTypedArray()
     }

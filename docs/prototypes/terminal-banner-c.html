@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>imux · 方向 C 定稿模拟 · 平时不占行，有事才出条（叠放）</title>
+<style>
+  :root { --page:#eceef2; --paper:#fff; --ink:#1f2329; --ink2:#5b616e; --rule:#d9dce3; --mark:#d6336c; }
+  .dark { --page:#16171a; --paper:#202226; --ink:#e3e5e9; --ink2:#9a9fa9; --rule:#33363c; --mark:#f06595; }
+  .ide { --bg:#ffffff; --panel:#f7f8fa; --border:#ebecf0; --text:#1e1f22; --dim:#6c707e; --link:#3574f0; --icon:#6c707e;
+         --hover:#dfe1e5; --pressed:#d3d5db; --green:#369650; --yellow:#c27d04; --term:#2b2d30; --termdim:#8c8f96;
+         --info:#f5f8fe; --infoLine:#c2d6fc; --warn:#fff6e9; --warnLine:#fed277; --ok:#f2fcf3; --okLine:#afdbb8;
+         --pop:#ffffff; --popLine:#dfe1e5; --sel:#d4e2ff; --float:rgba(247,248,250,.96); --promptLine:#c9ccd6; }
+  .dark .ide { --bg:#1e1f22; --panel:#2b2d30; --border:#393b40; --text:#dfe1e5; --dim:#8c8f96; --link:#548af7; --icon:#ced0d6;
+         --hover:#393b40; --pressed:#43454a; --green:#5fb865; --yellow:#e0b153; --term:#bcbec4; --termdim:#7a7e85;
+         --info:#25324d; --infoLine:#35538f; --warn:#3d3223; --warnLine:#5e4d33; --ok:#253627; --okLine:#375239;
+         --pop:#2b2d30; --popLine:#43454a; --sel:#2e436e; --float:rgba(43,45,48,.96); --promptLine:#4e5157; }
+
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--page); color:var(--ink); font: 14px/1.6 Inter, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .page { max-width: 1240px; margin: 0 auto; padding: 36px 32px 96px; }
+  h1 { font-size: 25px; line-height: 1.3; margin: 0 0 8px; font-weight: 650; letter-spacing: -.01em; }
+  h2 { font-size: 18px; margin: 44px 0 6px; font-weight: 650; }
+  .lead { color: var(--ink2); max-width: 920px; margin: 0 0 18px; }
+  .note { color: var(--ink2); margin: 0 0 12px; max-width: 920px; }
+
+  .controls { display:flex; flex-wrap:wrap; gap: 10px 22px; align-items:center; background: var(--paper); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  .grp { display:flex; flex-wrap: wrap; align-items:center; gap: 6px; }
+  .grp .lab { color: var(--ink2); font-size: 13px; margin-right: 2px; }
+  .cbtn { font: inherit; font-size: 13px; border:1px solid var(--rule); background: transparent; color: var(--ink); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .cbtn:hover { border-color: var(--ink2); }
+  .cbtn.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .cbtn.play { background: var(--mark); border-color: var(--mark); color: #fff; }
+  .cbtn.hot { border-color: var(--mark); color: var(--mark); }
+  .narr { min-height: 26px; margin: 10px 2px 0; color: var(--ink2); font-size: 13.5px; }
+  .narr b { color: var(--mark); font-weight: 600; margin-right: 6px; }
+
+  .spec { width:100%; border-collapse: collapse; background: var(--paper); border-radius: 8px; overflow:hidden; font-size: 13.5px; }
+  .spec th, .spec td { text-align:left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .spec th { color: var(--ink2); font-weight: 500; white-space: nowrap; }
+  .spec tr:last-child td { border-bottom: 0; }
+  .spec .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; border:1px solid; }
+  .cols { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card2 { background: var(--paper); border-radius: 8px; padding: 14px 16px; font-size: 13.5px; color: var(--ink2); }
+  .card2 h4 { margin: 0 0 6px; color: var(--ink); font-size: 14px; font-weight: 600; }
+  .card2 ul { margin: 0; padding-left: 18px; }
+  .card2 code { font: 12px "JetBrains Mono", Menlo, monospace; color: var(--ink); }
+  .card2 .risk { color: var(--mark); font-weight: 600; }
+
+  /* 对比区 */
+  .cmpwrap { display:flex; flex-direction: column; gap: 18px; }
+  .cmpitem h3 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  .cmpitem h3 .rec { font-size: 12px; color: #fff; background: var(--mark); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; font-weight: 500; }
+  .cmpitem p { margin: 0 0 8px; color: var(--ink2); font-size: 13.5px; }
+  .mini { pointer-events: none; }
+  .mini .body { height: 236px; }
+  .mini .term .hist { justify-content: flex-start; }
+
+  /* ---------- IDE ---------- */
+  .ide { font: 13px/1.4 Inter, -apple-system, "PingFang SC", sans-serif; color: var(--text); background: var(--bg);
+    border-radius: 9px; position: relative; box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgba(0,0,0,.08); transition: width .3s; user-select: none; }
+  .tabs { height: 36px; display:flex; align-items:center; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; }
+  .tab { height:100%; display:flex; align-items:center; gap:6px; padding: 0 10px; color: var(--dim); }
+  .tab.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--link); }
+  .body { position: relative; height: 520px; overflow: hidden; border-radius: 0 0 9px 9px; }
+  .term { position:absolute; inset: 0; padding: 10px 16px 0; font: 12.5px/1.7 "JetBrains Mono", Menlo, monospace; color: var(--term);
+    display:flex; flex-direction: column; user-select: text; }
+  .term .hist { flex: 1 1 auto; overflow: hidden; display:flex; flex-direction: column; justify-content: flex-end; }
+  .term .d { color: var(--termdim); } .term .g { color: var(--green); } .term .p { color: var(--link); } .term .y { color: var(--yellow); }
+  .term .l { white-space: pre; overflow: hidden; text-overflow: ellipsis; flex: none; }
+  .prompt { border: 1px solid var(--promptLine); border-radius: 6px; padding: 6px 10px; margin: 8px 0 4px; }
+  .status { color: var(--termdim); font-size: 11.5px; padding: 0 2px 8px; display:flex; justify-content: space-between; }
+  .caretb { display:inline-block; width: 7px; height: 15px; background: var(--term); vertical-align: -3px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .ico { display:inline-flex; width:16px; height:16px; flex:none; position: relative; color: var(--icon); }
+  .ico svg { width:16px; height:16px; }
+  .badge { position:absolute; right:-2px; top:-1px; width:7px; height:7px; border-radius:50%; box-shadow: 0 0 0 1.5px var(--bgUnder, var(--panel)); }
+  .badge.g { background: var(--green); } .badge.y { background: var(--yellow); }
+  .spin { width:13px; height:13px; border:2px solid color-mix(in srgb, var(--icon) 30%, transparent); border-top-color: var(--icon); border-radius:50%; animation: spin .9s linear infinite; flex:none; margin: 1.5px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .link { color: var(--link); cursor: pointer; white-space: nowrap; }
+  .link:hover { text-decoration: underline; }
+  .caret { display:inline-block; width:0; height:0; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; margin-left:4px; vertical-align: 2px; opacity:.8; }
+  .muted { color: var(--dim); }
+  .ell { overflow:hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+  /* 事件条：覆盖在终端顶部，不改变终端行数 */
+  .barwrap { position:absolute; left:0; right:0; top:0; z-index: 6; height: 0; overflow: hidden; transition: height .22s cubic-bezier(.2,.8,.2,1); }
+  .event { display:flex; align-items:center; gap: 8px; height: 33px; padding: 0 10px 0 14px; border-bottom: 1px solid; position: relative; }
+  .barwrap > div > .event:last-child { box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+  .event.info { background: var(--info); border-color: var(--infoLine); --bgUnder: var(--info); }
+  .event.warn { background: var(--warn); border-color: var(--warnLine); --bgUnder: var(--warn); }
+  .event.ok { background: var(--ok); border-color: var(--okLine); --bgUnder: var(--ok); }
+  .event .acts { display:flex; gap: 14px; margin-left: 6px; flex: none; }
+  .event .glue { flex: 1 1 auto; min-width: 8px; }
+  .x { width: 22px; height: 22px; display:inline-flex; align-items:center; justify-content:center; border-radius: 4px; color: var(--dim); cursor: pointer; font-size: 14px; flex:none; }
+  .x:hover { background: color-mix(in srgb, var(--hover) 70%, transparent); color: var(--text); }
+  .x.sm { width: 18px; height: 18px; font-size: 12px; margin-left: -2px; }
+  .cd { position:absolute; left:0; bottom:-1px; height:2px; background: var(--green); }
+  .ttl { color: var(--dim); font-size: 12px; flex: none; white-space: nowrap; }
+
+  /* 分段 */
+  .event.segs { gap: 0; padding-left: 12px; }
+  .segi { display:flex; align-items:center; gap: 6px; height: 100%; position: relative; padding: 0 2px; min-width: 0; }
+  .segi .lbl { white-space: nowrap; }
+  .segi .link { margin-left: 4px; }
+  .segsep { width:1px; height:14px; background: color-mix(in srgb, var(--dim) 45%, transparent); margin: 0 12px; flex: none; }
+  .segi .cd { bottom: 0; }
+
+  /* 翻页 */
+  .pager { display:flex; align-items:center; gap: 2px; color: var(--dim); font-size: 12.5px; flex: none; margin-right: 4px; }
+  .pg { width: 20px; height: 20px; display:inline-flex; align-items:center; justify-content:center; border-radius: 4px; cursor: pointer; font-size: 15px; }
+  .pg:hover { background: color-mix(in srgb, var(--hover) 70%, transparent); color: var(--text); }
+  .pdots { display:flex; gap: 3px; margin: 0 4px; }
+  .pdots i { width: 6px; height: 6px; border-radius: 50%; display:block; opacity: .35; }
+  .pdots i.on { opacity: 1; }
+  .pdots i.warn { background: var(--yellow); } .pdots i.info { background: var(--link); } .pdots i.ok { background: var(--green); }
+
+  /* 浮动图标组 */
+  .float { position:absolute; right: 14px; top: 8px; z-index: 7; display:flex; gap: 2px; padding: 3px; background: var(--float);
+    border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.08); --bgUnder: var(--panel);
+    transition: top .22s cubic-bezier(.2,.8,.2,1), opacity .18s; }
+  .float.quiet { opacity: .5; }
+  .float.hidden { opacity: 0; pointer-events: none; }
+  .fb { width: 26px; height: 24px; display:inline-flex; align-items:center; justify-content:center; border-radius: 5px; cursor:pointer; }
+  .fb:hover { background: var(--hover); } .fb.on { background: var(--pressed); }
+
+  /* 提示、弹出 */
+  .tipx { position:absolute; z-index: 20; pointer-events: none; background: var(--pop); color: var(--text); border:1px solid var(--popLine); border-radius: 6px;
+    padding: 7px 10px; font-size: 12.5px; line-height: 1.5; box-shadow: 0 6px 20px rgba(0,0,0,.14); max-width: 280px; }
+  .tipx b { font-weight: 600; display:block; } .tipx .s { color: var(--dim); }
+  .pop { position:absolute; z-index: 15; background: var(--pop); border:1px solid var(--popLine); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.18); font-size: 13px; color: var(--text); --bgUnder: var(--pop); }
+  .menu { width: 268px; padding: 4px 0; }
+  .menu .h { color: var(--dim); font-size: 12px; padding: 5px 12px 6px; line-height: 1.45; }
+  .menu .st { padding: 4px 12px 6px; display:flex; align-items:center; gap: 8px; }
+  .menu .i { padding: 4px 12px; display:flex; align-items:center; gap: 8px; cursor: pointer; position: relative; }
+  .menu .i:hover { background: var(--sel); }
+  .menu .i.dis { color: var(--dim); cursor: default; } .menu .i.dis:hover { background: none; }
+  .menu .i .arr { margin-left:auto; color: var(--dim); }
+  .menu .i .sub { display:none; position:absolute; right: 100%; top: -5px; }
+  .menu .i:hover > .sub { display:block; }
+  .menu hr { border:0; border-top:1px solid var(--popLine); margin: 4px 0; }
+  .menu .dotx { width:7px; height:7px; border-radius:50%; display:inline-block; }
+
+  .trail { width: 340px; padding: 0; overflow: hidden; }
+  .trail .hd { display:flex; align-items:center; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--popLine); }
+  .trail .hd b { font-weight: 600; }
+  .trail .stale { display:flex; gap: 8px; align-items:center; padding: 6px 12px; background: var(--warn); border-bottom: 1px solid var(--warnLine); font-size: 12.5px; --bgUnder: var(--warn); }
+  .trail ol { list-style: none; margin: 0; padding: 10px 12px 12px; }
+  .trail li { position: relative; padding: 0 0 10px 18px; font-size: 12.5px; }
+  .trail li::before { content:""; position:absolute; left: 3px; top: 6px; width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--link); background: var(--pop); }
+  .trail li::after { content:""; position:absolute; left: 6.5px; top: 16px; bottom: -2px; width: 1px; background: var(--popLine); }
+  .trail li:last-child::after { display:none; }
+  .trail li.side { margin-left: 16px; } .trail li.side::before { border-color: var(--dim); }
+  .trail li .t { color: var(--dim); font-size: 11.5px; }
+  .trail .ft { padding: 7px 12px; border-top: 1px solid var(--popLine); color: var(--dim); font-size: 12px; display:flex; justify-content: space-between; }
+
+  .gotit { position:absolute; z-index: 16; width: 262px; background: #2b2d30; color: #dfe1e5; border-radius: 8px; padding: 10px 12px 9px; font-size: 12.5px; line-height: 1.55; box-shadow: 0 8px 26px rgba(0,0,0,.28); }
+  .gotit b { color: #fff; font-weight: 600; display:block; margin-bottom: 3px; font-size: 13px; }
+  .gotit .row { display:flex; justify-content: space-between; align-items:center; margin-top: 8px; }
+  .gotit .btn { background: #3574f0; color: #fff; border:0; border-radius: 5px; padding: 3px 12px; font: inherit; cursor: pointer; }
+  .gotit::before { content:""; position:absolute; top:-5px; right: 52px; width:10px; height:10px; background:#2b2d30; transform: rotate(45deg); }
+
+  .talkwin { position:absolute; z-index: 9; left: 24px; bottom: 74px; width: 300px; background: var(--pop); border:1px solid var(--popLine); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.18); font-size: 12.5px; --bgUnder: var(--pop); }
+  .talkwin .hd { display:flex; align-items:center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--popLine); font-weight: 600; }
+  .talkwin .bd { padding: 8px 12px 10px; color: var(--dim); line-height: 1.6; }
+  .talkwin .bd p { margin: 0 0 6px; } .talkwin .bd .me { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>方向 C · 平时不占行，有事才出条（叠放定稿）</h1>
+  <p class="lead">终端从第一行开始，四个功能收在右上角的浮动图标组里。需要你看一眼的事才从顶部滑出提示条，盖在终端最上面的历史输出上，不改变终端行数。会出提示的来源有手机、结对审查、会话轨迹、先聊再做四个（先聊再做只在打开那一刻出一条绿色说明），每个来源同一时间只保留一条；同时有几件事就叠几行，最多四行，按严重程度排：黄在上，蓝居中，绿在下。之前「分段 / 叠放 / 翻页」的对比稿另存在 <code>terminal-banner-rethink/terminal-banner-c-v2-三方式对比.html</code>。</p>
+
+  <div class="controls">
+    <div class="grp"><button class="cbtn play" id="play">▶ 自动演示</button><button class="cbtn" data-do="reset">重置</button><button class="cbtn" data-do="firstRun">首次打开（引导）</button><button class="cbtn hot" data-do="triple">三件事同时发生</button></div>
+    <div class="grp"><span class="lab">讨论</span><button class="cbtn" data-do="talkToggle">打开 / 结束先聊再做</button></div>
+    <div class="grp"><span class="lab">结对</span><button class="cbtn" data-do="pairOn">开启 Codex</button><button class="cbtn" data-do="reviewStart">开始一轮审查</button><button class="cbtn" data-do="reviewPass">审查完·无反馈</button><button class="cbtn" data-do="reviewFeedback">审查完·有反馈</button><button class="cbtn" data-do="reviewFail">审查失败</button></div>
+    <div class="grp"><span class="lab">手机</span><button class="cbtn" data-do="phoneBind">连接</button><button class="cbtn" data-do="phoneDrop">断线</button></div>
+    <div class="grp"><span class="lab">轨迹</span><button class="cbtn" data-do="trailStale">有新进展</button><button class="cbtn" data-do="trailFail">更新失败</button></div>
+    <div class="grp"><span class="lab">宽度</span><button class="cbtn on" data-w="1100">宽</button><button class="cbtn" data-w="640">窄</button>
+      <span class="lab" style="margin-left:10px">主题</span><button class="cbtn on" data-t="light">亮</button><button class="cbtn" data-t="dark">暗</button></div>
+  </div>
+
+  <div class="ide" id="ide" style="width:1100px">
+    <div class="tabs"><div class="tab on"><span id="tabico"></span><span>claude · 横幅窄屏</span></div><div class="tab">codex · 审查</div></div>
+    <div class="body" id="body">
+      <div class="term" id="term"></div>
+      <div class="barwrap" id="barwrap"><div id="bar"></div></div>
+      <div class="float" id="float"></div>
+      <div id="layer"></div>
+    </div>
+  </div>
+  <div class="narr" id="narr"></div>
+
+
+  <h2>事件目录</h2>
+  <p class="note">只有表里这些情况会出提示，一件一行。多行按颜色从上到下排：黄 &gt; 蓝 &gt; 绿；颜色相同时按 手机 &gt; 结对 &gt; 轨迹。</p>
+  <table class="spec">
+    <tr><th>来源</th><th>情况</th><th>颜色</th><th>完整文案</th><th>操作</th><th>怎么消失</th><th>点 × 之后</th></tr>
+    <tr><td>手机</td><td>连接断开</td><td><span class="sw" style="background:#fff6e9;border-color:#fed277"></span>黄</td><td>手机连接已断开 · 企业微信「研发助手」，消息暂时收不到</td><td>重连（主）、换绑 ▾</td><td>重连成功</td><td>这次断线不再提示，手机图标保留黄点</td></tr>
+    <tr><td>手机</td><td>重连中</td><td><span class="sw" style="background:#f5f8fe;border-color:#c2d6fc"></span>蓝</td><td>正在重新连接 企业微信「研发助手」…</td><td>—</td><td>成功或失败时被替换</td><td>不可关</td></tr>
+    <tr><td>手机</td><td>刚连上 / 重新连上</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>已连接手机 · 企业微信「研发助手」，手机消息会直接提交到这个终端</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
+    <tr><td>结对</td><td>审查失败</td><td><span class="sw" style="background:#fff6e9;border-color:#fed277"></span>黄</td><td>Codex 审查失败：调用超时（120 秒）</td><td>重试（主）、停止结对</td><td>重试或停止</td><td>结对图标保留黄点</td></tr>
+    <tr><td>结对</td><td>审查进行中</td><td><span class="sw" style="background:#f5f8fe;border-color:#c2d6fc"></span>蓝</td><td>Codex 正在审查第 2 轮 · 已完成 5 项 · 正在执行 git diff · 34 秒</td><td>取消本轮</td><td>审查结束时被结果替换</td><td>结对图标继续转圈</td></tr>
+    <tr><td>结对</td><td>审查完 · 有反馈</td><td><span class="sw" style="background:#f5f8fe;border-color:#c2d6fc"></span>蓝</td><td>Codex 审查完，提了 3 条意见，已交给 Claude 处理</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
+    <tr><td>结对</td><td>审查完 · 无反馈</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>Codex 已审查，没有新的反馈</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
+    <tr><td>结对</td><td>开启 / 更换伙伴</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>结对伙伴 Codex 已就绪，你每改完一轮它会自动审查</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
+    <tr><td>讨论</td><td>打开先聊再做</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>先聊再做的讨论已打开，聊完会把方案交给这个终端</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
+    <tr><td>轨迹</td><td>更新失败</td><td><span class="sw" style="background:#fff6e9;border-color:#fed277"></span>黄</td><td>会话轨迹更新失败：AI 响应超时</td><td>重试</td><td>重试成功</td><td>轨迹图标保留黄点</td></tr>
+  </table>
+
+  <h2>规则</h2>
+  <div class="cols">
+    <div class="card2"><h4>多件事叠放</h4>
+      <ul>
+        <li>每个来源只保留一条：状态一变，旧提示直接被替换。例如手机断线后，「已连接手机」立刻消失，不会两条并存。</li>
+        <li>同时几件事就叠几行，最多四行（约 130px），需要处理的黄条最多两行，每行都是完整句子和全部操作；窄屏时句子用省略号截断，操作不截。</li>
+        <li>按严重程度排，要你动手的黄条永远在最上面；新出的黄条会把已有的行往下挤。</li>
+        <li>自动收起的提示各自倒数 8 秒，到时间只收这一行；鼠标停在任意一行上时全部暂停。</li>
+        <li>点 × 只收起这一件事；同一件事状态没变就不会再弹出，状态变了（例如又断了一次）会重新出现。</li>
+      </ul></div>
+    <div class="card2"><h4>角标（四个图标通用）</h4>
+      <ul>
+        <li>无角标：没开启。绿点：开着且正常。黄点：有问题待处理。转圈：正在跑。按下态：对应的面板或窗口开着。</li>
+        <li>提示条被 × 收起之后，黄点就是唯一的提醒，所以黄点要等问题真正解决了才消失。</li>
+      </ul></div>
+    <div class="card2"><h4>浮动图标组</h4>
+      <ul>
+        <li>没有角标时半透明；鼠标进入终端上部 80px 或有任何角标时不透明。</li>
+        <li>拖选终端文字时暂时隐藏。始终停在最后一行提示条的下方，跟着行数上下移。</li>
+        <li>常驻状态句取消：结对就绪、讨论开着只看绿点和悬停提示；开启那一刻各出一条绿色说明。</li>
+        <li>第一次打开 Agent 终端时，用 GotIt 气泡指一下图标组，只出现一次。</li>
+      </ul></div>
+    <div class="card2"><h4>平台实现与风险</h4>
+      <ul>
+        <li>提示条和图标组挂在现有 <code>terminalLayer</code>（<code>JBLayeredPane</code>）上，和「滚到底部」按钮同一层；颜色用 <code>JBUI.CurrentTheme.Banner</code>，角标用 <code>BadgeIconSupplier</code>，图标组用 <code>ActionToolbar</code> + <code>HelpTooltip</code>。</li>
+        <li><span class="risk">风险：</span>浮动层盖在终端上时，点击和拖选会不会被吃掉，需要做出来在 IDE 里试。</li>
+        <li><span class="risk">风险：</span>新用户主要靠一次性引导气泡发现入口。</li>
+      </ul></div>
+  </div>
+</div>
+
+<script>
+const SVG = {
+  pair: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M5.5 9.5h-3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3"/><rect fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" x="5.5" y="5.5" width="9" height="9" rx="1"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M8 8.5l1.5 1.5L8 11.5M11 11.5h1.5"/>',
+  talk: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M2.5 2.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5l-3 2.5v-2.5h-2a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M6.6 5.6a1.5 1.5 0 1 1 2.1 1.4c-.45.2-.7.5-.7.95v.3"/><circle fill="currentColor" cx="8" cy="9.75" r=".6"/>',
+  trail: '<rect fill="none" stroke="currentColor" x="1.5" y="2.5" width="13" height="11" rx="1"/><circle fill="none" stroke="currentColor" cx="5" cy="6" r="1.2"/><circle fill="none" stroke="currentColor" cx="5" cy="10" r="1.2"/><path fill="none" stroke="currentColor" stroke-linecap="round" d="M5 7.2v1.6M8 6h4M8 10h3"/>',
+  phone: '<rect x="4.5" y="1.5" width="7" height="13" rx="1.5" fill="none" stroke="currentColor"/><path d="M7 12H9" stroke="currentColor" stroke-linecap="round"/>',
+  review: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M7.5 12.5h-5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3.5"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M4 5.5l1.5 1.5L4 8.5"/><circle fill="none" stroke="currentColor" cx="11" cy="11" r="2.5"/><path fill="none" stroke="currentColor" stroke-linecap="round" d="M12.8 12.8l1.7 1.7"/>',
+  verified: '<path fill="none" stroke="var(--green)" stroke-linecap="round" stroke-linejoin="round" d="M8 1.5l1.6 1.2 2-.1.6 1.9 1.6 1.2-.6 1.9.6 1.9-1.6 1.2-.6 1.9-2-.1L8 14.5l-1.6-1.2-2 .1-.6-1.9-1.6-1.2.6-1.9-.6-1.9 1.6-1.2.6-1.9 2 .1z"/><path fill="none" stroke="var(--green)" stroke-linecap="round" stroke-linejoin="round" d="M5.6 8.1l1.6 1.6 3.2-3.3"/>',
+  warning: '<path fill="none" stroke="var(--yellow)" stroke-linejoin="round" d="M8 1.8l6.6 11.7H1.4z"/><path stroke="var(--yellow)" stroke-linecap="round" d="M8 6v3.6"/><circle fill="var(--yellow)" cx="8" cy="11.6" r=".75"/>',
+  info: '<circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--link)"/><path d="M8 7v4" stroke="var(--link)" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".75" fill="var(--link)"/>',
+};
+const ic = (n, badge) => `<span class="ico"><svg viewBox="0 0 16 16">${SVG[n]}</svg>${badge ? `<span class="badge ${badge}"></span>` : ''}</span>`;
+const spin = '<span class="spin"></span>';
+const caret = '<span class="caret"></span>';
+const ROBOT = '企业微信「研发助手」';
+const TTL = 8000, ROW = 33;
+const SOURCES = ['phone', 'pair', 'trail', 'talk'];
+const TONE_RANK = { warn: 3, info: 2, ok: 1 };
+const MODES = { segments: '分段', stack: '叠放', pager: '翻页' };
+
+/* ---------- 状态 ---------- */
+let st, seq = 0;
+function fresh() {
+  return {
+    mode: 'stack',
+    pair: { k: 'idle', agent: 'Codex', round: 0, done: 0, cur: '', startAt: 0, err: '' },
+    talk: false,
+    trail: { k: 'latest', open: false },
+    phone: { k: 'unbound' },
+    flash: { phone: null, pair: null, trail: null, talk: null },   // 会自动收起的提示，每个来源最多一条
+    dismissed: {},                                     // 来源 → 被 × 收起的那条提示的 key
+    page: 0, menu: null, menuAt: null, gotit: false, near: false, selecting: false, hoverBar: false,
+  };
+}
+st = fresh();
+
+/* 同一来源状态一变：旧的自动提示作废，被收起的记录也作废 */
+function touch(src) { st.flash[src] = null; delete st.dismissed[src]; }
+function flash(src, tone, icon, full, short) { st.flash[src] = { id: ++seq, tone, icon, full, short, left: TTL }; delete st.dismissed[src]; }
+
+/* ---------- 事件 ---------- */
+const secs = () => Math.max(0, Math.round((Date.now() - st.pair.startAt) / 1000));
+const live = (k, v) => `<span data-live="${k}">${v}</span>`;
+function persistent(src) {
+  const p = st.pair;
+  if (src === 'phone') {
+    if (st.phone.k === 'problem') return { key: 'phone:problem', tone: 'warn', icon: ic('warning'), full: `手机连接已断开 · ${ROBOT}，消息暂时收不到`, short: '手机断线', acts: [['重连', 'reconnect'], ['换绑' + caret, 'menu:phone']], close: true };
+    if (st.phone.k === 'connecting') return { key: 'phone:connecting', tone: 'info', icon: spin, full: `正在重新连接 ${ROBOT}…`, short: '重连中', acts: [], close: false };
+  }
+  if (src === 'pair') {
+    if (p.k === 'failed') return { key: 'pair:failed', tone: 'warn', icon: ic('warning'), full: `${p.agent} 审查失败：${p.err}`, short: '审查失败', acts: [['重试', 'reviewStart'], ['停止结对', 'pairOff']], close: true };
+    if (p.k === 'running') return { key: 'pair:running:' + p.round, tone: 'info', icon: spin,
+      full: `${p.agent} 正在审查第 ${p.round} 轮 · 已完成 ${live('done', p.done)} 项 · ${live('cur', p.cur)} · ${live('secs', secs())} 秒`,
+      short: `${p.agent} 审查中 ${live('secs', secs())} 秒`, acts: [['取消本轮', 'reviewCancel']], close: true };
+  }
+  if (src === 'trail' && st.trail.k === 'failed') return { key: 'trail:failed', tone: 'warn', icon: ic('warning'), full: '会话轨迹更新失败：AI 响应超时', short: '轨迹更新失败', acts: [['重试', 'trailRetry']], close: true };
+  return null;
+}
+function srcEvent(src) {
+  const e = persistent(src);
+  if (e && st.dismissed[src] !== e.key) return { src, ...e };
+  if (e) return null;
+  const f = st.flash[src];
+  return f ? { src, key: 'flash:' + f.id, tone: f.tone, icon: f.icon, full: f.full, short: f.short, acts: [], close: true, flash: true, left: f.left } : null;
+}
+function events() {
+  return SOURCES.map(srcEvent).filter(Boolean)
+    .sort((a, b) => TONE_RANK[b.tone] - TONE_RANK[a.tone] || SOURCES.indexOf(a.src) - SOURCES.indexOf(b.src));
+}
+const pageIndex = ev => ev.length ? ((st.page % ev.length) + ev.length) % ev.length : 0;
+/* 当前真正显示出来的来源：只有这些的自动提示才倒数 */
+function visibleSources(mode, ev) { return mode === 'pager' ? (ev.length ? [ev[pageIndex(ev)].src] : []) : ev.map(e => e.src); }
+
+/* ---------- 动作 ---------- */
+const timers = new Set();
+const later = (ms, fn) => { const t = setTimeout(() => { timers.delete(t); fn(); render(); }, ms); timers.add(t); return t; };
+const reviewSteps = ['正在采集代码变更…', '正在执行 git diff --stat', '读取 PhoneBanner.kt', '读取 AgentTerminalFileEditor.kt', '正在执行 ./gradlew test', '搭档正在写反馈…'];
+const A = {
+  reset() { timers.forEach(clearTimeout); timers.clear(); st = fresh(); narr(''); },
+  firstRun() { st.gotit = true; },
+  gotitClose() { st.gotit = false; },
+  pairOn(agent) { st.pair = { ...st.pair, k: 'ready', agent: agent || 'Codex' }; flash('pair', 'ok', ic('verified'), `结对伙伴 ${st.pair.agent} 已就绪，你每改完一轮它会自动审查`, '结对已开启'); },
+  pairOff() { touch('pair'); st.pair = { ...st.pair, k: 'idle' }; },
+  reviewStart() {
+    touch('pair');
+    const round = st.pair.k === 'failed' ? st.pair.round : st.pair.round + 1;
+    st.pair = { ...st.pair, k: 'running', round, done: 0, cur: reviewSteps[0], startAt: Date.now() };
+    reviewSteps.slice(1).forEach((s, i) => later(1400 * (i + 1), () => { if (st.pair.k === 'running' && st.pair.round === round) { st.pair.cur = s; st.pair.done = i + 1; } }));
+  },
+  reviewCancel() { st.pair.k = 'ready'; flash('pair', 'info', ic('info'), '已取消本轮审查，下次改完代码会重新开始', '已取消本轮'); },
+  reviewPass() { if (st.pair.k === 'idle') st.pair.k = 'ready'; st.pair.k = 'ready'; flash('pair', 'ok', ic('verified'), `${st.pair.agent} 已审查，没有新的反馈`, '审查通过'); },
+  reviewFeedback() { st.pair.k = 'ready'; flash('pair', 'info', ic('review'), `${st.pair.agent} 审查完，提了 3 条意见，已交给 Claude 处理`, '3 条意见已交给 Claude'); },
+  reviewFail() { touch('pair'); st.pair = { ...st.pair, k: 'failed', err: '调用超时（120 秒）', round: Math.max(1, st.pair.round) }; },
+  phoneBind() { st.phone.k = 'ok'; flash('phone', 'ok', ic('verified'), `已连接手机 · ${ROBOT}，手机消息会直接提交到这个终端`, '手机已连接'); },
+  phoneUnbind() { touch('phone'); st.phone.k = 'unbound'; },
+  phoneDrop() { touch('phone'); st.phone.k = 'problem'; },
+  reconnect() { touch('phone'); st.phone.k = 'connecting'; later(1800, () => { st.phone.k = 'ok'; flash('phone', 'ok', ic('verified'), `已重新连接 · ${ROBOT}`, '已重新连接'); }); },
+  trailStale() { touch('trail'); st.trail.k = 'stale'; },
+  trailFail() { touch('trail'); st.trail.k = 'failed'; },
+  trailRetry() { touch('trail'); st.trail.k = 'loading'; later(2200, () => { st.trail.k = 'latest'; flash('trail', 'ok', ic('verified'), '会话轨迹已更新 · 共 6 个节点', '轨迹已更新'); }); },
+  trailToggle() { st.trail.open = !st.trail.open; st.menu = null; },
+  talkToggle() { st.talk = !st.talk; st.menu = null; if (st.talk) flash('talk', 'ok', ic('talk', 'g'), '先聊再做的讨论已打开，聊完会把方案交给这个终端', '讨论已打开'); else touch('talk'); },
+  triple() {
+    A.reset();
+    st.pair = { ...st.pair, k: 'ready', agent: 'Codex' }; st.phone.k = 'ok'; st.flash.pair = null;
+    A.reviewStart(); A.phoneDrop(); A.trailFail();
+  },
+};
+function run(cmd) {
+  if (cmd.startsWith('menu:')) { const m = cmd.slice(5); st.menu = st.menu === m ? null : m; return; }
+  const [name, arg] = cmd.split('|');
+  A[name](arg); st.menu = null;
+}
+
+/* ---------- 横幅 HTML：三种方式共用 ---------- */
+const strip = s => s.replace(/<[^>]+>/g, '');
+function ttlText(e, compact) {
+  if (st.hoverBar) return compact ? '暂停' : '已暂停';
+  const s = Math.ceil(e.left / 1000);
+  return compact ? s + 's' : s + ' 秒后收起';
+}
+function barHTML(mode, ev, narrow, interactive) {
+  if (!ev.length) return { html: '', h: 0 };
+  const act = ([t, c]) => `<span class="link" ${interactive ? `data-run="${c}"` : ''}>${t}</span>`;
+  const x = (e, sm) => e.close ? `<span class="x ${sm ? 'sm' : ''}" ${interactive ? `data-dismiss="${e.src}"` : ''} title="收起">✕</span>` : '';
+  const counting = new Set(visibleSources(mode, ev));
+  const ttl = (e, compact) => e.flash ? `<span class="ttl" data-ttl="${e.src}" data-compact="${compact ? 1 : 0}">${counting.has(e.src) ? ttlText(e, compact) : ''}</span>` : '';
+  const cd = e => e.flash ? `<span class="cd" data-cd="${e.src}" style="width:${(e.left / TTL) * 100}%"></span>` : '';
+  const full = (e, extra = '') => `<div class="event ${e.tone}" data-bar>
+      ${e.icon}<span class="ell">${e.full}</span>
+      ${e.acts.length ? `<span class="acts">${e.acts.map(act).join('')}</span>` : ''}
+      <span class="glue"></span>${extra}${ttl(e)}${x(e)}${cd(e)}</div>`;
+
+  if (mode === 'stack') return { html: ev.map(e => full(e)).join(''), h: ev.length * ROW };
+
+  if (mode === 'pager') {
+    const i = pageIndex(ev), e = ev[i];
+    const pager = ev.length > 1 ? `<span class="pager">
+        <span class="pg" ${interactive ? 'data-page="-1"' : ''}>‹</span>
+        <span class="pdots">${ev.map((o, j) => `<i class="${o.tone} ${j === i ? 'on' : ''}"></i>`).join('')}</span>
+        <span>${i + 1} / ${ev.length}</span>
+        <span class="pg" ${interactive ? 'data-page="1"' : ''}>›</span></span>` : '';
+    return { html: full(e, pager), h: ROW };
+  }
+
+  // 分段：只有一件事时就是完整的一句话
+  if (ev.length === 1) return { html: full(ev[0]), h: ROW };
+  const segs = ev.map((e, i) => {
+    const main = e.acts[0] ? act(e.acts[0]) : '';
+    // 窄屏：短词省掉，改用来源自己的图标（手机 / 结对 / 轨迹）加颜色角标，才分得清是哪件事
+    const running = e.src === 'pair' && st.pair.k === 'running' && !e.flash;
+    const icon = narrow ? (e.icon === spin && !running ? spin : ic(e.src, { warn: 'y', ok: 'g' }[e.tone] || '')) : e.icon;
+    const label = narrow ? (running ? `<span class="lbl">${live('secs', secs())}s</span>` : main ? '' : `<span class="lbl">${e.short}</span>`) : `<span class="lbl">${e.short}</span>`;
+    return (i ? '<span class="segsep"></span>' : '') +
+      `<span class="segi" title="${strip(e.full)}">${icon}${label}${main}${narrow ? '' : ttl(e, true)}${x(e, true)}${cd(e)}</span>`;
+  }).join('');
+  return { html: `<div class="event ${ev[0].tone} segs" data-bar>${segs}<span class="glue"></span></div>`, h: ROW };
+}
+
+/* ---------- 其它部件 ---------- */
+function badgeOf(key) {
+  const p = st.pair;
+  switch (key) {
+    case 'pair': return p.k === 'running' ? 'spin' : p.k === 'failed' ? 'y' : p.k === 'idle' ? '' : 'g';
+    case 'talk': return st.talk ? 'g' : '';
+    case 'trail': return st.trail.k === 'loading' ? 'spin' : (st.trail.k === 'stale' || st.trail.k === 'failed') ? 'y' : '';
+    case 'phone': return st.phone.k === 'connecting' ? 'spin' : st.phone.k === 'problem' ? 'y' : st.phone.k === 'ok' ? 'g' : '';
+  }
+}
+function floatHTML(interactive) {
+  const fb = (key, pressed) => {
+    const b = badgeOf(key);
+    return `<span class="fb ${pressed ? 'on' : ''}" ${interactive ? `data-fb="${key}"` : ''}>${b === 'spin' ? spin : ic(key, b)}</span>`;
+  };
+  return fb('pair', st.menu === 'pair') + fb('talk', st.talk) + fb('trail', st.trail.open) + fb('phone', st.menu === 'phone');
+}
+const TIPS = {
+  pair: () => ['结对编程', { idle: '未开启 · 点开选择伙伴，或只审查一次', ready: `${st.pair.agent} 已就绪，每改完一轮自动审查`, running: `${st.pair.agent} 正在审查第 ${st.pair.round} 轮`, failed: `${st.pair.agent} 审查失败：${st.pair.err}` }[st.pair.k]],
+  talk: () => ['先聊再做', st.talk ? '讨论窗口开着 · 点击回到讨论' : '先和 Agent 把需求聊清楚，再交给终端动手'],
+  trail: () => ['会话轨迹', { latest: '已是最新 · 点击显示', stale: '会话有新进展，摘要已过期', loading: '正在生成…', failed: '更新失败：AI 响应超时' }[st.trail.k]],
+  phone: () => ['手机', { unbound: '未连接 · 点开选择机器人', ok: `${ROBOT} · 在线`, problem: `${ROBOT} · 连接已断开`, connecting: '正在重新连接…' }[st.phone.k]],
+};
+const $ = id => document.getElementById(id);
+const TERM_HIST = [
+  ['p', '❯ 横幅里“连接手机”的文案改成和设置页一致'],
+  ['d', '● Search(pattern: "bridge.banner", path: "src/main/resources/messages")'],
+  ['d', '  ⎿  Found 10 files'],
+  ['d', '● Update(src/main/resources/messages/ImuxBundle.properties)'],
+  ['d', '  ⎿  Updated src/main/resources/messages/ImuxBundle_zh_CN.properties with 4 additions'],
+  ['', '● 文案已同步到简繁中文和日文，其余语言沿用英文。'],
+  ['p', '❯ 好，再看下横幅在窄屏下的样子'],
+  ['', '● 现在窄屏时手机段只留图标，但结对编程段文字没收，会挤掉左边的状态句。'],
+  ['p', '❯ 把 PhoneBanner 的窄屏规则也套到结对编程段，横幅变窄时两段一起收起文字，阈值统一放到 BannerWidth 里'],
+  ['', '● 好的。我先看一下两段现在各自怎么判断宽度。'],
+  ['d', '● Read(src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneBanner.kt)'],
+  ['d', '  ⎿  Read 242 lines'],
+  ['d', '● Read(src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt)'],
+  ['d', '  ⎿  Read 690 lines'],
+  ['', '● PhoneBanner 按父容器宽度分三档（≥900 / ≥600 / 更窄），结对编程段没有判断。'],
+  ['', '  我会把阈值提成 bannerWidthTier()，两段共用。'],
+  ['d', '● Update(src/main/kotlin/com/github/izerui/imux/terminal/BannerParts.kt)'],
+  ['d', '  ⎿  Updated with <span class="g">18 additions</span> and <span class="y">11 removals</span>'],
+  ['d', '● Bash(./gradlew test --tests "*PhoneBanner*" --tests "*BannerParts*")'],
+  ['g', '  ⎿  BUILD SUCCESSFUL in 14s · 9 tests passed'],
+  ['', '● 已完成：两段在 600px 以下都只保留图标，阈值集中在 BannerParts.kt。'],
+];
+const termHTML = () => `<div class="hist">${TERM_HIST.map(([c, t]) => `<div class="l ${c}">${t}</div>`).join('')}</div>
+    <div class="prompt"><span class="p">❯</span> <span class="caretb"></span></div>
+    <div class="status"><span>⏵⏵ accept edits on · shift+tab to cycle</span><span>Opus 5.5 · imux</span></div>`;
+const ideWidth = () => parseInt($('ide').style.width);
+
+/* ---------- 渲染 ---------- */
+function render() {
+  const ev = events(), narrow = ideWidth() < 760;
+  const { html, h } = barHTML(st.mode, ev, narrow, true);
+  $('bar').innerHTML = html;
+  $('barwrap').style.height = h + 'px';
+  const fl = $('float');
+  const anyBadge = ['pair', 'talk', 'trail', 'phone'].some(k => badgeOf(k));
+  fl.className = 'float' + (st.selecting ? ' hidden' : (!anyBadge && !st.near && !st.menu && !st.trail.open && !st.gotit ? ' quiet' : ''));
+  fl.style.top = (h + 8) + 'px';
+  fl.innerHTML = floatHTML(true);
+  $('tabico').innerHTML = ic('pair') + (st.phone.k === 'ok' ? ic('phone') : '');
+  renderLayer(h);
+}
+
+function renderLayer(barH) {
+  let h = '';
+  const flBottom = barH + 8 + 32;
+  if (st.talk) h += `<div class="talkwin"><div class="hd">${ic('talk', 'g')}先聊再做 · 讨论中<span style="margin-left:auto" class="link" data-run="talkToggle">结束讨论</span></div>
+    <div class="bd"><p class="me">横幅能不能平时不占行？</p><p>可以。把四个入口收成浮动图标，只在审查、断线这类事件时出条……</p><p class="muted">聊完点「交给终端」，方案会作为一条指令提交。</p></div></div>`;
+  if (st.trail.open) {
+    h += `<div class="pop trail" style="right:14px;top:${flBottom + 6}px">
+      <div class="hd">${ic('trail')}<b>会话轨迹</b><span class="muted" style="font-size:12px">共 6 个节点 · 主线 5 · 旁支 1</span><span style="margin-left:auto" class="link" data-run="trailToggle">收起</span></div>
+      ${st.trail.k === 'stale' ? `<div class="stale">${ic('warning')}<span>会话有新进展，摘要已过期</span><span class="link" style="margin-left:auto" data-run="trailRetry">更新</span></div>` : ''}
+      ${st.trail.k === 'failed' ? `<div class="stale">${ic('warning')}<span>更新失败：AI 响应超时</span><span class="link" style="margin-left:auto" data-run="trailRetry">重试</span></div>` : ''}
+      ${st.trail.k === 'loading' ? `<div class="stale" style="background:var(--info);border-color:var(--infoLine)">${spin}<span>正在整理时间线…</span></div>` : ''}
+      <ol>
+        <li>提出：窄屏时结对编程段也要收起文字<div class="t">10:42</div></li>
+        <li>读 PhoneBanner、AgentTerminalFileEditor，确认两段各自判断宽度<div class="t">10:43</div></li>
+        <li class="side">旁支：讨论阈值放哪个文件<div class="t">10:44</div></li>
+        <li>新增 bannerWidthTier()，两段共用<div class="t">10:46</div></li>
+        <li>跑 PhoneBanner / BannerParts 测试，9 个通过<div class="t">10:47</div></li>
+        <li>完成，等待下一步<div class="t">进行中</div></li>
+      </ol>
+      <div class="ft"><span>生成于 10:47</span><span class="link" data-run="trailRetry">更新轨迹</span></div></div>`;
+  }
+  if (st.menu && st.menuAt) h += `<div class="pop menu" style="right:${Math.max(8, st.menuAt.right - 4)}px;top:${st.menuAt.top + 4}px">${menuFor(st.menu)}</div>`;
+  if (st.gotit) h += `<div class="gotit" style="right:14px;top:${flBottom + 8}px">
+      <b>协作工具在这里</b>结对审查、先聊再做、会话轨迹、手机连接都收在这四个图标里。平时不占终端的行；审查、断线这类事发生时，顶部会滑出一条提示。
+      <div class="row"><span style="color:#8c8f96">1 / 1</span><button class="btn" data-run="gotitClose">知道了</button></div></div>`;
+  if (hoverKey && !st.menu && !st.gotit) {
+    const el = document.querySelector(`[data-fb="${hoverKey}"]`);
+    if (el) {
+      const a = rel(el), [t, s] = TIPS[hoverKey]();
+      h += `<div class="tipx" style="right:${Math.max(8, a.right - 30)}px;top:${a.top + 6}px"><b>${t}</b><span class="s">${s}</span></div>`;
+    }
+  }
+  $('layer').innerHTML = h;
+}
+function rel(el) {
+  const b = $('body').getBoundingClientRect(), r = el.getBoundingClientRect();
+  return { right: b.right - r.right, top: r.bottom - b.top };
+}
+
+function menuFor(m) {
+  const p = st.pair;
+  const item = (text, cmd, opt = {}) => `<div class="i ${opt.dis ? 'dis' : ''}" ${opt.dis || !cmd ? '' : `data-run="${cmd}"`}>${opt.icon || ''}<span>${text}</span>${opt.sub ? `<span class="arr">▸</span><div class="pop menu sub">${opt.sub}</div>` : ''}</div>`;
+  const agents = ['Codex', 'Claude', 'Pi'];
+  if (m === 'pair') {
+    const head = `<div class="h">让另一个 AI 在你改代码时帮你看，或者只审查一次。</div>`;
+    if (p.k === 'idle') return head + item('开启结对编程', '', { icon: ic('pair'), sub: agents.map(a => item(a, `pairOn|${a}`)).join('') }) + item('审查一次…', 'reviewStart', { icon: ic('review') });
+    const status = { ready: `${p.agent} 已就绪，每改完一轮自动审查`, running: `${p.agent} 正在审查第 ${p.round} 轮`, failed: `${p.agent} 审查失败：${p.err}` }[p.k];
+    let body = `<div class="st"><span class="dotx" style="background:${p.k === 'failed' ? 'var(--yellow)' : 'var(--green)'}"></span><span>${status}</span></div><hr>`;
+    if (p.k === 'running') body += item('取消本轮审查', 'reviewCancel') + item('停止结对编程', 'pairOff');
+    else if (p.k === 'failed') body += item('重试', 'reviewStart') + item('停止结对编程', 'pairOff');
+    else body += item('更换结对伙伴', '', { sub: agents.filter(a => a !== p.agent).map(a => item(a, `pairOn|${a}`)).join('') }) + item('现在审查一次', 'reviewStart') + '<hr>' + item('停止结对编程', 'pairOff');
+    return head + body;
+  }
+  if (m === 'phone') {
+    const head = `<div class="h">手机消息会直接提交到这个终端，回复同步到手机。</div>`;
+    const robots = item(ROBOT, 'phoneBind', { icon: ic('phone') }) + item('飞书「值班机器人」· 已连接其他会话', '', { icon: ic('phone'), dis: true });
+    if (st.phone.k === 'unbound') return head + robots + '<hr>' + item('添加机器人…', 'phoneBind') + item('管理通讯机器人…', 'phoneBind');
+    const s = { ok: ['var(--green)', `${ROBOT} · 在线`], problem: ['var(--yellow)', `${ROBOT} · 连接已断开`], connecting: ['var(--link)', '正在重新连接…'] }[st.phone.k];
+    return head + `<div class="st"><span class="dotx" style="background:${s[0]}"></span><span>${s[1]}</span></div><hr>` +
+      item('重连', 'reconnect', { dis: st.phone.k === 'connecting' }) + item('换绑机器人', '', { sub: item('飞书「值班机器人」', 'phoneBind') + item('钉钉「构建通知」', 'phoneBind') }) + item('断开', 'phoneUnbind') + '<hr>' + item('管理通讯机器人…', 'phoneBind');
+  }
+  return '';
+}
+
+/* ---------- 计时：只改数字，不重建 DOM ---------- */
+let lastTick = Date.now();
+setInterval(() => {
+  const now = Date.now(), dt = now - lastTick; lastTick = now;
+  const ev = events();
+  let expired = false;
+  if (!st.hoverBar) {
+    for (const src of visibleSources(st.mode, ev)) {
+      const f = st.flash[src];
+      if (f && ev.find(e => e.src === src && e.flash)) { f.left -= dt; if (f.left <= 0) { st.flash[src] = null; expired = true; } }
+    }
+  }
+  if (expired) { render(); return; }
+  document.querySelectorAll('[data-live="secs"]').forEach(e => e.textContent = secs());
+  for (const src of SOURCES) {
+    const f = st.flash[src]; if (!f) continue;
+    document.querySelectorAll(`[data-cd="${src}"]`).forEach(e => e.style.width = (f.left / TTL) * 100 + '%');
+    document.querySelectorAll(`[data-ttl="${src}"]`).forEach(e => { if (e.textContent) e.textContent = ttlText(f, e.dataset.compact === '1'); });
+  }
+}, 200);
+
+/* ---------- 交互 ---------- */
+let hoverKey = null;
+const body = $('body');
+body.addEventListener('mousemove', e => {
+  const near = e.clientY - body.getBoundingClientRect().top < 80 + parseInt($('barwrap').style.height || 0);
+  const fb = e.target.closest('[data-fb]'); const k = fb ? fb.dataset.fb : null;
+  st.hoverBar = !!e.target.closest('[data-bar]');
+  if (near !== st.near || k !== hoverKey) { st.near = near; hoverKey = k; render(); }
+});
+body.addEventListener('mouseleave', () => { st.near = false; st.hoverBar = false; hoverKey = null; render(); });
+$('term').addEventListener('mousedown', () => { st.selecting = true; st.menu = null; render(); });
+document.addEventListener('mouseup', () => { if (st.selecting) { st.selecting = false; render(); } });
+
+document.addEventListener('click', e => {
+  const fb = e.target.closest('[data-fb]');
+  if (fb) {
+    const k = fb.dataset.fb; st.gotit = false;
+    if (k === 'talk') A.talkToggle(); else if (k === 'trail') A.trailToggle();
+    else { st.menu = st.menu === k ? null : k; st.menuAt = rel(fb); }
+    hoverKey = null; render(); return;
+  }
+  const r = e.target.closest('[data-run]');
+  if (r && r.dataset.run) { if (r.dataset.run.startsWith('menu:')) st.menuAt = rel(r); run(r.dataset.run); render(); return; }
+  const d = e.target.closest('[data-dismiss]');
+  if (d) {
+    const src = d.dataset.dismiss, ev = srcEvent(src);
+    if (ev && ev.flash) st.flash[src] = null; else if (ev) st.dismissed[src] = ev.key;
+    st.hoverBar = false; render(); return;
+  }
+  const pg = e.target.closest('[data-page]');
+  if (pg) { st.page = pageIndex(events()) + +pg.dataset.page; render(); return; }
+  const md = e.target.closest('[data-mode]');
+  if (md) { setMode(md.dataset.mode); return; }
+  const c = e.target.closest('[data-do]');
+  if (c) { stopPlay(); run(c.dataset.do); render(); return; }
+  if (e.target.closest('.pop')) return;
+  if (st.menu) { st.menu = null; render(); }
+});
+function setMode(m) { st.mode = m; st.page = 0; render(); }
+document.querySelectorAll('[data-w]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-w]').forEach(x => x.classList.toggle('on', x === b)); $('ide').style.width = b.dataset.w + 'px'; render(); });
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-t]').forEach(x => x.classList.toggle('on', x === b)); document.body.classList.toggle('dark', b.dataset.t === 'dark'); });
+
+/* ---------- 自动演示 ---------- */
+const narr = (t, n) => { $('narr').innerHTML = t ? `<b>${n}</b>${t}` : ''; };
+const SCRIPT = [
+  [0, '第一次打开 Agent 终端：没有横幅，终端从第一行开始；GotIt 气泡指向右上角的图标组。', () => { A.reset(); A.firstRun(); }],
+  [4000, '点「知道了」后，图标组退成半透明，不干扰阅读。', () => { A.gotitClose(); }],
+  [6000, '开启结对编程：出一条绿色说明，8 秒后收起；之后只靠结对图标上的绿点。', () => { A.pairOn('Codex'); }],
+  [10500, 'Claude 改完一轮，Codex 开始审查：蓝条显示实时进度，排在绿条上面。', () => A.reviewStart()],
+  [17000, '审查通过：蓝条换成绿条。', () => A.reviewPass()],
+  [20000, '手机这时断线：黄条插到最上面，绿条被挤到第二行；图标组跟着下移。', () => { st.phone.k = 'ok'; A.phoneDrop(); }],
+  [24500, '轨迹也更新失败：第二条黄条。三行就是上限。', () => { A.trailFail(); }],
+  [29000, '点手机那行的「重连」：这一行变成蓝色「正在重新连接」，降到黄条下面；连上后变绿，8 秒后只收掉这一行。', () => A.reconnect()],
+  [36000, '点轨迹那行的 ×：只收起这一行，轨迹图标保留黄点。', () => { const ev = srcEvent('trail'); if (ev) st.dismissed.trail = ev.key; }],
+  [40000, '打开先聊再做：出一条绿色说明，讨论图标呈按下态。', () => { A.talkToggle(); }],
+  [45000, '演示结束。用上面的按钮自己点一遍；「三件事同时发生」可以直接造出最挤的情况。', () => {}],
+];
+let playing = [];
+function stopPlay() { playing.forEach(clearTimeout); playing = []; }
+$('play').onclick = () => {
+  stopPlay();
+  SCRIPT.forEach(([t, text, fn]) => playing.push(setTimeout(() => { fn(); narr(text, `${Math.round(t / 1000)}s`); render(); }, t)));
+};
+
+/* URL 参数：截图用 */
+const q = new URLSearchParams(location.search);
+if (q.get('theme') === 'dark') { document.body.classList.add('dark'); document.querySelectorAll('[data-t]').forEach(x => x.classList.toggle('on', x.dataset.t === 'dark')); }
+if (q.get('w')) { $('ide').style.width = q.get('w') + 'px'; document.querySelectorAll('[data-w]').forEach(x => x.classList.toggle('on', x.dataset.w === q.get('w'))); }
+$('term').innerHTML = termHTML();
+if (q.get('mode')) setMode(q.get('mode'));
+if (q.get('do')) for (const c of q.get('do').split(',')) run(c);
+render();
+</script>
+</body>
+</html>

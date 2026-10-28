@@ -50,7 +50,7 @@ fun interface HttpJsonGet {
 
 /** JDK WebSocket：拼接分片、串行发送（并发 sendText 会抛 IllegalStateException）。 */
 class JdkWebSocketTransport(
-    private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build(),
+    private val client: HttpClient = HttpClient.newBuilder().connectTimeout(NETWORK_TIMEOUT).build(),
 ) : FrameTransport {
     private val sendLock = Mutex()
 
@@ -64,7 +64,7 @@ class JdkWebSocketTransport(
         val assembler = TextFrameAssembler()
         socket =
             client.newWebSocketBuilder()
-                .connectTimeout(Duration.ofSeconds(15))
+                .connectTimeout(NETWORK_TIMEOUT)
                 .buildAsync(
                     URI(url),
                     object : WebSocket.Listener {
@@ -111,10 +111,10 @@ class JdkWebSocketTransport(
 }
 
 class JdkHttpJsonGet(
-    private val client: HttpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build(),
+    private val client: HttpClient = HttpClient.newBuilder().connectTimeout(NETWORK_TIMEOUT).build(),
 ) : HttpJsonGet {
     override suspend fun get(url: String): JsonObject {
-        val request = HttpRequest.newBuilder(URI(url)).timeout(Duration.ofSeconds(15)).GET().build()
+        val request = HttpRequest.newBuilder(URI(url)).timeout(NETWORK_TIMEOUT).GET().build()
         val response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await()
         if (response.statusCode() !in 200..299) throw IOException("HTTP ${response.statusCode()}")
         val root = JsonParser.parseString(response.body())
@@ -149,7 +149,7 @@ fun interface HttpFileDownload {
  */
 class JdkHttpFileDownload(
     private val client: HttpClient =
-        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).followRedirects(HttpClient.Redirect.NORMAL).build(),
+        HttpClient.newBuilder().connectTimeout(NETWORK_TIMEOUT).followRedirects(HttpClient.Redirect.NORMAL).build(),
     private val timeout: Duration = Duration.ofSeconds(60),
     /** 临时文件目录；null 用系统临时目录。测试传入独立目录以检查残留。 */
     private val tempDir: Path? = null,
@@ -276,3 +276,6 @@ private fun decodePercentUtf8(value: String): String {
         value
     }
 }
+
+/** 建立连接、单次 HTTP 请求的超时。 */
+private val NETWORK_TIMEOUT: Duration = Duration.ofSeconds(15)

@@ -11,11 +11,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BridgeHubDeliveryTest {
-    private val message = OutboundMessage(RobotId("r1"), "chat-1", null, "secret body text")
+    private val message = OutboundMessage(RobotId("r1"), "chat-1", "secret body text")
 
     @Test
     fun `送达成功不记日志`() {
-        assertNull(deliveryLog(message, DeliveryResult.Accepted("m")))
+        assertNull(deliveryLog(message, DeliveryResult.Accepted))
     }
 
     @Test

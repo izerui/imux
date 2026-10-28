@@ -1,34 +1,39 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.bridge.BindingService
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.BridgeSettings
-import com.github.izerui.imux.bridge.core.RobotId
-import com.github.izerui.imux.bridge.robot.RobotManager
+import com.github.izerui.imux.bridge.RobotManager
+import com.github.izerui.imux.bridge.SessionTitles
+import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.BannerColors
+import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.github.izerui.imux.terminal.StatusDotIcon
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.BoundConfigurable
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.Disposer
 import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.table.JBTable
-import kotlinx.coroutines.launch
 import javax.swing.JTable
-import javax.swing.Timer
 import javax.swing.table.AbstractTableModel
 
 /** 设置 › 工具 › Imux › 通讯机器人。机器人管理与会话管理分开：这里只管机器人。 */
 class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings.displayName")) {
     private val model = RobotTableModel()
-    private var timer: Timer? = null
+    private var uiDisposable: Disposable? = null
     private var table: JBTable? = null
 
     override fun createPanel(): DialogPanel {
@@ -81,12 +86,21 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 ).createPanel()
         refresh()
         // 设置页可能多次创建面板：先停掉旧定时器，避免泄漏
-        timer?.stop()
-        timer = Timer(1_000) { refresh() }.also { it.start() }
+        // 不定时轮询，按事件刷新：机器人、连接状态或绑定变化（与终端横幅、状态栏同一信号），
+        // 以及会话列表变化（“当前连接的会话”一列显示会话标题，改名后要跟着变）
+        uiDisposable?.let(Disposer::dispose)
+        uiDisposable =
+            Disposer.newDisposable("imux.robots.settings").also { disposable ->
+                ApplicationManager.getApplication().messageBus.connect(disposable)
+                    .subscribe(SessionDecorationsListener.TOPIC, SessionDecorationsListener { refresh() })
+                ProjectManager.getInstance().openProjects.filterNot { it.isDisposed }.forEach { project ->
+                    SessionMonitor.getInstance(project).addListener(disposable) { refresh() }
+                }
+            }
         return panel {
             row {
                 checkBox(ImuxBundle.message("bridge.settings.enable"))
-                    .bindSelected(settings.state::enabled)
+                    .bindSelected({ settings.state.enabled }, { BridgeLifecycle.setEnabled(it) })
                     .comment(ImuxBundle.message("bridge.settings.enable.comment"))
             }
             row { cell(decorated).align(Align.FILL) }.resizableRow()
@@ -94,16 +108,9 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         }
     }
 
-    override fun apply() {
-        val before = BridgeSettings.getInstance().state.enabled
-        super.apply()
-        val after = BridgeSettings.getInstance().state.enabled
-        if (before != after) BridgeLifecycle.applyEnabled(after)
-    }
-
     override fun disposeUIResources() {
-        timer?.stop()
-        timer = null
+        uiDisposable?.let(Disposer::dispose)
+        uiDisposable = null
         table = null
         super.disposeUIResources()
     }
@@ -117,8 +124,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             robotRows(
                 manager.robots(),
                 statusOf = manager::statusOf,
-                bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
-                titleOf = BridgeLifecycle::sessionTitle,
+                bindingOf = { hub.bindings.bindingOf(it) },
+                titleOf = SessionTitles::of,
                 labels = BundleRowLabels,
                 bridgeEnabled = BridgeSettings.getInstance().state.enabled,
             )
@@ -161,10 +168,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
 
     private fun unbind(table: JBTable) {
         val row = selected(table) ?: return
-        val hub = BridgeHub.getInstance()
-        val binding = hub.bindings.unbind(RobotId(row.id)) ?: return
-        RobotManager.getInstance().syncBindings()
-        hub.launch { hub.router.onReleased(binding, BridgeLifecycle.sessionTitle(binding)) }
+        BindingService.unbind(row.id)
         refresh()
     }
 
@@ -183,9 +187,9 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             column: Int,
         ) {
             icon =
-                when (model.rows.getOrNull(row)?.tone) {
-                    RowTone.OK -> okDot
-                    RowTone.ATTENTION -> attentionDot
+                when (model.rows.getOrNull(row)?.health) {
+                    RobotHealth.OK -> okDot
+                    RobotHealth.ATTENTION -> attentionDot
                     else -> null
                 }
             append(value?.toString().orEmpty())
@@ -198,7 +202,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 if (field == value) return
                 val sameRows = sameRobotsInOrder(field, value)
                 field = value
-                // 每秒都会刷新状态：只是内容变了就只更新行，整表重建会把用户的选中清掉
+                // 状态、会话标题变了只更新行：整表重建会把用户的选中清掉
                 if (sameRows && value.isNotEmpty()) fireTableRowsUpdated(0, value.lastIndex) else fireTableDataChanged()
             }
 
@@ -217,9 +221,9 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         ): Any {
             val row = rows[rowIndex]
             return when (columnIndex) {
-                0 -> row.name
-                1 -> row.channel
-                2 -> row.status
+                NAME_COLUMN -> row.name
+                CHANNEL_COLUMN -> row.channel
+                STATUS_COLUMN -> row.status
                 else -> row.session ?: "—"
             }
         }
@@ -233,4 +237,6 @@ internal fun sameRobotsInOrder(
 ): Boolean = before.map { it.id } == after.map { it.id }
 
 /** 表格列顺序：机器人、渠道、状态、当前连接的会话。 */
+private const val NAME_COLUMN = 0
+private const val CHANNEL_COLUMN = 1
 private const val STATUS_COLUMN = 2

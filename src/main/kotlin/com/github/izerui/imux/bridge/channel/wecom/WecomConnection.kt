@@ -63,7 +63,7 @@ class WecomConnection(
         data class Dropped(val reason: String) : SessionEnd
     }
 
-    /** Per-session mutable state, isolated from other sessions. */
+    /** 一次连接会话的可变状态；断线重连后换一份新的，旧会话的待确认请求不会串到新会话。 */
     private class SessionState {
         val pending = ConcurrentHashMap<String, CompletableDeferred<WecomFrame.Ack>>()
 
@@ -125,7 +125,7 @@ class WecomConnection(
             } catch (_: IOException) {
                 return DeliveryResult.Unknown
             } ?: return DeliveryResult.Unknown
-        return if (ack.errcode == 0) DeliveryResult.Accepted(null) else DeliveryResult.Rejected("${ack.errcode} ${ack.errmsg.orEmpty()}".trim())
+        return if (ack.errcode == 0) DeliveryResult.Accepted else DeliveryResult.Rejected("${ack.errcode} ${ack.errmsg.orEmpty()}".trim())
     }
 
     private suspend fun runLoop(

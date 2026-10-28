@@ -1,12 +1,6 @@
 package com.github.izerui.imux.bridge.transcript
 
 import com.github.izerui.imux.bridge.core.SessionEvent
-import com.github.izerui.imux.bridge.core.SessionEventKind.ASSISTANT_TEXT
-import com.github.izerui.imux.bridge.core.SessionEventKind.TOOL_FINISHED
-import com.github.izerui.imux.bridge.core.SessionEventKind.TOOL_STARTED
-import com.github.izerui.imux.bridge.core.SessionEventKind.TURN_ENDED
-import com.github.izerui.imux.bridge.core.SessionEventKind.TURN_STARTED
-import com.github.izerui.imux.bridge.core.SessionEventKind.USER_TEXT
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -26,12 +20,12 @@ class TranscriptDecodersTest {
             """{"type":"user","uuid":"u2","message":{"role":"user","content":[""" +
                 """{"type":"tool_result","tool_use_id":"t1","content":"文件内容"}]}}"""
 
-        assertEquals(listOf(SessionEvent(USER_TEXT, "第一行\n第二行")), ClaudeTranscriptDecoder.decode(user))
+        assertEquals(listOf(SessionEvent.UserText("第一行\n第二行")), ClaudeTranscriptDecoder.decode(user))
         assertEquals(
-            listOf(SessionEvent(ASSISTANT_TEXT, "```kt\nval a = 1\n```"), SessionEvent(TOOL_STARTED, "Read", "t1")),
+            listOf(SessionEvent.AssistantText("```kt\nval a = 1\n```"), SessionEvent.ToolStarted),
             ClaudeTranscriptDecoder.decode(assistant),
         )
-        assertEquals(listOf(SessionEvent(TOOL_FINISHED, "", "t1")), ClaudeTranscriptDecoder.decode(result))
+        assertTrue("工具结果不产生事件", ClaudeTranscriptDecoder.decode(result).isEmpty())
     }
 
     @Test
@@ -54,18 +48,18 @@ class TranscriptDecodersTest {
             """{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"…"}]}}"""
         val claudeTool =
             """{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"我先看看"}]}}"""
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), ClaudeTranscriptDecoder.decode(claudeText))
+        assertEquals(listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded), ClaudeTranscriptDecoder.decode(claudeText))
         assertTrue("同一消息里先写入的思考行不能提前结束，否则结论会晚于结束标记", ClaudeTranscriptDecoder.decode(claudeThinking).isEmpty())
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "我先看看")), ClaudeTranscriptDecoder.decode(claudeTool))
+        assertEquals(listOf(SessionEvent.AssistantText("我先看看")), ClaudeTranscriptDecoder.decode(claudeTool))
 
         val codexDone = """{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"结论"}}"""
-        assertEquals(listOf(SessionEvent(TURN_ENDED, "")), CodexTranscriptDecoder.decode(codexDone))
+        assertEquals(listOf(SessionEvent.TurnEnded), CodexTranscriptDecoder.decode(codexDone))
 
         fun pi(stop: String) =
             """{"type":"message","message":{"role":"assistant","stopReason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), PiTranscriptDecoder.decode(pi("stop")))
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论")), PiTranscriptDecoder.decode(pi("toolUse")))
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论")), PiTranscriptDecoder.decode(pi("aborted")))
+        assertEquals(listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded), PiTranscriptDecoder.decode(pi("stop")))
+        assertEquals(listOf(SessionEvent.AssistantText("结论")), PiTranscriptDecoder.decode(pi("toolUse")))
+        assertEquals(listOf(SessionEvent.AssistantText("结论")), PiTranscriptDecoder.decode(pi("aborted")))
     }
 
     @Test
@@ -73,16 +67,16 @@ class TranscriptDecodersTest {
         fun claude(stop: String) =
             """{"type":"assistant","message":{"role":"assistant","stop_reason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
         for (stop in listOf("max_tokens", "stop_sequence", "refusal")) {
-            assertEquals(stop, listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), ClaudeTranscriptDecoder.decode(claude(stop)))
+            assertEquals(stop, listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded), ClaudeTranscriptDecoder.decode(claude(stop)))
         }
-        assertEquals("还要继续调工具", listOf(SessionEvent(ASSISTANT_TEXT, "结论")), ClaudeTranscriptDecoder.decode(claude("pause_turn")))
+        assertEquals("还要继续调工具", listOf(SessionEvent.AssistantText("结论")), ClaudeTranscriptDecoder.decode(claude("pause_turn")))
         val streaming = """{"type":"assistant","message":{"role":"assistant","stop_reason":null,"content":[{"type":"text","text":"结论"}]}}"""
-        assertEquals("还没写完的行没有 stop_reason", listOf(SessionEvent(ASSISTANT_TEXT, "结论")), ClaudeTranscriptDecoder.decode(streaming))
+        assertEquals("还没写完的行没有 stop_reason", listOf(SessionEvent.AssistantText("结论")), ClaudeTranscriptDecoder.decode(streaming))
 
         fun pi(stop: String) =
             """{"type":"message","message":{"role":"assistant","stopReason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
         for (stop in listOf("length", "error")) {
-            assertEquals(stop, listOf(SessionEvent(ASSISTANT_TEXT, "结论"), SessionEvent(TURN_ENDED, "")), PiTranscriptDecoder.decode(pi(stop)))
+            assertEquals(stop, listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded), PiTranscriptDecoder.decode(pi(stop)))
         }
     }
 
@@ -91,8 +85,8 @@ class TranscriptDecodersTest {
         val command = """{"type":"user","message":{"role":"user","content":"<local-command-stdout>已清空</local-command-stdout>"}}"""
         val notification =
             """{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":[{"type":"text","text":"<task-notification>\n<status>completed</status>\n</task-notification>"}]}}"""
-        assertEquals(listOf(SessionEvent(TURN_STARTED, "")), ClaudeTranscriptDecoder.decode(command))
-        assertEquals(listOf(SessionEvent(TURN_STARTED, "")), ClaudeTranscriptDecoder.decode(notification))
+        assertEquals(listOf(SessionEvent.TurnStarted), ClaudeTranscriptDecoder.decode(command))
+        assertEquals(listOf(SessionEvent.TurnStarted), ClaudeTranscriptDecoder.decode(notification))
     }
 
     @Test
@@ -101,19 +95,19 @@ class TranscriptDecodersTest {
             kind: String,
             content: String,
         ) = """{"type":"user","origin":{"kind":"$kind"},"message":{"role":"user","content":${com.google.gson.JsonPrimitive(content)}}}"""
-        assertEquals(listOf(SessionEvent(USER_TEXT, "跑一下测试")), ClaudeTranscriptDecoder.decode(line("human", "跑一下测试")))
+        assertEquals(listOf(SessionEvent.UserText("跑一下测试")), ClaudeTranscriptDecoder.decode(line("human", "跑一下测试")))
         assertEquals(
-            listOf(SessionEvent(USER_TEXT, "<task-notification>写在代码里</task-notification>")),
+            listOf(SessionEvent.UserText("<task-notification>写在代码里</task-notification>")),
             ClaudeTranscriptDecoder.decode(line("human", "<task-notification>写在代码里</task-notification>")),
         )
         assertEquals(
-            listOf(SessionEvent(USER_TEXT, "/codex:review --wait")),
+            listOf(SessionEvent.UserText("/codex:review --wait")),
             ClaudeTranscriptDecoder.decode(
                 line("human", "<command-message>codex:review</command-message>\n<command-name>/codex:review</command-name>\n<command-args>--wait</command-args>"),
             ),
         )
         assertEquals(
-            listOf(SessionEvent(TURN_STARTED, "")),
+            listOf(SessionEvent.TurnStarted),
             ClaudeTranscriptDecoder.decode(line("task-notification", "<task-notification>\n<status>completed</status>\n</task-notification>")),
         )
     }
@@ -122,7 +116,7 @@ class TranscriptDecodersTest {
     fun `人写的 HTML 与自定义标签照常是用户输入，不当成注入消息`() {
         for (text in listOf("<div>你好</div>", "<my-component>内容</my-component>", "<user_card>x</user_card>")) {
             val line = """{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"$text"}}"""
-            assertEquals(text, listOf(SessionEvent(USER_TEXT, text)), ClaudeTranscriptDecoder.decode(line))
+            assertEquals(text, listOf(SessionEvent.UserText(text)), ClaudeTranscriptDecoder.decode(line))
         }
     }
 
@@ -130,22 +124,22 @@ class TranscriptDecodersTest {
     fun `Codex 的各种工具调用都算工具，过程说明不算最终回复`() {
         fun item(payload: String) = """{"type":"response_item","payload":$payload}"""
         assertEquals(
-            listOf(SessionEvent(TOOL_STARTED, "web_search_call", null)),
+            listOf(SessionEvent.ToolStarted),
             CodexTranscriptDecoder.decode(item("""{"type":"web_search_call","status":"completed","action":{"type":"search","query":"x"}}""")),
         )
         assertEquals(
-            listOf(SessionEvent(TOOL_STARTED, "tool_search_call", "c2")),
+            listOf(SessionEvent.ToolStarted),
             CodexTranscriptDecoder.decode(item("""{"type":"tool_search_call","call_id":"c2"}""")),
         )
         assertEquals(
-            listOf(SessionEvent(TOOL_FINISHED, "", "c2")),
+            emptyList<SessionEvent>(),
             CodexTranscriptDecoder.decode(item("""{"type":"tool_search_output","call_id":"c2"}""")),
         )
         assertTrue(CodexTranscriptDecoder.decode(item("""{"type":"reasoning","summary":[]}""")).isEmpty())
         val commentary = item("""{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"我先搜一下"}]}""")
         val answer = item("""{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"结论"}]}""")
         assertTrue(CodexTranscriptDecoder.decode(commentary).isEmpty())
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "结论")), CodexTranscriptDecoder.decode(answer))
+        assertEquals(listOf(SessionEvent.AssistantText("结论")), CodexTranscriptDecoder.decode(answer))
     }
 
     @Test
@@ -168,12 +162,12 @@ class TranscriptDecodersTest {
         val mirror = """{"type":"event_msg","payload":{"type":"agent_message","message":"好的"}}"""
         val otherItem = """{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"text","text":"好的"}]}}}"""
 
-        assertEquals(listOf(SessionEvent(USER_TEXT, "<my-component>修一下</my-component>")), CodexTranscriptDecoder.decode(userMessage))
+        assertEquals(listOf(SessionEvent.UserText("<my-component>修一下</my-component>")), CodexTranscriptDecoder.decode(userMessage))
         assertTrue(CodexTranscriptDecoder.decode(injected).isEmpty())
-        assertEquals("子代理通知等注入开启的一轮也有 task_started", listOf(SessionEvent(TURN_STARTED, "")), CodexTranscriptDecoder.decode(started))
-        assertEquals(listOf(SessionEvent(ASSISTANT_TEXT, "好的")), CodexTranscriptDecoder.decode(assistant))
-        assertEquals(listOf(SessionEvent(TOOL_STARTED, "shell", "c1")), CodexTranscriptDecoder.decode(call))
-        assertEquals(listOf(SessionEvent(TOOL_FINISHED, "", "c1")), CodexTranscriptDecoder.decode(output))
+        assertEquals("子代理通知等注入开启的一轮也有 task_started", listOf(SessionEvent.TurnStarted), CodexTranscriptDecoder.decode(started))
+        assertEquals(listOf(SessionEvent.AssistantText("好的")), CodexTranscriptDecoder.decode(assistant))
+        assertEquals(listOf(SessionEvent.ToolStarted), CodexTranscriptDecoder.decode(call))
+        assertTrue("工具结果不产生事件", CodexTranscriptDecoder.decode(output).isEmpty())
         assertTrue("助手消息的镜像不能重复转发", CodexTranscriptDecoder.decode(mirror).isEmpty())
         assertTrue(CodexTranscriptDecoder.decode(otherItem).isEmpty())
     }
@@ -189,12 +183,12 @@ class TranscriptDecodersTest {
         val system = """{"type":"message","id":"0","parentId":null,"message":{"role":"system","content":""}}"""
         val header = """{"type":"session","version":3,"id":"s","cwd":"/p"}"""
 
-        assertEquals(listOf(SessionEvent(USER_TEXT, "你好")), PiTranscriptDecoder.decode(user))
+        assertEquals(listOf(SessionEvent.UserText("你好")), PiTranscriptDecoder.decode(user))
         assertEquals(
-            listOf(SessionEvent(ASSISTANT_TEXT, "看看"), SessionEvent(TOOL_STARTED, "bash", "k1")),
+            listOf(SessionEvent.AssistantText("看看"), SessionEvent.ToolStarted),
             PiTranscriptDecoder.decode(assistant),
         )
-        assertEquals(listOf(SessionEvent(TOOL_FINISHED, "", "k1")), PiTranscriptDecoder.decode(result))
+        assertTrue("工具结果不产生事件", PiTranscriptDecoder.decode(result).isEmpty())
         assertTrue(PiTranscriptDecoder.decode(system).isEmpty())
         assertTrue(PiTranscriptDecoder.decode(header).isEmpty())
     }

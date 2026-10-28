@@ -7,8 +7,7 @@ import java.io.File
 
 class BridgeDecorationsSourceTest {
     private val decorator = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/BridgeSessionDecorator.kt").normalized
-    private val manager = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/robot/RobotManager.kt").normalized
-    private val service = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/TerminalBridgeService.kt").normalized
+    private val hub = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeHub.kt").normalized
     private val banner = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneBanner.kt").normalized
     private val pluginXml = File("src/main/resources/META-INF/plugin.xml").readText()
 
@@ -24,25 +23,19 @@ class BridgeDecorationsSourceTest {
         assertTrue("创建手机段时不看开关", !create.contains("BridgeSettings"))
         val menu = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneBanner.kt")
         val showMenu = menu.bodyAfter("private fun showMenu()", '{')
-        assertTrue("开关关着时不实例化中枢", showMenu.contains("showConnectMenu(if (segment.bridgeEnabled) BridgeHub.getInstance() else null)"))
-        val connectMenu = menu.bodyAfter("private fun showConnectMenu(hub: BridgeHub?)", '{')
-        val disabledBranch = connectMenu.substringAfter("if (hub == null) {").substringBefore("return")
+        assertTrue(showMenu.contains("showConnectMenu(segment.bridgeEnabled)"))
+        val connectMenu = menu.bodyAfter("private fun showConnectMenu(bridgeEnabled: Boolean)", '{')
+        val disabledBranch = connectMenu.substringAfter("if (!bridgeEnabled) {").substringBefore("return")
         assertTrue("关闭时菜单只引导去设置", disabledBranch.contains("\"bridge.action.disabled\""))
-        assertTrue(disabledBranch.contains("showSettingsDialog(project, RobotsConfigurable::class.java)"))
+        assertTrue(disabledBranch.contains("showRobotSettings(project)"))
+        assertTrue("开关关着时不走会实例化中枢的菜单构造", !disabledBranch.contains("phoneMenuFor"))
         val refresh = menu.bodyAfter("private fun refresh()", '{')
         assertTrue("刷新时不隐藏手机段", !refresh.contains("isVisible"))
     }
 
     @Test
     fun `机器人、状态或绑定变化时在 EDT 广播装饰变化`() {
-        assertTrue(manager.contains("SessionDecorations.changed()"))
-        assertTrue(manager.contains("ModalityState.any()"))
-    }
-
-    @Test
-    fun `重新挂接后同步，标记随之刷新`() {
-        assertTrue(service.contains("TabChange.Reattach"))
-        assertTrue(service.contains("RobotManager.getInstance().syncBindings()"))
+        assertTrue(hub.contains("invokeLater({ SessionDecorations.changed() }, ModalityState.any())"))
     }
 
     @Test

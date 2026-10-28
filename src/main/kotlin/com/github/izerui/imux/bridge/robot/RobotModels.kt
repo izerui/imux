@@ -1,19 +1,8 @@
 package com.github.izerui.imux.bridge.robot
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
+import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.RobotOwner
-
-/** 渠道种类。[id] 写入持久化，不能改名。 */
-enum class ChannelKind(val id: String) {
-    WECOM("wecom"),
-    FEISHU("feishu"),
-    DINGTALK("dingtalk"),
-    WEIXIN("weixin"),
-    ;
-
-    companion object {
-        fun of(id: String): ChannelKind? = entries.firstOrNull { it.id == id }
-    }
-}
 
 /**
  * 一个长期保存的机器人。它与会话无关：会话来来去去，机器人反复绑定。
@@ -22,7 +11,7 @@ enum class ChannelKind(val id: String) {
  * 等本人把它发给机器人；认主后只接受本人的消息。
  */
 data class RobotRecord(
-    val id: String,
+    val id: RobotId,
     val name: String,
     val kind: ChannelKind,
     val ownerSenderId: String? = null,
@@ -38,7 +27,7 @@ data class RobotRecord(
     }
 }
 
-/** 持久化的绑定：IDE 重启后按原生会话 id 重新挂接到恢复的标签。 */
+/** 持久化的绑定：IDE 重启后按原生会话 id 重新挂接到恢复的标签。字段都是持久化用的字符串。 */
 data class SavedBinding(
     val robotId: String,
     val projectPath: String,
@@ -51,20 +40,20 @@ data class RobotBook(
     val robots: List<RobotRecord> = emptyList(),
     val bindings: List<SavedBinding> = emptyList(),
 ) {
-    fun robot(id: String): RobotRecord? = robots.firstOrNull { it.id == id }
+    fun robot(id: RobotId): RobotRecord? = robots.firstOrNull { it.id == id }
 
     fun add(record: RobotRecord): RobotBook = copy(robots = robots.filterNot { it.id == record.id } + record)
 
     fun rename(
-        id: String,
+        id: RobotId,
         name: String,
     ): RobotBook = update(id) { it.copy(name = name) }
 
-    fun remove(id: String): RobotBook =
-        copy(robots = robots.filterNot { it.id == id }, bindings = bindings.filterNot { it.robotId == id })
+    fun remove(id: RobotId): RobotBook =
+        copy(robots = robots.filterNot { it.id == id }, bindings = bindings.filterNot { it.robotId == id.value })
 
     fun withOwner(
-        id: String,
+        id: RobotId,
         owner: RobotOwner,
     ): RobotBook =
         update(id) {
@@ -73,16 +62,16 @@ data class RobotBook(
 
     /** [code] 为 null 表示作废当前配对码（例如连续猜错）。 */
     fun withPairCode(
-        id: String,
+        id: RobotId,
         code: String?,
         expiresAtMillis: Long,
     ): RobotBook = update(id) { it.copy(pairCode = code, pairCodeExpiresAtMillis = expiresAtMillis) }
 
     fun withBindings(next: List<SavedBinding>): RobotBook =
-        copy(bindings = next.filter { binding -> robots.any { it.id == binding.robotId } })
+        copy(bindings = next.filter { binding -> robots.any { it.id.value == binding.robotId } })
 
     private fun update(
-        id: String,
+        id: RobotId,
         transform: (RobotRecord) -> RobotRecord,
     ): RobotBook = copy(robots = robots.map { if (it.id == id) transform(it) else it })
 }

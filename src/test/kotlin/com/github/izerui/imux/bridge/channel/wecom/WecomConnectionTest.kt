@@ -179,7 +179,7 @@ class WecomConnectionTest {
         runBlocking {
             val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") 846607 else 0 })
             startAndAwaitOnline(conn)
-            val result = conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi"))
+            val result = conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
             assertEquals(DeliveryResult.Rejected("846607 e"), result)
             val frame = JsonParser.parseString(transports.first().sent.last()).asJsonObject
             assertEquals(1, frame["body"].asJsonObject["chat_type"].asInt)
@@ -190,9 +190,9 @@ class WecomConnectionTest {
     fun `确认成功返回 Accepted，离线返回 Rejected`() =
         runBlocking {
             val conn = connection()
-            assertEquals(DeliveryResult.Rejected("offline"), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi")))
+            assertEquals(DeliveryResult.Rejected("offline"), conn.send(OutboundMessage(RobotId("r"), "u1", "hi")))
             startAndAwaitOnline(conn)
-            assertEquals(DeliveryResult.Accepted(null), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi")))
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "u1", "hi")))
         }
 
     @Test
@@ -200,8 +200,8 @@ class WecomConnectionTest {
         runBlocking {
             val conn = connection(limiter = SlidingWindowLimiter(1, 60_000))
             startAndAwaitOnline(conn)
-            assertEquals(DeliveryResult.Accepted(null), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "a")))
-            assertEquals(DeliveryResult.Rejected("rate limited"), conn.send(OutboundMessage(RobotId("r"), "u1", 1, "b")))
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "u1", "a")))
+            assertEquals(DeliveryResult.Rejected("rate limited"), conn.send(OutboundMessage(RobotId("r"), "u1", "b")))
         }
 
     @Test
@@ -220,7 +220,7 @@ class WecomConnectionTest {
             val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") null else 0 })
             startAndAwaitOnline(conn)
             val result = async(Dispatchers.Default) {
-                conn.send(OutboundMessage(RobotId("r"), "u1", 1, "hi"))
+                conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
             }
             delay(30)
             transports.first().close()

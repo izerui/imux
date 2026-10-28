@@ -58,40 +58,37 @@ data class InboundMessage(
 data class OutboundMessage(
     val robotId: RobotId,
     val chatId: String,
-    /** 未绑定时的提示回复为 null。 */
-    val bindingEpoch: Long?,
     val text: String,
 )
 
-enum class SessionEventKind {
-    USER_TEXT,
-    ASSISTANT_TEXT,
-    TOOL_STARTED,
-    TOOL_FINISHED,
+/** 会话记录里读出的一件事：解码器产出，路由器据此划分轮次、攒最终回复。 */
+sealed interface SessionEvent {
+    /** 从输入框提交的内容（人、副驾驶或手机）。开启新一轮。 */
+    data class UserText(val text: String) : SessionEvent
+
+    /** 助手的正文。工具调用之前的只是过程说明。 */
+    data class AssistantText(val text: String) : SessionEvent
+
+    /** 助手发起一次工具调用：此前攒的正文是过程说明，作废。 */
+    data object ToolStarted : SessionEvent
 
     /**
-     * CLI 注入的消息开启了新一轮（斜杠命令、后台任务完成通知等），不是人写的，不转发。
-     * 只用来结束上一轮的“已完成”状态，否则这一轮的过程说明会被当成迟到的最终回复逐条推送。
+     * CLI 注入的消息开启了新一轮（后台任务完成通知、Codex 的 task_started 等），不是输入，不转发。
+     * 只用来结束上一轮的“已结算”状态，否则这一轮的过程说明会被当成迟到的最终回复逐条推送。
      */
-    TURN_STARTED,
+    data object TurnStarted : SessionEvent
 
     /**
-     * 会话记录里的本轮结束标记（Claude 的 end_turn、Codex 的 task_complete、Pi 的 stop）。
+     * 会话记录里的本轮结束标记（Claude 带正文的收尾、Codex 的 task_complete、Pi 的 stop 等）。
      * 与 IDE“本轮完成”是同一件事，但按记录顺序到达：即使与下一轮开头在同一次读取里，结论也先发出。
      */
-    TURN_ENDED,
+    data object TurnEnded : SessionEvent
 }
-
-data class SessionEvent(
-    val kind: SessionEventKind,
-    val text: String,
-    val toolCallId: String? = null,
-)
 
 enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }
 
 sealed interface DeliveryResult {
-    data class Accepted(val platformMessageId: String?) : DeliveryResult
+    data object Accepted : DeliveryResult
     data class Rejected(val reason: String) : DeliveryResult
     data object Unknown : DeliveryResult
 }

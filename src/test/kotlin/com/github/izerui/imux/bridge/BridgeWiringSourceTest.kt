@@ -13,8 +13,31 @@ class BridgeWiringSourceTest {
     private val pluginXml = java.io.File("src/main/resources/META-INF/plugin.xml").readText()
 
     @Test
-    fun `开关关闭时不启动任何订阅与轮询`() {
-        assertTrue(startup.contains("if (!BridgeSettings.getInstance().state.enabled) return"))
+    fun `项目打开时交给生命周期，开关关着时什么也不启动`() {
+        assertTrue(startup.contains("= BridgeLifecycle.onProjectOpened(project)"))
+        val lifecycle = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeLifecycle.kt")
+        val opened = lifecycle.compact(lifecycle.bodyAfter("fun onProjectOpened(project: Project)", '{'))
+        assertTrue(opened.startsWith("{if(!BridgeSettings.getInstance().state.enabled)return"))
+    }
+
+    @Test
+    fun `开关只有一个写入口`() {
+        val writers =
+            java.io.File("src/main/kotlin").walkTopDown().filter { it.extension == "kt" }
+                .filter { SourceCode(it.path).normalized.contains("state.enabled = ") }
+                .map { it.name }.toList()
+        assertTrue("只有 BridgeLifecycle 写开关：$writers", writers == listOf("BridgeLifecycle.kt"))
+    }
+
+    @Test
+    fun `绑定表一改动就由中枢持久化，各处不再手动同步`() {
+        assertTrue(hub.contains("bindings.onChanged = {"))
+        assertTrue(hub.contains("store.update { it.withBindings(bindingsToSave(bindings.snapshot())) }"))
+        val manual =
+            java.io.File("src/main/kotlin").walkTopDown().filter { it.extension == "kt" }
+                .filter { SourceCode(it.path).normalized.contains("syncBindings") }
+                .map { it.name }.toList()
+        assertTrue("不应再有手动同步：$manual", manual.isEmpty())
     }
 
     @Test
@@ -28,32 +51,28 @@ class BridgeWiringSourceTest {
     }
 
     @Test
-    fun `轮次完成时先记下读取边界，读出最后的回复，再按所属轮次推最终回复，不另发完成通知`() {
+    fun `轮次完成时先同步记下读取边界，再交给轮询器结算，不另发完成通知`() {
         val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/TerminalBridgeService.kt")
         val completed = source.bodyAfter("override fun turnCompleted(sessionId: String)", '{')
-        val mark = completed.indexOf("ReadMark(it, it.size())")
-        val poll = completed.indexOf("pollTab(tabId, mark)")
-        val flush = completed.indexOf("hub.router.onTurnCompleted(tabId, hub.router.currentTurn(tabId))")
-        assertTrue("信号到达时先记下读取边界", mark >= 0)
-        assertTrue("完成回调只读到这个边界，读出最后的回复", poll > mark)
-        assertTrue("再按读到的轮次推本轮最终回复", flush > poll)
+        val mark = completed.indexOf("val mark = tails.mark(tabId)")
+        val launch = completed.indexOf("scope.launch(Dispatchers.IO) { poller.completed(tabId, mark) }")
+        assertTrue("信号到达时就同步记下读取边界，不等进协程", mark >= 0)
+        assertTrue("再交给轮询器按边界结算（顺序由 TabPollerTest 验证）", launch > mark)
         val router = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgeRouter.kt")
-        assertTrue("完成入口只发待发结果", router.bodyAfter("suspend fun onTurnCompleted(tabId: String, turn: Long,)", '{').contains("flushFinal(tabId)"))
+        assertTrue("完成入口只发待发结果", router.bodyAfter("suspend fun onTurnCompleted(tabId: String, turn: Long,)", '{').contains("sendReply(tabId, reply)"))
         val ports = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgePorts.kt").normalized
         assertTrue("文案接口不再有完成通知", !ports.contains("fun completed("))
     }
 
     @Test
-    fun `尾随器按绑定代次与会话缓存，换绑或迁移后重建`() {
-        assertTrue(service.contains("ConcurrentHashMap<String, TailEntry>()"))
-        assertTrue(service.contains("reuseTail(cached.epoch, cached.sessionId, binding.epoch, binding.target.sessionId)"))
-        assertTrue(service.contains("TailEntry(binding.epoch, sessionId, tail)"))
-    }
-
-    @Test
-    fun `桥接协程与故障隔离`() {
-        assertTrue(service.contains("SupervisorJob"))
-        assertTrue(hub.contains("SupervisorJob"))
+    fun `中枢、机器人管理与项目观察都用隔离作用域：子任务互不牵连，异常只记日志`() {
+        for (name in listOf("BridgeHub", "RobotManager", "TerminalBridgeService")) {
+            val code = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/$name.kt").normalized
+            assertTrue(name, code.contains("private val scope = isolatedScope(parentScope, LOG, "))
+        }
+        val scopes = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeScopes.kt")
+        val body = scopes.compact(scopes.bodyAfter("internal fun isolatedScope(", '('))
+        assertTrue(body.contains("SupervisorJob(parent.coroutineContext[Job])+CoroutineExceptionHandler{_,e->log.warn("))
     }
 
     @Test

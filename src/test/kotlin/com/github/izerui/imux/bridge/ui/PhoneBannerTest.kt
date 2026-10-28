@@ -1,10 +1,10 @@
 package com.github.izerui.imux.bridge.ui
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
-import com.github.izerui.imux.bridge.robot.ChannelKind
 import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
@@ -12,7 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PhoneBannerTest {
-    private val robot = RobotRecord("r", "开发助手 1", ChannelKind.WECOM, ownerSenderId = "u", ownerChatId = "u")
+    private val robot = RobotRecord(RobotId("r"), "开发助手 1", ChannelKind.WECOM, ownerSenderId = "u", ownerChatId = "u")
     private val binding = Binding(RobotId("r"), SessionTarget("/p", "t", AgentType.CODEX, "s"), 1)
 
     private fun model(
@@ -24,7 +24,7 @@ class PhoneBannerTest {
 
     @Test
     fun `在线时只显示渠道与名称`() {
-        assertEquals(PhoneBannerModel("r", "wecom", "开发助手 1", null), model())
+        assertEquals(PhoneBannerModel(RobotId("r"), "wecom", "开发助手 1", null), model())
     }
 
     @Test

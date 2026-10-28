@@ -1,23 +1,25 @@
 package com.github.izerui.imux.bridge.robot
 
+import com.github.izerui.imux.bridge.channel.ChannelKind
+import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.RobotOwner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RobotBookTest {
-    private fun robot(id: String) = RobotRecord(id, "bot-$id", ChannelKind.WECOM, pairCode = "123456", pairCodeExpiresAtMillis = 99)
+    private fun robot(id: String) = RobotRecord(RobotId(id), "bot-$id", ChannelKind.WECOM, pairCode = "123456", pairCodeExpiresAtMillis = 99)
 
     @Test
     fun `重命名只改对应机器人`() {
-        val book = RobotBook().add(robot("a")).add(robot("b")).rename("a", "开发助手")
-        assertEquals("开发助手", book.robot("a")!!.name)
-        assertEquals("bot-b", book.robot("b")!!.name)
+        val book = RobotBook().add(robot("a")).add(robot("b")).rename(RobotId("a"), "开发助手")
+        assertEquals("开发助手", book.robot(RobotId("a"))!!.name)
+        assertEquals("bot-b", book.robot(RobotId("b"))!!.name)
     }
 
     @Test
     fun `认主后清除配对码`() {
-        val owned = RobotBook().add(robot("a")).withOwner("a", RobotOwner("u1", "u1")).robot("a")!!
+        val owned = RobotBook().add(robot("a")).withOwner(RobotId("a"), RobotOwner("u1", "u1")).robot(RobotId("a"))!!
         assertEquals(RobotOwner("u1", "u1"), owned.owner())
         assertNull(owned.pairCode)
         assertEquals(0L, owned.pairCodeExpiresAtMillis)
@@ -30,8 +32,8 @@ class RobotBookTest {
                 .add(robot("a"))
                 .add(robot("b"))
                 .withBindings(listOf(SavedBinding("a", "/p", "codex", "s1"), SavedBinding("b", "/p", "claude", "s2")))
-                .remove("a")
-        assertEquals(listOf("b"), book.robots.map { it.id })
+                .remove(RobotId("a"))
+        assertEquals(listOf("b"), book.robots.map { it.id.value })
         assertEquals(listOf("b"), book.bindings.map { it.robotId })
     }
 

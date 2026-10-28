@@ -1,7 +1,7 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
-import com.github.izerui.imux.bridge.robot.RobotManager
+import com.github.izerui.imux.bridge.RobotManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 

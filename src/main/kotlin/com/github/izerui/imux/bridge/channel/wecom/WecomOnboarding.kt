@@ -4,7 +4,8 @@ import com.github.izerui.imux.bridge.channel.ChannelOnboarding
 import com.github.izerui.imux.bridge.channel.HttpJsonGet
 import com.github.izerui.imux.bridge.channel.JdkHttpJsonGet
 import com.github.izerui.imux.bridge.channel.OnboardingStep
-import com.google.gson.JsonObject
+import com.github.izerui.imux.bridge.json.obj
+import com.github.izerui.imux.bridge.json.primitiveText
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
@@ -34,8 +35,8 @@ class WecomOnboarding(
 
     override suspend fun start(): OnboardingStep {
         val data = http.get("$BASE/generate?source=imux&plat=$plat").obj("data")
-        val code = data?.str("scode")
-        val authUrl = data?.str("auth_url")
+        val code = data?.primitiveText("scode")
+        val authUrl = data?.primitiveText("auth_url")
         if (code.isNullOrEmpty() || authUrl.isNullOrEmpty()) return OnboardingStep.Failed("bridge.onboarding.noQr")
         scode = code
         return OnboardingStep.ShowQr(authUrl)
@@ -44,19 +45,14 @@ class WecomOnboarding(
     override suspend fun poll(): OnboardingStep {
         val code = scode ?: return OnboardingStep.Failed("bridge.onboarding.noQr")
         val data = http.get("$BASE/query_result?scode=${URLEncoder.encode(code, StandardCharsets.UTF_8)}").obj("data")
-        if (data?.str("status") != "success") return OnboardingStep.Waiting
+        if (data?.primitiveText("status") != "success") return OnboardingStep.Waiting
         val info = data.obj("bot_info")
-        val botId = info?.str("botid") ?: info?.str("bot_id")
-        val secret = info?.str("secret")
+        val botId = info?.primitiveText("botid") ?: info?.primitiveText("bot_id")
+        val secret = info?.primitiveText("secret")
         if (botId.isNullOrEmpty() || secret.isNullOrEmpty()) return OnboardingStep.Failed("bridge.onboarding.noCredentials")
         return OnboardingStep.Succeeded(mapOf("bot_id" to botId, "secret" to secret), ownerId = null, suggestedName = null)
     }
 
-    override suspend fun submitVerifyCode(code: String): OnboardingStep = OnboardingStep.Failed("bridge.onboarding.unsupported")
-
-    private fun JsonObject.str(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString
-
-    private fun JsonObject.obj(key: String): JsonObject? = get(key)?.takeIf { it.isJsonObject }?.asJsonObject
 
     private companion object {
         const val BASE = "https://work.weixin.qq.com/ai/qc"

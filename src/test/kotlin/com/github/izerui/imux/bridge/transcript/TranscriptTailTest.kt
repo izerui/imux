@@ -1,7 +1,6 @@
 package com.github.izerui.imux.bridge.transcript
 
 import com.github.izerui.imux.bridge.core.SessionEvent
-import com.github.izerui.imux.bridge.core.SessionEventKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -18,9 +17,9 @@ class TranscriptTailTest {
     @get:Rule
     val temp = TemporaryFolder()
 
-    private val echo = TranscriptDecoder { listOf(SessionEvent(SessionEventKind.ASSISTANT_TEXT, it)) }
+    private val echo = TranscriptDecoder { listOf(SessionEvent.AssistantText(it)) }
 
-    private fun texts(poll: TailPoll) = poll.events.map { it.text }
+    private fun texts(poll: TailPoll) = poll.events.map { (it as SessionEvent.AssistantText).text }
 
     private fun append(
         file: java.nio.file.Path,
@@ -90,12 +89,11 @@ class TranscriptTailTest {
     }
 
     @Test
-    fun `超长行被跳过并计数，后续行正常`() {
+    fun `超长行被跳过，后续行正常`() {
         val file = temp.newFile("s.jsonl").toPath()
         val tail = TranscriptTail(file, echo, maxLineBytes = 8).apply { startAtEnd() }
         append(file, "0123456789abcdef\nok\n".toByteArray())
         assertEquals(listOf("ok"), texts(tail.poll()))
-        assertEquals(1, tail.skippedOversizeLines)
     }
 
     @Test

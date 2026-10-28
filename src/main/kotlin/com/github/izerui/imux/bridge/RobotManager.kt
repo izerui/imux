@@ -1,98 +1,58 @@
-package com.github.izerui.imux.bridge.robot
+package com.github.izerui.imux.bridge
 
-import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeSettings
-import com.github.izerui.imux.bridge.BundleBridgeTexts
 import com.github.izerui.imux.bridge.channel.ChannelConnection
 import com.github.izerui.imux.bridge.channel.ChannelFactories
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
-import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.InboundSink
 import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
-import com.github.izerui.imux.bridge.core.SessionTarget
-import com.github.izerui.imux.model.AgentType
-import com.github.izerui.imux.terminal.SessionDecorations
+import com.github.izerui.imux.bridge.robot.CredentialVault
+import com.github.izerui.imux.bridge.robot.PairDecision
+import com.github.izerui.imux.bridge.robot.Pairing
+import com.github.izerui.imux.bridge.robot.PasswordSafeVault
+import com.github.izerui.imux.bridge.robot.RobotRecord
+import com.github.izerui.imux.bridge.robot.RobotStore
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-internal fun bindingsToSave(snapshot: List<Binding>): List<SavedBinding> =
-    snapshot.mapNotNull { binding ->
-        val sessionId = binding.target.sessionId ?: return@mapNotNull null
-        SavedBinding(binding.robotId.value, binding.target.projectPath, binding.target.agentType.cli, sessionId)
-    }
-
-internal fun restoredTarget(saved: SavedBinding): SessionTarget? {
-    val agentType = AgentType.entries.firstOrNull { it.cli == saved.agentCli } ?: return null
-    return SessionTarget(saved.projectPath, RESTORED_TAB_PREFIX + saved.sessionId, agentType, saved.sessionId)
-}
-
-private const val RESTORED_TAB_PREFIX = "restored:"
-
 /**
- * 机器人的生命周期：凭据、连接、认主、状态，以及绑定的持久化。
+ * 机器人的生命周期：凭据、连接、认主与连接状态。绑定的恢复与持久化在 [BridgeHub]。
  *
  * 只在开关打开时建立连接。每个机器人一条连接；被别处接管后不重连，提示用户。
  */
 @Service(Service.Level.APP)
 class RobotManager(parentScope: CoroutineScope) {
-    private val scope =
-        CoroutineScope(
-            parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) +
-                CoroutineExceptionHandler { _, e -> LOG.warn("机器人任务异常，已隔离", e) },
-        )
+    private val scope = isolatedScope(parentScope, LOG, "机器人任务")
     private val store get() = RobotStore.getInstance()
     private val hub get() = BridgeHub.getInstance()
     private val vault: CredentialVault = PasswordSafeVault()
-    private val connections = ConcurrentHashMap<String, ChannelConnection>()
-    private val statuses = ConcurrentHashMap<String, ConnectionStatus>()
+    private val connections = ConcurrentHashMap<RobotId, ChannelConnection>()
+    private val statuses = ConcurrentHashMap<RobotId, ConnectionStatus>()
 
     /** 当前配对码的连续错误次数，只在内存里；配对成功或重新生成时清零。 */
-    private val wrongPairAttempts = ConcurrentHashMap<String, Int>()
+    private val wrongPairAttempts = ConcurrentHashMap<RobotId, Int>()
 
     /** 登记/摘除连接与写入状态共用一把锁：start()/stop() 都不阻塞，持锁时间很短。 */
     private val lifecycleLock = Any()
-    private val _revision = MutableStateFlow(0L)
-
-    /** 机器人、状态或绑定任何变化时加一，界面据此刷新。 */
-    val revision: StateFlow<Long> = _revision
 
     /** 由界面层设置：机器人被别处接管时的提示。 */
     @Volatile
     var notifyKicked: (RobotRecord) -> Unit = {}
 
-    init {
-        store.book().bindings.forEach { saved ->
-            val target = restoredTarget(saved) ?: return@forEach
-            hub.bindings.bind(RobotId(saved.robotId), target)
-        }
-        // 机器人、状态或绑定变化时，让标签、会话树、提示条、状态栏刷新
-        scope.launch {
-            revision.collect {
-                ApplicationManager.getApplication().invokeLater({ SessionDecorations.changed() }, ModalityState.any())
-            }
-        }
-    }
-
     fun robots(): List<RobotRecord> = store.book().robots
 
-    fun robot(id: String): RobotRecord? = store.book().robot(id)
+    fun robot(id: RobotId): RobotRecord? = store.book().robot(id)
 
-    fun statusOf(id: String): ConnectionStatus? = statuses[id]
+    fun statusOf(id: RobotId): ConnectionStatus? = statuses[id]
 
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
@@ -107,7 +67,7 @@ class RobotManager(parentScope: CoroutineScope) {
     }
 
     /** 断开后重新连接；用于被别处接管、连接失败或已停止的机器人。开关关闭时只断开。 */
-    fun reconnect(id: String) {
+    fun reconnect(id: RobotId) {
         scope.launch(Dispatchers.IO) {
             disconnect(id)
             robot(id)?.let { connect(it) }
@@ -122,7 +82,7 @@ class RobotManager(parentScope: CoroutineScope) {
         name: String,
     ): RobotRecord {
         val now = System.currentTimeMillis()
-        val id = UUID.randomUUID().toString()
+        val id = RobotId(UUID.randomUUID().toString())
         withContext(Dispatchers.IO) { vault.save(id, credentials) }
         val record =
             RobotRecord(
@@ -141,7 +101,7 @@ class RobotManager(parentScope: CoroutineScope) {
         return record
     }
 
-    fun renewPairCode(id: String): RobotRecord? {
+    fun renewPairCode(id: RobotId): RobotRecord? {
         wrongPairAttempts.remove(id)
         val book = store.update { it.withPairCode(id, Pairing.newCode(), System.currentTimeMillis() + Pairing.TTL_MILLIS) }
         bump()
@@ -149,24 +109,19 @@ class RobotManager(parentScope: CoroutineScope) {
     }
 
     fun rename(
-        id: String,
+        id: RobotId,
         name: String,
     ) {
         store.update { it.rename(id, name) }
         bump()
     }
 
-    suspend fun remove(id: String) {
+    suspend fun remove(id: RobotId) {
         disconnect(id)
-        hub.unregisterRobot(RobotId(id))
+        statuses.remove(id)
+        hub.unregisterRobot(id)
         store.update { it.remove(id) }
         withContext(Dispatchers.IO) { vault.delete(id) }
-        syncBindings()
-    }
-
-    /** 绑定表是权威来源；把当前快照写入持久化。 */
-    fun syncBindings() {
-        store.update { it.withBindings(bindingsToSave(hub.bindings.snapshot())) }
         bump()
     }
 
@@ -176,17 +131,17 @@ class RobotManager(parentScope: CoroutineScope) {
         val factory = ChannelFactories.forKind(record.kind) ?: return
         val credentials = vault.load(record.id)
         if (credentials == null) {
-            setStatus(record.id, ConnectionStatus.Failed("noCredentials"))
+            setStatus(record.id, ConnectionStatus.NoCredentials)
             return
         }
-        val connection = factory.connect(RobotId(record.id), credentials, scope)
+        val connection = factory.connect(record.id, credentials, scope)
         synchronized(lifecycleLock) {
             if (connections.putIfAbsent(record.id, connection) != null) return
             // 加载凭据期间开关可能已关闭或机器人已被删除：不留残余连接
             if (!BridgeSettings.getInstance().state.enabled || robot(record.id) == null) {
                 connections.remove(record.id)
                 connection.stop()
-                hub.detachRobot(RobotId(record.id))
+                hub.detachRobot(record.id)
                 return
             }
             hub.registerRobot(connection, record.owner())
@@ -203,20 +158,25 @@ class RobotManager(parentScope: CoroutineScope) {
         }
     }
 
-    private fun disconnect(id: String) {
+    /** 先摘下再停止：连接自己报的 Stopped 会被当成旧连接的回调丢掉，所以这里直接记下。 */
+    private fun disconnect(id: RobotId) {
         synchronized(lifecycleLock) {
             connections.remove(id)?.stop()
-            hub.detachRobot(RobotId(id))
-            statuses.remove(id)
+            hub.detachRobot(id)
+            statuses[id] = ConnectionStatus.Stopped
         }
     }
 
     private fun pairingSink(
-        id: String,
+        id: RobotId,
         connection: ChannelConnection,
     ) = InboundSink { message ->
         if (!BridgeSettings.getInstance().state.enabled) return@InboundSink
         val record = robot(id) ?: return@InboundSink
+        fun reply(
+            chatId: String,
+            text: String,
+        ) = scope.launch { connection.send(OutboundMessage(connection.robotId, chatId, text)) }
         when (val decision = Pairing.decide(record, message, System.currentTimeMillis())) {
             PairDecision.Pass -> hub.inboundSink.accept(message)
             is PairDecision.Paired -> {
@@ -224,30 +184,24 @@ class RobotManager(parentScope: CoroutineScope) {
                 store.update { it.withOwner(id, decision.owner) }
                 hub.registerRobot(connection, decision.owner)
                 bump()
-                scope.launch {
-                    connection.send(OutboundMessage(connection.robotId, decision.owner.chatId, null, BundleBridgeTexts.pairingSucceeded()))
-                }
+                reply(decision.owner.chatId, BundleBridgeTexts.pairingSucceeded())
             }
-            PairDecision.Expired ->
-                scope.launch {
-                    connection.send(OutboundMessage(connection.robotId, message.chatId, null, BundleBridgeTexts.pairingExpired()))
-                }
+            PairDecision.Expired -> reply(message.chatId, BundleBridgeTexts.pairingExpired())
             PairDecision.Wrong -> {
-                if (wrongPairAttempts.merge(id, 1, Int::plus)!! < Pairing.MAX_WRONG_ATTEMPTS) return@InboundSink
+                val attempts = wrongPairAttempts.merge(id, 1, Int::plus) ?: 1
+                if (attempts < Pairing.MAX_WRONG_ATTEMPTS) return@InboundSink
                 // 连续猜错：作废配对码，只在作废这一下回复一次
                 wrongPairAttempts.remove(id)
                 store.update { it.withPairCode(id, null, 0) }
                 bump()
-                scope.launch {
-                    connection.send(OutboundMessage(connection.robotId, message.chatId, null, BundleBridgeTexts.pairingLocked()))
-                }
+                reply(message.chatId, BundleBridgeTexts.pairingLocked())
             }
             PairDecision.Ignore -> Unit
         }
     }
 
     private fun setStatus(
-        id: String,
+        id: RobotId,
         status: ConnectionStatus,
     ) {
         // 联调与排障依据：只记状态变化，不记消息内容
@@ -255,9 +209,7 @@ class RobotManager(parentScope: CoroutineScope) {
         bump()
     }
 
-    private fun bump() {
-        _revision.update { it + 1 }
-    }
+    private fun bump() = hub.changed()
 
     companion object {
         private val LOG = logger<RobotManager>()

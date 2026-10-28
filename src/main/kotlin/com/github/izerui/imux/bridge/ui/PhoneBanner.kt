@@ -2,35 +2,30 @@ package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.BridgeSettings
+import com.github.izerui.imux.bridge.RobotManager
+import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
-import com.github.izerui.imux.bridge.robot.ChannelKind
-import com.github.izerui.imux.bridge.robot.RobotManager
 import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
-import com.github.izerui.imux.terminal.StatusDotIcon
-import com.github.izerui.imux.terminal.BannerDivider
 import com.github.izerui.imux.terminal.BannerColors
+import com.github.izerui.imux.terminal.BannerDivider
 import com.github.izerui.imux.terminal.SessionDecorationsListener
+import com.github.izerui.imux.terminal.StatusDotIcon
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.ControlFlowException
 import com.intellij.openapi.diagnostic.logger
-import com.intellij.openapi.options.ShowSettingsUtil
-import com.intellij.openapi.project.DumbAwareAction
-import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.RowIcon
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBLabel
@@ -47,7 +42,7 @@ import kotlin.coroutines.cancellation.CancellationException
 private val LOG = logger<PhoneBanner>()
 
 data class PhoneBannerModel(
-    val robotId: String,
+    val robotId: RobotId,
     val channel: String,
     val robotName: String,
     val problem: String?,
@@ -63,7 +58,7 @@ fun phoneBannerModel(
 ): PhoneBannerModel? {
     if (!enabled || binding == null || robot == null) return null
     // 与设置页状态圆点同一判断：黄点即异常
-    val problem = if (rowTone(status, paired = true, bridgeEnabled = true) == RowTone.ATTENTION) statusText(status) else null
+    val problem = if (needsAttention(status)) statusText(status) else null
     return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem)
 }
 
@@ -158,7 +153,7 @@ class PhoneBanner(
             } else {
                 val binding = BridgeHub.getInstance().bindings.bindingForTab(file.tabId)
                 val manager = RobotManager.getInstance()
-                val robot = binding?.let { manager.robot(it.robotId.value) }
+                val robot = binding?.let { manager.robot(it.robotId) }
                 phoneBannerModel(enabled, binding, robot, robot?.let { manager.statusOf(it.id) }, ::channelLabel) { statusLabel(it, paired = true) }
             }
         state = phoneSegmentState(enabled, next)
@@ -196,86 +191,46 @@ class PhoneBanner(
             when (val segment = state) {
                 is PhoneSegmentState.Bound -> segment.model
                 is PhoneSegmentState.Unbound -> {
-                    // 开关关着时不实例化中枢，菜单只引导去设置里开启
-                    showConnectMenu(if (segment.bridgeEnabled) BridgeHub.getInstance() else null)
+                    showConnectMenu(segment.bridgeEnabled)
                     return
                 }
             }
-        val hub = BridgeHub.getInstance()
         val rebind = DefaultActionGroup(ImuxBundle.message("bridge.banner.rebind"), true)
-        phoneMenuModel(
-            RobotManager.getInstance().robots(),
-            bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
-            statusOf = RobotManager.getInstance()::statusOf,
-            thisTabId = file.tabId,
-            titleOf = BridgeLifecycle::sessionTitle,
-            labels = BundleMenuLabels,
-        ).filterIsInstance<PhoneMenuEntry.Robot>().forEach { entry ->
-            rebind.add(
-                object : DumbAwareAction(entry.label) {
-                    override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-                    override fun update(e: AnActionEvent) {
-                        e.presentation.isEnabled = entry.enabled
-                    }
-
-                    override fun actionPerformed(e: AnActionEvent) = PhoneOperations.bind(project, file, entry.robotId)
-                },
-            )
+        phoneMenuFor(file.tabId).filterIsInstance<PhoneMenuEntry.Robot>().forEach { entry ->
+            rebind.add(phoneAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
         }
         val group = DefaultActionGroup()
         group.add(Separator.create(ImuxBundle.message("bridge.banner.hint")))
         group.add(rebind)
-        group.add(simpleAction(ImuxBundle.message("bridge.settings.reconnect")) { RobotManager.getInstance().reconnect(current.robotId) })
-        group.add(simpleAction(ImuxBundle.message("bridge.action.disconnect")) { PhoneOperations.disconnect(project, current.robotId) })
+        group.add(phoneAction(ImuxBundle.message("bridge.settings.reconnect")) { RobotManager.getInstance().reconnect(current.robotId) })
+        group.add(phoneAction(ImuxBundle.message("bridge.action.disconnect")) { PhoneOperations.disconnect(project, current.robotId) })
         group.addSeparator()
-        group.add(
-            simpleAction(ImuxBundle.message("bridge.banner.manage")) {
-                ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
-            },
-        )
-        JBPopupFactory.getInstance()
-            .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(link), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
-            .showUnderneathOf(link)
+        group.add(phoneAction(ImuxBundle.message("bridge.banner.manage")) { showRobotSettings(project) })
+        popup(group)
     }
 
-    /** 未连接时的菜单：说明、可选的机器人、添加机器人、管理。 */
-    private fun showConnectMenu(hub: BridgeHub?) {
+    /** 未连接时的菜单：说明、可选的机器人、添加机器人、管理。开关关着时不实例化中枢，只引导去设置里开启。 */
+    private fun showConnectMenu(bridgeEnabled: Boolean) {
         val group = DefaultActionGroup()
         group.add(Separator.create(ImuxBundle.message("bridge.banner.hint")))
-        if (hub == null) {
-            group.add(
-                simpleAction(ImuxBundle.message("bridge.action.disabled")) {
-                    ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
-                },
-            )
+        if (!bridgeEnabled) {
+            group.add(phoneAction(ImuxBundle.message("bridge.action.disabled")) { showRobotSettings(project) })
             popup(group)
             return
         }
-        phoneMenuModel(
-            RobotManager.getInstance().robots(),
-            bindingOf = { hub.bindings.bindingOf(RobotId(it)) },
-            statusOf = RobotManager.getInstance()::statusOf,
-            thisTabId = file.tabId,
-            titleOf = BridgeLifecycle::sessionTitle,
-            labels = BundleMenuLabels,
-        ).forEach { entry ->
+        phoneMenuFor(file.tabId).forEach { entry ->
             when (entry) {
                 is PhoneMenuEntry.Robot ->
-                    group.add(simpleAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
-                PhoneMenuEntry.NoRobots -> group.add(simpleAction(ImuxBundle.message("bridge.action.none"), enabled = false) {})
+                    group.add(phoneAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
+                PhoneMenuEntry.NoRobots -> group.add(phoneAction(ImuxBundle.message("bridge.action.none"), enabled = false))
                 PhoneMenuEntry.AddRobot -> {
                     group.addSeparator()
-                    group.add(simpleAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(project).show() })
+                    group.add(phoneAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(project).show() })
                 }
                 is PhoneMenuEntry.Disconnect -> Unit
             }
         }
-        group.add(
-            simpleAction(ImuxBundle.message("bridge.banner.manage")) {
-                ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
-            },
-        )
+        group.add(phoneAction(ImuxBundle.message("bridge.banner.manage")) { showRobotSettings(project) })
         popup(group)
     }
 
@@ -283,19 +238,5 @@ class PhoneBanner(
         JBPopupFactory.getInstance()
             .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(link), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
             .showUnderneathOf(link)
-    }
-
-    private fun simpleAction(
-        text: String,
-        enabled: Boolean = true,
-        run: () -> Unit,
-    ) = object : DumbAwareAction(text) {
-        override fun getActionUpdateThread() = ActionUpdateThread.EDT
-
-        override fun update(e: AnActionEvent) {
-            e.presentation.isEnabled = enabled
-        }
-
-        override fun actionPerformed(e: AnActionEvent) = run()
     }
 }
