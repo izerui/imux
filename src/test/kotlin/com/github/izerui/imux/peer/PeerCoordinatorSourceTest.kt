@@ -41,13 +41,13 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `横幅由自有编辑器布局承载`() {
+    fun `提示条与图标组由自有编辑器图层承载`() {
         assertFalse(coordinator.contains("setTopComponent("))
-        assertTrue(editor.contains("add(peerBanner, BorderLayout.NORTH)"))
+        assertTrue(editor.contains("setLayer(toolStrip.component, JLayeredPane.PALETTE_LAYER)"))
     }
 
     @Test
-    fun `横幅结对选项弹窗不显示重复标题`() {
+    fun `结对选项弹窗不显示重复标题`() {
         assertTrue(
             SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/AgentTerminalFileEditor.kt")
                 .compact(editor)
@@ -56,28 +56,35 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `横幅使用紧凑操作和较小纵向内边距`() {
-        assertTrue(editor.contains("""ActionLink(ImuxBundle.message("action.peer.cancel"))"""))
-        assertTrue(editor.contains("border = JBUI.Borders.empty(3, 12, 3, 24)"))
-        assertTrue("结对编程段带下拉箭头", editor.contains("setDropDownLinkIcon()"))
+    fun `审查中的提示给完整进度并能取消本轮`() {
+        val refreshFun = editor.substringAfter("private fun refreshPeer()").substringBefore("private fun failedText")
+        assertTrue(refreshFun.contains("if (progress != null) progressSummary(name, progress)"))
+        assertTrue(refreshFun.contains("NoticeAction(ImuxBundle.message(\"action.peer.segment.cancelRun\")) { coordinator.cancelCurrentRun(key) }"))
     }
 
     @Test
-    fun `结对编程段按状态使用正确的图标`() {
-        val refreshFun = editor.substringAfter("fun refreshPeerBanner()").substringBefore("private fun showPeerMenu")
-        assertTrue("空闲用结对图标", refreshFun.contains("PeerSegmentKind.IDLE -> AgentIcons.pair"))
-        assertTrue("审查中复用缓存的旋转图标", refreshFun.contains("PeerSegmentKind.RUNNING -> peerBusyIcon"))
-        assertTrue("结对中与通过带绿点", refreshFun.contains("PeerSegmentKind.READY, PeerSegmentKind.PASSED -> RowIcon(peerDot, AgentIcons.pair)"))
+    fun `结对编程按钮开着时显示伙伴名，审查中显示秒数，失败显示黄色`() {
+        val pairTool = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/PairTool.kt").bodyAfter("internal fun pairToolState(", '{')
+        assertTrue("审查中显示秒数", pairTool.contains("busyIcon, title, runningText, label = message(\"action.peer.tool.running\", listOf(model.elapsedSeconds)), tone = NoticeTone.INFO"))
+        assertTrue("失败显示黄色短字", pairTool.contains("message(\"action.peer.tool.failed\", emptyList()), NoticeTone.WARNING"))
+        assertTrue("空闲只是图标，但附上一轮结果", pairTool.contains("ToolState(AgentIcons.pair, title, withResult(message(\"action.peer.segment.hint\", emptyList())))"))
+        assertTrue("结对中显示伙伴名", pairTool.contains("label = name, tone = NoticeTone.SUCCESS"))
+        val refreshFun = editor.substringAfter("private fun refreshPeer()").substringBefore("private fun failedText")
+        assertTrue("审查中复用缓存的旋转图标", refreshFun.contains("peerBusyIcon,"))
         assertTrue("旋转图标应缓存为字段", editor.contains("private val peerBusyIcon = AnimatedIcon.Default()"))
-        assertFalse("refreshPeerBanner 不应新建 AnimatedIcon", refreshFun.contains("AnimatedIcon.Default()"))
+        assertFalse("refreshPeer 不应新建 AnimatedIcon", refreshFun.contains("AnimatedIcon.Default()"))
+        assertTrue("伙伴名最后才收", editor.contains("ToolPill(pairTool, pinned = true)"))
     }
 
     @Test
-    fun `左边状态句：审查中给完整进度，通过时显示无新反馈`() {
-        val refreshFun = editor.substringAfter("fun refreshPeerBanner()").substringBefore("private fun showPeerMenu")
-        assertTrue(refreshFun.contains("model.kind == PeerSegmentKind.RUNNING && progress != null -> progressSummary(name, progress)"))
-        assertTrue(refreshFun.contains("""model.kind == PeerSegmentKind.PASSED -> ImuxBundle.message("action.peer.status.passed", name)"""))
-        assertTrue(refreshFun.contains("""hint -> ImuxBundle.message("banner.status.idle")"""))
+    fun `新的审查结果提示一次，之后留在结果 chip，不以仍在结对为前提`() {
+        val refreshFun = editor.substringAfter("private fun refreshPeer()").substringBefore("private fun failedText")
+        assertTrue("按完成时间认新结果", refreshFun.contains("it.finishedAtMillis != announcedOutcomeAt"))
+        assertTrue(refreshFun.contains("fresh != null -> pairNotices.flash(resultNotice(fresh))"))
+        val chip = editor.substringAfter("private fun refreshResultChip()").substringBefore("private fun refreshTalk()")
+        assertTrue("结果提示还在顶部时不重复显示", chip.contains("!noticeOverlay.isShowing(NoticeSource.PAIR)"))
+        assertTrue(chip.contains(".lastOutcome(virtualFile.sessionKey)"))
+        assertFalse("单次审查自动解绑后 status 为 null，chip 不能依赖它", chip.contains(".status("))
     }
 
     @Test

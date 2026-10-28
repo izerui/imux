@@ -1285,8 +1285,9 @@ class PeerCoordinatorDispatchTest {
         try {
             coordinator.bind("s-auth", AgentType.CLAUDE)
             coordinator.onTurnCompleted("s-auth")
-            val review = scope.coroutineContext[Job]!!.children.single()
-            runBlocking { withTimeout(5_000) { review.join() } }
+            // launch 在 onTurnCompleted 里同步登记子任务；取不到说明它已经跑完，失败路径很快
+            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
+            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
             assertEquals("非溢出错误只应调用 CLI 一次", 1, callCount.get())
         } finally {
             coordinator.dispose()
@@ -1629,6 +1630,216 @@ class PeerCoordinatorDispatchTest {
             assertTrue(coordinator.status("s1")!!.lastReviewPassed)
             coordinator.onTurnStarted("s1")
             assertFalse(coordinator.status("s1")!!.lastReviewPassed)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    /** 持续结对与审查一次走同一条进度路径：审查进行时 status 带着当前工具调用，界面的蓝条与悬停说明都从这里取。 */
+    private fun assertLiveProgress(start: (PeerCoordinator) -> Unit) {
+        val toolSeen = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, onProgress ->
+                onProgress(PeerProgressEvent(PeerProgressKind.TOOL_STARTED, "./gradlew test"))
+                toolSeen.countDown()
+                release.await(5, TimeUnit.SECONDS)
+                "PASS"
+            },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            start(coordinator)
+            assertTrue(toolSeen.await(5, TimeUnit.SECONDS))
+            val status = coordinator.status("s1")
+            assertNotNull("审查进行时仍是绑定状态", status)
+            assertTrue(status!!.running)
+            assertEquals(PeerProgressKind.TOOL_STARTED, status.progress?.current?.kind)
+            assertEquals("./gradlew test", status.progress?.current?.subject)
+        } finally {
+            release.countDown()
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `持续结对审查进行时可以取到当前工具调用`() {
+        assertLiveProgress {
+            it.bind("s1", AgentType.CODEX)
+            it.onTurnCompleted("s1")
+        }
+    }
+
+    @Test
+    fun `审查一次进行时可以取到当前工具调用`() {
+        assertLiveProgress { it.reviewOnce("s1", AgentType.CODEX, null) }
+    }
+
+    @Test
+    fun `主会话开始新一轮工作时上一轮审查结果仍保留`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope)
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertEquals(PeerOutcomeKind.PASSED, coordinator.lastOutcome("s1")?.kind)
+            coordinator.onTurnStarted("s1")
+            assertEquals("用户提交下一条指令后，无新反馈的结果仍应看得到", PeerOutcomeKind.PASSED, coordinator.lastOutcome("s1")?.kind)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `下一轮审查真正开始时才替换上一轮结果`() {
+        val calls = AtomicInteger(0)
+        val secondStarted = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope) { _, _, _, _, _, _, _, _ ->
+            if (calls.incrementAndGet() == 2) {
+                secondStarted.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+            "PASS"
+        }
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            val first = coordinator.lastOutcome("s1")
+            assertEquals(PeerOutcomeKind.PASSED, first?.kind)
+            coordinator.onTurnCompleted("s1")
+            assertTrue(secondStarted.await(5, TimeUnit.SECONDS))
+            assertEquals("新一轮开始后不应再显示上一轮结果", null, coordinator.lastOutcome("s1"))
+            release.countDown()
+        } finally {
+            release.countDown()
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `单次审查通过并自动解绑后结果仍保留`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val unbound = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+            onOneShotPassed = {},
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key ->
+                if (key == "s1" && coordinator.status("s1") == null && coordinator.lastOutcome("s1") != null) unbound.countDown()
+            }
+            coordinator.reviewOnce("s1", AgentType.CODEX, null)
+            assertTrue("单次审查完成后应自动解绑", unbound.await(5, TimeUnit.SECONDS))
+            assertEquals(null, coordinator.status("s1"))
+            val outcome = coordinator.lastOutcome("s1")
+            assertEquals(PeerOutcomeKind.PASSED, outcome?.kind)
+            assertEquals(AgentType.CODEX, outcome?.targetAgentType)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `主动停止结对时清除审查结果`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope)
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertNotNull(coordinator.lastOutcome("s1"))
+            coordinator.unbind("s1")
+            assertEquals(null, coordinator.lastOutcome("s1"))
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `反馈送达后记录为 FEEDBACK`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val recorded = CountDownLatch(1)
+        val coordinator = PeerCoordinator(
+            project = testProject(),
+            projectPath = "/tmp/test-project",
+            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
+            viewOf = { null },
+            coroutineScope = scope,
+            shell = "/bin/zsh",
+            edtDispatcher = Dispatchers.Unconfined,
+            peerMaxRounds = { 5 },
+            peerAutoInject = { true },
+            runCli = { _, _, _, _, _, _, _, _ -> "请补上空列表的测试" },
+            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            buildPrompt = { _, _ -> "test prompt" },
+            sendAutoFeedback = { _, _ -> true },
+        )
+        try {
+            coordinator.addStateListener(coordinator) { key ->
+                if (key == "s1" && coordinator.lastOutcome("s1") != null) recorded.countDown()
+            }
+            coordinator.bind("s1", AgentType.CLAUDE)
+            coordinator.onTurnCompleted("s1")
+            assertTrue(recorded.await(5, TimeUnit.SECONDS))
+            val outcome = coordinator.lastOutcome("s1")
+            assertEquals(PeerOutcomeKind.FEEDBACK, outcome?.kind)
+            assertEquals(1, outcome?.round)
+        } finally {
+            coordinator.dispose()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `CLI 调用失败时记录为 FAILED 并带上原因`() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = passCoordinator(scope) { _, _, _, _, _, _, _, _ -> throw IllegalStateException("调用超时") }
+        try {
+            coordinator.bind("s1", AgentType.CLAUDE)
+            val done = awaitReviewDone(coordinator, "s1")
+            coordinator.onTurnCompleted("s1")
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            val outcome = coordinator.lastOutcome("s1")
+            assertEquals(PeerOutcomeKind.FAILED, outcome?.kind)
+            assertEquals("调用超时", outcome?.detail)
         } finally {
             coordinator.dispose()
             scope.cancel()

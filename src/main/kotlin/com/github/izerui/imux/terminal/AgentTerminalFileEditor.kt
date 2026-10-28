@@ -2,14 +2,16 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
 import javax.swing.Icon
-import com.intellij.ui.RowIcon
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.ide.DataManager
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.clarification.ClarificationService
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.peer.PeerOutcome
+import com.github.izerui.imux.peer.PeerOutcomeKind
 import com.github.izerui.imux.peer.PeerProgressEvent
+import com.github.izerui.imux.peer.collapseWhitespace
 import com.github.izerui.imux.peer.PeerProgressKind
 import com.github.izerui.imux.peer.PeerProgressSnapshot
 import com.github.izerui.imux.settings.ImuxSettings
@@ -30,6 +32,7 @@ import com.intellij.openapi.components.serviceIfCreated
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseListener
+import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.event.VisibleAreaListener
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -41,7 +44,6 @@ import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
@@ -49,11 +51,10 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.IdeFrame
 import com.intellij.ui.AnimatedIcon
-import com.intellij.ui.components.ActionLink
+import com.intellij.ui.GotItTooltip
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
-import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.conflate
@@ -61,9 +62,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
-import java.awt.BorderLayout
-import javax.swing.Box
-import javax.swing.BoxLayout
+import java.awt.Point
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -113,6 +112,11 @@ class AgentTerminalFileEditor(
     private val messageNavigator = SessionMessageNavigator(project, virtualFile, this)
     private var terminalLayer: JComponent? = null
 
+    /** 终端顶部叠放的提示条：审查进度与结果、断线、轨迹失败等，平时不占行。 */
+    private val noticeOverlay = TerminalNoticeOverlay(this, onChanged = { onNoticesChanged() })
+    private val pairNotices = noticeOverlay.sink(NoticeSource.PAIR)
+    private val talkNotices = noticeOverlay.sink(NoticeSource.TALK)
+
     /** 点到轨迹卡片之外（终端正文、滚动条、叠加控件、提示条）就收起面板。 */
     private val trailOutsideClicks by lazy { TrailOutsideClicks { trailOverlay.collapse() } }
     private val trailOverlay =
@@ -125,9 +129,11 @@ class AgentTerminalFileEditor(
                     .requestFocusInProject(virtualFile.terminalView.preferredFocusableComponent, project)
             },
             relayout = {
+                toolStrip?.refresh()
                 terminalLayer?.revalidate()
                 terminalLayer?.repaint()
             },
+            notices = noticeOverlay.sink(NoticeSource.TRAIL),
         )
     private val activeModelDispatcher = ActiveModelDispatcher(
         schedule = { runnable ->
@@ -148,69 +154,63 @@ class AgentTerminalFileEditor(
             override fun mousePressed(event: EditorMouseEvent) {
                 clearUnread()
             }
+
+            override fun mouseReleased(event: EditorMouseEvent) {
+                toolStrip?.component?.isVisible = true
+            }
+        }
+
+    /** 拖选终端文字时先藏起浮动图标组，免得挡住要选的那几行；松开鼠标再出来。 */
+    private val editorDragListener =
+        object : EditorMouseMotionListener {
+            override fun mouseDragged(event: EditorMouseEvent) {
+                toolStrip?.component?.isVisible = false
+            }
         }
     private var activeModelJob: Job? = null
     private var keyEventsJob: Job? = null
     private var followBottomOnActivation = false
     private var disposed = false
     private val peerBusyIcon = AnimatedIcon.Default()
-    private val peerDot = StatusDotIcon()
-    private val clarifyDot = StatusDotIcon()
     private var peerSegment = PeerSegmentModel(PeerSegmentKind.IDLE)
+    private var peerRefreshed = false
+    /** 已经发过一次性提示的审查结果，按完成时间认；打开标签页时已有的结果不再提示。 */
+    private var announcedOutcomeAt: Long? = null
+    private var discussing: Boolean? = null
 
-    // 横幅左边：一句当前最要紧的状态。审查进行中时给出完整进度和「取消」，空闲时是一句淡色提示。
-    private val statusIcon = JLabel()
-    private val statusLabel = JLabel()
-    private val peerCancelButton =
-        ActionLink(ImuxBundle.message("action.peer.cancel")) {
-            SessionMonitor.getInstance(project).peerCoordinator.cancelCurrentRun(virtualFile.sessionKey)
-        }.apply {
-            isFocusable = false
-            border = JBUI.Borders.emptyLeft(12)
+    // 右上角浮动图标组：结对编程、先聊再做、会话轨迹，以及其它功能的按钮（例如手机连接）。
+    // 开着的功能显示「图标＋短字」并着色（结对显示伙伴名、审查中显示秒数），悬停看说明，点开是各自的菜单。
+    private var pairState = ToolState(AgentIcons.pair, "", "")
+    private val pairTool =
+        object : SessionTool {
+            override fun state() = pairState
+
+            override fun perform(anchor: JComponent) = showPeerMenu(anchor)
+        }
+    private val talkTool =
+        object : SessionTool {
+            override fun state(): ToolState {
+                val open = discussing == true
+                return ToolState(
+                    icon = AgentIcons.talk,
+                    title = ImuxBundle.message("clarify.action.text"),
+                    description = ImuxBundle.message(if (open) "clarify.status.open" else "clarify.action.description"),
+                    label = if (open) ImuxBundle.message("clarify.tool.open") else null,
+                    tone = if (open) NoticeTone.SUCCESS else null,
+                )
+            }
+
+            override fun perform(anchor: JComponent) {
+                ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType)
+            }
         }
 
-    // 横幅右边是一排功能段。结对编程段：开启、审查一次、停止、不再提示都在下拉菜单里。
-    private val peerSegmentIcon = JLabel()
-    private val peerSegmentLink: ActionLink =
-        ActionLink(ImuxBundle.message("action.peer.group.text")) { showPeerMenu() }.apply {
-            isFocusable = false
-            setDropDownLinkIcon()
-        }
-
-    // 先聊再做段：只有一个动作，点了就打开或聚焦讨论窗口；窗口开着时亮绿点。
-    private val clarifyIcon = JLabel()
-    private val clarifyLink: ActionLink =
-        ActionLink(ImuxBundle.message("clarify.action.text")) {
-            ClarificationService.getInstance(project).open(virtualFile.sessionKey, virtualFile.tabId, virtualFile.agentType)
-        }.apply {
-            isFocusable = false
-        }
-    private val peerBanner =
-        JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
-            border = JBUI.Borders.empty(3, 12, 3, 24)
-            isOpaque = true
-            background = JBUI.CurrentTheme.Banner.INFO_BACKGROUND
-            add(statusIcon)
-            add(Box.createHorizontalStrut(JBUI.scale(6)))
-            add(statusLabel)
-            add(peerCancelButton)
-            add(Box.createHorizontalGlue())
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(peerSegmentIcon)
-            add(Box.createHorizontalStrut(JBUI.scale(4)))
-            add(peerSegmentLink)
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(BannerDivider())
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(clarifyIcon)
-            add(Box.createHorizontalStrut(JBUI.scale(4)))
-            add(clarifyLink)
-            isVisible = true
-        }
+    /** 上一轮审查结果：结果提示收起后留在图标组左边，直到下一轮审查开始。 */
+    private val resultChip = ResultChip { showPeerMenu(it) }
+    private var toolStrip: TerminalToolStrip? = null
     private val peerElapsedTimer =
         Timer(1_000) {
-            if (peerBanner.isVisible) refreshPeerBanner()
+            if (!disposed) refreshPeer()
         }
 
     /**
@@ -253,26 +253,31 @@ class AgentTerminalFileEditor(
             scrollToBottomAction.templatePresentation.description =
                 ImuxBundle.message("action.scroll.bottom.description")
             scrollButton?.update()
-            peerCancelButton.text = ImuxBundle.message("action.peer.cancel")
-            refreshPeerBanner()
+            refreshPeer()
+            refreshTalk()
         }
         SessionMonitor.getInstance(project).peerCoordinator.addStateListener(
             this,
         ) { sessionKey ->
-            if (sessionKey == virtualFile.sessionKey) refreshPeerBanner()
+            if (sessionKey == virtualFile.sessionKey) refreshPeer()
         }
         ClarificationService.getInstance(project).addOpenListener(this) { sessionKey ->
             ApplicationManager.getApplication().invokeLater({
-                if (!disposed && sessionKey == virtualFile.sessionKey) refreshPeerBanner()
+                if (!disposed && sessionKey == virtualFile.sessionKey) refreshTalk()
             }, project.disposed)
         }
-        refreshPeerBanner()
+        refreshPeer()
+        refreshTalk()
 
         // 会话装饰变化（例如连上或断开手机）时，让平台重新取本标签的图标。
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             SessionDecorationsListener.TOPIC,
             SessionDecorationsListener {
-                if (!disposed && !project.isDisposed) FileEditorManager.getInstance(project).updateFilePresentation(virtualFile)
+                if (!disposed && !project.isDisposed) {
+                    FileEditorManager.getInstance(project).updateFilePresentation(virtualFile)
+                    toolStrip?.refresh()
+                    terminalLayer?.revalidate()
+                }
             },
         )
 
@@ -301,6 +306,10 @@ class AgentTerminalFileEditor(
                 }
             },
         )
+
+        // 必须是 init 的最后一步：上面以及各字段初始化时发出的提示（例如轨迹已是失败状态）
+        // 到这里才画出来，回调里用到的 resultChip、toolStrip 此时都已初始化
+        noticeOverlay.start()
     }
 
     private val editorComponent: JComponent by lazy(::createEditorComponent)
@@ -328,10 +337,20 @@ class AgentTerminalFileEditor(
             }
         this.scrollButton = scrollButton
         val navigatorComponent = messageNavigator.component
-        // 标签页里固定不变、不属于轨迹卡片的组件；终端正文与滚动条随编辑器切换另行绑定
+        val toolButtons =
+            listOf(ToolPill(pairTool, pinned = true), ToolPill(talkTool), ToolPill(trailOverlay.tool)) +
+                SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill)
+        val toolStrip = TerminalToolStrip(resultChip, toolButtons)
+        this.toolStrip = toolStrip
+        toolStrip.refresh()
+        val notices = noticeOverlay.component
+        // 标签页里固定不变、不属于轨迹卡片的组件；终端正文与滚动条随编辑器切换另行绑定。
+        // 轨迹按钮自己负责展开收起，不挂“点外面收起”，否则按下时先收起、松开又展开。
         trailOutsideClicks.attach(navigatorComponent)
         trailOutsideClicks.attach(scrollButton)
-        trailOutsideClicks.attach(peerBanner)
+        trailOutsideClicks.attach(notices)
+        trailOutsideClicks.attach(resultChip)
+        toolButtons.filter { it.tool !== trailOverlay.tool }.forEach(trailOutsideClicks::attach)
         startScrollTracking()
         startInputTracking()
 
@@ -347,6 +366,11 @@ class AgentTerminalFileEditor(
                     setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
                     add(trailOverlay.card)
                     setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
+                    add(toolStrip.component)
+                    setLayer(toolStrip.component, JLayeredPane.PALETTE_LAYER)
+                    // 提示条压在导航轨道之上
+                    add(notices)
+                    setLayer(notices, JLayeredPane.PALETTE_LAYER + 1)
                 }
 
                 override fun uiDataSnapshot(sink: DataSink) {
@@ -356,6 +380,7 @@ class AgentTerminalFileEditor(
                 override fun addNotify() {
                     super.addNotify()
                     scheduleScrollButtonRefresh()
+                    ApplicationManager.getApplication().invokeLater({ showToolsGotIt() }, project.disposed)
                 }
 
                 override fun doLayout() {
@@ -376,93 +401,207 @@ class AgentTerminalFileEditor(
                         (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
                     navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
 
-                    // 轨迹面板放在导航轨道左侧，轨道始终完整可用
-                    trailOverlay.layout(width, height, navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET))
+                    // 提示条铺满顶部；图标组在它下面、导航轨道左侧；轨迹面板再往下，轨道始终完整可用
+                    val noticeHeight = if (notices.isVisible) notices.preferredSize.height else 0
+                    notices.setBounds(0, 0, width, noticeHeight)
+                    val rightReserve = navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET)
+                    val margin = JBUI.scale(TOOL_STRIP_MARGIN)
+                    // 窄分屏时先保住按钮，结果文字按剩余宽度缩短或只留图标
+                    val stripRoom = (width - rightReserve - margin * 2).coerceAtLeast(0)
+                    val strip = toolStrip.fit(stripRoom)
+                    val stripY = noticeHeight + margin
+                    toolStrip.component.setBounds(
+                        (width - rightReserve - margin - strip.width).coerceAtLeast(0),
+                        stripY,
+                        strip.width,
+                        strip.height,
+                    )
+                    trailOverlay.layout(width, height, rightReserve, stripY + strip.height)
                 }
             }
         this.terminalLayer = terminalLayer
-        // 顶部只有一条横幅：左边说状态，右边依次是结对编程、先聊再做、会话轨迹与其它功能的装饰段（例如手机连接）。
-        // 轨迹段自己负责展开收起，不挂“点外面收起”，否则按下时先收起、松开又展开。
-        peerBanner.add(trailOverlay.bannerSegment)
-        SessionDecorations.bannerSegments(project, virtualFile, this@AgentTerminalFileEditor).forEach { segment ->
-            peerBanner.add(segment)
-            trailOutsideClicks.attach(segment)
-        }
-        return JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(peerBanner, BorderLayout.NORTH)
-            add(terminalLayer, BorderLayout.CENTER)
-        }
+        return terminalLayer
     }
 
-    private fun refreshPeerBanner() {
-        val status = SessionMonitor.getInstance(project).peerCoordinator.status(virtualFile.sessionKey)
+    /** 第一次看到浮动图标组时说明一次；平台按 id 记住已看过。 */
+    private fun showToolsGotIt() {
+        val target = toolStrip?.component ?: return
+        if (disposed || !target.isShowing) return
+        GotItTooltip(TOOLS_GOT_IT_ID, ImuxBundle.message("terminal.tools.gotit.text"), this)
+            .withHeader(ImuxBundle.message("terminal.tools.gotit.header"))
+            // 平台的 BOTTOM_MIDDLE 挂在 @ApiStatus.Internal 的 Companion 上，这里自己算锚点
+            .show(target) { component, _ -> Point(component.width / 2, component.height) }
+    }
+
+    private fun onNoticesChanged() {
+        refreshResultChip()
+        toolStrip?.refresh()
+        terminalLayer?.revalidate()
+        terminalLayer?.repaint()
+    }
+
+    /**
+     * 结对编程的状态落到三处：按钮图标与说明；审查进行中、失败时的常驻提示；
+     * 新结果的一次性提示（之后收进结果 chip）。
+     */
+    private fun refreshPeer() {
+        val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+        val key = virtualFile.sessionKey
+        val status = coordinator.status(key)
+        val outcome = coordinator.lastOutcome(key)
         val model = peerSegmentModel(status, System.currentTimeMillis())
+        val previousKind = peerSegment.kind
         peerSegment = model
         val name = model.agentName.orEmpty()
-        val discussing = ClarificationService.getInstance(project).isOpen(virtualFile.sessionKey)
         val progress = status?.progress
+        val running = model.kind == PeerSegmentKind.RUNNING
+        val failed = outcome?.takeIf { it.kind == PeerOutcomeKind.FAILED && !running }
+        val runningText =
+            if (progress != null) progressSummary(name, progress) else ImuxBundle.message("action.peer.status.starting", name)
 
-        // 左边的状态句：审查中 > 结对中 > 审查通过 > 讨论进行中 > 空闲提示。
-        val hint = model.kind == PeerSegmentKind.IDLE && !discussing
-        statusIcon.icon =
+        pairNotices.persistent(
             when {
-                model.kind == PeerSegmentKind.RUNNING -> peerBusyIcon
-                model.kind == PeerSegmentKind.READY || model.kind == PeerSegmentKind.PASSED -> AllIcons.CodeWithMe.CwmVerified
+                running ->
+                    Notice(
+                        key = "pair:running:${progress?.startedAtMillis ?: 0}",
+                        tone = NoticeTone.INFO,
+                        text = runningText,
+                        icon = peerBusyIcon,
+                        actions = listOf(NoticeAction(ImuxBundle.message("action.peer.segment.cancelRun")) { coordinator.cancelCurrentRun(key) }),
+                    )
+                failed != null -> failedNotice(failed)
                 else -> null
-            }
-        statusIcon.isVisible = statusIcon.icon != null
-        statusLabel.text =
+            },
+        )
+        if (peerRefreshed) {
+            val fresh = outcome?.takeIf { it.kind != PeerOutcomeKind.FAILED && it.finishedAtMillis != announcedOutcomeAt }
             when {
-                model.kind == PeerSegmentKind.RUNNING && progress != null -> progressSummary(name, progress)
-                model.kind == PeerSegmentKind.RUNNING -> ImuxBundle.message("action.peer.status.starting", name)
-                model.kind == PeerSegmentKind.READY -> ImuxBundle.message("action.peer.status.ready", name)
-                model.kind == PeerSegmentKind.PASSED -> ImuxBundle.message("action.peer.status.passed", name)
-                discussing -> ImuxBundle.message("clarify.status.open")
-                hint -> ImuxBundle.message("banner.status.idle")
-                else -> ""
+                fresh != null -> pairNotices.flash(resultNotice(fresh))
+                previousKind == PeerSegmentKind.IDLE && model.kind == PeerSegmentKind.READY ->
+                    pairNotices.flash(Notice("pair:ready", NoticeTone.SUCCESS, ImuxBundle.message("action.peer.notice.ready", name)))
             }
-        statusLabel.foreground = if (hint || discussing) UIUtil.getContextHelpForeground() else UIUtil.getLabelForeground()
-        peerCancelButton.isVisible = model.kind == PeerSegmentKind.RUNNING
-        if (model.kind == PeerSegmentKind.RUNNING) peerElapsedTimer.start() else peerElapsedTimer.stop()
+        }
+        announcedOutcomeAt = outcome?.finishedAtMillis
+        peerRefreshed = true
+        if (running) peerElapsedTimer.start() else peerElapsedTimer.stop()
 
-        // 右边的结对编程段：图标带状态，文字固定。
-        peerDot.color = BannerColors.ONLINE
-        peerSegmentIcon.icon =
-            when (model.kind) {
-                PeerSegmentKind.IDLE -> AgentIcons.pair
-                PeerSegmentKind.RUNNING -> peerBusyIcon
-                PeerSegmentKind.READY, PeerSegmentKind.PASSED -> RowIcon(peerDot, AgentIcons.pair)
-            }
-        peerSegmentLink.text = ImuxBundle.message("action.peer.group.text")
-        val tooltip = ImuxBundle.message("action.peer.segment.hint")
-        peerSegmentIcon.toolTipText = tooltip
-        peerSegmentLink.toolTipText = tooltip
-
-        clarifyIcon.icon = if (discussing) RowIcon(clarifyDot, AgentIcons.talk) else AgentIcons.talk
-        clarifyLink.text = ImuxBundle.message("clarify.action.text")
-        clarifyLink.toolTipText = ImuxBundle.message("clarify.action.description")
-
-        peerBanner.revalidate()
-        peerBanner.repaint()
+        pairState =
+            pairToolState(
+                model,
+                failed,
+                lastResultLine(outcome, virtualFile.agentType.displayName),
+                runningText,
+                failed?.let(::failedText),
+                peerBusyIcon,
+            )
+        refreshResultChip()
+        toolStrip?.refresh()
     }
 
-    /** 结对编程段的下拉菜单：第一行是说明或完整进度，其余按状态给出可做的事。 */
-    private fun showPeerMenu() {
+    private fun failedText(outcome: PeerOutcome): String =
+        ImuxBundle.message(
+            "action.peer.notice.failed",
+            outcome.targetAgentType.displayName,
+            collapseWhitespace(outcome.detail.orEmpty()).let { if (it.length <= MAX_FAILURE_CHARS) it else it.take(MAX_FAILURE_CHARS - 1) + "…" },
+        )
+
+    /** 审查失败：「重试」按当时的方式再审一次；还在结对时可以直接停止。 */
+    private fun failedNotice(outcome: PeerOutcome): Notice {
+        val coordinator = SessionMonitor.getInstance(project).peerCoordinator
+        val key = virtualFile.sessionKey
+        val bound = coordinator.boundTarget(key) != null
+        val retry =
+            NoticeAction(ImuxBundle.message("action.peer.notice.retry")) {
+                if (coordinator.boundTarget(virtualFile.sessionKey) != null) {
+                    coordinator.onTurnCompleted(virtualFile.sessionKey)
+                } else {
+                    coordinator.reviewOnce(virtualFile.sessionKey, outcome.targetAgentType, null)
+                }
+            }
+        val stop = NoticeAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(virtualFile.sessionKey) }
+        return Notice(
+            key = "pair:failed:${outcome.finishedAtMillis}",
+            tone = NoticeTone.WARNING,
+            text = failedText(outcome),
+            actions = if (bound) listOf(retry, stop) else listOf(retry),
+        )
+    }
+
+    private fun resultNotice(outcome: PeerOutcome): Notice {
+        val agent = outcome.targetAgentType.displayName
+        return if (outcome.kind == PeerOutcomeKind.PASSED) {
+            Notice("pair:passed", NoticeTone.SUCCESS, ImuxBundle.message("action.peer.notice.passed", agent))
+        } else {
+            Notice(
+                "pair:feedback",
+                NoticeTone.INFO,
+                ImuxBundle.message("action.peer.notice.feedback", agent, virtualFile.agentType.displayName),
+                icon = AgentIcons.review,
+            )
+        }
+    }
+
+    /** 结果 chip 只在没有结对提示条时出现：审查中、失败、结果提示还在顶部时不重复显示。 */
+    private fun refreshResultChip() {
+        val outcome =
+            SessionMonitor.getInstance(project).peerCoordinator.lastOutcome(virtualFile.sessionKey)
+                ?.takeIf { it.kind != PeerOutcomeKind.FAILED }
+        val visible = outcome != null && peerSegment.kind != PeerSegmentKind.RUNNING && !noticeOverlay.isShowing(NoticeSource.PAIR)
+        if (outcome != null) {
+            val agent = outcome.targetAgentType.displayName
+            val time = resultTime(outcome)
+            val passed = outcome.kind == PeerOutcomeKind.PASSED
+            resultChip.icon = if (passed) AllIcons.Status.Success else AgentIcons.review
+            resultChip.setResult(
+                visible,
+                full = if (passed) ImuxBundle.message("action.peer.chip.passed", time) else ImuxBundle.message("action.peer.chip.feedback", agent, time),
+                short = ImuxBundle.message(if (passed) "action.peer.chip.passed.short" else "action.peer.chip.feedback.short"),
+            )
+            resultChip.toolTipText =
+                ImuxBundle.message(
+                    "action.peer.chip.tooltip",
+                    outcome.round,
+                    agent,
+                    time,
+                    if (passed) ImuxBundle.message("action.peer.chip.passed.detail")
+                    else ImuxBundle.message("action.peer.chip.feedback.detail", virtualFile.agentType.displayName),
+                )
+        } else {
+            resultChip.setResult(false, "", "")
+        }
+        // 文字随语言、结果变化，宽度要重新分配；真正显示哪一种由 doLayout 里的 fit 决定
+        toolStrip?.refresh()
+        terminalLayer?.revalidate()
+    }
+
+    /** 先聊再做：讨论窗口开着时按钮显示「讨论中」，刚打开时提示一次。 */
+    private fun refreshTalk() {
+        val open = ClarificationService.getInstance(project).isOpen(virtualFile.sessionKey)
+        if (discussing == false && open) {
+            talkNotices.flash(Notice("talk:open", NoticeTone.SUCCESS, ImuxBundle.message("clarify.notice.open")))
+        }
+        discussing = open
+        toolStrip?.refresh()
+    }
+
+    /** 结对编程的下拉菜单：第一行是说明，其余按状态给出可做的事。 */
+    private fun showPeerMenu(anchor: JComponent) {
         val key = virtualFile.sessionKey
         val coordinator = SessionMonitor.getInstance(project).peerCoordinator
         val targets = ImuxSettings.getInstance().enabledAgentTypes
         val status = coordinator.status(key)
         val group = DefaultActionGroup()
         group.add(Separator.create(ImuxBundle.message("action.peer.segment.hint")))
+        // 上一轮结果（包括单次审查跑完自动解绑之后）：结果 chip 在窄屏被收起时，菜单里也看得到
+        if (peerSegment.kind != PeerSegmentKind.RUNNING) {
+            lastResultLine(coordinator.lastOutcome(key), virtualFile.agentType.displayName)?.let { group.add(Separator.create(it)) }
+        }
         when (peerSegment.kind) {
+            // 伙伴直接列在第一层，选一次就开启，不用再展开子菜单
             PeerSegmentKind.IDLE -> {
-                group.add(
-                    DefaultActionGroup(ImuxBundle.message("action.peer.enable.hint"), true).apply {
-                        templatePresentation.icon = AgentIcons.pair
-                        addAll(*peerProgrammingActions(project, key, targets))
-                    },
-                )
+                group.add(Separator.create(ImuxBundle.message("action.peer.enable.hint")))
+                group.addAll(*peerProgrammingActions(project, key, targets))
+                group.addSeparator()
                 group.add(
                     bannerAction(ImuxBundle.message("action.peer.once.hint"), AgentIcons.review, enabled = targets.isNotEmpty()) {
                         showReviewOnceDialog(project, virtualFile)
@@ -474,18 +613,18 @@ class AgentTerminalFileEditor(
                 group.add(bannerAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(key) })
             }
             PeerSegmentKind.READY, PeerSegmentKind.PASSED -> {
-                group.add(
-                    DefaultActionGroup(ImuxBundle.message("action.peer.segment.switch"), true).apply {
-                        addAll(*peerProgrammingActions(project, key, targets.filter { it != status?.targetAgentType }, includeUnbind = false))
-                    },
-                )
+                val others = targets.filter { it != status?.targetAgentType }
+                if (others.isNotEmpty()) {
+                    group.add(Separator.create(ImuxBundle.message("action.peer.segment.switch")))
+                    group.addAll(*peerProgrammingActions(project, key, others, includeUnbind = false))
+                }
                 group.addSeparator()
                 group.add(bannerAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(key) })
             }
         }
         JBPopupFactory.getInstance()
-            .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(peerSegmentLink), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
-            .showUnderneathOf(peerSegmentLink)
+            .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(anchor), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
+            .showUnderneathOf(anchor)
     }
 
     private fun bannerAction(
@@ -588,6 +727,7 @@ class AgentTerminalFileEditor(
             if (observedEditor?.isDisposed == false) {
                 observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
                 observedEditor?.removeEditorMouseListener(editorMouseListener)
+                observedEditor?.removeEditorMouseMotionListener(editorDragListener)
             }
             imeCompositionSupport?.dispose()
             imeCompositionSupport = null
@@ -595,6 +735,7 @@ class AgentTerminalFileEditor(
             trailOutsideClicks.bindEditor(editor?.let(::terminalClickTargets).orEmpty())
             editor?.scrollingModel?.addVisibleAreaListener(visibleAreaListener)
             editor?.addEditorMouseListener(editorMouseListener)
+            editor?.addEditorMouseMotionListener(editorDragListener)
             messageNavigator.bind(editor)
             if (editor != null && virtualFile.agentType.needsImeCompositionOverlay) {
                 imeCompositionSupport =
@@ -649,6 +790,7 @@ class AgentTerminalFileEditor(
         if (observedEditor?.isDisposed == false) {
             observedEditor?.scrollingModel?.removeVisibleAreaListener(visibleAreaListener)
             observedEditor?.removeEditorMouseListener(editorMouseListener)
+            observedEditor?.removeEditorMouseMotionListener(editorDragListener)
         }
         imeCompositionSupport?.dispose()
         imeCompositionSupport = null
@@ -683,6 +825,9 @@ class AgentTerminalFileEditor(
 
     private companion object {
         const val MAX_BANNER_SUBJECT_CHARS = 48
+        const val MAX_FAILURE_CHARS = 160
+        const val TOOL_STRIP_MARGIN = 8
+        const val TOOLS_GOT_IT_ID = "imux.terminal.tools"
         const val NAVIGATOR_RIGHT_INSET = 14
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30

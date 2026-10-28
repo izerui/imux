@@ -8,10 +8,12 @@ import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class PhoneBannerTest {
+class PhoneToolTest {
     private val robot = RobotRecord(RobotId("r"), "开发助手 1", ChannelKind.WECOM, ownerSenderId = "u", ownerChatId = "u")
     private val binding = Binding(RobotId("r"), SessionTarget("/p", "t", AgentType.CODEX, "s"), 1)
 
@@ -44,23 +46,40 @@ class PhoneBannerTest {
         assertNull(model(robot = null))
     }
 
-    private val label = { channel: String, name: String -> "$channel「$name」" }
-
     @Test
-    fun `宽横幅显示渠道与名称，出问题时追加状态`() {
-        assertEquals("wecom「开发助手 1」", phoneBannerText(model()!!, 1100, label))
-        assertEquals("wecom「开发助手 1」 · S:Kicked", phoneBannerText(model(status = ConnectionStatus.Kicked)!!, 900, label))
+    fun `连接中单独标出，不算问题`() {
+        val connecting = model(status = ConnectionStatus.Connecting)!!
+        assertTrue(connecting.connecting)
+        assertNull(connecting.problem)
     }
 
     @Test
-    fun `中等宽度只留渠道，出问题时换成状态`() {
-        assertEquals("wecom", phoneBannerText(model()!!, 760, label))
-        assertEquals("S:Kicked", phoneBannerText(model(status = ConnectionStatus.Kicked)!!, 600, label))
+    fun `顶部提示按连接中、出问题、在线、未连接区分`() {
+        assertEquals(PhoneNoticeState.None, phoneNoticeState(phoneSegmentState(true, null)))
+        assertTrue(phoneNoticeState(phoneSegmentState(true, model(status = ConnectionStatus.Connecting))) is PhoneNoticeState.Connecting)
+        assertEquals(
+            PhoneNoticeState.Problem(model(status = ConnectionStatus.Kicked)!!, "S:Kicked"),
+            phoneNoticeState(phoneSegmentState(true, model(status = ConnectionStatus.Kicked))),
+        )
+        assertEquals(PhoneNoticeState.Online(model()!!), phoneNoticeState(phoneSegmentState(true, model())))
     }
 
     @Test
-    fun `窄横幅只留图标`() {
-        assertEquals("", phoneBannerText(model()!!, 599, label))
+    fun `刚连上、重连成功、换了机器人时提示一次`() {
+        val online = PhoneNoticeState.Online(model()!!)
+        assertTrue("刚连上", phoneJustConnected(PhoneNoticeState.None, online))
+        assertTrue("重连成功", phoneJustConnected(PhoneNoticeState.Connecting(model(status = ConnectionStatus.Connecting)!!), online))
+        assertTrue("断线后恢复", phoneJustConnected(PhoneNoticeState.Problem(model(status = ConnectionStatus.Kicked)!!, "S:Kicked"), online))
+        val other = PhoneNoticeState.Online(model(robot = robot.copy(id = RobotId("r2")))!!)
+        assertTrue("换了机器人", phoneJustConnected(online, other))
+    }
+
+    @Test
+    fun `打开标签页时已在线、一直在线、未连上时不提示`() {
+        val online = PhoneNoticeState.Online(model()!!)
+        assertFalse("打开标签页时已在线", phoneJustConnected(null, online))
+        assertFalse("一直在线", phoneJustConnected(online, online))
+        assertFalse("未连上", phoneJustConnected(PhoneNoticeState.None, PhoneNoticeState.None))
     }
 
     @Test

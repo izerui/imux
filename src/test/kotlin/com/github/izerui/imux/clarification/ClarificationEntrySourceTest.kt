@@ -20,19 +20,20 @@ class ClarificationEntrySourceTest {
     }
 
     @Test
-    fun `先聊再做是横幅里固定的一段，任何状态都不隐藏`() {
-        val banner = editor.normalized.substringAfter("private val peerBanner =").substringBefore("private val peerElapsedTimer")
-        assertTrue("横幅里有先聊再做段", banner.contains("add(clarifyLink)"))
-        assertTrue("与结对编程段之间有分隔线", banner.contains("add(BannerDivider())"))
-        assertTrue("任何地方都不隐藏它", !editor.normalized.contains("clarifyLink.isVisible = false"))
+    fun `先聊再做是图标组里固定的按钮`() {
+        assertTrue(editor.normalized.contains("ToolPill(talkTool)"))
+        assertTrue("任何地方都不隐藏它", !editor.normalized.contains("isEnabledAndVisible = false"))
     }
 
     @Test
-    fun `讨论窗口开着时横幅显示讨论中，开关窗口会通知横幅刷新`() {
-        val refresh = editor.bodyAfter("private fun refreshPeerBanner()", '{')
+    fun `讨论窗口开着时按钮显示讨论中并着绿色，开关窗口会刷新并提示一次`() {
+        val talk = editor.normalized.substringAfter("private val talkTool =").substringBefore("private val resultChip")
+        assertTrue(talk.contains("label = if (open) ImuxBundle.message(\"clarify.tool.open\") else null"))
+        assertTrue(talk.contains("tone = if (open) NoticeTone.SUCCESS else null"))
+        assertTrue(talk.contains("\"clarify.status.open\""))
+        val refresh = editor.bodyAfter("private fun refreshTalk()", '{')
         assertTrue(refresh.contains("ClarificationService.getInstance(project).isOpen(virtualFile.sessionKey)"))
-        assertTrue(refresh.contains("discussing -> ImuxBundle.message(\"clarify.status.open\")"))
-        assertTrue(refresh.contains("RowIcon(clarifyDot, AgentIcons.talk)"))
+        assertTrue("刚打开时提示一次", refresh.contains("if (discussing == false && open)"))
         assertTrue(editor.normalized.contains("ClarificationService.getInstance(project).addOpenListener(this)"))
         val service = SourceCode("src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt")
         assertTrue("打开时通知", service.bodyAfter("internal fun open(", '{').contains("openListeners.multicaster.openChanged(sessionKey)"))
@@ -40,9 +41,8 @@ class ClarificationEntrySourceTest {
     }
 
     @Test
-    fun `横幅不再提供不再提示`() {
+    fun `不提供不再提示`() {
         assertTrue(!editor.normalized.contains("peerBannerDismissed"))
         assertTrue(!editor.normalized.contains("action.peer.enable.dismiss"))
-        assertTrue("横幅本身不隐藏", !editor.normalized.contains("peerBanner.isVisible = false"))
     }
 }

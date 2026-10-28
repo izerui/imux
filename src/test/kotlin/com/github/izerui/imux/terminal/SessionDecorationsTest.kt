@@ -7,7 +7,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
-import javax.swing.JComponent
 import kotlin.coroutines.cancellation.CancellationException
 
 class SessionDecorationsTest {
@@ -17,11 +16,12 @@ class SessionDecorationsTest {
             tabId: String,
         ): Boolean = value
 
-        override fun createBannerSegment(
+        override fun createTool(
             project: Project,
             file: AgentTerminalVirtualFile,
             parent: Disposable,
-        ): JComponent? = null
+            notices: NoticeSink,
+        ): SessionTool? = null
 
         fun ask(): Boolean {
             if (fail) throw IllegalStateException("boom")

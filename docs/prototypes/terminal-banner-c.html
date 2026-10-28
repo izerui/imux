@@ -442,7 +442,7 @@ function lastHTML(interactive) {
 }
 const TIPS = {
   last: () => { const l = st.pair.last; return ['上一轮审查', `第 ${l.round} 轮 · ${st.pair.agent} · ${l.at} · ${l.kind === 'pass' ? '没有新的反馈' : `提了 ${l.n} 条意见，已交给 Claude 处理`}。下一轮开始时更新。`]; },
-  pair: () => ['结对编程', { idle: '未开启 · 点开选择伙伴，或只审查一次', ready: `${st.pair.agent} 已就绪，每改完一轮自动审查` + (st.pair.last ? `；上一轮 ${st.pair.last.at} ${st.pair.last.kind === 'pass' ? '没有新的反馈' : `提了 ${st.pair.last.n} 条意见`}` : ''), running: `${st.pair.agent} 正在审查第 ${st.pair.round} 轮`, failed: `${st.pair.agent} 审查失败：${st.pair.err}` }[st.pair.k]],
+  pair: () => ['结对编程', { idle: '未开启 · 点开选择伙伴，或只审查一次', ready: `${st.pair.agent} 已就绪，每改完一轮自动审查` + (st.pair.last ? `；上一轮 ${st.pair.last.at} ${st.pair.last.kind === 'pass' ? '没有新的反馈' : `提了 ${st.pair.last.n} 条意见`}` : ''), running: `${st.pair.agent} 正在审查第 ${st.pair.round} 轮 · 已完成 ${st.pair.done} 项 · ${st.pair.cur} · ${secs()} 秒`, failed: `${st.pair.agent} 审查失败：${st.pair.err}` }[st.pair.k]],
   talk: () => ['先聊再做', st.talk ? '讨论窗口开着 · 点击回到讨论' : '先和 Agent 把需求聊清楚，再交给终端动手'],
   trail: () => ['会话轨迹', { latest: '已是最新 · 点击显示', stale: '会话有新进展，摘要已过期', loading: '正在生成…', failed: '更新失败：AI 响应超时' }[st.trail.k]],
   phone: () => ['手机', { unbound: '未连接 · 点开选择机器人', ok: `${ROBOT} · 在线`, problem: `${ROBOT} · 连接已断开`, connecting: '正在重新连接…' }[st.phone.k]],

@@ -1,9 +1,6 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
-import javax.swing.BoxLayout
-import javax.swing.Box
-import com.intellij.ui.RowIcon
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.overview.LoadingRow
@@ -49,7 +46,8 @@ import javax.swing.SwingUtilities
 import javax.swing.Timer
 
 /**
- * 会话轨迹：入口是终端顶部横幅上的一段（[bannerSegment]），展开后是正文右上角一张可滚动、可调整大小的卡片。
+ * 会话轨迹：入口是终端右上角浮动图标组里的一个按钮（[tool]），展开后是图标组下方一张可滚动、可调整大小的卡片。
+ * 生成失败时在顶部发一条常驻提示，重新生成完成时发一条一次性提示（[notices]）。
  *
  * 卡片由 [AgentTerminalFileEditor] 放进终端上方的 `PALETTE_LAYER`，只遮住自身范围，
  * 不改变终端尺寸，TUI 不会重新排版。这里只负责显示：状态与生成任务在
@@ -62,6 +60,7 @@ internal class SessionTrailOverlay(
     parent: Disposable,
     private val focusTerminal: () -> Unit,
     private val relayout: () -> Unit,
+    private val notices: NoticeSink,
 ) : Disposable {
     private val store get() = ProgressOverviewService.getInstance(project).trailStore
     private val key get() = virtualFile.sessionKey
@@ -79,28 +78,40 @@ internal class SessionTrailOverlay(
     private var availableWidth = 0
     private var availableHeight = 0
 
-    // 横幅上的会话轨迹段：图标带状态（生成中转圈，过期或失败亮黄点），点一下展开或收起右上角的卡片。
-    private val segmentDot = StatusDotIcon(BannerColors.PROBLEM)
-    private val segmentIcon = JBLabel()
-    private val segmentLink =
-        ActionLink(ImuxBundle.message("action.overview.text")) {
-            if (store.state(key) !is TrailState.Unavailable) setExpanded(!virtualFile.trailExpanded)
-        }.apply {
-            isFocusable = false
-            setDropDownLinkIcon()
-        }
+    /** 上次刷新时是否在生成，用来判断“刚生成完”。初值 null 表示还没刷新过，打开标签页时不发提示。 */
+    private var wasLoading: Boolean? = null
 
-    /** 放进终端顶部横幅的一段，自带左侧分隔线。 */
-    val bannerSegment: JComponent =
-        JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
-            isOpaque = false
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(BannerDivider())
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(segmentIcon)
-            add(Box.createHorizontalStrut(JBUI.scale(4)))
-            add(segmentLink)
+    /**
+     * 浮动图标组里的会话轨迹按钮：生成中转圈并显示「生成中」，过期或失败显示黄色短字；卡片展开时按钮呈按下状态。
+     */
+    val tool: SessionTool =
+        object : SessionTool {
+            override fun state(): ToolState {
+                val state = store.state(key)
+                val title = ImuxBundle.message("action.overview.text")
+                return when {
+                    state is TrailState.Unavailable ->
+                        ToolState(AgentIcons.trail, title, ImuxBundle.message("action.overview.pending"), enabled = false)
+                    state is TrailState.Loading -> {
+                        val text = ImuxBundle.message("action.overview.status.loading")
+                        ToolState(AnimatedIcon.Default.INSTANCE, title, text, label = text, tone = NoticeTone.INFO, selected = virtualFile.trailExpanded)
+                    }
+                    state is TrailState.Failed -> {
+                        val text = ImuxBundle.message("action.overview.status.failed")
+                        ToolState(AgentIcons.trail, title, text, label = text, tone = NoticeTone.WARNING, selected = virtualFile.trailExpanded)
+                    }
+                    state is TrailState.Ready && state.stale -> {
+                        val text = ImuxBundle.message("action.overview.status.stale")
+                        ToolState(AgentIcons.trail, title, text, label = text, tone = NoticeTone.WARNING, selected = virtualFile.trailExpanded)
+                    }
+                    else ->
+                        ToolState(AgentIcons.trail, title, ImuxBundle.message("action.overview.toggle.description"), selected = virtualFile.trailExpanded)
+                }
+            }
+
+            override fun perform(anchor: JComponent) {
+                if (store.state(key) !is TrailState.Unavailable) setExpanded(!virtualFile.trailExpanded)
+            }
         }
 
     private val titleLabel = JBLabel().apply { font = JBUI.Fonts.label().asBold() }
@@ -167,17 +178,20 @@ internal class SessionTrailOverlay(
         refresh()
     }
 
-    /** 由编辑器在 `doLayout` 中调用；[rightReserve] 是导航轨道连同右侧留白的宽度。 */
-    fun layout(width: Int, height: Int, rightReserve: Int) {
+    /**
+     * 由编辑器在 `doLayout` 中调用；[rightReserve] 是导航轨道连同右侧留白的宽度，
+     * [topOffset] 是顶部提示条与浮动图标组占去的高度。
+     */
+    fun layout(width: Int, height: Int, rightReserve: Int, topOffset: Int) {
         val metrics = trailMetrics()
         val expanded = virtualFile.trailExpanded
         card.isVisible = expanded
         availableWidth = (width - rightReserve - metrics.margin * 2).coerceAtLeast(0)
-        availableHeight = (height - metrics.margin * 2).coerceAtLeast(0)
+        availableHeight = (height - topOffset - metrics.margin * 2).coerceAtLeast(0)
         val size = dragSize
         val desiredWidth = size?.width ?: JBUI.scale(TrailSizeSetting.width())
         val desiredHeight = size?.height ?: desiredCardHeight()
-        val bounds = trailBounds(width, height, rightReserve, expanded, desiredWidth, desiredHeight, metrics)
+        val bounds = trailBounds(width, height, rightReserve, expanded, desiredWidth, desiredHeight, metrics, topOffset)
         if (expanded) card.bounds = bounds
     }
 
@@ -211,7 +225,7 @@ internal class SessionTrailOverlay(
 
         if (expanded) store.generateIfNeeded(key, virtualFile.tabId)
         val state = store.state(key)
-        updateSegment(state)
+        updateNotices(state, expanded)
         if (expanded) render(state) else loadingTimer.stop()
         relayout()
     }
@@ -292,29 +306,30 @@ internal class SessionTrailOverlay(
         row.update(state.progress ?: ImuxBundle.message("action.overview.loading"), seconds)
     }
 
-    private fun updateSegment(state: TrailState) {
-        segmentIcon.icon =
-            when {
-                state is TrailState.Loading -> AnimatedIcon.Default.INSTANCE
-                state is TrailState.Failed || (state is TrailState.Ready && state.stale) -> RowIcon(segmentDot, AgentIcons.trail)
-                else -> AgentIcons.trail
-            }
-        val title = ImuxBundle.message("action.overview.text")
-        segmentLink.text =
-            when {
-                state is TrailState.Loading -> "$title · ${ImuxBundle.message("action.overview.status.loading")}"
-                state is TrailState.Failed -> "$title · ${ImuxBundle.message("action.overview.status.failed")}"
-                state is TrailState.Ready && state.stale -> "$title · ${ImuxBundle.message("action.overview.status.stale")}"
-                else -> title
-            }
-        segmentLink.isEnabled = state !is TrailState.Unavailable
-        val tip =
-            if (state is TrailState.Unavailable) ImuxBundle.message("action.overview.pending")
-            else ImuxBundle.message("action.overview.toggle.description")
-        segmentIcon.toolTipText = tip
-        segmentLink.toolTipText = tip
-        bannerSegment.revalidate()
-        bannerSegment.repaint()
+    /** 失败是常驻提示（带「重试」）；从生成中变为就绪且卡片收着时，提示一次已更新。 */
+    private fun updateNotices(state: TrailState, expanded: Boolean) {
+        val loading = state is TrailState.Loading
+        notices.persistent(
+            (state as? TrailState.Failed)?.let {
+                Notice(
+                    key = "trail:failed:${it.message}",
+                    tone = NoticeTone.WARNING,
+                    text = ImuxBundle.message("action.overview.notice.failed", it.message),
+                    actions = listOf(NoticeAction(ImuxBundle.message("action.overview.notice.retry")) { store.generate(key, virtualFile.tabId) }),
+                )
+            },
+        )
+        if (wasLoading == true && state is TrailState.Ready && !expanded) {
+            notices.flash(
+                Notice(
+                    key = "trail:ready",
+                    tone = NoticeTone.SUCCESS,
+                    text = ImuxBundle.message("action.overview.notice.ready", state.result.nodes.size),
+                    actions = listOf(NoticeAction(ImuxBundle.message("action.overview.notice.show")) { setExpanded(true) }),
+                ),
+            )
+        }
+        wasLoading = loading
     }
 
     /** 收起时若焦点在卡片里（比如刚选中了节点文字），交还终端，免得键盘输入落空。 */
@@ -407,8 +422,8 @@ internal class SessionTrailOverlay(
     }
 }
 
-/** 与消息导航预览卡片同一套底色与描边的圆角面板；可在左下角画拖拽手柄。 */
-private class TrailSurface(private val showGrip: Boolean = false) : JPanel() {
+/** 与消息导航预览卡片同一套底色与描边的圆角面板；可在左下角画拖拽手柄。浮动图标组也用它。 */
+internal class TrailSurface(private val showGrip: Boolean = false) : JPanel() {
     init {
         isOpaque = false
     }

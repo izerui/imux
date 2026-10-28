@@ -26,6 +26,7 @@ internal fun trailMetrics(): TrailMetrics =
  *
  * 折叠时是一个 chip × chip 的图标；展开时按期望尺寸，夹在下限与可用区域之间。
  * 正文比下限还小时以可用区域为准，任何情况下都不出现负值。
+ * [topOffset] 是上方已被占用的高度（顶部提示条与浮动图标组），面板从它下面开始。
  */
 internal fun trailBounds(
     width: Int,
@@ -35,13 +36,14 @@ internal fun trailBounds(
     desiredWidth: Int,
     desiredHeight: Int,
     metrics: TrailMetrics,
+    topOffset: Int = 0,
 ): Rectangle {
     val right = (width - rightReserve - metrics.margin).coerceAtLeast(0)
-    val top = metrics.margin
+    val top = topOffset.coerceAtLeast(0) + metrics.margin
     if (!expanded) return Rectangle((right - metrics.chip).coerceAtLeast(0), top, metrics.chip, metrics.chip)
 
     val cardWidth = fit(desiredWidth, metrics.minWidth, right - metrics.margin)
-    val cardHeight = fit(desiredHeight, metrics.minHeight, height - metrics.margin * 2)
+    val cardHeight = fit(desiredHeight, metrics.minHeight, height - top - metrics.margin)
     return Rectangle((right - cardWidth).coerceAtLeast(0), top, cardWidth, cardHeight)
 }
 

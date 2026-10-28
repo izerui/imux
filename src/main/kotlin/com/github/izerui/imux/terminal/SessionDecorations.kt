@@ -8,11 +8,10 @@ import com.intellij.openapi.extensions.ExtensionPointName
 import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
 import java.util.EventListener
-import javax.swing.JComponent
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * 其它功能给终端会话加的装饰：标签与会话树上的标记、终端顶部横幅右端的一段。
+ * 其它功能给终端会话加的装饰：标签与会话树上的标记、终端右上角浮动图标组里的一个按钮。
  *
  * 现有代码只认这个接口，不认识具体功能；实现通过扩展点
  * `com.github.izerui.imux.sessionDecorator` 注册。实现必须很快返回，
@@ -25,14 +24,16 @@ interface SessionDecorator {
     ): Boolean
 
     /**
-     * 放在终端顶部横幅右端的一段，与原有横幅同处一行；不需要时返回 null。
-     * 组件应透明、自带左侧分隔，自己负责刷新与显隐，随 [parent] 一起释放。
+     * 放进终端右上角浮动图标组的按钮；不需要时返回 null。
+     * 按钮的样子由 [SessionTool.state] 按当前状态算出；装饰变化时编辑器会重新询问。
+     * 需要用户注意的事（断线、重连中、刚连上）通过 [notices] 发到终端顶部。随 [parent] 一起释放。
      */
-    fun createBannerSegment(
+    fun createTool(
         project: Project,
         file: AgentTerminalVirtualFile,
         parent: Disposable,
-    ): JComponent?
+        notices: NoticeSink,
+    ): SessionTool?
 }
 
 /** 装饰变化。只在 EDT 上发布，订阅方可直接操作 Swing。 */
@@ -56,11 +57,12 @@ object SessionDecorations {
         tabId: String,
     ): Boolean = collectSafely(EP_NAME.extensionList, false) { it.isPhoneConnected(project, tabId) }.any { it }
 
-    fun bannerSegments(
+    fun tools(
         project: Project,
         file: AgentTerminalVirtualFile,
         parent: Disposable,
-    ): List<JComponent> = collectSafely(EP_NAME.extensionList, null) { it.createBannerSegment(project, file, parent) }.filterNotNull()
+        notices: NoticeSink,
+    ): List<SessionTool> = collectSafely(EP_NAME.extensionList, null) { it.createTool(project, file, parent, notices) }.filterNotNull()
 
     /** 由装饰实现在 EDT 上调用。 */
     fun changed() {

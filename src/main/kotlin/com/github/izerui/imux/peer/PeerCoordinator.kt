@@ -46,6 +46,23 @@ data class PeerStatus(
     val lastReviewPassed: Boolean,
 )
 
+enum class PeerOutcomeKind { PASSED, FEEDBACK, FAILED }
+
+/**
+ * 最近一轮审查的结果，终端顶部的结果 chip 靠它显示。
+ *
+ * 只在下一轮审查真正开始时被替换：主会话开始新一轮工作（[PeerCoordinator.onTurnStarted]）不清，
+ * 单次审查结束自动解绑也不清——那时 [PeerCoordinator.status] 已经是 null，结果仍要看得到。
+ * 用户主动停止结对、会话迁移时才丢弃。
+ */
+data class PeerOutcome(
+    val kind: PeerOutcomeKind,
+    val targetAgentType: AgentType,
+    val round: Int,
+    val finishedAtMillis: Long,
+    val detail: String? = null,
+)
+
 internal data class PeerMcpConfig(
     val endpoint: IdeaMcpEndpoint?,
     val guidance: String?,
@@ -111,6 +128,7 @@ class PeerCoordinator internal constructor(
     private val passedSessions = ConcurrentHashMap.newKeySet<String>()
     private data class OneShotInfo(val generation: Long, val instruction: String?)
     private val oneShotSessions = ConcurrentHashMap<String, OneShotInfo>()
+    private val outcomes = ConcurrentHashMap<String, PeerOutcome>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
 
     fun addStateListener(
@@ -130,6 +148,8 @@ class PeerCoordinator internal constructor(
                 lastReviewPassed = sessionKey in passedSessions,
             )
         }
+
+    fun lastOutcome(sessionKey: String): PeerOutcome? = outcomes[sessionKey]
 
     internal fun feedbackHints(sessionKey: String, outputModel: TerminalOutputModel): List<PeerFeedbackHint> {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
@@ -153,6 +173,7 @@ class PeerCoordinator internal constructor(
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val cancelledRun = unbindInner(sessionKey)
+        outcomes.remove(sessionKey)
         cancelledRun?.killProcess()
         LOG.info("结对编程：解绑 $sessionKey")
         notifyStateChanged(sessionKey)
@@ -298,6 +319,7 @@ class PeerCoordinator internal constructor(
         feedbackHints.remove(from)
         sentFeedback.remove(from)
         passedSessions.remove(from)
+        outcomes.remove(from)
         val r1 = guards.remove(from)?.cancelAndDetach()
         bindings.remove(to)
         roundCounts.remove(to)
@@ -305,6 +327,7 @@ class PeerCoordinator internal constructor(
         feedbackHints.remove(to)
         sentFeedback.remove(to)
         passedSessions.remove(to)
+        outcomes.remove(to)
         oneShotSessions.remove(to)
         val r2 = guards.remove(to)?.cancelAndDetach()
         if (binding != null && !wasOneShot) {
@@ -327,6 +350,7 @@ class PeerCoordinator internal constructor(
         feedbackHints.clear()
         sentFeedback.clear()
         passedSessions.clear()
+        outcomes.clear()
         oneShotSessions.clear()
         guardsToCancel.forEach { it.cancel() }
     }
@@ -341,7 +365,11 @@ class PeerCoordinator internal constructor(
 
         run.reviewing.set(true)
         withContext(edt) {
-            if (runIsCurrent(mainSessionKey, run, guard)) notifyStateChanged(mainSessionKey)
+            if (runIsCurrent(mainSessionKey, run, guard)) {
+                // 新一轮真正开始才换掉上一轮结果；主会话开始工作（onTurnStarted）时旧结果仍然有效
+                outcomes.remove(mainSessionKey)
+                notifyStateChanged(mainSessionKey)
+            }
         }
 
         if (!runIsCurrent(mainSessionKey, run, guard)) return
@@ -368,7 +396,10 @@ class PeerCoordinator internal constructor(
         val command = invocation.command
         val environment = invocation.environment
         val completedRounds = roundCounts[mainSessionKey]?.get() ?: 0
-        run.startProgress(completedRounds + 1)
+        val round = completedRounds + 1
+        run.startProgress(round)
+        fun outcome(kind: PeerOutcomeKind, detail: String? = null) =
+            PeerOutcome(kind, currentBinding.targetAgentType, round, System.currentTimeMillis(), detail)
         LOG.info("结对编程：已注入 $completedRounds 轮，调用 ${currentBinding.targetAgentType.cli}")
 
         if (!runIsCurrent(mainSessionKey, run, guard)) return
@@ -410,7 +441,9 @@ class PeerCoordinator internal constructor(
                 if (shrunk.length >= prompt.length) {
                     LOG.warn("结对编程：上下文溢出但对话已无法进一步缩减")
                     withContext(edt) {
-                        if (!project.isDisposed) notifyCliError(currentBinding, error.message ?: error.javaClass.simpleName)
+                        val detail = error.message ?: error.javaClass.simpleName
+                        if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.FAILED, detail))
+                        if (!project.isDisposed) notifyCliError(currentBinding, detail)
                     }
                     return
                 }
@@ -424,7 +457,9 @@ class PeerCoordinator internal constructor(
             if (error != null) {
                 LOG.warn("结对编程：CLI 调用失败", error)
                 withContext(edt) {
-                    if (!project.isDisposed) notifyCliError(currentBinding, error.message ?: error.javaClass.simpleName)
+                    val detail = error.message ?: error.javaClass.simpleName
+                    if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.FAILED, detail))
+                    if (!project.isDisposed) notifyCliError(currentBinding, detail)
                 }
                 return
             }
@@ -437,16 +472,21 @@ class PeerCoordinator internal constructor(
             LOG.info("结对编程：副驾驶无有效反馈，本轮结束")
             val isExplicitPass = rawOutput?.trim().orEmpty().let { it.isNotEmpty() && PASS_PATTERN.matches(it) }
             if (isExplicitPass) run.passed = true
+            withContext(edt) {
+                if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.PASSED))
+            }
             return
         }
 
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
-            if (peerAutoInject()) {
-                injectFeedback(mainSessionKey, feedback, run, guard)
-            } else {
-                stageFeedback(mainSessionKey, feedback)
-            }
+            val delivered =
+                if (peerAutoInject()) {
+                    injectFeedback(mainSessionKey, feedback, run, guard)
+                } else {
+                    stageFeedback(mainSessionKey, feedback)
+                }
+            if (delivered) recordOutcome(mainSessionKey, outcome(PeerOutcomeKind.FEEDBACK))
         }
     }
 
@@ -458,6 +498,14 @@ class PeerCoordinator internal constructor(
         !run.cancelled.get() &&
                 guard.isActive(run) &&
                 bindings[sessionKey]?.generation == run.bindingGeneration
+
+    private fun recordOutcome(
+        sessionKey: String,
+        outcome: PeerOutcome,
+    ) {
+        outcomes[sessionKey] = outcome
+        notifyStateChanged(sessionKey)
+    }
 
     private fun notifyStateChanged(sessionKey: String) {
         if (disposed) return
@@ -547,8 +595,8 @@ class PeerCoordinator internal constructor(
         prompt: String,
         run: PeerRun,
         guard: PeerSessionGuard,
-    ) {
-        if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
+    ): Boolean {
+        if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return false
         var hint: PeerFeedbackHint? = null
         // 一直等到终端能安全接收为止：**时间不是终止条件，逻辑过期才是**。
         //
@@ -560,7 +608,7 @@ class PeerCoordinator internal constructor(
         // 重试循环必须套在两条发送路径外面。只套住 sendAutoFeedback 分支的话，
         // 生产路径（该参数为 null）只会尝试一次，终端那一刻没开括号粘贴就直接丢反馈。
         while (true) {
-            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return
+            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return false
             val delivered =
                 if (sendAutoFeedback != null) {
                     sendAutoFeedback.invoke(mainSessionKey, prompt)
@@ -571,7 +619,7 @@ class PeerCoordinator internal constructor(
                         // 轮次计数与 peerInjectedSessions 都在循环之后，这里一个都不动：
                         // 没送出去的反馈不该占掉用户的一轮审查额度。
                         (onFeedbackUndelivered ?: ::notifyFeedbackUndelivered).invoke(mainSessionKey, prompt)
-                        return
+                        return false
                     }
                     val outputModel = view.outputModels.active.value
                     val sendOffset = outputModel.endOffset.toAbsolute()
@@ -592,17 +640,18 @@ class PeerCoordinator internal constructor(
             while (history.size > MAX_FEEDBACK_HINTS) history.removeFirst()
             notifyStateChanged(mainSessionKey)
         }
+        return true
     }
 
     private fun stageFeedback(
         mainSessionKey: String,
         prompt: String,
-    ) {
+    ): Boolean {
         val view = viewOf(mainSessionKey)
         if (view == null) {
             LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
             (onFeedbackUndelivered ?: ::notifyFeedbackUndelivered).invoke(mainSessionKey, prompt)
-            return
+            return false
         }
         val sent = tryStagePeerFeedback(view.createSendTextBuilder(), prompt)
         if (sent) {
@@ -612,6 +661,7 @@ class PeerCoordinator internal constructor(
             LOG.warn("结对编程：终端未就绪（括号粘贴模式未开启），反馈未暂存 $mainSessionKey")
             (onFeedbackUndelivered ?: { _, text -> notifyFeedbackNotReady(text) }).invoke(mainSessionKey, prompt)
         }
+        return sent
     }
 
     /**

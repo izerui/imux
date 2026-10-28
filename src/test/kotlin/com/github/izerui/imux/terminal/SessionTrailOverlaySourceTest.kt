@@ -13,10 +13,8 @@ class SessionTrailOverlaySourceTest {
     fun `轨迹面板叠在终端上层，不进入终端布局`() {
         assertTrue(editor.normalized.contains("setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)"))
         assertTrue("终端仍占满正文", editor.normalized.contains("terminal.setBounds(0, 0, width, height)"))
-        assertTrue(
-            "面板让出导航轨道",
-            editor.normalized.contains("trailOverlay.layout(width, height, navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET))"),
-        )
+        assertTrue("面板让出导航轨道", editor.normalized.contains("val rightReserve = navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET)"))
+        assertTrue(editor.normalized.contains("trailOverlay.layout(width, height, rightReserve, stripY + strip.height)"))
     }
 
     @Test
@@ -63,7 +61,7 @@ class SessionTrailOverlaySourceTest {
     @Test
     fun `编辑器把正文、滚动条和叠加控件接到收起监听，随编辑器切换重绑并在早退前解绑`() {
         val create = editor.bodyAfter("private fun createEditorComponent()", '{')
-        for (target in listOf("navigatorComponent", "scrollButton", "peerBanner")) {
+        for (target in listOf("navigatorComponent", "scrollButton", "notices", "resultChip")) {
             assertTrue("点 $target 也算点在轨迹之外", create.contains("trailOutsideClicks.attach($target)"))
         }
         assertTrue(

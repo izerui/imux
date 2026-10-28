@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>imux · 浮动图标组尺寸与状态对比</title>
+<style>
+  :root { --page:#eceef2; --paper:#fff; --ink:#1f2329; --ink2:#5b616e; --rule:#d9dce3; --mark:#d6336c; }
+  .dark { --page:#16171a; --paper:#202226; --ink:#e3e5e9; --ink2:#9a9fa9; --rule:#33363c; --mark:#f06595; }
+  .ide { --bg:#ffffff; --panel:#f7f8fa; --border:#ebecf0; --text:#1e1f22; --dim:#6c707e; --link:#3574f0; --icon:#6c707e;
+         --hover:#dfe1e5; --green:#369650; --yellow:#c27d04; --term:#2b2d30; --termdim:#8c8f96;
+         --info:#edf3ff; --infoLine:#c2d6fc; --warn:#fff3df; --warnLine:#fed277; --ok:#e9f7ec; --okLine:#afdbb8;
+         --float:#f7f8fa; --floatLine:#d1d5db; --rail:#e3e5ea; }
+  .dark .ide { --bg:#1e1f22; --panel:#2b2d30; --border:#393b40; --text:#dfe1e5; --dim:#8c8f96; --link:#548af7; --icon:#ced0d6;
+         --hover:#393b40; --green:#5fb865; --yellow:#e0b153; --term:#bcbec4; --termdim:#7a7e85;
+         --info:#25324d; --infoLine:#35538f; --warn:#3d3223; --warnLine:#6b5733; --ok:#253627; --okLine:#3f5f42;
+         --float:#2b2d30; --floatLine:#393b40; --rail:#2b2d30; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--page); color:var(--ink); font: 14px/1.6 Inter, -apple-system, "PingFang SC", sans-serif; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 32px 32px 80px; }
+  h1 { font-size: 24px; margin: 0 0 6px; font-weight: 650; }
+  .lead { color: var(--ink2); margin: 0 0 16px; max-width: 900px; }
+  .controls { display:flex; flex-wrap:wrap; gap: 10px 22px; background: var(--paper); border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; position: sticky; top: 8px; z-index: 5; }
+  .grp { display:flex; flex-wrap: wrap; align-items:center; gap: 6px; }
+  .grp .lab { color: var(--ink2); font-size: 13px; }
+  .cbtn { font: inherit; font-size: 13px; border:1px solid var(--rule); background: transparent; color: var(--ink); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .cbtn.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .item { margin-bottom: 26px; }
+  .item h3 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+  .item h3 .rec { font-size: 12px; color: #fff; background: var(--mark); border-radius: 4px; padding: 1px 6px; margin-left: 6px; font-weight: 500; }
+  .item p { margin: 0 0 8px; color: var(--ink2); font-size: 13.5px; }
+
+  .ide { font: 13px/1.4 Inter, -apple-system, "PingFang SC", sans-serif; color: var(--text); background: var(--bg); border-radius: 9px;
+    position: relative; box-shadow: 0 0 0 1px var(--border); overflow: hidden; transition: width .25s; }
+  .tabs { height: 34px; display:flex; align-items:center; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); color: var(--text); gap: 6px; }
+  .body { position: relative; height: 150px; }
+  .term { position:absolute; inset: 0; padding: 10px 16px; font: 12.5px/1.7 "JetBrains Mono", Menlo, monospace; color: var(--term); }
+  .term .d { color: var(--termdim); }
+  .term .l { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .rail { position:absolute; right: 14px; top: 0; bottom: 0; width: 22px; background: var(--rail); opacity: .6; }
+  .bar { position:absolute; left:0; right:0; top:0; display:flex; align-items:center; gap: 8px; height: 32px; padding: 0 14px; border-bottom: 1px solid; font-size: 13px; z-index: 3; }
+  .bar.warn { background: var(--warn); border-color: var(--warnLine); }
+  .bar .link { color: var(--link); margin-left: 6px; }
+
+  .float { position:absolute; right: 44px; display:flex; align-items:center; background: var(--float); border: 1px solid var(--floatLine); border-radius: 8px; z-index: 4; }
+  .ico { display:inline-flex; width:16px; height:16px; flex:none; position: relative; color: var(--icon); }
+  .ico svg { width:16px; height:16px; }
+  .badge { position:absolute; right:-2px; top:-2px; width:6px; height:6px; border-radius:50%; box-shadow: 0 0 0 1.5px var(--float); }
+  .badge.g { background: var(--green); } .badge.y { background: var(--yellow); }
+  .spin { width:12px; height:12px; border:2px solid color-mix(in srgb, var(--icon) 30%, transparent); border-top-color: var(--icon); border-radius:50%; animation: spin .9s linear infinite; flex:none; margin: 2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 现状：22px 按钮、2px 边距、无间距、角标 */
+  .s0 { padding: 2px; gap: 0; top: 8px; }
+  .s0 .b { width: 22px; height: 22px; display:inline-flex; align-items:center; justify-content:center; border-radius: 4px; }
+  .s0 .chip { display:inline-flex; align-items:center; gap: 5px; height: 22px; padding: 0 8px 0 6px; color: var(--dim); font-size: 12px; }
+
+  /* A / B：28px 按钮、4px 间距、4px 边距 */
+  .sA, .sB { padding: 4px; gap: 4px; top: 8px; }
+  .sA .b, .sB .b { height: 28px; min-width: 28px; display:inline-flex; align-items:center; justify-content:center; gap: 6px; border-radius: 6px; font-size: 13px; }
+  .sA .b.on { padding: 0 10px 0 8px; background: var(--ok); box-shadow: inset 0 0 0 1px var(--okLine); color: var(--text); }
+  .sA .b.run { padding: 0 10px 0 8px; background: var(--info); box-shadow: inset 0 0 0 1px var(--infoLine); }
+  .sA .b.bad { padding: 0 10px 0 8px; background: var(--warn); box-shadow: inset 0 0 0 1px var(--warnLine); }
+  .sA .b.icononly { padding: 0; width: 28px; }
+  .sB .b { width: 28px; }
+  .sB .b.on { background: var(--ok); box-shadow: inset 0 0 0 1px var(--okLine); }
+  .sB .b.run { background: var(--info); box-shadow: inset 0 0 0 1px var(--infoLine); }
+  .sB .b.bad { background: var(--warn); box-shadow: inset 0 0 0 1px var(--warnLine); }
+  .sA .chip, .sB .chip { display:inline-flex; align-items:center; gap: 6px; height: 28px; padding: 0 8px 0 6px; color: var(--dim); font-size: 12.5px; }
+  .sep { width:1px; height: 16px; background: var(--floatLine); }
+  .tiny { font-size: 12px; color: var(--ink2); margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>浮动图标组：尺寸与“开着”的显示</h1>
+  <p class="lead">同一个终端、同一个场景，上面是现在插件里的样子，下面是两种改法。切场景和宽度对比；窄屏时 A 的文字会先退回成图标，四个入口一直都在。</p>
+  <div class="controls">
+    <div class="grp"><span class="lab">场景</span>
+      <button class="cbtn on" data-scene="idle">都没开</button>
+      <button class="cbtn" data-scene="pair">开了结对</button>
+      <button class="cbtn" data-scene="run">审查中</button>
+      <button class="cbtn" data-scene="result">审查完（结果收进来）</button>
+      <button class="cbtn" data-scene="resultbusy">审查完＋手机在线</button>
+      <button class="cbtn" data-scene="busy">结对＋手机在线＋轨迹过期</button>
+      <button class="cbtn" data-scene="drop">手机断线</button>
+    </div>
+    <div class="grp"><span class="lab">终端宽度</span>
+      <button class="cbtn on" data-w="1100">宽</button>
+      <button class="cbtn" data-w="620">半屏</button>
+      <button class="cbtn" data-w="420">窄分屏</button>
+      <button class="cbtn" data-w="340">很窄</button>
+      <button class="cbtn" data-w="260">极窄</button>
+    </div>
+    <div class="grp"><span class="lab">主题</span>
+      <button class="cbtn on" data-theme="dark">暗色</button>
+      <button class="cbtn" data-theme="light">亮色</button>
+    </div>
+  </div>
+  <div id="items"></div>
+</div>
+<script>
+const SVG = {
+  pair: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M5.5 9.5h-3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3"/><rect fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" x="5.5" y="5.5" width="9" height="9" rx="1"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M8 8.5l1.5 1.5L8 11.5M11 11.5h1.5"/>',
+  talk: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M2.5 2.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5l-3 2.5v-2.5h-2a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M6.6 5.6a1.5 1.5 0 1 1 2.1 1.4c-.45.2-.7.5-.7.95v.3"/><circle fill="currentColor" cx="8" cy="9.75" r=".6"/>',
+  trail: '<rect fill="none" stroke="currentColor" x="1.5" y="2.5" width="13" height="11" rx="1"/><circle fill="none" stroke="currentColor" cx="5" cy="6" r="1.2"/><circle fill="none" stroke="currentColor" cx="5" cy="10" r="1.2"/><path fill="none" stroke="currentColor" stroke-linecap="round" d="M5 7.2v1.6M8 6h4M8 10h3"/>',
+  phone: '<rect x="4.5" y="1.5" width="7" height="13" rx="1.5" fill="none" stroke="currentColor"/><path d="M7 12H9" stroke="currentColor" stroke-linecap="round"/>',
+  review: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M7.5 12.5h-5a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3.5"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M4 5.5l1.5 1.5L4 8.5"/><circle fill="none" stroke="currentColor" cx="11" cy="11" r="2.5"/><path fill="none" stroke="currentColor" stroke-linecap="round" d="M12.8 12.8l1.7 1.7"/>',
+  verified: '<path fill="none" stroke="var(--green)" stroke-linecap="round" stroke-linejoin="round" d="M8 1.5l1.6 1.2 2-.1.6 1.9 1.6 1.2-.6 1.9.6 1.9-1.6 1.2-.6 1.9-2-.1L8 14.5l-1.6-1.2-2 .1-.6-1.9-1.6-1.2.6-1.9-.6-1.9 1.6-1.2.6-1.9 2 .1z"/><path fill="none" stroke="var(--green)" stroke-linecap="round" stroke-linejoin="round" d="M5.6 8.1l1.6 1.6 3.2-3.3"/>',
+  warning: '<path fill="none" stroke="var(--yellow)" stroke-linejoin="round" d="M8 1.8l6.6 11.7H1.4z"/><path stroke="var(--yellow)" stroke-linecap="round" d="M8 6v3.6"/><circle fill="var(--yellow)" cx="8" cy="11.6" r=".75"/>',
+  info: '<circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--link)"/><path d="M8 7v4" stroke="var(--link)" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".75" fill="var(--link)"/>',
+};
+const ic = (n, badge) => `<span class="ico"><svg viewBox="0 0 16 16">${SVG[n]}</svg>${badge ? `<span class="badge ${badge}"></span>` : ''}</span>`;
+const spin = '<span class="spin"></span>';
+let scene = 'idle', W = 1100, secs = 12;
+setInterval(() => { secs++; render(); }, 1000);
+
+/* 每个场景里四个功能的状态 */
+function state() {
+  const s = { pair: 'off', talk: 'off', trail: 'off', phone: 'off', result: null, bar: null };
+  if (scene === 'pair') s.pair = 'on';
+  if (scene === 'run') s.pair = 'run';
+  if (scene === 'result') { s.pair = 'on'; s.result = true; }
+  if (scene === 'resultbusy') { s.pair = 'on'; s.phone = 'on'; s.result = true; }
+  if (scene === 'busy') { s.pair = 'on'; s.phone = 'on'; s.trail = 'bad'; }
+  if (scene === 'drop') { s.pair = 'on'; s.phone = 'bad'; s.bar = '手机连接已断开 · 企业微信「研发助手」，消息暂时收不到'; }
+  return s;
+}
+const LABEL = { pair: { on: 'Codex', run: () => `审查中 ${secs}s` }, phone: { on: '研发助手', bad: '已断开' }, trail: { bad: '已过期' }, talk: { on: '讨论中' } };
+
+function current(s, narrow) {
+  const dot = st => st === 'on' ? 'g' : st === 'bad' ? 'y' : '';
+  const b = k => `<span class="b">${s[k] === 'run' ? spin : ic(k, dot(s[k]))}</span>`;
+  const chip = s.result ? `<span class="chip">${ic('verified')}${narrow ? '' : '已审查，无新反馈 · 14:32'}</span><span class="sep"></span>` : '';
+  return chip + ['pair', 'talk', 'trail', 'phone'].map(b).join('');
+}
+/*
+ * A：开着的功能变成「图标＋短字」。按真实渲染宽度逐级收缩，用户最在意的结对名字最后才收：
+ * 结果完整 → 结果短文案 → 收其它功能的字（手机、轨迹、讨论）→ 结果只留图标 → 收起结果 → 最后收结对名字。
+ */
+function optA(s, room) {
+  const keys = ['pair', 'talk', 'trail', 'phone'];
+  const text = k => { const l = LABEL[k] && LABEL[k][s[k]]; return typeof l === 'function' ? l() : l; };
+  const icon = k => s[k] === 'run' ? spin : ic(k);
+  const cls = k => s[k] === 'on' ? 'on' : s[k] === 'run' ? 'run' : s[k] === 'bad' ? 'bad' : '';
+  const html = (labelled, result) => {
+    const b = k => { const t = labelled.includes(k) ? text(k) : null; return `<span class="b ${cls(k)} ${t ? '' : 'icononly'}">${icon(k)}${t ? `<span>${t}</span>` : ''}</span>`; };
+    const res = { full: '已审查，无新反馈 · 14:32', short: '无新反馈', icon: '' }[result];
+    const chip = s.result && result !== 'hidden' ? `<span class="chip">${ic('verified')}${res}</span><span class="sep"></span>` : '';
+    return chip + keys.map(b).join('');
+  };
+  const withText = keys.filter(text);
+  const steps = [];
+  const others = ['phone', 'trail', 'talk'];
+  steps.push([withText, 'full'], [withText, 'short']);
+  let current = withText;
+  for (const k of others) if (current.includes(k)) { current = current.filter(x => x !== k); steps.push([current, 'short']); }
+  steps.push([current, 'icon'], [current, 'hidden']);
+  steps.push([current.filter(k => k !== 'pair'), 'hidden']);
+  for (const [labelled, result] of steps) {
+    const h = html(labelled, result);
+    if (measure(h) <= room) return h;
+  }
+  return html([], 'hidden');
+}
+/* 放进隐藏的同样式图标组里量真实宽度 */
+let meter;
+function measure(h) {
+  if (!meter) {
+    const wrap = document.createElement('div');
+    wrap.className = 'ide'; wrap.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden';
+    meter = document.createElement('div'); meter.className = 'float sA'; meter.style.position = 'static'; meter.style.display = 'inline-flex';
+    wrap.appendChild(meter); document.body.appendChild(wrap);
+  }
+  meter.innerHTML = h;
+  return meter.getBoundingClientRect().width;
+}
+/* B：不加字，整个按钮染色 */
+function optB(s, narrow) {
+  const cls = k => s[k] === 'on' ? 'on' : s[k] === 'run' ? 'run' : s[k] === 'bad' ? 'bad' : '';
+  const b = k => `<span class="b ${cls(k)}">${s[k] === 'run' ? spin : ic(k)}</span>`;
+  const chip = s.result ? `<span class="chip">${ic('verified')}${narrow ? '无新反馈' : '已审查，无新反馈 · 14:32'}</span><span class="sep"></span>` : '';
+  return chip + ['pair', 'talk', 'trail', 'phone'].map(b).join('');
+}
+
+const TERM = `<div class="l d">● Update(src/main/kotlin/…/PhoneTool.kt)</div><div class="l d">  ⎿  Updated with 18 additions and 11 removals</div><div class="l">● 已完成：窄屏时两段都只保留图标，阈值集中在 BannerParts.kt。</div><div class="l">❯ </div>`;
+function ide(inner, cls, s) {
+  const top = s.bar ? 40 : 8;
+  return `<div class="ide" style="width:${W}px"><div class="tabs">${ic('pair')}<span>imux · Claude Code</span></div>
+    <div class="body"><div class="term">${s.bar ? '<div style="height:30px"></div>' : ''}${TERM}</div><div class="rail"></div>
+    ${s.bar ? `<div class="bar warn">${ic('warning')}<span>${s.bar}</span><span class="link">重连</span><span class="link">换绑</span></div>` : ''}
+    <div class="float ${cls}" style="top:${top}px">${inner}</div></div></div>`;
+}
+function render() {
+  const s = state(), narrow = W < 600, room = W - 44 - 8;
+  document.getElementById('items').innerHTML = `
+    <div class="item"><h3>现状</h3><p>22px 按钮、按钮之间没有间距；状态只靠图标右上角 6px 的小圆点，开了结对和没开几乎一样。</p>${ide(current(s, narrow), 's0', s)}</div>
+    <div class="item"><h3>A · 放大＋开着的显示名字<span class="rec">推荐</span></h3><p>按钮 28px、间距 4px。开着的功能变成「图标＋短字」并带浅色底：结对显示伙伴名，审查中显示秒数，手机显示机器人名，出问题显示黄色。没开的仍只是图标。宽度不够时短字从左往右依次退回图标。</p>${ide(optA(s, room), 'sA', s)}</div>
+    <div class="item"><h3>B · 放大＋整个按钮染色</h3><p>同样放大，不加字，开着的按钮整个铺上绿 / 蓝 / 黄底。宽度永远不变，但“和谁结对”“连的哪个机器人”要悬停才知道。</p>${ide(optB(s, narrow), 'sB', s)}</div>`;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.cbtn'); if (!b) return;
+  const grp = b.parentElement; grp.querySelectorAll('.cbtn').forEach(x => x.classList.toggle('on', x === b));
+  if (b.dataset.scene) scene = b.dataset.scene;
+  if (b.dataset.w) W = +b.dataset.w;
+  if (b.dataset.theme) document.body.classList.toggle('dark', b.dataset.theme === 'dark');
+  render();
+});
+const q = new URLSearchParams(location.search);
+if (q.get('scene')) scene = q.get('scene');
+if (q.get('w')) W = +q.get('w');
+document.body.classList.toggle('dark', q.get('theme') !== 'light');
+document.querySelectorAll('[data-scene]').forEach(x => x.classList.toggle('on', x.dataset.scene === scene));
+document.querySelectorAll('[data-w]').forEach(x => x.classList.toggle('on', +x.dataset.w === W));
+document.querySelectorAll('[data-theme]').forEach(x => x.classList.toggle('on', (x.dataset.theme === 'light') === (q.get('theme') === 'light')));
+render();
+</script>
+</body>
+</html>

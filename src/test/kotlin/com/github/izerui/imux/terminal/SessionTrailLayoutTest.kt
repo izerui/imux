@@ -36,6 +36,14 @@ class SessionTrailLayoutTest {
     }
 
     @Test
+    fun `面板从提示条和浮动图标组下面开始且不越过底部`() {
+        val bounds = trailBounds(1000, 600, rightReserve, expanded = true, 360, 900, metrics, topOffset = 100)
+
+        assertEquals(100 + 8, bounds.y)
+        assertEquals(600 - 8, bounds.y + bounds.height)
+    }
+
+    @Test
     fun `期望尺寸小于下限时取下限`() {
         val bounds = trailBounds(1000, 600, rightReserve, expanded = true, 10, 10, metrics)
 
