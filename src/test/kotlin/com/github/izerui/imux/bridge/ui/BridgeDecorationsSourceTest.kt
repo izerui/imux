@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -39,7 +40,7 @@ class BridgeDecorationsSourceTest {
         val refresh = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter("private fun refresh()", '{')
         assertTrue(refresh.contains("tone = NoticeTone.WARNING"))
         assertTrue(refresh.contains("RobotManager.getInstance().reconnect(current.model.robotId)"))
-        assertTrue(refresh.contains("showMenu(current.model, anchor)"))
+        assertTrue("提示上的换绑直接弹出机器人列表", refresh.contains("showRebindMenu(anchor)"))
         assertTrue("连接中的提示不能收起", refresh.contains("closable = false"))
         assertTrue(refresh.contains("phoneJustConnected(noticeState, current)"))
     }
@@ -54,6 +55,14 @@ class BridgeDecorationsSourceTest {
         assertTrue(tool.contains("SessionDecorationsListener.TOPIC"))
         assertTrue(tool.contains("PhoneOperations.bind("))
         assertTrue(tool.contains("PhoneOperations.disconnect("))
+    }
+
+    @Test
+    fun `换绑的机器人平铺在菜单里，不再套二级菜单`() {
+        assertFalse(tool.contains("DefaultActionGroup(ImuxBundle.message(\"bridge.banner.rebind\"), true)"))
+        val menu = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter("private fun showMenu(", '{')
+        assertTrue(menu.contains("Separator.create(ImuxBundle.message(\"bridge.banner.rebind\"))"))
+        assertTrue(menu.contains("addRobots(group)"))
     }
 
     @Test

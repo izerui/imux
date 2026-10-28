@@ -199,7 +199,7 @@ class PhoneTool(
                         actions =
                             listOf(
                                 NoticeAction(ImuxBundle.message("bridge.settings.reconnect")) { RobotManager.getInstance().reconnect(current.model.robotId) },
-                                NoticeAction(ImuxBundle.message("bridge.banner.rebind")) { anchor -> showMenu(current.model, anchor) },
+                                NoticeAction(ImuxBundle.message("bridge.banner.rebind")) { anchor -> showRebindMenu(anchor) },
                             ),
                     )
                 else -> null
@@ -223,18 +223,31 @@ class PhoneTool(
         current: PhoneBannerModel,
         anchor: JComponent,
     ) {
-        val rebind = DefaultActionGroup(ImuxBundle.message("bridge.banner.rebind"), true)
-        phoneMenuFor(file.tabId).filterIsInstance<PhoneMenuEntry.Robot>().forEach { entry ->
-            rebind.add(phoneAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
-        }
         val group = DefaultActionGroup()
         group.add(Separator.create(ImuxBundle.message("bridge.banner.hint")))
-        group.add(rebind)
+        // 可换的机器人直接平铺在「换绑机器人」分隔标题下，点一下就换，不用再展开二级菜单
+        group.add(Separator.create(ImuxBundle.message("bridge.banner.rebind")))
+        addRobots(group)
+        group.addSeparator()
         group.add(phoneAction(ImuxBundle.message("bridge.settings.reconnect")) { RobotManager.getInstance().reconnect(current.robotId) })
         group.add(phoneAction(ImuxBundle.message("bridge.action.disconnect")) { PhoneOperations.disconnect(project, current.robotId) })
         group.addSeparator()
         group.add(phoneAction(ImuxBundle.message("bridge.banner.manage")) { showRobotSettings(project) })
         popup(group, anchor)
+    }
+
+    /** 顶部异常提示上的「换绑」：直接弹出可选的机器人，选一个就换。 */
+    private fun showRebindMenu(anchor: JComponent) {
+        val group = DefaultActionGroup()
+        group.add(Separator.create(ImuxBundle.message("bridge.banner.rebind")))
+        addRobots(group)
+        popup(group, anchor)
+    }
+
+    private fun addRobots(group: DefaultActionGroup) {
+        phoneMenuFor(file.tabId).filterIsInstance<PhoneMenuEntry.Robot>().forEach { entry ->
+            group.add(phoneAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
+        }
     }
 
     /** 未连接时的菜单：说明、可选的机器人、添加机器人、管理。开关关着时不实例化中枢，只引导去设置里开启。 */
