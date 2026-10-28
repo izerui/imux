@@ -577,7 +577,7 @@ function ContextMenu({ ctx }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Dot c={robot.status === 'bound' ? 'var(--ide-yellow)' : 'var(--ide-green)'} />企业微信 · {robot.name}</span>
                 <span style={{ color: 'inherit', opacity: .7, fontSize: 11, paddingLeft: 13 }}>
-                  {robot.status === 'bound' ? (robot.boundTab === menu.tab ? '已连接此会话' : `正在连接：${ctx.tabs.find(t => t.id === robot.boundTab).title}`) : '空闲'}
+                  {robot.status === 'bound' ? (robot.boundTab === menu.tab ? '已连接此会话' : `已连接其他会话：${ctx.tabs.find(t => t.id === robot.boundTab).title}`) : '空闲'}
                 </span>
               </div>,
               () => robot.boundTab !== menu.tab && A.bind(menu.tab),
@@ -597,7 +597,7 @@ function ReplaceDialog({ ctx }) {
     <Modal width={430}>
       <div style={{ fontWeight: 600, marginBottom: 10 }}>替换「{robot.name}」的连接？</div>
       <div style={{ lineHeight: 1.7, color: '#c9cdd4' }}>
-        它正在连接「{from.title}」。改连到「{to.title}」后：<br />
+        它已连接「{from.title}」。改连到「{to.title}」后：<br />
         · 「{from.title}」继续在 IDE 里运行，只是不再收发手机消息<br />
         · 手机聊天里会提示连接已切换，旧会话未发出的内容不会转到新会话
       </div>
