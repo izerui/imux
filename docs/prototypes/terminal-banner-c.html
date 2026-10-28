@@ -124,6 +124,14 @@
   .float.hidden { opacity: 0; pointer-events: none; }
   .fb { width: 26px; height: 24px; display:inline-flex; align-items:center; justify-content:center; border-radius: 5px; cursor:pointer; }
   .fb:hover { background: var(--hover); } .fb.on { background: var(--pressed); }
+  /* 上一轮审查结果：绿条收起后收进图标组左边，留到下一轮开始 */
+  .last { display:inline-flex; align-items:center; gap: 5px; height: 24px; padding: 0 8px 0 6px; border-radius: 5px; cursor: pointer;
+    color: var(--dim); font-size: 12.5px; white-space: nowrap; animation: tuck .35s cubic-bezier(.2,.8,.2,1); }
+  .last:hover { background: var(--hover); color: var(--text); }
+  .last .ico { width: 14px; height: 14px; } .last .ico svg { width: 14px; height: 14px; }
+  .last + .fb { margin-left: 2px; }
+  .lastsep { width: 1px; height: 14px; background: var(--border); align-self: center; margin: 0 2px; }
+  @keyframes tuck { from { transform: translateY(-14px); opacity: 0; } }
 
   /* 提示、弹出 */
   .tipx { position:absolute; z-index: 20; pointer-events: none; background: var(--pop); color: var(--text); border:1px solid var(--popLine); border-radius: 6px;
@@ -203,8 +211,8 @@
     <tr><td>手机</td><td>刚连上 / 重新连上</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>已连接手机 · 企业微信「研发助手」，手机消息会直接提交到这个终端</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
     <tr><td>结对</td><td>审查失败</td><td><span class="sw" style="background:#fff6e9;border-color:#fed277"></span>黄</td><td>Codex 审查失败：调用超时（120 秒）</td><td>重试（主）、停止结对</td><td>重试或停止</td><td>结对图标保留黄点</td></tr>
     <tr><td>结对</td><td>审查进行中</td><td><span class="sw" style="background:#f5f8fe;border-color:#c2d6fc"></span>蓝</td><td>Codex 正在审查第 2 轮 · 已完成 5 项 · 正在执行 git diff · 34 秒</td><td>取消本轮</td><td>审查结束时被结果替换</td><td>结对图标继续转圈</td></tr>
-    <tr><td>结对</td><td>审查完 · 有反馈</td><td><span class="sw" style="background:#f5f8fe;border-color:#c2d6fc"></span>蓝</td><td>Codex 审查完，提了 3 条意见，已交给 Claude 处理</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
-    <tr><td>结对</td><td>审查完 · 无反馈</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>Codex 已审查，没有新的反馈</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
+    <tr><td>结对</td><td>审查完 · 有反馈</td><td><span class="sw" style="background:#f5f8fe;border-color:#c2d6fc"></span>蓝</td><td>Codex 审查完，提了 3 条意见，已交给 Claude 处理</td><td>—</td><td>显示满 8 秒后收进图标组左边，留到下一轮开始</td><td>立即收进图标组</td></tr>
+    <tr><td>结对</td><td>审查完 · 无反馈</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>Codex 已审查，没有新的反馈</td><td>—</td><td>显示满 8 秒后收进图标组左边，留到下一轮开始</td><td>立即收进图标组</td></tr>
     <tr><td>结对</td><td>开启 / 更换伙伴</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>结对伙伴 Codex 已就绪，你每改完一轮它会自动审查</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
     <tr><td>讨论</td><td>打开先聊再做</td><td><span class="sw" style="background:#f2fcf3;border-color:#afdbb8"></span>绿</td><td>先聊再做的讨论已打开，聊完会把方案交给这个终端</td><td>—</td><td>显示满 8 秒</td><td>立即收起</td></tr>
     <tr><td>轨迹</td><td>更新失败</td><td><span class="sw" style="background:#fff6e9;border-color:#fed277"></span>黄</td><td>会话轨迹更新失败：AI 响应超时</td><td>重试</td><td>重试成功</td><td>轨迹图标保留黄点</td></tr>
@@ -230,6 +238,7 @@
         <li>没有角标时半透明；鼠标进入终端上部 80px 或有任何角标时不透明。</li>
         <li>拖选终端文字时暂时隐藏。始终停在最后一行提示条的下方，跟着行数上下移。</li>
         <li>常驻状态句取消：结对就绪、讨论开着只看绿点和悬停提示；开启那一刻各出一条绿色说明。</li>
+        <li>审查结果不会只闪 8 秒：结果条收起后，「✓ 已审查，无新反馈 · 10:47」或「Codex 提了 3 条意见 · 10:47」收进图标组左边，留到下一轮开始；点它打开结对菜单。</li>
         <li>第一次打开 Agent 终端时，用 GotIt 气泡指一下图标组，只出现一次。</li>
       </ul></div>
     <div class="card2"><h4>平台实现与风险</h4>
@@ -282,6 +291,7 @@ function touch(src) { st.flash[src] = null; delete st.dismissed[src]; }
 function flash(src, tone, icon, full, short) { st.flash[src] = { id: ++seq, tone, icon, full, short, left: TTL }; delete st.dismissed[src]; }
 
 /* ---------- 事件 ---------- */
+const hhmm = () => new Date().toTimeString().slice(0, 5);
 const secs = () => Math.max(0, Math.round((Date.now() - st.pair.startAt) / 1000));
 const live = (k, v) => `<span data-live="${k}">${v}</span>`;
 function persistent(src) {
@@ -323,16 +333,16 @@ const A = {
   firstRun() { st.gotit = true; },
   gotitClose() { st.gotit = false; },
   pairOn(agent) { st.pair = { ...st.pair, k: 'ready', agent: agent || 'Codex' }; flash('pair', 'ok', ic('verified'), `结对伙伴 ${st.pair.agent} 已就绪，你每改完一轮它会自动审查`, '结对已开启'); },
-  pairOff() { touch('pair'); st.pair = { ...st.pair, k: 'idle' }; },
+  pairOff() { touch('pair'); st.pair = { ...st.pair, k: 'idle', last: null }; },
   reviewStart() {
     touch('pair');
     const round = st.pair.k === 'failed' ? st.pair.round : st.pair.round + 1;
-    st.pair = { ...st.pair, k: 'running', round, done: 0, cur: reviewSteps[0], startAt: Date.now() };
+    st.pair = { ...st.pair, k: 'running', round, done: 0, cur: reviewSteps[0], startAt: Date.now(), last: null };
     reviewSteps.slice(1).forEach((s, i) => later(1400 * (i + 1), () => { if (st.pair.k === 'running' && st.pair.round === round) { st.pair.cur = s; st.pair.done = i + 1; } }));
   },
   reviewCancel() { st.pair.k = 'ready'; flash('pair', 'info', ic('info'), '已取消本轮审查，下次改完代码会重新开始', '已取消本轮'); },
-  reviewPass() { if (st.pair.k === 'idle') st.pair.k = 'ready'; st.pair.k = 'ready'; flash('pair', 'ok', ic('verified'), `${st.pair.agent} 已审查，没有新的反馈`, '审查通过'); },
-  reviewFeedback() { st.pair.k = 'ready'; flash('pair', 'info', ic('review'), `${st.pair.agent} 审查完，提了 3 条意见，已交给 Claude 处理`, '3 条意见已交给 Claude'); },
+  reviewPass() { st.pair.k = 'ready'; st.pair.last = { kind: 'pass', at: hhmm(), round: Math.max(1, st.pair.round) }; flash('pair', 'ok', ic('verified'), `${st.pair.agent} 已审查，没有新的反馈`, '审查通过'); },
+  reviewFeedback() { st.pair.k = 'ready'; st.pair.last = { kind: 'feedback', n: 3, at: hhmm(), round: Math.max(1, st.pair.round) }; flash('pair', 'info', ic('review'), `${st.pair.agent} 审查完，提了 3 条意见，已交给 Claude 处理`, '3 条意见已交给 Claude'); },
   reviewFail() { touch('pair'); st.pair = { ...st.pair, k: 'failed', err: '调用超时（120 秒）', round: Math.max(1, st.pair.round) }; },
   phoneBind() { st.phone.k = 'ok'; flash('phone', 'ok', ic('verified'), `已连接手机 · ${ROBOT}，手机消息会直接提交到这个终端`, '手机已连接'); },
   phoneUnbind() { touch('phone'); st.phone.k = 'unbound'; },
@@ -415,10 +425,24 @@ function floatHTML(interactive) {
     const b = badgeOf(key);
     return `<span class="fb ${pressed ? 'on' : ''}" ${interactive ? `data-fb="${key}"` : ''}>${b === 'spin' ? spin : ic(key, b)}</span>`;
   };
-  return fb('pair', st.menu === 'pair') + fb('talk', st.talk) + fb('trail', st.trail.open) + fb('phone', st.menu === 'phone');
+  return lastHTML(interactive) + fb('pair', st.menu === 'pair') + fb('talk', st.talk) + fb('trail', st.trail.open) + fb('phone', st.menu === 'phone');
+}
+/* 上一轮结果：结果绿 / 蓝条还在顶部时不重复显示，收起后才出现 */
+function lastResult() {
+  const p = st.pair, l = p.last;
+  if (!l || p.k !== 'ready' || srcEvent('pair')) return null;
+  return l;
+}
+function lastHTML(interactive) {
+  const l = lastResult(); if (!l) return '';
+  const narrow = ideWidth() < 760;
+  const text = l.kind === 'pass' ? (narrow ? '无新反馈' : '已审查，无新反馈') : (narrow ? `${l.n} 条意见` : `${st.pair.agent} 提了 ${l.n} 条意见`);
+  const icon = l.kind === 'pass' ? ic('verified') : ic('review');
+  return `<span class="last" ${interactive ? 'data-fb="last"' : ''}>${icon}<span>${text} · ${l.at}</span></span><span class="lastsep"></span>`;
 }
 const TIPS = {
-  pair: () => ['结对编程', { idle: '未开启 · 点开选择伙伴，或只审查一次', ready: `${st.pair.agent} 已就绪，每改完一轮自动审查`, running: `${st.pair.agent} 正在审查第 ${st.pair.round} 轮`, failed: `${st.pair.agent} 审查失败：${st.pair.err}` }[st.pair.k]],
+  last: () => { const l = st.pair.last; return ['上一轮审查', `第 ${l.round} 轮 · ${st.pair.agent} · ${l.at} · ${l.kind === 'pass' ? '没有新的反馈' : `提了 ${l.n} 条意见，已交给 Claude 处理`}。下一轮开始时更新。`]; },
+  pair: () => ['结对编程', { idle: '未开启 · 点开选择伙伴，或只审查一次', ready: `${st.pair.agent} 已就绪，每改完一轮自动审查` + (st.pair.last ? `；上一轮 ${st.pair.last.at} ${st.pair.last.kind === 'pass' ? '没有新的反馈' : `提了 ${st.pair.last.n} 条意见`}` : ''), running: `${st.pair.agent} 正在审查第 ${st.pair.round} 轮`, failed: `${st.pair.agent} 审查失败：${st.pair.err}` }[st.pair.k]],
   talk: () => ['先聊再做', st.talk ? '讨论窗口开着 · 点击回到讨论' : '先和 Agent 把需求聊清楚，再交给终端动手'],
   trail: () => ['会话轨迹', { latest: '已是最新 · 点击显示', stale: '会话有新进展，摘要已过期', loading: '正在生成…', failed: '更新失败：AI 响应超时' }[st.trail.k]],
   phone: () => ['手机', { unbound: '未连接 · 点开选择机器人', ok: `${ROBOT} · 在线`, problem: `${ROBOT} · 连接已断开`, connecting: '正在重新连接…' }[st.phone.k]],
@@ -459,7 +483,7 @@ function render() {
   $('bar').innerHTML = html;
   $('barwrap').style.height = h + 'px';
   const fl = $('float');
-  const anyBadge = ['pair', 'talk', 'trail', 'phone'].some(k => badgeOf(k));
+  const anyBadge = ['pair', 'talk', 'trail', 'phone'].some(k => badgeOf(k)) || !!lastResult();
   fl.className = 'float' + (st.selecting ? ' hidden' : (!anyBadge && !st.near && !st.menu && !st.trail.open && !st.gotit ? ' quiet' : ''));
   fl.style.top = (h + 8) + 'px';
   fl.innerHTML = floatHTML(true);
@@ -514,7 +538,8 @@ function menuFor(m) {
     const head = `<div class="h">让另一个 AI 在你改代码时帮你看，或者只审查一次。</div>`;
     if (p.k === 'idle') return head + item('开启结对编程', '', { icon: ic('pair'), sub: agents.map(a => item(a, `pairOn|${a}`)).join('') }) + item('审查一次…', 'reviewStart', { icon: ic('review') });
     const status = { ready: `${p.agent} 已就绪，每改完一轮自动审查`, running: `${p.agent} 正在审查第 ${p.round} 轮`, failed: `${p.agent} 审查失败：${p.err}` }[p.k];
-    let body = `<div class="st"><span class="dotx" style="background:${p.k === 'failed' ? 'var(--yellow)' : 'var(--green)'}"></span><span>${status}</span></div><hr>`;
+    let body = `<div class="st"><span class="dotx" style="background:${p.k === 'failed' ? 'var(--yellow)' : 'var(--green)'}"></span><span>${status}</span></div>` +
+      (p.last ? `<div class="st" style="color:var(--dim);font-size:12.5px;padding-top:0">${p.last.kind === 'pass' ? ic('verified') : ic('review')}<span>上一轮 ${p.last.at} · ${p.last.kind === 'pass' ? '没有新的反馈' : `提了 ${p.last.n} 条意见，已交给 Claude`}</span></div>` : '') + '<hr>';
     if (p.k === 'running') body += item('取消本轮审查', 'reviewCancel') + item('停止结对编程', 'pairOff');
     else if (p.k === 'failed') body += item('重试', 'reviewStart') + item('停止结对编程', 'pairOff');
     else body += item('更换结对伙伴', '', { sub: agents.filter(a => a !== p.agent).map(a => item(a, `pairOn|${a}`)).join('') }) + item('现在审查一次', 'reviewStart') + '<hr>' + item('停止结对编程', 'pairOff');
@@ -569,7 +594,8 @@ document.addEventListener('click', e => {
   const fb = e.target.closest('[data-fb]');
   if (fb) {
     const k = fb.dataset.fb; st.gotit = false;
-    if (k === 'talk') A.talkToggle(); else if (k === 'trail') A.trailToggle();
+    if (k === 'last') { st.menu = st.menu === 'pair' ? null : 'pair'; st.menuAt = rel(fb); }
+    else if (k === 'talk') A.talkToggle(); else if (k === 'trail') A.trailToggle();
     else { st.menu = st.menu === k ? null : k; st.menuAt = rel(fb); }
     hoverKey = null; render(); return;
   }
@@ -602,9 +628,10 @@ const SCRIPT = [
   [6000, '开启结对编程：出一条绿色说明，8 秒后收起；之后只靠结对图标上的绿点。', () => { A.pairOn('Codex'); }],
   [10500, 'Claude 改完一轮，Codex 开始审查：蓝条显示实时进度，排在绿条上面。', () => A.reviewStart()],
   [17000, '审查通过：蓝条换成绿条。', () => A.reviewPass()],
+  [25300, '8 秒到了：绿条收起，结果收进图标组左边「已审查，无新反馈 · 时间」，一直留到下一轮审查开始。', () => {}],
   [20000, '手机这时断线：黄条插到最上面，绿条被挤到第二行；图标组跟着下移。', () => { st.phone.k = 'ok'; A.phoneDrop(); }],
-  [24500, '轨迹也更新失败：第二条黄条。三行就是上限。', () => { A.trailFail(); }],
-  [29000, '点手机那行的「重连」：这一行变成蓝色「正在重新连接」，降到黄条下面；连上后变绿，8 秒后只收掉这一行。', () => A.reconnect()],
+  [23000, '轨迹也更新失败：第二条黄条。', () => { A.trailFail(); }],
+  [30000, '点手机那行的「重连」：这一行变成蓝色「正在重新连接」，降到黄条下面；连上后变绿，8 秒后只收掉这一行。', () => A.reconnect()],
   [36000, '点轨迹那行的 ×：只收起这一行，轨迹图标保留黄点。', () => { const ev = srcEvent('trail'); if (ev) st.dismissed.trail = ev.key; }],
   [40000, '打开先聊再做：出一条绿色说明，讨论图标呈按下态。', () => { A.talkToggle(); }],
   [45000, '演示结束。用上面的按钮自己点一遍；「三件事同时发生」可以直接造出最挤的情况。', () => {}],
