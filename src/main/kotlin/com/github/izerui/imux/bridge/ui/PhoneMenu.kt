@@ -11,6 +11,8 @@ sealed interface PhoneMenuEntry {
         val robotId: RobotId,
         val label: String,
         val enabled: Boolean,
+        /** 就是这个会话现在连着的机器人：打勾显示，不可选。 */
+        val current: Boolean = false,
     ) : PhoneMenuEntry
 
     data object NoRobots : PhoneMenuEntry
@@ -59,7 +61,7 @@ fun phoneMenuModel(
                 robot.owner() == null -> PhoneMenuEntry.Robot(robot.id, labels.unpaired(name), false)
                 binding?.target?.tabId == thisTabId -> {
                     currentRobot = robot.id
-                    PhoneMenuEntry.Robot(robot.id, labels.current(name), false)
+                    PhoneMenuEntry.Robot(robot.id, labels.current(name), false, current = true)
                 }
                 binding != null -> PhoneMenuEntry.Robot(robot.id, labels.bound(name, titleOf(binding)), true)
                 // 不在线也可以先连上，恢复在线后自动收发；只是不能谎称“空闲”

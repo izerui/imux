@@ -56,7 +56,7 @@ class PhoneMenuTest {
             listOf(
                 PhoneMenuEntry.Robot(RobotId("a"), "bot-a/idle", true),
                 PhoneMenuEntry.Robot(RobotId("b"), "bot-b/bound:T:other", true),
-                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/current", false),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/current", false, current = true),
                 PhoneMenuEntry.Robot(RobotId("d"), "bot-d/unpaired", false),
                 PhoneMenuEntry.AddRobot,
                 PhoneMenuEntry.Disconnect(RobotId("c")),

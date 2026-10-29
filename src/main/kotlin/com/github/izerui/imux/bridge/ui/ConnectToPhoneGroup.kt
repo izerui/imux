@@ -27,7 +27,7 @@ class ConnectToPhoneGroup : ActionGroup(), DumbAware {
         return phoneMenuFor(file.tabId).flatMap { entry ->
             when (entry) {
                 is PhoneMenuEntry.Robot ->
-                    listOf(phoneAction(entry.label, entry.enabled) { e -> e.project?.let { PhoneOperations.bind(it, file, entry.robotId) } })
+                    listOf(robotAction(entry) { e -> e.project?.let { PhoneOperations.bind(it, file, entry.robotId) } })
                 PhoneMenuEntry.NoRobots -> listOf(phoneAction(ImuxBundle.message("bridge.action.none"), enabled = false))
                 PhoneMenuEntry.AddRobot -> listOf(Separator.getInstance(), phoneAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(it.project).show() })
                 is PhoneMenuEntry.Disconnect ->

@@ -66,6 +66,16 @@ class BridgeDecorationsSourceTest {
     }
 
     @Test
+    fun `菜单显示不可选的项：当前连着的机器人打勾、不可选`() {
+        val popup = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter("private fun popup(", '{')
+        val args = popup.lines().filterNot { it.trim().startsWith("//") }.joinToString("").filterNot(Char::isWhitespace)
+        assertTrue("不可选的也显示", args.contains("ActionSelectionAid.SPEEDSEARCH,true,"))
+        val actions = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneActions.kt").normalized
+        assertTrue(actions.contains("if (entry.current) AllIcons.Actions.Checked else null"))
+        assertTrue("三处菜单都用同一个画法", !tool.contains("phoneAction(entry.label"))
+    }
+
+    @Test
     fun `注册了装饰实现`() {
         assertTrue(pluginXml.contains("<extensions defaultExtensionNs=\"com.github.izerui.imux\">"))
         assertTrue(pluginXml.contains("com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"))

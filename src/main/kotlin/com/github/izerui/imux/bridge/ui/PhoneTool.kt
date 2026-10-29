@@ -246,7 +246,7 @@ class PhoneTool(
 
     private fun addRobots(group: DefaultActionGroup) {
         phoneMenuFor(file.tabId).filterIsInstance<PhoneMenuEntry.Robot>().forEach { entry ->
-            group.add(phoneAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
+            group.add(robotAction(entry) { PhoneOperations.bind(project, file, entry.robotId) })
         }
     }
 
@@ -265,7 +265,7 @@ class PhoneTool(
         phoneMenuFor(file.tabId).forEach { entry ->
             when (entry) {
                 is PhoneMenuEntry.Robot ->
-                    group.add(phoneAction(entry.label, entry.enabled) { PhoneOperations.bind(project, file, entry.robotId) })
+                    group.add(robotAction(entry) { PhoneOperations.bind(project, file, entry.robotId) })
                 PhoneMenuEntry.NoRobots -> group.add(phoneAction(ImuxBundle.message("bridge.action.none"), enabled = false))
                 PhoneMenuEntry.AddRobot -> {
                     group.addSeparator()
@@ -283,7 +283,14 @@ class PhoneTool(
         anchor: JComponent,
     ) {
         JBPopupFactory.getInstance()
-            .createActionGroupPopup(null, group, DataManager.getInstance().getDataContext(anchor), JBPopupFactory.ActionSelectionAid.SPEEDSEARCH, false)
+            .createActionGroupPopup(
+                null,
+                group,
+                DataManager.getInstance().getDataContext(anchor),
+                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
+                // 不可选的也显示：当前连着的机器人、未配对的机器人要看得到
+                true,
+            )
             .showUnderneathOf(anchor)
     }
 }

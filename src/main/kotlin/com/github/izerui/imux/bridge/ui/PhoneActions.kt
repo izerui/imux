@@ -13,6 +13,7 @@ import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.options.ShowSettingsUtil
@@ -93,9 +94,10 @@ internal object PhoneOperations {
 internal fun phoneAction(
     text: String,
     enabled: Boolean = true,
+    icon: javax.swing.Icon? = null,
     run: (AnActionEvent) -> Unit = {},
 ): AnAction =
-    object : DumbAwareAction(text) {
+    object : DumbAwareAction(text, null, icon) {
         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
         override fun update(e: AnActionEvent) {
@@ -104,6 +106,12 @@ internal fun phoneAction(
 
         override fun actionPerformed(e: AnActionEvent) = run(e)
     }
+
+/** 菜单里的一个机器人；当前连着的打勾、不可选。 */
+internal fun robotAction(
+    entry: PhoneMenuEntry.Robot,
+    run: (AnActionEvent) -> Unit,
+): AnAction = phoneAction(entry.label, entry.enabled, if (entry.current) AllIcons.Actions.Checked else null, run)
 
 /** 打开通讯机器人设置页。 */
 internal fun showRobotSettings(project: Project?) = ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
