@@ -82,7 +82,7 @@ internal class SessionTrailOverlay(
     private var wasLoading: Boolean? = null
 
     /**
-     * 浮动图标组里的会话轨迹按钮：生成中转圈并显示「生成中」，过期或失败显示黄色短字；卡片展开时按钮呈按下状态。
+     * 浮动图标组里的会话轨迹按钮：生成中转圈并显示「生成中」，失败显示黄色短字；过期提示只在面板内显示。
      */
     val tool: SessionTool =
         object : SessionTool {
@@ -98,10 +98,6 @@ internal class SessionTrailOverlay(
                     }
                     state is TrailState.Failed -> {
                         val text = ImuxBundle.message("action.overview.status.failed")
-                        ToolState(AgentIcons.trail, title, text, label = text, tone = NoticeTone.WARNING, selected = virtualFile.trailExpanded)
-                    }
-                    state is TrailState.Ready && state.stale -> {
-                        val text = ImuxBundle.message("action.overview.status.stale")
                         ToolState(AgentIcons.trail, title, text, label = text, tone = NoticeTone.WARNING, selected = virtualFile.trailExpanded)
                     }
                     else ->

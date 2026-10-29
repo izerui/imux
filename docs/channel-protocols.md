@@ -11,10 +11,10 @@
 | 扫码返回本人身份 | 否 → 配对码 | 是（open_id） | 否 → 配对码 | 是（user_openid） | 是（ilink_user_id） |
 | 扫码额外步骤 | — | — | — | 首次在手机上取名创建 | 可能要求输入手机显示的验证码；二维码可刷新 3 次 |
 | 收消息 | WebSocket JSON | WebSocket protobuf，3 秒内 ACK | WebSocket JSON，ticket 一次性 | WebSocket JSON（op 帧） | HTTP 长轮询 + 游标 |
-| 语音 | voice.content 即转写 | 无转写，需下载后转写 | content.recognition | attachments[].asr_refer_text | voice_item.text |
-| 回复凭证 | 无（主动推送需用户先发过消息） | 无 | sessionWebhook（约 90 分钟，未核实） | msg_id（5 或 60 分钟，文档矛盾） | context_token（有效期未核实，必须带） |
-| 主动发送 | aibot_send_msg，chat_type=1 | im/v1/messages?receive_id_type=open_id | oToMessages/batchSend（需 staffId） | /v2/users/{openid}/messages（用户可关闭） | 实际上依赖 context_token |
-| 官方 Java SDK | 无 | 有，但不引入：长连接与 HTTP 自实现（2026-10-28 决定） | 有（app-stream-client 1.3.12，5.4 MB，已 shade） | 无 | 无 |
+| 语音 | voice.content 即转写 | 无转写，需下载后转写 | content.recognition（文档未保证一定有） | attachments[].asr_refer_text | voice_item.text |
+| 回复凭证 | 无（主动推送需用户先发过消息） | 无 | sessionWebhook（官方示例约 90 分钟，未给定值） | msg_id（5 或 60 分钟，文档矛盾） | context_token（有效期未核实，必须带） |
+| 主动发送 | aibot_send_msg，chat_type=1 | im/v1/messages?receive_id_type=open_id | oToMessages/batchSend（需 staffId，机器人发布后才返回） | /v2/users/{openid}/messages（用户可关闭） | 实际上依赖 context_token |
+| 官方 Java SDK | 无 | 有，但不引入：长连接与 HTTP 自实现（2026-10-28 决定） | 有（app-stream-client 1.3.12） | 无 | 无 |
 | 扫码接口是否公开 | 否（ai/qc/* 为后台接口） | 是（RegisterApp，OAuth device flow） | 否（官方 connector 源码） | 否（混淆 npm 包） | 否（开源客户端协议） |
 
 框架约定：
@@ -95,20 +95,42 @@
 
 ## 3. 钉钉
 
-**扫码**（官方 connector `device-auth.ts`，非公开接口）
-- `POST https://oapi.dingtalk.com/app/registration/init` `{"source":"DING_DWS_CLAW"}` → `nonce`；自定义 source 是否被接受未核实。
-- `POST /app/registration/begin` `{"nonce"}` → `device_code, verification_uri_complete（二维码）, expires_in, interval`。
-- `POST /app/registration/poll` `{"device_code"}` → `status WAITING|SUCCESS|FAIL|EXPIRED, client_id, client_secret`；不返回用户身份。`robotCode` 按惯例等于 `client_id`（未核实）。
+第二轮核实：2026-10-29。官方文档读自钉钉开放平台（含其 OSS 文档原文件）；官方连接器读 npm `@dingtalk-real-ai/dingtalk-connector` 0.8.27（2026-10-20），SDK 读 Maven `app-stream-client`（正式版 1.3.12，另有 1.3.14-beta.1）与 PyPI `dingtalk-stream` 0.24.3。下文“官方”指官方文档原文，“连接器”指官方连接器源码（行为参考，不是平台契约）。
 
-**Stream 长连接**（官方 Java SDK `com.dingtalk.open:app-stream-client:1.3.12`，MIT，已 shade）
-- `POST https://api.dingtalk.com/v1.0/gateway/connections/open` `{clientId, clientSecret, subscriptions:[{type:"CALLBACK",topic:"/v1.0/im/bot/messages/get"}], ua, localIp}` → `{endpoint, ticket}`；ticket 90 秒内一次性。
-- `GET {endpoint}?ticket=..` 建 WebSocket；推送帧 `{specVersion,type:SYSTEM|EVENT|CALLBACK,headers{topic,messageId,...},data:"<json>"}`；ACK `{"code":200,"headers":{"messageId","contentType":"application/json"},"message":"OK","data":"{\"response\": null}"}`；系统消息 `ping` 原样回传 opaque，`disconnect` 后 10 秒断开需重连。
-- 机器人消息字段：`msgId, senderStaffId（机器人发布上线后才有）, senderId（加密）, conversationType("1" 单聊), conversationId, sessionWebhook, sessionWebhookExpiredTime, msgtype, text.content, content.recognition`。
+**扫码**（连接器 `src/device-auth.ts`，非公开接口；init/begin 已实测，poll 只测过无效 device_code）
+- 三个接口都是 `POST https://oapi.dingtalk.com/app/registration/{init|begin|poll}`，JSON 请求体；响应都带 `errcode`、`errmsg`，`errcode=0` 才成功。
+- `init` `{"source"}` → `nonce`、`expires_in=300`。
+- `begin` `{"nonce"}` → `device_code`、`user_code`、`verification_uri`、`verification_uri_complete`（二维码内容）、`expires_in=7200`、`interval=2`；nonce 失效返回 `errcode=-1`。
+- `poll` `{"device_code"}` → `status` 为 WAITING / SUCCESS / FAIL / EXPIRED，成功时 `client_id`、`client_secret`，失败时 `fail_reason`。FAIL 不走 HTTP 错误（无效 device_code 也是 `errcode=0, status=FAIL`）。连接器对 FAIL/EXPIRED 和网络错误有 2 分钟重试窗口。
+- **不返回任何用户身份**（无 userId、staffId、unionId、corpId）→ 配对码认主。连接器本身也不认主（默认 `dmPolicy=open`）。
+- `source`：连接器默认 `DING_DWS_CLAW`（可用 `DINGTALK_REGISTRATION_SOURCE` 覆盖）。2026-10-29 实测：`DING_DWS_CLAW`、`imux`、空值三者 init/begin 都成功，但只有 `DING_DWS_CLAW` 出现在二维码链接（`https://open-dev.dingtalk.com/openapp/registration/openClaw?user_code=..&source=DING_DWS_CLAW`）里，其余被去掉。服务端只认已知取值；不带 source 扫码后能否正常建应用、权限是否相同，未核实。没有找到第三方申请 source 的文档。
+- 扫码后需登录，登录页文案为“仅支持管理员登录……可直接创建新组织”（推断：扫码人须为组织管理员，建的是该组织的企业内部应用）；授权页可新建或选择已有机器人（连接器提示语）。是否自动开通机器人、Stream、发消息权限，是否已发布，未核实。
+- `robotCode`：连接器发消息、下载附件都用 `clientId`（`src/services/messaging.ts`、`media.ts`）。
+
+**Stream 长连接**（官方《Stream模式协议接入说明》、开发者百科）
+- `POST https://api.dingtalk.com/v1.0/gateway/connections/open` `{clientId, clientSecret, subscriptions:[{type:"CALLBACK",topic:"/v1.0/im/bot/messages/get"}], ua?, localIp?}`，请求头带 `Accept: application/json`（否则可能返回 XML）→ `{endpoint, ticket}`；`ua`、`localIp` 非必填；ticket 90 秒内一次性。
+- `endpoint` 已含 `/connect`，直接 `{endpoint}?ticket=<urlencode>` 建 WebSocket。
+- 推送帧 `{specVersion,type:SYSTEM|EVENT|CALLBACK,headers{topic,messageId,contentType,time,appId},data:"<json>"}`；ACK `{"code":200,"headers":{"messageId","contentType":"application/json"},"message":"OK","data":"{\"response\": null}"}`。
+- 系统帧：`ping` 原样回传 data（opaque）与 messageId；`disconnect` 后不再推送新消息，10 秒后断开，应立即重新取 ticket 建新连接。
+- 同一应用多条连接时，每条消息随机推给其中一条（百科 FAQ）；连接数上限、是否互踢未查到。
+- 重推：百科说机器人消息不因超时重推；连接器发布说明记录过处理超 60 秒后被重推，重推时 `headers.messageId` 变、`data.msgId` 不变。按可能重推设计：收到即 ACK，用 `data.msgId` 去重。
+- SDK 心跳参考：Java 空闲 60 秒发 WS ping、5 秒无 pong 断开；连接器每 10 秒应用层 ping。
+
+**机器人消息**（官方《消息发送与接收类型》2026-05-15）
+- 字段：`msgId`（加密）、`conversationType`（字符串 `"1"` 单聊、`"2"` 群聊）、`conversationId`、`senderId`（加密）、`senderStaffId`、`senderUnionId`、`senderNick`、`senderCorpId`、`isAdmin`、`chatbotUserId`、`robotCode`、`sessionWebhook`、`sessionWebhookExpiredTime`（毫秒，官方示例比 `createAt` 晚 90 分钟，未给定值）、`createAt`。
+- `senderStaffId` 官方原文：“如果发送人非机器人所在企业成员，则此字段为空……**机器人发布上线后生效。否则不会返回。**”
+- 类型：`text.content`；`richText`（`content.richText[]`，元素为 `{text}` 或 `{type:"picture",downloadCode}`）；`picture`（`content.downloadCode`）；`audio`（`content.downloadCode, recognition, duration`）；`video`；`file`（`content.downloadCode, fileName`）；不支持的类型为 `unknownMsgType`。单聊可收语音、视频、文件；群里 @ 机器人收不到这三种。
+- 语音 `recognition` 文档未保证一定有（连接器缺失时显示“[语音消息]”）。
+- 引用：`text.isReplyMsg` + `text.repliedMsg{msgType,content,msgId,senderId}`（richText 在 `content` 下）；**只见于连接器源码，官方文档未写**。
+- 附件：`POST https://api.dingtalk.com/v1.0/robot/messageFiles/download`，头 `x-acs-dingtalk-access-token`，`{downloadCode, robotCode}` → `downloadUrl`（OSS 签名地址，有效期未公布）；文件大小上限未公布；downloadCode 会过期。
 
 **发送**
-- token：`POST https://api.dingtalk.com/v1.0/oauth2/accessToken` `{appKey, appSecret}` → `accessToken, expireIn 7200`。
-- 被动：POST `sessionWebhook`，`{"msgtype":"text","text":{"content"}}`。
-- 主动：`POST https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend`，header `x-acs-dingtalk-access-token`，`{"robotCode","userIds":[staffId],"msgKey":"sampleText","msgParam":"{\"content\":..}"}`；userIds 必须是 staffId。
+- token：`POST https://api.dingtalk.com/v1.0/oauth2/accessToken` `{appKey, appSecret}` → `accessToken, expireIn 7200`；有效期内重复获取返回相同结果并续期；不计入 API 额度（附录 A）。
+- 主动：`POST https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend`，头 `x-acs-dingtalk-access-token`，`{"robotCode","userIds":[userId],"msgKey","msgParam":"<JSON 字符串>"}`。官方：“本接口只支持企业内部应用机器人调用”，`userIds` 每次最多 20 个（错误码说明残留 100），权限“企业内机器人发送消息权限”，第三方个人应用暂不支持。响应 `processQueryKey`、`invalidStaffIdList`、`flowControlledStaffIdList`，HTTP 200 也要检查后两个列表。加密 senderId、unionId 不能当 userId（无依据）。
+- 相关错误码：`invalidParameter.userId.empty`（缺少 staffId）、`staffId.notExisted`、`chatbotId.notAllow.sendOTO`（不允许主动发单聊，检查机器人是否启用）、`robot.oto.notExist`（没有有效的机器人单聊会话）、`session.expired`、`bot.forbidden.sendMessage`、`send.too.fast`、`msgParam.tooLong`。是否要求用户先发过消息、多久后不能主动推送，官方未写。
+- 被动：POST `sessionWebhook`，`{"msgtype":"text|markdown",...}`；只适合刚收到消息后的即时回复；官方消息类型页另写“webhook 方式只支持在群聊会话”，与连接器单聊也用它相矛盾。
+- Markdown：`msgKey=sampleMarkdown`，`msgParam={"title","text"}`。官方支持子集：标题、引用、加粗、斜体、链接、图片、无序列表、有序列表；换行建议 `\n` 前后各加两个空格。**代码块、表格不在清单内。**单聊长度上限未公布（群发 `msgParam` 15000 字节）。连接器优先用 AI 卡片（需模板和权限），失败退回普通消息。
+- 其他：撤回 `POST /v1.0/robot/otoMessages/batchRecall`（24 小时内）；出站图片、文件、语音、视频需先上传媒体（`sampleImageMsg`、`sampleFile`、`sampleAudio`、`sampleVideo`）。
 
 ## 4. QQ 官方机器人（不纳入实现，仅存档）
 
@@ -146,6 +168,6 @@
 
 - 企业微信：流式回复实际时长；加密 userid 能否用于主动推送；扫码能否选已有机器人。
 - 飞书：扫码返回的 open_id 与消息发送人是否一致；PersonalAgent 默认模板是否已开启长连接、单聊收发与语音识别（speech_to_text:speech）权限；语音文件是否为标准 Ogg Opus；pcm 字节序；语音识别是否计入月度额度。
-- 钉钉：自定义 source 是否被接受；扫码创建的应用是否已发布机器人（否则没有 senderStaffId）。
+- 钉钉（按重要性）：扫码是否要求组织管理员、不带 `DING_DWS_CLAW` 能否正常建应用；建出的应用是否已发布、是否开通 Stream 与发消息权限；单聊消息有无 `senderStaffId`、`batchSend` 能否发出、`robotCode` 是否等于 `client_id`；隔数小时后主动推送是否仍成功；后台“资源管理”显示的版本与额度、收消息是否计入 Webhook&Stream 额度；代码块和表格的实际显示；语音是否总带 `recognition`；引用字段实际形态；不 ACK 是否重推；`downloadUrl` 有效期；两个客户端同时连接的表现。
 - QQ：msg_id 有效期；重复扫码是否复用机器人；扫码机器人是否为沙箱。
 - 普通微信：context_token 有效期；非官方客户端身份是否被拒；ilink_user_id 与 from_user_id 是否一致。
