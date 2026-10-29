@@ -227,6 +227,9 @@ class SessionMonitor(
     var runningIds: Set<String> = emptySet()
         private set
 
+    /** 前台轮次状态，仅在 EDT 更新；后台任务的持续运行不应掩盖新一轮开始。 */
+    private var workingIds: Set<String> = emptySet()
+
     private val listenerDispatcher = EventDispatcher.create(SessionMonitorListener::class.java)
     private val started = AtomicBoolean(false)
     private val scanning = AtomicBoolean(false)
@@ -481,6 +484,7 @@ class SessionMonitor(
         peerCoordinator.forgetFeedbackHints(key)
         model.cancelPending(key)
         transcriptGenerations.remove(key)
+        workingIds = workingIds - key
         if (key !in runningIds) return
         runningIds = runningIds - key
         updateOpenTabIcons(setOf(key))
@@ -714,25 +718,29 @@ class SessionMonitor(
                 val outcome = statusTracker.completedSince(snapshot)
                 val completed = (outcome.completed + watcher.poll()).distinct()
                 // 取全部而不点名某个 agent：凡是靠会话文件推断的都该算进来
-                val running = RunningSessions.of(snapshot, watcher.workingIds())
+                val inferredWorking = watcher.workingIds()
+                val running = RunningSessions.of(snapshot, inferredWorking)
+                val working = RunningSessions.workingOf(snapshot, inferredWorking)
 
                 withContext(Dispatchers.EDT) {
                     val previousRunning = runningIds
+                    val previousWorking = workingIds
                     val runningChanged = previousRunning != running
                     runtime = snapshot
                     runningIds = running
+                    workingIds = working
                     // 标签图标与窗口标题读的是同一个信号，一并推
                     if (runningChanged) {
                         updateOpenTabIcons()
                         updateFrameTitle()
-                        (running - previousRunning).forEach { sessionId ->
-                            peerCoordinator.onTurnStarted(sessionId)
-                        }
+                    }
+                    (working - previousWorking).forEach { sessionId ->
+                        peerCoordinator.onTurnStarted(sessionId)
                     }
                     notifyListeners()
 
                     completed.forEach { sessionId ->
-                        dispatchCompletedPeerReview(sessionId, running, peerCoordinator::onTurnCompleted)
+                        dispatchCompletedPeerReview(sessionId, working, peerCoordinator::onTurnCompleted)
 
                         val session = model.sessionOf(sessionId)
                         val title =

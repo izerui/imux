@@ -21,6 +21,37 @@ class RunningSessionsTest {
     }
 
     @Test
+    fun `后台命令运行期间持续计入执行中，结束后移除`() {
+        assertEquals(setOf("s1"), RunningSessions.of(snapshot("s1" to "busy"), emptySet()))
+        assertEquals(setOf("s1"), RunningSessions.of(snapshot("s1" to "shell"), emptySet()))
+        assertTrue(RunningSessions.of(snapshot("s1" to "idle"), emptySet()).isEmpty())
+    }
+
+    @Test
+    fun `等待用户确认时不计入执行中`() {
+        assertTrue(RunningSessions.of(snapshot("s1" to "waiting"), emptySet()).isEmpty())
+    }
+
+    @Test
+    fun `后台运行标记持续时仍能识别前台新一轮`() {
+        val background = snapshot("s1" to "shell")
+        val foreground = snapshot("s1" to "busy")
+        assertEquals(setOf("s1"), RunningSessions.of(background, emptySet()))
+        assertTrue(RunningSessions.workingOf(background, emptySet()).isEmpty())
+        assertEquals(setOf("s1"), RunningSessions.of(foreground, emptySet()))
+        assertEquals(setOf("s1"), RunningSessions.workingOf(foreground, emptySet()))
+        assertEquals(
+            setOf("s1"),
+            RunningSessions.workingOf(foreground, emptySet()) - RunningSessions.workingOf(background, emptySet()),
+        )
+    }
+
+    @Test
+    fun `前台轮次集合保留文件推断的执行状态`() {
+        assertEquals(setOf("c1"), RunningSessions.workingOf(snapshot("s1" to "shell"), setOf("c1")))
+    }
+
+    @Test
     fun `空闲的 claude 会话不计入`() {
         val running = RunningSessions.of(snapshot("s1" to "idle"), emptySet())
 

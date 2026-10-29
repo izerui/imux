@@ -110,17 +110,14 @@ class ClaudeRuntimeIndexTest {
         assertFalse(index().load()["s1"]!!.blocksResume())
     }
 
-    /**
-     * `shell` 是 CLI 的第三种状态：本轮回答已经打完，只剩它派生的后台 shell 还在跑。
-     * 本机实测的序列是 `busy` -> `shell` -> `idle`。对用户来说这一轮已经完了，
-     * 标签页不该继续转菊花——尤其在状态图标会顶掉品牌图标之后，那意味着
-     * 品牌图标要一直等到后台任务结束才回来。
-     */
+    /** 回答已输出但后台命令仍在跑，标签不能提前恢复为空闲。 */
     @Test
-    fun `只剩后台 shell 时不算忙碌`() {
+    fun `后台 shell 保持运行标记但不占用前台轮次`() {
         writeSession(1001, "s1", status = "shell")
 
-        assertFalse(index().load()["s1"]!!.isBusy)
+        val session = index().load()["s1"]!!
+        assertFalse(session.isBusy)
+        assertTrue(session.isRunning)
     }
 
     /** 但会话仍被这个进程占着，resume 预检要按占用处理。 */

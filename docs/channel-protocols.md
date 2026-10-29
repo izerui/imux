@@ -14,7 +14,7 @@
 | 语音 | voice.content 即转写 | 无转写，需下载后转写 | content.recognition（文档未保证一定有） | attachments[].asr_refer_text | voice_item.text |
 | 回复凭证 | 无（主动推送需用户先发过消息） | 无 | sessionWebhook（官方示例约 90 分钟，未给定值） | msg_id（5 或 60 分钟，文档矛盾） | context_token（有效期未核实，必须带） |
 | 主动发送 | aibot_send_msg，chat_type=1 | im/v1/messages?receive_id_type=open_id | oToMessages/batchSend（需 staffId，机器人发布后才返回） | /v2/users/{openid}/messages（用户可关闭） | 实际上依赖 context_token |
-| 官方 Java SDK | 无 | 有，但不引入：长连接与 HTTP 自实现（2026-10-28 决定） | 有（app-stream-client 1.3.12） | 无 | 无 |
+| 官方 Java SDK | 无 | 有，但不引入：长连接与 HTTP 自实现（2026-10-28 决定） | 有（app-stream-client 1.3.12，5.4 MB，内含 shade 的 Netty），但不引入：Stream、扫码与 OpenAPI 自实现（2026-10-29 决定） | 无 | 无 |
 | 扫码接口是否公开 | 否（ai/qc/* 为后台接口） | 是（RegisterApp，OAuth device flow） | 否（官方 connector 源码） | 否（混淆 npm 包） | 否（开源客户端协议） |
 
 框架约定：

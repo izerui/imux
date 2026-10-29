@@ -25,5 +25,12 @@ object RunningSessions {
         runtime: Map<String, ClaudeRuntimeSession>,
         fileInferredWorking: Set<String>,
     ): Set<String> =
+        runtime.values.filter { it.isRunning }.map { it.sessionId }.toSet() + fileInferredWorking
+
+    /** 前台轮次集合不包含后台 shell，轮次事件不能使用图标的运行集合。 */
+    fun workingOf(
+        runtime: Map<String, ClaudeRuntimeSession>,
+        fileInferredWorking: Set<String>,
+    ): Set<String> =
         runtime.values.filter { it.isBusy }.map { it.sessionId }.toSet() + fileInferredWorking
 }

@@ -13,6 +13,9 @@ import com.github.izerui.imux.bridge.core.SubmitResult
 import com.github.izerui.imux.bridge.transcript.SessionFile
 import com.github.izerui.imux.bridge.transcript.TailRegistry
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.ClaudeRuntimeSession
+import com.github.izerui.imux.turn.RunningSessions
+import com.github.izerui.imux.turn.RuntimeStatusTracker
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -124,6 +127,45 @@ class TabPollerTest {
             bindings.bind(robot, SessionTarget("/p", "tab", AgentType.PI, "s1"))
             poller.poll("tab")
             sent.clear()
+        }
+
+    @Test
+    fun `后台任务持续时中间轮次缺少结束标记也按轮发到手机`() =
+        runBlocking {
+            start()
+            bindings.bind(robot, SessionTarget("/p", "tab", AgentType.CLAUDE, "s1"))
+            poller.poll("tab")
+            val tracker = RuntimeStatusTracker()
+            fun runtime(status: String) =
+                mapOf("s1" to ClaudeRuntimeSession("s1", 1, "interactive", status, "/p"))
+
+            tracker.completedSince(runtime("busy"))
+            write(
+                """{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"第一句"}}""",
+                """{"type":"user","toolUseResult":{"backgroundTaskId":"task1","description":"后台测试"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool1","content":"running"}]}}""",
+                assistant("第一轮结论"),
+            )
+            // 故意不写 stop_reason，复现依靠 IDE 轮次事件兜底的路径。
+            val first = tracker.completedSince(runtime("shell"))
+            assertEquals(listOf("s1"), first.completed)
+            assertEquals(setOf("s1"), RunningSessions.of(runtime("shell"), emptySet()))
+            first.completed.forEach { poller.completed("tab", tails.mark("tab")) }
+            assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "BG(后台测试)"), sent)
+
+            tracker.completedSince(runtime("busy"))
+            write(
+                """{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"第二句"}}""",
+                assistant("第二轮结论"),
+            )
+            val second = tracker.completedSince(runtime("shell"))
+            assertEquals(listOf("s1"), second.completed)
+            assertEquals(setOf("s1"), RunningSessions.of(runtime("shell"), emptySet()))
+            second.completed.forEach { poller.completed("tab", tails.mark("tab")) }
+            assertEquals(
+                listOf("LOCAL:\n第一句", "第一轮结论", "BG(后台测试)", "LOCAL:\n第二句", "第二轮结论"),
+                sent,
+            )
+            assertEquals(emptyList<String>(), tracker.completedSince(runtime("idle")).completed)
         }
 
     @Test

@@ -140,12 +140,12 @@ class PlatformApiAlignmentSourceTest {
         )
         assertTrue(
             "取消范围应为新进入运行态的会话",
-            monitor.contains("(running - previousRunning).forEach"),
+            monitor.contains("(working - previousWorking).forEach"),
         )
         // 同一轮询中完成但仍在运行的会话不应启动副驾驶
         assertTrue(
             "仍在运行的已完成会话不应触发 onTurnCompleted",
-            monitor.contains("dispatchCompletedPeerReview(sessionId, running, peerCoordinator::onTurnCompleted)"),
+            monitor.contains("dispatchCompletedPeerReview(sessionId, working, peerCoordinator::onTurnCompleted)"),
         )
         assertTrue(monitor.contains("updateFilePresentation(file)"))
         val unreadTracker =

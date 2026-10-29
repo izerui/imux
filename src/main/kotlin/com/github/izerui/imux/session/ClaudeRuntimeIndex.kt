@@ -10,8 +10,8 @@ import java.nio.file.Path
  * 一个正在运行的 Claude 进程所对应的会话。
  *
  * @param kind `interactive` 或 `bg`（后台 agent）
- * @param status 本机实测有三种：`busy` 正在干活、`shell` 回答已打完但派生的后台 shell
- *   还在跑、`idle` 等待用户输入
+ * @param status `busy` 正在干活、`shell` 回答已打完但后台命令还在跑、
+ *   `idle` 等待新输入、`waiting` 等待用户确认
  */
 data class ClaudeRuntimeSession(
     val sessionId: String,
@@ -37,17 +37,20 @@ data class ClaudeRuntimeSession(
     val isWaiting: Boolean get() = status == WAITING
 
     /**
-     * 这一轮还在跑。据此显示运行中标记、判定轮次完成。
+     * 前台轮次还在执行，用于轮次通知与结对审查。
      *
-     * `shell` 不算：那时回答早打完了，只剩后台 shell 在收尾。实测状态序列是
-     * `busy` -> `shell` -> `idle`，若把 `shell` 也算忙碌，用户眼里就是
-     * 「明明执行完了还一直转菊花」，且品牌图标要等到后台任务结束才回来。
+     * `busy` -> `shell` 时本轮回答已结束，手机仍应及时收到回复；
+     * 后台任务的运行标记由 [isRunning] 独立判断。
      *
      * `waiting` 同样不算：那是 CLI 弹出了权限确认或选择框，对话已经停下等用户操作。
      * 继续转菊花会让人以为它还在跑，而实际上不去点一下它永远不会动。
      */
-    val isBusy: Boolean get() =
-        status != null && status != "idle" && status != SHELL && status != WAITING
+    val isBusy: Boolean
+        get() =
+            status != null && status != "idle" && status != SHELL && status != WAITING
+
+    /** 标签与窗口运行数：后台命令尚未结束时仍显示执行中。 */
+    val isRunning: Boolean get() = isBusy || status == SHELL
 
     /** 会话被这个进程占着。resume 一个未空闲的后台会话会被 CLI 拒绝。 */
     val isOccupied: Boolean get() = status != null && status != "idle"

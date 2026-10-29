@@ -10,6 +10,43 @@ import java.time.Instant
 
 class RuntimeStatusTrackerTest {
 
+    @Test
+    fun `前台转后台时通知本轮完成，后台结束不重复通知`() {
+        val start = Instant.parse("2026-10-29T00:00:00Z")
+        var now = start
+        val tracker = RuntimeStatusTracker { now }
+        tracker.completedSince(snapshot("s1" to "idle"))
+        tracker.completedSince(snapshot("s1" to "busy"))
+        now = start.plusSeconds(10)
+        assertEquals(listOf("s1"), tracker.completedSince(snapshot("s1" to "shell")).completed)
+        assertEquals(Duration.ofSeconds(10), tracker.lastDuration("s1"))
+        now = start.plusSeconds(30)
+        assertTrue(tracker.completedSince(snapshot("s1" to "shell")).completed.isEmpty())
+        now = start.plusSeconds(40)
+        assertTrue(tracker.completedSince(snapshot("s1" to "idle")).completed.isEmpty())
+        assertEquals(Duration.ofSeconds(10), tracker.lastDuration("s1"))
+        assertTrue(tracker.completedSince(snapshot("s1" to "idle")).completed.isEmpty())
+    }
+
+    @Test
+    fun `首次看到后台命令运行不补发历史轮次通知`() {
+        val tracker = RuntimeStatusTracker()
+        assertTrue(tracker.completedSince(snapshot("s1" to "shell")).completed.isEmpty())
+        assertTrue(tracker.completedSince(snapshot("s1" to "idle")).completed.isEmpty())
+        assertNull(tracker.lastDuration("s1"))
+    }
+
+    @Test
+    fun `后台期间等待确认只报等待，前台恢复后结束正常通知`() {
+        val tracker = RuntimeStatusTracker()
+        tracker.completedSince(snapshot("s1" to "shell"))
+        val waiting = tracker.completedSince(waitingSnapshot("s1", "permission"))
+        assertTrue(waiting.completed.isEmpty())
+        assertEquals(listOf(WaitingSession("s1", "permission")), waiting.waiting)
+        assertTrue(tracker.completedSince(snapshot("s1" to "busy")).completed.isEmpty())
+        assertEquals(listOf("s1"), tracker.completedSince(snapshot("s1" to "idle")).completed)
+    }
+
     private fun session(id: String, status: String?, waitingFor: String? = null) =
         ClaudeRuntimeSession(
             id,
@@ -97,7 +134,9 @@ class RuntimeStatusTrackerTest {
     /** 从可控时钟推进，验证耗时按 busy 起点计算。 */
     private class FakeClock(var now: Instant = Instant.parse("2026-08-04T10:00:00Z")) : () -> Instant {
         override fun invoke(): Instant = now
-        fun advance(seconds: Long) { now = now.plusSeconds(seconds) }
+        fun advance(seconds: Long) {
+            now = now.plusSeconds(seconds)
+        }
     }
 
     @Test
