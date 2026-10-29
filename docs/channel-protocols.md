@@ -89,7 +89,7 @@
 - 收消息类型：text、post（接收时 `md` 会被转成其他标签）、image（`image_key`）、file（`file_key`、`file_name`）、media（视频）、audio（`file_key`、`duration`，**无转写**）。
 - 下载附件：`GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=image|file`，音频与视频用 `file`；100 MB 以下整包下载，更大需 Range 分片（本版不做）；内容不加密。
 - 引用：事件只有 `parent_id`，文字需 `GET /open-apis/im/v1/messages/{message_id}` 获取。
-- 语音：消息是 Opus（Ogg 封装）；识别接口 `speech_to_text/v1/speech/file_recognize` 只收 16k pcm、适合 60 秒以内、权限 `speech_to_text:speech`。插件用 Concentus 解码后按 50 秒切段识别，失败时退回音频附件。
+- 语音：消息是 Opus（Ogg 封装）；识别接口 `speech_to_text/v1/speech/file_recognize` 只收 16k pcm、适合 60 秒以内、权限 `speech_to_text:speech`。插件用 Concentus 解码后整段一次识别（不切段；60 秒以上也提交，仅超过 10 分钟作为内存保护不识别），失败时退回音频附件。
 - 令牌：`tenant_access_token` 最长 2 小时；剩余不足 30 分钟时再取会得到新令牌。
 - 错误码：令牌无效 99991661 / 99991663 / 99991665 / 20005 / 20013；应用不可用 10014 / 10015 / 11207 / 11209 / 99991662 / 99991673 / 20009；限频 99991400 / 1000004 / 1000005；额度 99991403；权限 99991672 / 99991676；不在可用范围 230013；未启用机器人 230006。
 

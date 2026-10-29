@@ -93,7 +93,7 @@ robot/、根包              不改（RobotManager.add 已支持 ownerId 非空�
 | `FeishuApi` | 取长连接地址；令牌缓存与失效重取；发 Markdown；取引用消息文字；所有返回统一成 `FeishuResult`（成功 / 业务错误码 / 网络错误） | `HttpJson` | 无（企业微信发送走长连接） |
 | `FeishuConnection` | 建连、心跳、确认、拼包、去重、重连、入站排队、发送与状态上报 | 以上全部、`FrameTransport` | `WecomConnection` |
 | `FeishuAttachment` | `InboundAttachment` 实现：带令牌下载，文件名优先用消息里的 `file_name` | `HttpFileDownload`、`FeishuApi` | `WecomAttachment` |
-| `FeishuSpeech` | 下载语音 → `OggOpus` 解码 → 按 50 秒切段调用识别 → 拼接；任何一步失败返回 null | `FeishuAttachment`、`FeishuApi`、`OggOpus` | 无（企业微信消息自带转写） |
+| `FeishuSpeech` | 下载语音 → `OggOpus` 解码 → 整段一次调用识别（不切段；60 秒以上也提交，仅超过 10 分钟作为内存保护不识别）；任何一步失败返回 null | `FeishuAttachment`、`FeishuApi`、`OggOpus` | 无（企业微信消息自带转写） |
 | `OggOpus`（`channel/`） | 拆 Ogg 页、丢 pre-skip、用 Concentus 解成 16k 单声道 pcm；上限 10 分钟 | Concentus | — |
 
 ### 3.3 公共层改动（企业微信行为不变）
@@ -250,7 +250,7 @@ onBinary(bytes):
 | `FeishuConnectionTest` | 假传输：先回写确认再处理；拼包；去重；入站顺序（第一条取引用慢，第二条也不会先到）；pong 更新心跳间隔；3 个周期无帧判死重连；握手 514+1000040350 不重连；endpoint 业务错误分类；额度用完 → `SendFailing`，随后成功 → `Online`；stop 上报 Stopped |
 | `FeishuAttachmentTest` | 带令牌请求头；文件名优先级；超限 |
 | `OggOpusTest` | 用 ffmpeg（libopus）生成的单声道 16k、立体声 48k 样本：时长与非静音；超限、非 Ogg、截断报错 |
-| `FeishuSpeechTest` | 切段与拼接、请求参数、临时文件删除；识别报错、结果为空、解码失败都返回 null |
+| `FeishuSpeechTest` | 整段一次识别、请求参数、临时文件删除；识别报错、结果为空、解码失败、异常大文件都返回 null |
 | 传输层 | `BinaryFrameAssemblerTest`；`JdkWebSocketTransport` 握手被拒转换 |
 | 现有测试 | `ChannelIsolationSourceTest` 自动覆盖新目录；企业微信相关测试全部保持通过 |
 

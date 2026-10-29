@@ -58,23 +58,19 @@ class FeishuSpeechTest {
         code: Int = 0,
         texts: List<String> = emptyList(),
         bytes: ByteArray = tone,
-        chunkSamples: Int = 50 * 16_000,
+        maxSamples: Int = 10 * 60 * 16_000,
     ) = FeishuSpeech(
         FeishuApi("cli", "sec", FeishuDomain.FEISHU, http(code, ArrayDeque(texts))),
         download(bytes),
-        chunkSamples = chunkSamples
+        maxSamples = maxSamples
     )
 
     @Test
-    fun `解码后按段识别并按顺序拼接`() =
+    fun `整段语音一次识别，不切段`() =
         runBlocking {
-            assertEquals(
-                "你好世界。",
-                speech(texts = listOf("你好", "世界", "。"), chunkSamples = 8_000).transcribe("om_1", ref)
-            )
-            assertEquals(3, chunks.size)
-            assertTrue(chunks.all { it <= 8_000 * 2 })
-            assertTrue("总字节 ${chunks.sum()}", chunks.sum() in 32_000..32_800)
+            assertEquals("你好世界", speech(texts = listOf(" 你好世界 ")).transcribe("om_1", ref))
+            assertEquals("只调用一次识别", 1, chunks.size)
+            assertTrue("整段约 1 秒 pcm：${chunks.single()} 字节", chunks.single() in 32_000..32_800)
             configs.forEach {
                 assertEquals("pcm", it["format"].asString)
                 assertEquals("16k_auto", it["engine_type"].asString)
@@ -96,11 +92,11 @@ class FeishuSpeechTest {
         }
 
     @Test
-    fun `任一段识别为空时整体返回 null，不交出部分文字`() =
+    fun `异常大的文件不识别，直接退回附件`() =
         runBlocking {
-            // 第一段有文字、第二段为空（或缺 recognition_text）：退回音频附件，不能只交出前半段
-            assertNull(speech(texts = listOf("你好", ""), chunkSamples = 8_000).transcribe("om_1", ref))
-            assertEquals("第二段为空后不再识别后续段", 2, chunks.size)
+            assertNull(speech(texts = listOf("你好"), maxSamples = 8_000).transcribe("om_1", ref))
+            assertTrue(chunks.isEmpty())
+            assertFalse(Files.exists(downloaded.single()))
         }
 
     @Test
