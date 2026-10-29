@@ -78,7 +78,7 @@
 - 帧为 protobuf `pbbp2.Frame`（SeqID=1, LogID=2, service=3, method=4[0 控制/1 数据], headers=5, payload_encoding=6, payload_type=7, payload=8, LogIDNew=9）；心跳为控制帧 header `type=ping`，默认 120 秒；分片按 header `sum/seq` 合并。
 - 收到数据帧后须在 **3 秒内** 回写同帧（payload `{"code":200}`），处理放到异步队列。
 - 每应用最多 50 条连接，事件随机投给其中一个；握手 514+autherrcode 1000040350 或 403 时不重连。
-- 实现：自实现，不引入 SDK。帧格式以官方 Python SDK `lark-oapi` 1.7.5 内嵌的 `pbbp2.proto` 为准，测试样本字节由该 SDK 生成。收到数据帧立即回写确认，处理放到按序队列；官方 SDK 只靠读错误发现断线，我们另加"3 个心跳周期无任何帧即重连"。
+- 实现：自实现，不引入 SDK。帧格式以官方 Python SDK `lark-oapi` 1.7.5 内嵌的 `pbbp2.proto` 为准，测试样本字节由该 SDK 生成。收帧对齐 Node SDK：校验 `sum/seq`，拼齐后按序处理，成功回 200、处理异常回 500，`biz_rt` 记录耗时；未拼齐不确认，未完成缓存保留 10 秒。官方 SDK 只靠读错误发现断线，我们另加"3 个心跳周期无任何帧即重连"。
 
 **收发**
 - 事件 `im.message.receive_v1`：`sender.sender_id.open_id`、`sender.sender_type`(user/bot)、`message.message_id/chat_type(p2p)/message_type/content`（JSON 字符串，文本为 `{"text":..}`）；用 `message_id` 去重。

@@ -41,7 +41,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * 飞书长连接（docs/superpowers/specs/2026-10-28-feishu-channel-design.md 第 5 至 7 节）。
  *
  * 收消息走 WebSocket（protobuf 帧），发消息走 HTTP，两者互不依赖：长连接重连期间照样能发。
- * 收到事件先回写确认再处理，确认不等取引用、不等终端；之后由单个协程按到达顺序交给 [InboundSink]。
+ * 按 Node SDK 拼齐事件后处理，成功回 200、异常回 500；单个协程按到达顺序交给 [InboundSink]。
  * 飞书没有踢线事件，不会上报 Kicked。
  */
 class FeishuConnection(
@@ -80,6 +80,12 @@ class FeishuConnection(
     private class Partial(
         val parts: Array<ByteArray?>,
         val createdAt: Long,
+    )
+
+    private class PendingEvent(
+        val state: SessionState,
+        val frame: FeishuFrame,
+        val payload: String,
     )
 
     private val seen = LinkedHashSet<String>()
@@ -148,6 +154,7 @@ class FeishuConnection(
         current.job.cancel()
         session?.transport?.close()
         session = null
+        synchronized(partials) { partials.clear() }
         // 只入队不回调，不会阻塞在监听器上
         synchronized(statusLock) {
             linkStatus = ConnectionStatus.Stopped
@@ -241,8 +248,8 @@ class FeishuConnection(
         sink: InboundSink,
     ) {
         coroutineScope {
-            val inbound = Channel<FeishuMessage>(Channel.UNLIMITED)
-            launch { for (message in inbound) deliver(message, sink) }
+            val inbound = Channel<PendingEvent>(Channel.UNLIMITED)
+            launch { for (event in inbound) handleEvent(event, sink) }
             var reconnects = 0
             var lastFailure: String? = null
             var first = true
@@ -296,7 +303,7 @@ class FeishuConnection(
 
     private suspend fun runSession(
         owner: Run,
-        inbound: SendChannel<FeishuMessage>,
+        inbound: SendChannel<PendingEvent>,
         onOnline: () -> Unit,
     ): SessionEnd {
         val endpoint =
@@ -404,7 +411,7 @@ class FeishuConnection(
     private fun onFrame(
         state: SessionState,
         bytes: ByteArray,
-        inbound: SendChannel<FeishuMessage>,
+        inbound: SendChannel<PendingEvent>,
     ) {
         val frame = runCatching { FeishuFrameCodec.decode(bytes) }.getOrNull() ?: return
         when (frame.method) {
@@ -424,39 +431,60 @@ class FeishuConnection(
     private fun onData(
         state: SessionState,
         frame: FeishuFrame,
-        inbound: SendChannel<FeishuMessage>,
+        inbound: SendChannel<PendingEvent>,
     ) {
         if (frame.header("type") != "event") return
         val frameId = frame.header("message_id") ?: return
-        val sum = frame.header("sum")?.toIntOrNull() ?: 1
-        val payload =
-            if (sum > 1) {
-                combine(frameId, sum, frame.header("seq")?.toIntOrNull() ?: -1, frame.payload ?: ByteArray(0)) ?: return
-            } else {
-                frame.payload ?: ByteArray(0)
-            }
-        acknowledge(state, frame)
-        val message = FeishuEvents.parseMessage(String(payload, StandardCharsets.UTF_8)) ?: return
-        if (markSeen(message.messageId)) inbound.trySend(message)
-    }
-
-    private fun acknowledge(
-        state: SessionState,
-        frame: FeishuFrame,
-    ) {
-        val ack = frame.withHeader("biz_rt", "0").copy(payload = ACK_PAYLOAD)
-        scope.launch {
-            try {
-                state.transport.sendBinary(FeishuFrameCodec.encode(ack))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // 确认没发出去，平台会重投，靠消息 id 去重
-            }
+        val sum = frame.header("sum")?.toIntOrNull() ?: return
+        val seq = frame.header("seq")?.toIntOrNull() ?: return
+        val payload = combine(frameId, sum, seq, frame.payload ?: ByteArray(0)) ?: return
+        val text = String(payload, StandardCharsets.UTF_8)
+        // Node SDK 在 mergeData 内解析 JSON；坏包不进入业务回调，也不回成功确认。
+        if (runCatching { JsonParser.parseString(text).isJsonObject }.getOrDefault(false)) {
+            inbound.trySend(PendingEvent(state, frame, text))
         }
     }
 
-    /** 与官方 SDK 一样按 seq 放进缓存，5 秒内拼齐才交出。 */
+    private suspend fun handleEvent(event: PendingEvent, sink: InboundSink) {
+        val startedAt = now()
+        var claimedId: String? = null
+        val code = try {
+            val message = FeishuEvents.parseMessage(event.payload)
+            if (message != null && markSeen(message.messageId)) {
+                claimedId = message.messageId
+                deliver(message, sink)
+            }
+            200
+        } catch (e: CancellationException) {
+            claimedId?.let { synchronized(seen) { seen.remove(it) } }
+            throw e
+        } catch (_: Exception) {
+            // 处理失败不能留下去重标记，否则平台重投会被当成已处理。
+            claimedId?.let { synchronized(seen) { seen.remove(it) } }
+            500
+        }
+        acknowledge(event.state, event.frame, code, now() - startedAt)
+    }
+
+    private suspend fun acknowledge(
+        state: SessionState,
+        frame: FeishuFrame,
+        code: Int,
+        elapsedMillis: Long,
+    ) {
+        // biz_rt 记录本次业务处理耗时，不包含排队时间。
+        val ack = frame.withHeader("biz_rt", elapsedMillis.coerceAtLeast(0).toString())
+            .copy(payload = """{"code":$code}""".toByteArray(StandardCharsets.UTF_8))
+        try {
+            state.transport.sendBinary(FeishuFrameCodec.encode(ack))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // 确认没发出去，平台会重投，靠消息 id 去重
+        }
+    }
+
+    /** 与 Node SDK 一样校验元数据并按 seq 拼接，未完成缓存保留 10 秒。 */
     private fun combine(
         frameId: String,
         sum: Int,
@@ -466,7 +494,7 @@ class FeishuConnection(
         synchronized(partials) {
             val current = now()
             partials.entries.removeIf { current - it.value.createdAt > COMBINE_TTL_MILLIS }
-            if (seq !in 0 until sum) return null
+            if (sum <= 0 || seq !in 0 until sum) return null
             val partial = partials.getOrPut(frameId) { Partial(arrayOfNulls(sum), current) }
             if (partial.parts.size != sum) return null
             partial.parts[seq] = part
@@ -488,30 +516,24 @@ class FeishuConnection(
         message: FeishuMessage,
         sink: InboundSink,
     ) {
-        try {
-            val quote = message.parentId?.let { api.messageText(it) }
-            // 语音先交给飞书识别；识别成功就当作本人发的文字（与企业微信的语音转写一致），失败则作为音频附件转交
-            val voice = message.media.firstOrNull { it.kind == AttachmentKind.AUDIO }
-            val transcript = voice?.let { speech.transcribe(message.messageId, it) }
-            val media = if (transcript != null) message.media.filter { it !== voice } else message.media
-            val text = listOfNotNull(message.text, transcript).joinToString("\n")
-            val attachments = media.map { FeishuAttachment(message.messageId, it, api, download) }
-            sink.accept(
-                InboundMessage(
-                    robotId,
-                    message.messageId,
-                    message.senderOpenId,
-                    message.senderOpenId,
-                    text,
-                    attachments,
-                    quote
-                )
+        val quote = message.parentId?.let { api.messageText(it) }
+        // 语音先交给飞书识别；识别成功就当作本人发的文字（与企业微信的语音转写一致），失败则作为音频附件转交
+        val voice = message.media.firstOrNull { it.kind == AttachmentKind.AUDIO }
+        val transcript = voice?.let { speech.transcribe(message.messageId, it) }
+        val media = if (transcript != null) message.media.filter { it !== voice } else message.media
+        val text = listOfNotNull(message.text, transcript).joinToString("\n")
+        val attachments = media.map { FeishuAttachment(message.messageId, it, api, download) }
+        sink.accept(
+            InboundMessage(
+                robotId,
+                message.messageId,
+                message.senderOpenId,
+                message.senderOpenId,
+                text,
+                attachments,
+                quote
             )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            // 一条消息出错不能让后续消息停摆
-        }
+        )
     }
 
     private fun queryParam(
@@ -526,9 +548,8 @@ class FeishuConnection(
             ?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }
 
     private companion object {
-        val ACK_PAYLOAD = """{"code":200}""".toByteArray(StandardCharsets.UTF_8)
         const val DEAD_AFTER_PINGS = 3
-        const val COMBINE_TTL_MILLIS = 5_000L
+        const val COMBINE_TTL_MILLIS = 10_000L
         const val SEEN_CAPACITY = 1000
     }
 }

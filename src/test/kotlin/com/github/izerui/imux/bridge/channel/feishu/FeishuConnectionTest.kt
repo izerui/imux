@@ -87,9 +87,11 @@ class FeishuConnectionTest {
     @Volatile
     private var quoteDelayMillis = 0L
 
-    /** 取引用在此等待放行；用来确定地证明确认不等处理。 */
+    /** 取引用在此等待放行；用来确定地证明确认等待处理完成。 */
     @Volatile
     private var quoteGate: CompletableDeferred<Unit>? = null
+
+    private val quoteEntered = CompletableDeferred<Unit>()
 
     /** 之后新建的连接一律握手失败（[connection] 的 reject 优先）；用来模拟在线后重连失败。 */
     @Volatile
@@ -106,6 +108,7 @@ class FeishuConnectionTest {
                 method == "POST" && url.contains("/im/v1/messages?") -> 200 to """{"code":$sendCode,"msg":"m"}"""
                 url.endsWith("/speech_to_text/v1/speech/file_recognize") -> 200 to """{"code":$speechCode,"msg":"m","data":{"recognition_text":"跑一下单测"}}"""
                 method == "GET" && url.contains("/im/v1/messages/") -> {
+                    quoteEntered.complete(Unit)
                     quoteGate?.await()
                     delay(quoteDelayMillis)
                     200 to """{"code":0,"data":{"items":[{"msg_type":"text","body":{"content":"{\"text\":\"原话\"}"}}]}}"""
@@ -202,7 +205,7 @@ class FeishuConnectionTest {
     private fun acks(transport: FakeTransport) = transport.frames.filter { it.method == FeishuFrame.METHOD_DATA }
 
     @Test
-    fun `收到事件先回写确认，再把本人消息交出`() =
+    fun `收到事件处理成功后回写确认`() =
         runBlocking {
             startAndAwaitOnline(connection())
             val transport = transports.first()
@@ -211,24 +214,91 @@ class FeishuConnectionTest {
             assertEquals(InboundMessage(RobotId("r"), "om_1", "ou_me", "ou_me", "跑一下单测"), received.single())
             val ack = acks(transport).single()
             assertEquals("f1", ack.header("message_id"))
-            assertEquals("0", ack.header("biz_rt"))
+            assertTrue(ack.header("biz_rt")!!.toLong() >= 0)
             assertEquals("""{"code":200}""", String(ack.payload!!, Charsets.UTF_8))
         }
 
     @Test
-    fun `确认不等处理：取引用很慢时确认照样先发出`() =
+    fun `取引用完成并交出消息后才确认`() =
         runBlocking {
-            // 取引用卡在闸门上，直到看到确认才放行：确认先于处理完成是确定的，不靠计时
+            // 业务已进入且阻塞时不得提前确认；放行后才允许成功确认。
             val gate = CompletableDeferred<Unit>()
             quoteGate = gate
             startAndAwaitOnline(connection())
             val transport = transports.first()
             transport.emit(dataFrame("f1", textEvent("om_1", "这个呢", parentId = "om_0")))
-            withTimeout(2_000) { while (acks(transport).isEmpty()) delay(5) }
+            withTimeout(2_000) { quoteEntered.await() }
+            assertTrue(acks(transport).isEmpty())
             assertTrue(received.isEmpty())
             gate.complete(Unit)
-            withTimeout(2_000) { while (received.isEmpty()) delay(5) }
+            withTimeout(2_000) { while (received.isEmpty() || acks(transport).isEmpty()) delay(5) }
             assertEquals("原话", received.single().quote)
+            assertEquals("""{"code":200}""", String(acks(transport).single().payload!!, Charsets.UTF_8))
+        }
+
+    @Test
+    fun `业务处理异常回五百，重投可以重新处理`() =
+        runBlocking {
+            val attempts = AtomicInteger()
+            val conn = connection()
+            conn.start(InboundSink {
+                if (attempts.incrementAndGet() == 1) error("failed")
+                received += it
+            }) { statuses += it }
+            awaitLast(ConnectionStatus.Online)
+            val transport = transports.first()
+            val event = dataFrame("f1", textEvent("om_1", "重试"))
+            transport.emit(event)
+            withTimeout(2_000) { while (acks(transport).isEmpty()) delay(5) }
+            assertEquals("""{"code":500}""", String(acks(transport).single().payload!!, Charsets.UTF_8))
+            assertTrue(received.isEmpty())
+            transport.emit(event)
+            withTimeout(2_000) { while (acks(transport).size < 2) delay(5) }
+            assertEquals(listOf("重试"), received.map { it.text })
+            assertEquals("""{"code":200}""", String(acks(transport).last().payload!!, Charsets.UTF_8))
+        }
+
+    @Test
+    fun `缺片不确认，总数不一致不拼接，补齐才交出`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            val payload = textEvent("om_1", "拼起来")
+            val half = payload.length / 2
+            transport.emit(dataFrame("f1", payload.substring(0, half), sum = 2, seq = 0))
+            transport.emit(dataFrame("f1", payload.substring(half), sum = 3, seq = 1))
+            assertTrue(acks(transport).isEmpty())
+            assertTrue(received.isEmpty())
+            transport.emit(dataFrame("f1", payload.substring(half), sum = 2, seq = 1))
+            withTimeout(2_000) { while (acks(transport).isEmpty()) delay(5) }
+            assertEquals(listOf("拼起来"), received.map { it.text })
+            assertEquals(1, acks(transport).size)
+        }
+
+    @Test
+    fun `非法分片元数据不交出也不确认`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            val payload = textEvent("om_bad", "非法")
+            val invalid = listOf(
+                dataFrame("zero", payload, sum = 0),
+                dataFrame("negative", payload, sum = -1),
+                dataFrame("seq", payload, seq = 1),
+                dataFrame("negativeSeq", payload, seq = -1),
+                dataFrame("missing", payload).copy(
+                    headers = listOf(
+                        FeishuHeader("type", "event"),
+                        FeishuHeader("message_id", "missing")
+                    )
+                ),
+                dataFrame("json", "{"),
+            )
+            invalid.forEach(transport::emit)
+            transport.emit(dataFrame("valid", textEvent("om_valid", "正常")))
+            withTimeout(2_000) { while (acks(transport).isEmpty()) delay(5) }
+            assertEquals(listOf("正常"), received.map { it.text })
+            assertEquals(listOf("valid"), acks(transport).map { it.header("message_id") })
         }
 
     @Test
@@ -472,7 +542,13 @@ class FeishuConnectionTest {
             withTimeout(2_000) { while (statuses.none { it is ConnectionStatus.Retrying }) delay(5) }
             assertEquals(1, opens.get())
             stopAndAwait(conn)
-            assertEquals(listOf(ConnectionStatus.Connecting, ConnectionStatus.Retrying("handshake 500"), ConnectionStatus.Stopped), statuses.toList())
+            assertEquals(
+                listOf(
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.Retrying("handshake 500"),
+                    ConnectionStatus.Stopped
+                ), statuses.toList()
+            )
         }
 
     @Test
@@ -483,7 +559,13 @@ class FeishuConnectionTest {
             start(conn)
             withTimeout(2_000) { while (opens.get() < 4) delay(5) }
             stopAndAwait(conn)
-            assertEquals(listOf(ConnectionStatus.Connecting, ConnectionStatus.Retrying("handshake 500"), ConnectionStatus.Stopped), statuses.toList())
+            assertEquals(
+                listOf(
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.Retrying("handshake 500"),
+                    ConnectionStatus.Stopped
+                ), statuses.toList()
+            )
         }
 
     @Test

@@ -164,14 +164,15 @@ onBinary(bytes):
   frame = FeishuFrameCodec.decode(bytes)   失败则记日志丢弃
   method=0：type=pong → 更新 ClientConfig；其他忽略
   method=1：
-    sum>1 → 按 message_id 拼包（缓存 5 秒，与 SDK 相同）；未齐则返回
+    校验 sum 为正整数、seq 在 [0,sum) 内、同一消息 sum 一致
+    按 message_id 拼包（缓存 10 秒，与 Node SDK 相同）；未齐则返回
     type=event：
-      立即回写确认帧（payload {"code":200}，header 加 biz_rt=0）
-      解析事件，交给入站队列
+      解析事件，交给入站队列处理
+      成功回写 {"code":200}，处理异常回写 {"code":500}，biz_rt 记录处理耗时
     type=card：不处理、不回写（与 SDK 相同）
 ```
 
-- **先确认后处理**：确认在 WebSocket 回调里同步发出（经串行发送锁），不等解析、取引用或交给终端，保证 3 秒内。
+- **处理后确认**：对齐 Node SDK，拼齐并处理后才确认；这里处理完成指取引用、语音转写并调用 `sink.accept` 完成，不等待 CLI 执行完成。处理异常回 500，并移除本次去重标记以允许重投。慢处理可能触发平台重投，按消息 id 去重。
 - **入站队列**：每个连接一个单消费者协程，按到达顺序处理：取引用文字（有 `parent_id` 时）→ 组装 `InboundMessage` → `sink.accept`。取引用失败时 `quote = null`，照常转交。这样既满足 `InboundSink` 的顺序要求，也不阻塞确认。
 - **去重**：按 `message_id`（平台重投用同一个），容量 1000，与企业微信相同。
 
@@ -247,7 +248,7 @@ onBinary(bytes):
 | `FeishuEventsTest` | 各消息类型的解析表；非 p2p、非 user、非 receive_v1 被忽略；post 带语言外壳；`parent_id` |
 | `FeishuOnboardingTest` | 假 HTTP：正常成功、`slow_down` 间隔递增、Lark 切换且同一响应带凭据、`access_denied`、`expired_token`、init 不支持、缺 `open_id` 时 `ownerId=null` |
 | `FeishuApiTest` | 令牌缓存与提前刷新；令牌无效重取只重试一次；各错误码分类 |
-| `FeishuConnectionTest` | 假传输：先回写确认再处理；拼包；去重；入站顺序（第一条取引用慢，第二条也不会先到）；pong 更新心跳间隔；3 个周期无帧判死重连；握手 514+1000040350 不重连；endpoint 业务错误分类；额度用完 → `SendFailing`，随后成功 → `Online`；stop 上报 Stopped |
+| `FeishuConnectionTest` | 假传输：处理成功后确认；异常回 500 且允许重投；缺片不确认；非法元数据不处理；拼包；去重；入站顺序（第一条取引用慢，第二条也不会先到）；pong 更新心跳间隔；3 个周期无帧判死重连；握手 514+1000040350 不重连；endpoint 业务错误分类；额度用完 → `SendFailing`，随后成功 → `Online`；stop 上报 Stopped |
 | `FeishuAttachmentTest` | 带令牌请求头；文件名优先级；超限 |
 | `OggOpusTest` | 用 ffmpeg（libopus）生成的单声道 16k、立体声 48k 样本：时长与非静音；超限、非 Ogg、截断报错 |
 | `FeishuSpeechTest` | 整段一次识别、请求参数、临时文件删除；识别报错、结果为空、解码失败、异常大文件都返回 null |
