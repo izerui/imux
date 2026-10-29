@@ -47,9 +47,15 @@ class PeerReviewTextsTest {
     }
 
     @Test
-    fun `意见自动注入和主会话开新一轮不推，手机上随后看得到那条输入`() {
+    fun `意见自动注入不推，手机上随后看得到那条输入`() {
         assertEquals(null, zh(injected))
-        assertEquals(null, zh(turnStarted))
+    }
+
+    @Test
+    fun `审查中又发了消息、审查被取消时立即说明，其余不用立即发`() {
+        assertTrue(zh(turnStarted)!!.contains("已取消"))
+        assertTrue(turnStarted.immediate())
+        for (event in idle + started + startedOnce + staged) assertTrue(!event.immediate())
     }
 
     @Test

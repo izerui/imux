@@ -262,6 +262,15 @@ class BridgeRouter(
         onStatus(tabId, text)
     }
 
+    /** 立即发一条状态，不排在任何一轮的回复之后；之前排着的状态先发。 */
+    suspend fun onStatusNow(
+        tabId: String,
+        text: String,
+    ) {
+        sendAfterReply(tabId)
+        onStatus(tabId, text)
+    }
+
     /**
      * 完成信号到了但没能结算（读取边界不可靠）：后台任务提示照常补，排着的状态也不能一直压着。
      */

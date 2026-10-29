@@ -32,14 +32,17 @@ internal fun peerReviewText(
             when (event.reason) {
                 PeerStopReason.CANCELLED -> message("bridge.peer.cancelled", listOf(reviewer))
                 PeerStopReason.UNBOUND -> message("bridge.peer.unbound", listOf(reviewer))
-                // 新一轮是有人发了消息，手机上看得到
-                PeerStopReason.TURN_STARTED -> null
+                // 审查中又发了消息（电脑或手机），主会话开了新一轮，这一轮审查被取消
+                PeerStopReason.TURN_STARTED -> message("bridge.peer.turnStarted", listOf(reviewer))
                 PeerStopReason.MAX_ROUNDS -> message("bridge.peer.maxRounds", listOf(event.maxRounds))
                 PeerStopReason.INTERRUPTED -> message("bridge.peer.interrupted", listOf(reviewer))
                 PeerStopReason.SESSION_CHANGED -> message("bridge.peer.sessionChanged", listOf(reviewer))
             }
     }?.trim()
 }
+
+/** 审查被新一轮取消：新一轮已经开始，不能排到它的回复后面，立即发。 */
+internal fun PeerReviewEvent.immediate(): Boolean = this is PeerReviewEvent.Stopped && reason == PeerStopReason.TURN_STARTED
 
 /** 持续结对的审查开始、到上限不再审查，说的都是刚结束的那一轮，要排在这一轮的回复之后。 */
 internal fun PeerReviewEvent.followsTurn(): Boolean =

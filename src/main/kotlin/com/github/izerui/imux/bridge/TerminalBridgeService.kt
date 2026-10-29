@@ -135,9 +135,14 @@ class TerminalBridgeService(
         // 与轮次完成信号一样，在这一刻同步记下读取边界
         val mark = if (event.followsTurn()) tails.mark(tabId) else null
         val followsTurn = event.followsTurn()
+        val immediate = event.immediate()
         // 单线程依次发出：开始与结果分属不同协程时，先发生的先拿到标签锁
         scope.launch(peerEvents) {
-            if (followsTurn) poller.afterTurn(tabId, text, mark) else poller.status(tabId, text)
+            when {
+                followsTurn -> poller.afterTurn(tabId, text, mark)
+                immediate -> poller.statusNow(tabId, text)
+                else -> poller.status(tabId, text)
+            }
         }
     }
 

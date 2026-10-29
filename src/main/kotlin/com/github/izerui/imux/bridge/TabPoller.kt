@@ -89,6 +89,14 @@ internal class TabPoller(
         if (enabled()) router.onAfterReply(tabId, text)
     }
 
+    /** 不等任何一轮结算、立即发的状态（审查被新一轮取消）；还排着的状态先发，顺序不乱。 */
+    suspend fun statusNow(
+        tabId: String,
+        text: String,
+    ) = lock(tabId).withLock {
+        if (enabled()) router.onStatusNow(tabId, text)
+    }
+
     /** IDE 报告等待确认：先读出之前的内容，再推等待提示。 */
     suspend fun waiting(
         tabId: String,

@@ -176,6 +176,19 @@ class TabPollerTest {
         }
 
     @Test
+    fun `审查被新一轮取消：立即发出，不等新一轮的回复，排着的审查开始先发`() =
+        runBlocking {
+            start()
+            write(user("第一句"))
+            poller.poll("tab")
+            poller.status("tab", "审查中")
+            poller.statusNow("tab", "审查已取消")
+            write(user("第二句"))
+            poller.poll("tab")
+            assertEquals(listOf("LOCAL:\n第一句", "审查中", "审查已取消", "LOCAL:\n第二句"), sent)
+        }
+
+    @Test
     fun `完成信号按记下的边界结算本轮结论`() =
         runBlocking {
             start()
