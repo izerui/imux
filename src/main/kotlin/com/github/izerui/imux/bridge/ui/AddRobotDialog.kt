@@ -2,7 +2,6 @@ package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeLifecycle
 import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.bridge.channel.ChannelFactories
 import com.github.izerui.imux.bridge.channel.ChannelKind
@@ -142,7 +141,6 @@ class AddRobotDialog(
     private val qrTitle = JBLabel().apply { font = JBFont.label().asBold() }
     private val qrSteps = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     private val qrStatus = JBLabel()
-    private val enabledHint = JBLabel()
     private val retryButton = JButton(ImuxBundle.message("bridge.add.retry"))
     private val pairTitle = JBLabel().apply { font = JBFont.label().asBold() }
     private val pairCode = JBLabel()
@@ -162,6 +160,7 @@ class AddRobotDialog(
     private var job: Job? = null
     private var driver: OnboardingDriver? = null
     private var kind: ChannelKind = ChannelKind.WECOM
+
     @Volatile
     private var robotId: RobotId? = null
     private var step = Card.CHANNEL
@@ -216,7 +215,6 @@ class AddRobotDialog(
                         row { cell(qrTitle) }
                         row { cell(qrSteps) }
                         row { cell(qrStatus) }.topGap(TopGap.SMALL)
-                        row { cell(enabledHint) }
                         row { cell(retryButton) }
                     }.align(AlignY.TOP)
                 }
@@ -246,12 +244,11 @@ class AddRobotDialog(
         when (step) {
             Card.CHANNEL -> {
                 kind = radios.entries.first { it.value.isSelected }.key
-                val justEnabled = ensureBridgeEnabled()
-                if (justEnabled) enabledHint.text = ImuxBundle.message("bridge.add.enabledBridge")
                 show(Card.QR)
                 isOKActionEnabled = false
                 startScan()
             }
+
             Card.PAIR -> if (paired) super.doOKAction()
             Card.QR -> Unit
         }
@@ -266,7 +263,12 @@ class AddRobotDialog(
         job?.cancel()
         qrLabel.icon = null
         qrTitle.text = ImuxBundle.message("bridge.add.scan", channelLabel(kind))
-        qrSteps.text = html(ImuxBundle.message(ChannelFactories.forKind(kind)?.scanStepsKey ?: "bridge.add.scan.steps", channelLabel(kind)))
+        qrSteps.text = html(
+            ImuxBundle.message(
+                ChannelFactories.forKind(kind)?.scanStepsKey ?: "bridge.add.scan.steps",
+                channelLabel(kind)
+            )
+        )
         retryButton.isVisible = false
         val factory = ChannelFactories.forKind(kind) ?: return
         val current = OnboardingDriver(factory.onboarding(), { state -> ui { render(state) } })
@@ -281,15 +283,21 @@ class AddRobotDialog(
                 qrLabel.icon = ImageIcon(qrImage(state.content, JBUI.scale(200)))
                 setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.waiting"), PROBLEM_DOT)
             }
+
             DriverState.TimedOut -> {
                 setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.timeout"), PROBLEM_DOT)
                 retryButton.isVisible = true
             }
+
             is DriverState.Error -> {
-                val reason = if (state.detail != null) ImuxBundle.message(state.messageKey, state.detail) else ImuxBundle.message(state.messageKey)
+                val reason = if (state.detail != null) ImuxBundle.message(
+                    state.messageKey,
+                    state.detail
+                ) else ImuxBundle.message(state.messageKey)
                 setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", reason), PROBLEM_DOT)
                 retryButton.isVisible = true
             }
+
             is DriverState.Done -> created(state.step)
         }
     }
@@ -308,7 +316,11 @@ class AddRobotDialog(
                     throw e
                 } catch (e: Exception) {
                     ui {
-                        setStatus(qrStatus, ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName), PROBLEM_DOT)
+                        setStatus(
+                            qrStatus,
+                            ImuxBundle.message("bridge.add.failed", e.message ?: e.javaClass.simpleName),
+                            PROBLEM_DOT
+                        )
                         retryButton.isVisible = true
                     }
                 }
@@ -326,8 +338,7 @@ class AddRobotDialog(
             finish()
             return
         }
-        val justEnabled = ensureBridgeEnabled()
-        if (!justEnabled) reconnectIfDown(id)
+        reconnectIfDown(id)
         manager.renewPairCode(id)?.let { showPair(it.pairCode.orEmpty()) }
         job = manager.launch { awaitPaired(id) }
     }
@@ -379,7 +390,11 @@ class AddRobotDialog(
             when (wait) {
                 PairWait.INVALIDATED -> ImuxBundle.message("bridge.add.pair.invalidated")
                 PairWait.EXPIRED -> ImuxBundle.message("bridge.add.pair.expired")
-                PairWait.DISCONNECTED -> ImuxBundle.message("bridge.add.pair.disconnected", statusLabel(status, paired = false))
+                PairWait.DISCONNECTED -> ImuxBundle.message(
+                    "bridge.add.pair.disconnected",
+                    statusLabel(status, paired = false)
+                )
+
                 else -> ImuxBundle.message("bridge.add.pair.waiting")
             }
         // 原型：等待与异常都是黄点
@@ -408,11 +423,11 @@ class AddRobotDialog(
     ) {
         label.icon = dot
         // 内容居中，超宽的一行会左右两头都被截掉：长文字限宽换行
-        label.text = if (label.getFontMetrics(label.font).stringWidth(text) > JBUI.scale(STATUS_WIDTH)) html(text, STATUS_WIDTH) else text
+        label.text = if (label.getFontMetrics(label.font).stringWidth(text) > JBUI.scale(STATUS_WIDTH)) html(
+            text,
+            STATUS_WIDTH
+        ) else text
     }
-
-    /** 添加、配对都需要连接：开关关着就打开，返回是否刚打开（界面据此提示）。 */
-    private fun ensureBridgeEnabled(): Boolean = BridgeLifecycle.setEnabled(true)
 
     private fun show(card: Card) {
         step = card

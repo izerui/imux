@@ -13,20 +13,22 @@ class BridgeWiringSourceTest {
     private val pluginXml = java.io.File("src/main/resources/META-INF/plugin.xml").readText()
 
     @Test
-    fun `项目打开时交给生命周期，开关关着时什么也不启动`() {
+    fun `项目打开时自动连接机器人并启动终端观察`() {
         assertTrue(startup.contains("= BridgeLifecycle.onProjectOpened(project)"))
         val lifecycle = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeLifecycle.kt")
         val opened = lifecycle.compact(lifecycle.bodyAfter("fun onProjectOpened(project: Project)", '{'))
-        assertTrue(opened.startsWith("{if(!BridgeSettings.getInstance().state.enabled)return"))
+        assertTrue(opened.contains("RobotManager.getInstance().startAll()"))
+        assertTrue(opened.contains("if(!project.isDisposed)TerminalBridgeService.getInstance(project).start()"))
+        assertTrue(!opened.contains("BridgeSettings"))
     }
 
     @Test
-    fun `开关只有一个写入口`() {
-        val writers =
+    fun `桥接不再读取旧开关配置`() {
+        val readers =
             java.io.File("src/main/kotlin").walkTopDown().filter { it.extension == "kt" }
-                .filter { SourceCode(it.path).normalized.contains("state.enabled = ") }
+                .filter { SourceCode(it.path).normalized.contains("BridgeSettings") }
                 .map { it.name }.toList()
-        assertTrue("只有 BridgeLifecycle 写开关：$writers", writers == listOf("BridgeLifecycle.kt"))
+        assertTrue("旧 imux-bridge.xml 不得继续控制桥接：$readers", readers.isEmpty())
     }
 
     @Test
@@ -60,7 +62,10 @@ class BridgeWiringSourceTest {
         assertTrue("再交给轮询器按边界结算（顺序由 TabPollerTest 验证）", launch > mark)
         val router = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgeRouter.kt")
         val onCompleted = router.bodyAfter("suspend fun onTurnCompleted(tabId: String, turn: Long,)", '{')
-        assertTrue("完成入口只发待发结果", onCompleted.contains("val reply = tab(tabId) { takeReply() }") && onCompleted.contains("sendReply(tabId, reply)"))
+        assertTrue(
+            "完成入口只发待发结果",
+            onCompleted.contains("val reply = tab(tabId) { takeReply() }") && onCompleted.contains("sendReply(tabId, reply)")
+        )
         assertTrue("还没读到回复时先等，不立即判定没有回复", onCompleted.contains("tab(tabId) { awaitReply(now()) }"))
         assertTrue("结算后还有后台任务时补一条提示", onCompleted.contains("sendBackgroundRunning(tabId)"))
         val ports = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/core/BridgePorts.kt").normalized

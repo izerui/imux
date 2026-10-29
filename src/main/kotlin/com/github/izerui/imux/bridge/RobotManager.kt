@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 机器人的生命周期：凭据、连接、认主与连接状态。绑定的恢复与持久化在 [BridgeHub]。
  *
- * 只在开关打开时建立连接。每个机器人一条连接；被别处接管后不重连，提示用户。
+ * 已添加的机器人自动连接。每个机器人一条连接；被别处接管后不重连，提示用户。
  */
 @Service(Service.Level.APP)
 class RobotManager(parentScope: CoroutineScope) {
@@ -57,7 +57,6 @@ class RobotManager(parentScope: CoroutineScope) {
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
     fun startAll() {
-        if (!BridgeSettings.getInstance().state.enabled) return
         robots().forEach { record -> scope.launch(Dispatchers.IO) { connect(record) } }
     }
 
@@ -66,7 +65,7 @@ class RobotManager(parentScope: CoroutineScope) {
         bump()
     }
 
-    /** 断开后重新连接；用于被别处接管、连接失败或已停止的机器人。开关关闭时只断开。 */
+    /** 断开后重新连接；用于被别处接管、连接失败或已停止的机器人。 */
     fun reconnect(id: RobotId) {
         scope.launch(Dispatchers.IO) {
             disconnect(id)
@@ -103,7 +102,8 @@ class RobotManager(parentScope: CoroutineScope) {
 
     fun renewPairCode(id: RobotId): RobotRecord? {
         wrongPairAttempts.remove(id)
-        val book = store.update { it.withPairCode(id, Pairing.newCode(), System.currentTimeMillis() + Pairing.TTL_MILLIS) }
+        val book =
+            store.update { it.withPairCode(id, Pairing.newCode(), System.currentTimeMillis() + Pairing.TTL_MILLIS) }
         bump()
         return book.robot(id)
     }
@@ -126,7 +126,6 @@ class RobotManager(parentScope: CoroutineScope) {
     }
 
     private fun connect(record: RobotRecord) {
-        if (!BridgeSettings.getInstance().state.enabled) return
         if (connections.containsKey(record.id)) return
         val factory = ChannelFactories.forKind(record.kind) ?: return
         val credentials = vault.load(record.id)
@@ -137,8 +136,8 @@ class RobotManager(parentScope: CoroutineScope) {
         val connection = factory.connect(record.id, credentials, scope)
         synchronized(lifecycleLock) {
             if (connections.putIfAbsent(record.id, connection) != null) return
-            // 加载凭据期间开关可能已关闭或机器人已被删除：不留残余连接
-            if (!BridgeSettings.getInstance().state.enabled || robot(record.id) == null) {
+            // 加载凭据期间机器人可能已被删除：不留残余连接
+            if (robot(record.id) == null) {
                 connections.remove(record.id)
                 connection.stop()
                 hub.detachRobot(record.id)
@@ -171,7 +170,6 @@ class RobotManager(parentScope: CoroutineScope) {
         id: RobotId,
         connection: ChannelConnection,
     ) = InboundSink { message ->
-        if (!BridgeSettings.getInstance().state.enabled) return@InboundSink
         val record = robot(id) ?: return@InboundSink
         fun reply(
             chatId: String,
@@ -186,6 +184,7 @@ class RobotManager(parentScope: CoroutineScope) {
                 bump()
                 reply(decision.owner.chatId, BundleBridgeTexts.pairingSucceeded())
             }
+
             PairDecision.Expired -> reply(message.chatId, BundleBridgeTexts.pairingExpired())
             PairDecision.Wrong -> {
                 val attempts = wrongPairAttempts.merge(id, 1, Int::plus) ?: 1
@@ -196,6 +195,7 @@ class RobotManager(parentScope: CoroutineScope) {
                 bump()
                 reply(message.chatId, BundleBridgeTexts.pairingLocked())
             }
+
             PairDecision.Ignore -> Unit
         }
     }

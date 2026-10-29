@@ -51,8 +51,19 @@ internal object PhoneOperations {
         val robot = RobotManager.getInstance().robot(robotId) ?: return
         val title = SessionTitles.of(project, file)
         val current = BridgeHub.getInstance().bindings.bindingOf(robotId)
-        if (current != null && current.target.tabId != file.tabId && !confirmReplace(project, robot.name, SessionTitles.of(current), title)) return
-        val target = SessionTarget(project.basePath ?: System.getProperty("user.home"), file.tabId, file.agentType, file.sessionId)
+        if (current != null && current.target.tabId != file.tabId && !confirmReplace(
+                project,
+                robot.name,
+                SessionTitles.of(current),
+                title
+            )
+        ) return
+        val target = SessionTarget(
+            project.basePath ?: System.getProperty("user.home"),
+            file.tabId,
+            file.agentType,
+            file.sessionId
+        )
         BindingService.bind(project, robotId, target, title) ?: return
         // 机器人不在线时如实说明：会话已连上，但要等机器人恢复在线才能收发
         val status = RobotManager.getInstance().statusOf(robotId)
@@ -60,7 +71,12 @@ internal object PhoneOperations {
             if (status == ConnectionStatus.Online) {
                 ImuxBundle.message("bridge.notify.connected", title, robot.name)
             } else {
-                ImuxBundle.message("bridge.notify.connected.offline", title, robot.name, statusLabel(status, paired = true))
+                ImuxBundle.message(
+                    "bridge.notify.connected.offline",
+                    title,
+                    robot.name,
+                    statusLabel(status, paired = true)
+                )
             }
         BridgeNotifications.info(project, notice)
     }
@@ -114,11 +130,20 @@ internal fun robotAction(
 ): AnAction = phoneAction(entry.label, entry.enabled, if (entry.current) AllIcons.Actions.Checked else null, run)
 
 /** 打开通讯机器人设置页。 */
-internal fun showRobotSettings(project: Project?) = ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
+internal fun showRobotSettings(project: Project?) =
+    ShowSettingsUtil.getInstance().showSettingsDialog(project, RobotsConfigurable::class.java)
 
-/** 这个终端的连接菜单条目。只在远程控制开着时调用（会实例化中枢）。 */
+/** 这个终端的连接菜单条目。 */
 internal fun phoneMenuFor(tabId: String): List<PhoneMenuEntry> {
     val manager = RobotManager.getInstance()
     val hub = BridgeHub.getInstance()
-    return phoneMenuModel(manager.robots(), hub.bindings::bindingOf, manager::statusOf, tabId, SessionTitles::of, BundleMenuLabels, ::robotMenuName)
+    return phoneMenuModel(
+        manager.robots(),
+        hub.bindings::bindingOf,
+        manager::statusOf,
+        tabId,
+        SessionTitles::of,
+        BundleMenuLabels,
+        ::robotMenuName
+    )
 }

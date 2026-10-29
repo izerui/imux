@@ -1,7 +1,6 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.NoticeSink
 import com.github.izerui.imux.terminal.SessionDecorator
@@ -14,7 +13,7 @@ class BridgeSessionDecorator : SessionDecorator {
     override fun isPhoneConnected(
         project: Project,
         tabId: String,
-    ): Boolean = BridgeSettings.getInstance().state.enabled && BridgeHub.getInstance().bindings.bindingForTab(tabId) != null
+    ): Boolean = BridgeHub.getInstance().bindings.bindingForTab(tabId) != null
 
     override fun createTool(
         project: Project,

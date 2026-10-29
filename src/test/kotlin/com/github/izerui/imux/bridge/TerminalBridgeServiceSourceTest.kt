@@ -12,7 +12,10 @@ class TerminalBridgeServiceSourceTest {
     fun `start 用原子比较交换防止重复订阅`() {
         assertTrue(code.normalized.contains("private val started = AtomicBoolean(false)"))
         val body = code.compact(code.bodyAfter("fun start()", '{'))
-        assertTrue("start() 必须以 compareAndSet 开头", body.startsWith("{if(!started.compareAndSet(false,true))return"))
+        assertTrue(
+            "start() 必须以 compareAndSet 开头",
+            body.startsWith("{if(!started.compareAndSet(false,true))return")
+        )
         assertFalse(code.normalized.contains("started = true"))
     }
 
@@ -26,16 +29,10 @@ class TerminalBridgeServiceSourceTest {
     }
 
     @Test
-    fun `轮询循环在关闭期间也观察开关代次，关了又开就作废旧读取位置`() {
+    fun `项目存活期间持续轮询绑定会话`() {
         val start = code.compact(code.bodyAfter("fun start()", '{'))
-        assertTrue(start.contains("valenabled=BridgeSettings.getInstance().state.enabledtails.observeSwitch()if(enabled){"))
-    }
-
-    @Test
-    fun `每次开启换新代次，关闭时丢弃未发出的回复`() {
-        val lifecycle = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeLifecycle.kt")
-        assertTrue(lifecycle.compact(lifecycle.bodyAfter("private fun start()", '{')).contains("synchronized(this){switchGeneration++}"))
-        assertTrue(lifecycle.compact(lifecycle.bodyAfter("private fun stop()", '{')).contains("BridgeHub.getInstance().router.discardPending()"))
+        assertTrue(start.contains("while(isActive){if(!project.isDisposed){for(bindinginbindingsInProject()){"))
+        assertFalse(start.contains("BridgeSettings"))
     }
 
     @Test
@@ -45,10 +42,21 @@ class TerminalBridgeServiceSourceTest {
         assertTrue("释放走延迟复核", code.contains("TabChange.Release -> scheduleRelease(binding)"))
         val schedule = source.bodyAfter("private fun scheduleRelease(binding: Binding)", '{')
         assertTrue(schedule.contains("delay(RELEASE_GRACE_MS)"))
-        assertTrue("等待后关闭中或已销毁就不断开", schedule.contains("if (projectClosing || project.isDisposed) return@withContext"))
+        assertTrue(
+            "等待后关闭中或已销毁就不断开",
+            schedule.contains("if (projectClosing || project.isDisposed) return@withContext")
+        )
         assertTrue("保存前就记下项目在关闭", code.contains("override fun projectClosingBeforeSave(project: Project)"))
-        assertTrue("确定退出时记下，不用可被取消的 appClosing", code.contains("override fun appWillBeClosed(isRestart: Boolean)") && !code.contains("override fun appClosing()"))
-        assertTrue("自动接回后通知手机", code.contains("hub.bindings.reattach(binding.robotId, change.tabId)?.let(::reattached)"))
-        assertTrue(source.bodyAfter("private fun reattached(binding: Binding)", '{').contains("hub.router.onReattached("))
+        assertTrue(
+            "确定退出时记下，不用可被取消的 appClosing",
+            code.contains("override fun appWillBeClosed(isRestart: Boolean)") && !code.contains("override fun appClosing()")
+        )
+        assertTrue(
+            "自动接回后通知手机",
+            code.contains("hub.bindings.reattach(binding.robotId, change.tabId)?.let(::reattached)")
+        )
+        assertTrue(
+            source.bodyAfter("private fun reattached(binding: Binding)", '{').contains("hub.router.onReattached(")
+        )
     }
 }

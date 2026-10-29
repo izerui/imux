@@ -11,19 +11,21 @@ class BridgeUiSourceTest {
         SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/AddRobotDialog.kt")
 
     @Test
-    fun `设置页添加机器人后调用 reset 刷新绑定`() {
+    fun `设置页添加机器人后刷新列表`() {
         val addBody = configurable.bodyAfter(".setAddAction", '{')
         assertTrue(
-            "添加对话框关闭后必须调用 reset() 以同步开关状态",
-            configurable.compact(addBody).contains("reset()"),
+            "添加对话框关闭后刷新机器人列表",
+            configurable.compact(addBody).contains("AddRobotDialog(null).show()refresh()"),
         )
     }
 
     @Test
-    fun `添加对话框显示已自动开启桥接提示`() {
+    fun `机器人管理不再提供总开关或自动开启提示`() {
+        assertTrue(!configurable.normalized.contains("bridge.settings.enable"))
+        assertTrue(!dialog.normalized.contains("bridge.add.enabledBridge"))
         assertTrue(
-            "ensureBridgeEnabled 之后必须引用 bridge.add.enabledBridge 文案",
-            dialog.normalized.contains("bridge.add.enabledBridge"),
+            dialog.compact(dialog.bodyAfter("private fun startPairing(id: RobotId)", '{'))
+                .contains("reconnectIfDown(id)")
         )
     }
 
@@ -85,7 +87,10 @@ class RobotsSettingsRecoverySourceTest {
     @Test
     fun `配对码失效、过期或连接异常时说明原因，重新生成时一并重连`() {
         val wait = dialog.compact(dialog.bodyAfter("private suspend fun awaitPaired(id: RobotId)", '{'))
-        assertTrue("先投递到 EDT，再与页面此刻的显示比较", wait.contains("{wait,status->ui{pairView.offer(wait,status)}}"))
+        assertTrue(
+            "先投递到 EDT，再与页面此刻的显示比较",
+            wait.contains("{wait,status->ui{pairView.offer(wait,status)}}")
+        )
         val state = dialog.compact(dialog.bodyAfter("private fun renderPairState(", '{'))
         val show = dialog.compact(dialog.bodyAfter("private fun showPair(code: String)", '{'))
         assertTrue("重新生成后经显示状态记录改回等待", show.contains("pairView.show(PairWait.WAITING,null)"))

@@ -7,40 +7,42 @@ import org.junit.Test
 import java.io.File
 
 class BridgeDecorationsSourceTest {
-    private val decorator = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/BridgeSessionDecorator.kt").normalized
+    private val decorator =
+        SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/BridgeSessionDecorator.kt").normalized
     private val hub = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeHub.kt").normalized
     private val tool = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").normalized
     private val pluginXml = File("src/main/resources/META-INF/plugin.xml").readText()
 
     @Test
-    fun `开关关闭时不查询中枢`() {
-        assertTrue(decorator.contains("BridgeSettings.getInstance().state.enabled &&"))
+    fun `会话装饰按绑定关系显示`() {
+        assertTrue(decorator.contains("= BridgeHub.getInstance().bindings.bindingForTab(tabId) != null"))
     }
 
     @Test
-    fun `开关关闭时也创建手机按钮，只在点开菜单时引导去设置开启`() {
+    fun `手机按钮直接提供机器人连接菜单`() {
         val create = decorator.substringAfter("override fun createTool(")
         assertTrue("装饰器无条件创建手机按钮", create.contains("= PhoneTool(project, file, parent, notices)"))
         assertTrue("创建手机按钮时不看开关", !create.contains("BridgeSettings"))
         val menu = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt")
         val perform = menu.bodyAfter("override fun perform(anchor: JComponent)", '{')
-        assertTrue(perform.contains("showConnectMenu(segment.bridgeEnabled, anchor)"))
+        assertTrue(perform.contains("showConnectMenu(anchor)"))
         val connectMenu = menu.bodyAfter("private fun showConnectMenu(", '{')
-        val disabledBranch = connectMenu.substringAfter("if (!bridgeEnabled) {").substringBefore("return")
-        assertTrue("关闭时菜单只引导去设置", disabledBranch.contains("\"bridge.action.disabled\""))
-        assertTrue(disabledBranch.contains("showRobotSettings(project)"))
-        assertTrue("开关关着时不走会实例化中枢的菜单构造", !disabledBranch.contains("phoneMenuFor"))
-        val state = menu.bodyAfter("private fun segment()", '{')
-        assertTrue("开关关着时不查询中枢", state.indexOf("if (!enabled) return") in 0 until state.indexOf("BridgeHub.getInstance()"))
+        assertTrue(connectMenu.contains("phoneMenuFor(file.tabId)"))
+        assertTrue(connectMenu.contains("AddRobotDialog(project).show()"))
+        assertFalse(connectMenu.contains("bridge.action.disabled"))
         assertTrue("按钮任何状态都不隐藏", !menu.normalized.contains("isVisible"))
     }
 
     @Test
     fun `断线发常驻提示并带重连与换绑，连上时提示一次`() {
-        val refresh = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter("private fun refresh()", '{')
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt")
+        val refresh = source.bodyAfter(
+            "private fun refresh()",
+            '{'
+        )
         assertTrue(refresh.contains("tone = NoticeTone.WARNING"))
         assertTrue(refresh.contains("RobotManager.getInstance().reconnect(current.model.robotId)"))
-        assertTrue("提示上的换绑直接弹出机器人列表", refresh.contains("showRebindMenu(anchor)"))
+        assertTrue("提示上的换绑直接弹出机器人列表", source.compact(refresh).contains("showRebindMenu(anchor)"))
         assertTrue("连接中的提示不能收起", refresh.contains("closable = false"))
         assertTrue(refresh.contains("phoneJustConnected(noticeState, current)"))
     }
@@ -60,14 +62,20 @@ class BridgeDecorationsSourceTest {
     @Test
     fun `换绑的机器人平铺在菜单里，不再套二级菜单`() {
         assertFalse(tool.contains("DefaultActionGroup(ImuxBundle.message(\"bridge.banner.rebind\"), true)"))
-        val menu = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter("private fun showMenu(", '{')
+        val menu = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter(
+            "private fun showMenu(",
+            '{'
+        )
         assertTrue(menu.contains("Separator.create(ImuxBundle.message(\"bridge.banner.rebind\"))"))
         assertTrue(menu.contains("addRobots(group)"))
     }
 
     @Test
     fun `菜单显示不可选的项：当前连着的机器人打勾、不可选`() {
-        val popup = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter("private fun popup(", '{')
+        val popup = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter(
+            "private fun popup(",
+            '{'
+        )
         val args = popup.lines().filterNot { it.trim().startsWith("//") }.joinToString("").filterNot(Char::isWhitespace)
         assertTrue("不可选的也显示", args.contains("ActionSelectionAid.SPEEDSEARCH,true,"))
         val actions = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneActions.kt").normalized

@@ -14,11 +14,17 @@ class RobotManagerSourceTest {
     }
 
     @Test
-    fun `开关关闭时不建立连接：全部启动与单个连接一进来就检查开关`() {
+    fun `连接机器人不再读取旧总开关`() {
         val code = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/RobotManager.kt")
-        val guard = "{if(!BridgeSettings.getInstance().state.enabled)return"
-        assertTrue(code.compact(code.bodyAfter("fun startAll()", '{')).startsWith(guard))
-        assertTrue(code.compact(code.bodyAfter("private fun connect(record: RobotRecord)", '{')).startsWith(guard))
+        assertTrue(
+            code.compact(code.bodyAfter("fun startAll()", '{'))
+                .contains("robots().forEach{record->scope.launch(Dispatchers.IO){connect(record)}}")
+        )
+        assertTrue(
+            code.compact(code.bodyAfter("private fun connect(record: RobotRecord)", '{'))
+                .contains("connection.start(pairingSink(record.id,connection))")
+        )
+        assertTrue(!code.normalized.contains("BridgeSettings"))
     }
 
     @Test

@@ -45,11 +45,13 @@ class TerminalBridgeService(
     private val tails =
         TailRegistry(
             bindingForTab = { hub.bindings.bindingForTab(it) },
-            sessionFile = { id -> SessionMonitor.getInstance(project).model.sessionOf(id)?.let { SessionFile(it.filePath, it.createdAt) } },
-            switchGeneration = { BridgeLifecycle.switchGeneration },
+            sessionFile = { id ->
+                SessionMonitor.getInstance(project).model.sessionOf(id)?.let { SessionFile(it.filePath, it.createdAt) }
+            },
+            switchGeneration = { 0L },
         )
 
-    private val poller = TabPoller(tails, hub.router) { BridgeSettings.getInstance().state.enabled }
+    private val poller = TabPoller(tails, hub.router) { !project.isDisposed }
 
     /** 结对审查提示按发生顺序逐条处理。 */
     private val peerEvents = Dispatchers.IO.limitedParallelism(1)
@@ -59,7 +61,7 @@ class TerminalBridgeService(
     @Volatile
     private var projectClosing = false
 
-    // 启动活动（后台线程）、开关切换与绑定动作（EDT）都会调用 start()，必须原子地只启动一次
+    // 启动活动（后台线程）与绑定动作（EDT）都会调用 start()，必须原子地只启动一次
     private val started = AtomicBoolean(false)
 
     fun start() {
@@ -94,7 +96,6 @@ class TerminalBridgeService(
             TurnEventsListener.TOPIC,
             object : TurnEventsListener {
                 override fun turnCompleted(sessionId: String) {
-                    if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
                     // 信号到达这一刻就记下读取边界，结算只认这之前的内容；不另发“本轮完成”通知
                     val mark = tails.mark(tabId)
@@ -105,7 +106,6 @@ class TerminalBridgeService(
                     sessionId: String,
                     reason: String?,
                 ) {
-                    if (!BridgeSettings.getInstance().state.enabled) return
                     val tabId = tabIdOf(sessionId) ?: return
                     scope.launch(Dispatchers.IO) { poller.waiting(tabId, reason) }
                 }
@@ -114,9 +114,7 @@ class TerminalBridgeService(
         SessionMonitor.getInstance(project).peerCoordinator.addReviewListener(this) { event -> onPeerReview(event) }
         scope.launch(Dispatchers.IO) {
             while (isActive) {
-                val enabled = BridgeSettings.getInstance().state.enabled
-                tails.observeSwitch()
-                if (enabled) {
+                if (!project.isDisposed) {
                     for (binding in bindingsInProject()) {
                         val tabId = binding.target.tabId
                         // 上一次还在发送的标签这轮跳过，等它发完再读
@@ -137,7 +135,8 @@ class TerminalBridgeService(
         }
         // 恢复的绑定可能指向 "restored:<sessionId>" 占位标签；如果会话标签已经打开，
         // 需要立即对账一次以触发 Reattach，否则直到下次标签变化才会挂接。
-        ApplicationManager.getApplication().invokeLater({ if (!project.isDisposed) onSessionsChanged() }, ModalityState.any())
+        ApplicationManager.getApplication()
+            .invokeLater({ if (!project.isDisposed) onSessionsChanged() }, ModalityState.any())
     }
 
     /**
@@ -145,7 +144,6 @@ class TerminalBridgeService(
      * 在 EDT 调用。持续结对的审查开始、到上限在主会话轮次完成信号之前发出，所以走 [TabPoller.afterTurn]，排在本轮回复之后。
      */
     private fun onPeerReview(event: PeerReviewEvent) {
-        if (!BridgeSettings.getInstance().state.enabled) return
         val text = peerReviewText(event) ?: return
         val tabId = tabIdOf(event.sessionKey) ?: return
         if (hub.bindings.bindingForTab(tabId) == null) return
@@ -196,9 +194,12 @@ class TerminalBridgeService(
                 delay(RELEASE_GRACE_MS)
                 withContext(Dispatchers.EDT) {
                     if (projectClosing || project.isDisposed) return@withContext
-                    val current = hub.bindings.bindingOf(binding.robotId)?.takeIf { it.epoch == binding.epoch } ?: return@withContext
+                    val current = hub.bindings.bindingOf(binding.robotId)?.takeIf { it.epoch == binding.epoch }
+                        ?: return@withContext
                     val open = TerminalHost.getInstance(project).openTabsByTabId()
-                    if (tabChangeFor(current, open, seenTabs, projectClosing = false) == TabChange.Release) release(current)
+                    if (tabChangeFor(current, open, seenTabs, projectClosing = false) == TabChange.Release) release(
+                        current
+                    )
                 }
             } finally {
                 pendingReleases.remove(binding.robotId)
@@ -221,7 +222,8 @@ class TerminalBridgeService(
         hub.router.resetBackground(tabId)
     }
 
-    private fun bindingsInProject(): List<Binding> = hub.bindings.snapshot().filter { it.target.projectPath == projectPath }
+    private fun bindingsInProject(): List<Binding> =
+        hub.bindings.snapshot().filter { it.target.projectPath == projectPath }
 
     private fun tabIdOf(sessionKey: String): String? =
         TerminalHost.getInstance(project).openTabsByTabId().entries.firstOrNull { it.value == sessionKey }?.key

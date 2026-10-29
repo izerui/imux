@@ -2,7 +2,6 @@ package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.github.izerui.imux.terminal.TerminalHost
@@ -61,15 +60,13 @@ private class PhoneStatusWidget(
     }
 
     override fun getText(): String {
-        val enabled = BridgeSettings.getInstance().state.enabled
-        if (!enabled) return ""
         val openTabIds = TerminalHost.getInstance(project).openTabsByTabId().keys
         val manager = RobotManager.getInstance()
         val bound = BridgeHub.getInstance().bindings.snapshot().filter { it.target.tabId in openTabIds }
         // 与横幅、设置页同一判断
         val attentionCount = bound.count { needsAttention(manager.statusOf(it.robotId)) }
         return statusBarText(
-            enabled,
+            true,
             manager.robots().size,
             bound.size,
             connected = { ImuxBundle.message("bridge.statusbar.connected", it) },

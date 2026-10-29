@@ -3,8 +3,6 @@ package com.github.izerui.imux.bridge.ui
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BindingService
 import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeLifecycle
-import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.bridge.SessionTitles
 import com.github.izerui.imux.monitor.SessionMonitor
@@ -24,7 +22,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.ui.ColoredTableCellRenderer
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.dsl.builder.Align
-import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.table.JBTable
 import javax.swing.JTable
@@ -37,9 +34,17 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
     private var table: JBTable? = null
 
     override fun createPanel(): DialogPanel {
-        val settings = BridgeSettings.getInstance()
         val table =
-            JBTable(model).apply {
+            object : JBTable(model) {
+                override fun doLayout() {
+                    if (tableHeader?.resizingColumn == null && columnModel.columnCount == 4) {
+                        val shortWidth = width * 13 / 100
+                        for (index in 0..2) columnModel.getColumn(index).preferredWidth = shortWidth
+                        columnModel.getColumn(3).preferredWidth = width - shortWidth * 3
+                    }
+                    super.doLayout()
+                }
+            }.apply {
                 setShowGrid(false)
                 emptyText.text = ImuxBundle.message("bridge.settings.empty")
                 columnModel.getColumn(STATUS_COLUMN).cellRenderer = StatusRenderer()
@@ -48,13 +53,16 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             ToolbarDecorator.createDecorator(table)
                 .setAddAction {
                     AddRobotDialog(null).show()
-                    reset()
                     refresh()
                 }
                 .setRemoveAction { remove(table) }
                 .setEditAction { rename(table) }
                 .addExtraAction(
-                    object : com.intellij.openapi.project.DumbAwareAction(ImuxBundle.message("bridge.settings.unbind"), null, AllIcons.Actions.Cancel) {
+                    object : com.intellij.openapi.project.DumbAwareAction(
+                        ImuxBundle.message("bridge.settings.unbind"),
+                        null,
+                        AllIcons.Actions.Cancel
+                    ) {
                         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
                         override fun update(e: AnActionEvent) {
@@ -64,21 +72,31 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                         override fun actionPerformed(e: AnActionEvent) = unbind(table)
                     },
                 ).addExtraAction(
-                    object : com.intellij.openapi.project.DumbAwareAction(ImuxBundle.message("bridge.settings.reconnect"), null, AllIcons.Actions.Refresh) {
+                    object : com.intellij.openapi.project.DumbAwareAction(
+                        ImuxBundle.message("bridge.settings.reconnect"),
+                        null,
+                        AllIcons.Actions.Refresh
+                    ) {
                         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
                         override fun update(e: AnActionEvent) {
-                            e.presentation.isEnabled = selected(table) != null && BridgeSettings.getInstance().state.enabled
+                            e.presentation.isEnabled = selected(table) != null
                         }
 
                         override fun actionPerformed(e: AnActionEvent) = reconnect(table)
                     },
                 ).addExtraAction(
-                    object : com.intellij.openapi.project.DumbAwareAction(ImuxBundle.message("bridge.settings.pair"), null, AllIcons.General.User) {
+                    object : com.intellij.openapi.project.DumbAwareAction(
+                        ImuxBundle.message("bridge.settings.pair"),
+                        null,
+                        AllIcons.General.User
+                    ) {
                         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
                         override fun update(e: AnActionEvent) {
-                            e.presentation.isEnabled = selected(table)?.let { RobotManager.getInstance().robot(it.id)?.owner() == null } == true
+                            e.presentation.isEnabled = selected(table)?.let {
+                                RobotManager.getInstance().robot(it.id)?.owner() == null
+                            } == true
                         }
 
                         override fun actionPerformed(e: AnActionEvent) = pair(table)
@@ -98,11 +116,6 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 }
             }
         return panel {
-            row {
-                checkBox(ImuxBundle.message("bridge.settings.enable"))
-                    .bindSelected({ settings.state.enabled }, { BridgeLifecycle.setEnabled(it) })
-                    .comment(ImuxBundle.message("bridge.settings.enable.comment"))
-            }
             row { cell(decorated).align(Align.FILL) }.resizableRow()
             row { comment(ImuxBundle.message("bridge.settings.note")) }
         }
@@ -127,19 +140,27 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 bindingOf = { hub.bindings.bindingOf(it) },
                 titleOf = SessionTitles::of,
                 labels = BundleRowLabels,
-                bridgeEnabled = BridgeSettings.getInstance().state.enabled,
+                bridgeEnabled = true,
             )
         // 增删机器人会整表重建：按 id 把选中放回去
         if (table != null && selectedId != null && selected(table)?.id != selectedId) {
-            model.rows.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 }?.let { table.setRowSelectionInterval(it, it) }
+            model.rows.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 }
+                ?.let { table.setRowSelectionInterval(it, it) }
         }
     }
 
-    private fun selected(table: JBTable): RobotRow? = table.selectedRow.takeIf { it >= 0 }?.let { model.rows.getOrNull(it) }
+    private fun selected(table: JBTable): RobotRow? =
+        table.selectedRow.takeIf { it >= 0 }?.let { model.rows.getOrNull(it) }
 
     private fun remove(table: JBTable) {
         val row = selected(table) ?: return
-        val ok = Messages.showOkCancelDialog(ImuxBundle.message("bridge.settings.remove.confirm", row.name), ImuxBundle.message("bridge.settings.displayName"), Messages.getOkButton(), Messages.getCancelButton(), Messages.getWarningIcon())
+        val ok = Messages.showOkCancelDialog(
+            ImuxBundle.message("bridge.settings.remove.confirm", row.name),
+            ImuxBundle.message("bridge.settings.displayName"),
+            Messages.getOkButton(),
+            Messages.getCancelButton(),
+            Messages.getWarningIcon()
+        )
         if (ok != Messages.OK) return
         val manager = RobotManager.getInstance()
         manager.launch { manager.remove(row.id) }
@@ -147,7 +168,13 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
 
     private fun rename(table: JBTable) {
         val row = selected(table) ?: return
-        val name = Messages.showInputDialog(ImuxBundle.message("bridge.settings.rename"), ImuxBundle.message("bridge.settings.displayName"), null, row.name, null)
+        val name = Messages.showInputDialog(
+            ImuxBundle.message("bridge.settings.rename"),
+            ImuxBundle.message("bridge.settings.displayName"),
+            null,
+            row.name,
+            null
+        )
         if (!name.isNullOrBlank()) RobotManager.getInstance().rename(row.id, name.trim())
         refresh()
     }
@@ -161,8 +188,6 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
     private fun pair(table: JBTable) {
         val row = selected(table) ?: return
         AddRobotDialog(null, pairRobotId = row.id).show()
-        // 配对入口可能自动开启桥接，与添加入口一样同步开关状态
-        reset()
         refresh()
     }
 
@@ -207,7 +232,12 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
             }
 
         private val columns =
-            listOf("bridge.settings.column.name", "bridge.settings.column.channel", "bridge.settings.column.status", "bridge.settings.column.session")
+            listOf(
+                "bridge.settings.column.name",
+                "bridge.settings.column.channel",
+                "bridge.settings.column.status",
+                "bridge.settings.column.session"
+            )
 
         override fun getRowCount() = rows.size
 

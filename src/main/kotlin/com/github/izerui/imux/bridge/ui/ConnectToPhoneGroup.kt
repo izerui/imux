@@ -1,7 +1,6 @@
 package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
-import com.github.izerui.imux.bridge.BridgeSettings
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -21,17 +20,31 @@ class ConnectToPhoneGroup : ActionGroup(), DumbAware {
     override fun getChildren(event: AnActionEvent?): Array<AnAction> {
         val e = event ?: return emptyArray()
         val file = terminalFile(e) ?: return emptyArray()
-        if (!BridgeSettings.getInstance().state.enabled) {
-            return arrayOf(phoneAction(ImuxBundle.message("bridge.action.disabled")) { showRobotSettings(it.project) })
-        }
         return phoneMenuFor(file.tabId).flatMap { entry ->
             when (entry) {
                 is PhoneMenuEntry.Robot ->
                     listOf(robotAction(entry) { e -> e.project?.let { PhoneOperations.bind(it, file, entry.robotId) } })
-                PhoneMenuEntry.NoRobots -> listOf(phoneAction(ImuxBundle.message("bridge.action.none"), enabled = false))
-                PhoneMenuEntry.AddRobot -> listOf(Separator.getInstance(), phoneAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(it.project).show() })
+
+                PhoneMenuEntry.NoRobots -> listOf(
+                    phoneAction(
+                        ImuxBundle.message("bridge.action.none"),
+                        enabled = false
+                    )
+                )
+
+                PhoneMenuEntry.AddRobot -> listOf(
+                    Separator.getInstance(),
+                    phoneAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(it.project).show() })
+
                 is PhoneMenuEntry.Disconnect ->
-                    listOf(phoneAction(ImuxBundle.message("bridge.action.disconnect")) { e -> e.project?.let { PhoneOperations.disconnect(it, entry.robotId) } })
+                    listOf(phoneAction(ImuxBundle.message("bridge.action.disconnect")) { e ->
+                        e.project?.let {
+                            PhoneOperations.disconnect(
+                                it,
+                                entry.robotId
+                            )
+                        }
+                    })
             }
         }.toTypedArray()
     }

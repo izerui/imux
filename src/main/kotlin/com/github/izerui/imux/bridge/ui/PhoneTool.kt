@@ -2,7 +2,6 @@ package com.github.izerui.imux.bridge.ui
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
-import com.github.izerui.imux.bridge.BridgeSettings
 import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.bridge.channel.ChannelKind
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
@@ -60,7 +59,13 @@ fun phoneBannerModel(
     // 与设置页状态圆点同一判断：黄点即异常；连接中单独算，它会自己好
     val connecting = status == ConnectionStatus.Connecting
     val problem = if (!connecting && needsAttention(status)) statusText(status) else null
-    return PhoneBannerModel(robot.id, channel(robot.kind), robot.name, problem, connecting, problem?.let { status?.let { s -> s::class.simpleName } })
+    return PhoneBannerModel(
+        robot.id,
+        channel(robot.kind),
+        robot.name,
+        problem,
+        connecting,
+        problem?.let { status?.let { s -> s::class.simpleName } })
 }
 
 /** 手机按钮显示什么。开关关着也显示（未连接），点开菜单时再引导去设置里开启。 */
@@ -73,7 +78,8 @@ sealed interface PhoneSegmentState {
 fun phoneSegmentState(
     bridgeEnabled: Boolean,
     model: PhoneBannerModel?,
-): PhoneSegmentState = if (bridgeEnabled && model != null) PhoneSegmentState.Bound(model) else PhoneSegmentState.Unbound(bridgeEnabled)
+): PhoneSegmentState =
+    if (bridgeEnabled && model != null) PhoneSegmentState.Bound(model) else PhoneSegmentState.Unbound(bridgeEnabled)
 
 /** 顶部要显示的手机提示。连上时（含重连成功、换绑）发一次性提示，见 [PhoneTool]。 */
 sealed interface PhoneNoticeState {
@@ -102,8 +108,8 @@ fun phoneJustConnected(
     current: PhoneNoticeState,
 ): Boolean =
     current is PhoneNoticeState.Online &&
-        previous != null &&
-        (previous !is PhoneNoticeState.Online || previous.model.robotId != current.model.robotId)
+            previous != null &&
+            (previous !is PhoneNoticeState.Online || previous.model.robotId != current.model.robotId)
 
 /**
  * 终端右上角浮动图标组里的手机按钮：在线时显示机器人名（绿），连接中转圈显示「连接中」（蓝），出问题显示「连接异常」（黄），
@@ -129,7 +135,8 @@ class PhoneTool(
                     LOG.warn("手机提示刷新出错，已忽略", e)
                 }
             }
-        ApplicationManager.getApplication().messageBus.connect(parent).subscribe(SessionDecorationsListener.TOPIC, listener)
+        ApplicationManager.getApplication().messageBus.connect(parent)
+            .subscribe(SessionDecorationsListener.TOPIC, listener)
         ImuxSettings.getInstance().addLanguageListener(parent) { listener.decorationsChanged() }
         refresh()
     }
@@ -145,6 +152,7 @@ class PhoneTool(
                     label = ImuxBundle.message("bridge.tool.connecting"),
                     tone = NoticeTone.INFO,
                 )
+
             is PhoneNoticeState.Problem ->
                 ToolState(
                     AgentIcons.phone, title,
@@ -152,6 +160,7 @@ class PhoneTool(
                     label = ImuxBundle.message("bridge.tool.problem"),
                     tone = NoticeTone.WARNING,
                 )
+
             is PhoneNoticeState.Online ->
                 ToolState(
                     AgentIcons.phone, title,
@@ -165,18 +174,22 @@ class PhoneTool(
     override fun perform(anchor: JComponent) {
         when (val segment = segment()) {
             is PhoneSegmentState.Bound -> showMenu(segment.model, anchor)
-            is PhoneSegmentState.Unbound -> showConnectMenu(segment.bridgeEnabled, anchor)
+            is PhoneSegmentState.Unbound -> showConnectMenu(anchor)
         }
     }
 
     private fun segment(): PhoneSegmentState {
-        val enabled = BridgeSettings.getInstance().state.enabled
-        if (!enabled) return phoneSegmentState(false, null)
         val binding = BridgeHub.getInstance().bindings.bindingForTab(file.tabId)
         val manager = RobotManager.getInstance()
         val robot = binding?.let { manager.robot(it.robotId) }
-        val model = phoneBannerModel(enabled, binding, robot, robot?.let { manager.statusOf(it.id) }, ::channelLabel) { statusLabel(it, paired = true) }
-        return phoneSegmentState(enabled, model)
+        val model = phoneBannerModel(
+            true,
+            binding,
+            robot,
+            robot?.let { manager.statusOf(it.id) },
+            ::channelLabel
+        ) { statusLabel(it, paired = true) }
+        return phoneSegmentState(true, model)
     }
 
     private fun refresh() {
@@ -191,6 +204,7 @@ class PhoneTool(
                         icon = AnimatedIcon.Default.INSTANCE,
                         closable = false,
                     )
+
                 is PhoneNoticeState.Problem ->
                     Notice(
                         key = "phone:problem:${current.model.robotId.value}:${current.model.problemKind}",
@@ -198,10 +212,17 @@ class PhoneTool(
                         text = ImuxBundle.message("bridge.notice.problem", robotLabel(current.model), current.problem),
                         actions =
                             listOf(
-                                NoticeAction(ImuxBundle.message("bridge.settings.reconnect")) { RobotManager.getInstance().reconnect(current.model.robotId) },
-                                NoticeAction(ImuxBundle.message("bridge.banner.rebind")) { anchor -> showRebindMenu(anchor) },
+                                NoticeAction(ImuxBundle.message("bridge.settings.reconnect")) {
+                                    RobotManager.getInstance().reconnect(current.model.robotId)
+                                },
+                                NoticeAction(ImuxBundle.message("bridge.banner.rebind")) { anchor ->
+                                    showRebindMenu(
+                                        anchor
+                                    )
+                                },
                             ),
                     )
+
                 else -> null
             },
         )
@@ -210,14 +231,18 @@ class PhoneTool(
                 Notice(
                     key = "phone:online",
                     tone = NoticeTone.SUCCESS,
-                    text = ImuxBundle.message("bridge.notice.online", ImuxBundle.message("bridge.banner.connected", current.model.channel, current.model.robotName)),
+                    text = ImuxBundle.message(
+                        "bridge.notice.online",
+                        ImuxBundle.message("bridge.banner.connected", current.model.channel, current.model.robotName)
+                    ),
                 ),
             )
         }
         noticeState = current
     }
 
-    private fun robotLabel(model: PhoneBannerModel): String = ImuxBundle.message("bridge.banner.robot", model.channel, model.robotName)
+    private fun robotLabel(model: PhoneBannerModel): String =
+        ImuxBundle.message("bridge.banner.robot", model.channel, model.robotName)
 
     private fun showMenu(
         current: PhoneBannerModel,
@@ -229,8 +254,15 @@ class PhoneTool(
         group.add(Separator.create(ImuxBundle.message("bridge.banner.rebind")))
         addRobots(group)
         group.addSeparator()
-        group.add(phoneAction(ImuxBundle.message("bridge.settings.reconnect")) { RobotManager.getInstance().reconnect(current.robotId) })
-        group.add(phoneAction(ImuxBundle.message("bridge.action.disconnect")) { PhoneOperations.disconnect(project, current.robotId) })
+        group.add(phoneAction(ImuxBundle.message("bridge.settings.reconnect")) {
+            RobotManager.getInstance().reconnect(current.robotId)
+        })
+        group.add(phoneAction(ImuxBundle.message("bridge.action.disconnect")) {
+            PhoneOperations.disconnect(
+                project,
+                current.robotId
+            )
+        })
         group.addSeparator()
         group.add(phoneAction(ImuxBundle.message("bridge.banner.manage")) { showRobotSettings(project) })
         popup(group, anchor)
@@ -250,27 +282,29 @@ class PhoneTool(
         }
     }
 
-    /** 未连接时的菜单：说明、可选的机器人、添加机器人、管理。开关关着时不实例化中枢，只引导去设置里开启。 */
+    /** 未连接时直接提供可选的机器人、添加机器人与管理。 */
     private fun showConnectMenu(
-        bridgeEnabled: Boolean,
         anchor: JComponent,
     ) {
         val group = DefaultActionGroup()
         group.add(Separator.create(ImuxBundle.message("bridge.banner.hint")))
-        if (!bridgeEnabled) {
-            group.add(phoneAction(ImuxBundle.message("bridge.action.disabled")) { showRobotSettings(project) })
-            popup(group, anchor)
-            return
-        }
         phoneMenuFor(file.tabId).forEach { entry ->
             when (entry) {
                 is PhoneMenuEntry.Robot ->
                     group.add(robotAction(entry) { PhoneOperations.bind(project, file, entry.robotId) })
-                PhoneMenuEntry.NoRobots -> group.add(phoneAction(ImuxBundle.message("bridge.action.none"), enabled = false))
+
+                PhoneMenuEntry.NoRobots -> group.add(
+                    phoneAction(
+                        ImuxBundle.message("bridge.action.none"),
+                        enabled = false
+                    )
+                )
+
                 PhoneMenuEntry.AddRobot -> {
                     group.addSeparator()
                     group.add(phoneAction(ImuxBundle.message("bridge.action.add")) { AddRobotDialog(project).show() })
                 }
+
                 is PhoneMenuEntry.Disconnect -> Unit
             }
         }

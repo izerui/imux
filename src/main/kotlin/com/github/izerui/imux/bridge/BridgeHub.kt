@@ -55,14 +55,22 @@ class BridgeHub(parentScope: CoroutineScope) {
     /** 机器人、连接状态或绑定任何变化时加一；标签、会话树、提示条、状态栏与设置页据此刷新。 */
     val revision: StateFlow<Long> = _revision
 
-    private val inbound = RobotInboundQueues(scope, onFailure = { LOG.warn("处理入站消息失败", it) }, handle = { router.onInbound(it) })
+    private val inbound =
+        RobotInboundQueues(scope, onFailure = { LOG.warn("处理入站消息失败", it) }, handle = { router.onInbound(it) })
 
-    /** 渠道收到消息后调用。开关关闭时直接丢弃，不进入终端。 */
-    val inboundSink = InboundSink { message -> if (BridgeSettings.getInstance().state.enabled) inbound.offer(message) }
+    /** 渠道收到消息后入队，由路由器校验本人和当前绑定。 */
+    val inboundSink = InboundSink { message -> inbound.offer(message) }
 
     init {
         val store = RobotStore.getInstance()
-        store.book().bindings.forEach { saved -> restoredTarget(saved)?.let { bindings.bind(RobotId(saved.robotId), it) } }
+        store.book().bindings.forEach { saved ->
+            restoredTarget(saved)?.let {
+                bindings.bind(
+                    RobotId(saved.robotId),
+                    it
+                )
+            }
+        }
         bindings.onChanged = {
             store.update { it.withBindings(bindingsToSave(bindings.snapshot())) }
             changed()
@@ -125,7 +133,11 @@ internal fun deliveryLog(
 ): DeliveryLog? =
     when (result) {
         DeliveryResult.Accepted -> null
-        is DeliveryResult.Rejected -> DeliveryLog(true, "出站消息被拒绝：robot=${message.robotId.value} reason=${result.reason}")
+        is DeliveryResult.Rejected -> DeliveryLog(
+            true,
+            "出站消息被拒绝：robot=${message.robotId.value} reason=${result.reason}"
+        )
+
         DeliveryResult.Unknown -> DeliveryLog(false, "出站消息结果不明：robot=${message.robotId.value}")
     }
 
