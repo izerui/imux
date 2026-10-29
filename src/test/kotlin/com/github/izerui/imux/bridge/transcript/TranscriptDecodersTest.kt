@@ -230,7 +230,7 @@ class TranscriptDecodersTest {
         val notification =
             """{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":""" +
                 """"<task-notification>\n<task-id>b9</task-id>\n<status>completed</status>\n<summary>Background command done</summary>\n</task-notification>"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundEnded("b9")), ClaudeTranscriptDecoder.decode(notification))
+        assertEquals("通知既说明任务结束，也开启新一轮", listOf(SessionEvent.BackgroundEnded("b9"), SessionEvent.TurnStarted), ClaudeTranscriptDecoder.decode(notification))
 
         val queued =
             """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a7</task-id>\n<status>completed</status>\n</task-notification>"}"""

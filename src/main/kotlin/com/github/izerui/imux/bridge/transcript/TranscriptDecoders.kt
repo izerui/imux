@@ -62,11 +62,11 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         content: JsonElement,
         human: Boolean,
     ): List<SessionEvent> {
-        if (content.isJsonPrimitive) return listOfNotNull(userText(content.asString, human))
-        return blocks(content).mapNotNull { block ->
+        if (content.isJsonPrimitive) return userText(content.asString, human)
+        return blocks(content).flatMap { block ->
             when (block.string("type")) {
-                "text" -> block.string("text")?.let { userText(it, human) }
-                else -> null
+                "text" -> block.string("text")?.let { userText(it, human) }.orEmpty()
+                else -> emptyList()
             }
         }
     }
@@ -101,14 +101,13 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
     private fun userText(
         text: String,
         human: Boolean,
-    ): SessionEvent? {
+    ): List<SessionEvent> {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return null
-        if (!human) backgroundEnded(trimmed)?.let { return it }
-        // 不是输入的（后台任务通知等）：不转发，但它们会开启新一轮
-        if (!human) return SessionEvent.TurnStarted
+        if (trimmed.isEmpty() || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return emptyList()
+        // 不是输入的（后台任务通知等）：不转发，但它们会开启新一轮；后台任务通知同时说明那个任务结束了
+        if (!human) return listOfNotNull(backgroundEnded(trimmed), SessionEvent.TurnStarted)
         // 输入的斜杠命令记成 <command-name> 标记，转成原样的“/命令 参数”
-        return SessionEvent.UserText(slashCommand(trimmed) ?: trimmed)
+        return listOf(SessionEvent.UserText(slashCommand(trimmed) ?: trimmed))
     }
 
     private fun slashCommand(text: String): String? {
