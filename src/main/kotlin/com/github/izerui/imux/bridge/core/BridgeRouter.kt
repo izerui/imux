@@ -204,6 +204,8 @@ class BridgeRouter(
             when (event) {
                 is SessionEvent.AssistantText -> tab(tabId) { appendReply(binding.epoch, event.text) }
                 is SessionEvent.UserText -> {
+                    // 上一轮没等到结算就开了新一轮：排着的状态先发，不能落到新一轮的输入后面
+                    sendAfterReply(tabId)
                     val echo =
                         tab(tabId) {
                             startTurn()
@@ -212,10 +214,14 @@ class BridgeRouter(
                     if (!echo) send(binding, texts.localInputLabel() + "\n" + event.text)
                 }
                 SessionEvent.ToolStarted -> tab(tabId) { toolStarted() }
-                SessionEvent.TurnStarted -> tab(tabId) { startTurn() }
+                SessionEvent.TurnStarted -> {
+                    sendAfterReply(tabId)
+                    tab(tabId) { startTurn() }
+                }
                 SessionEvent.TurnEnded -> {
                     sendReply(tabId, tab(tabId) { endByMarker() })
                     sendBackgroundRunning(tabId)
+                    sendAfterReply(tabId)
                 }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
                 is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
@@ -237,18 +243,41 @@ class BridgeRouter(
         turn: Long,
     ) {
         val completed = tab(tabId) { completeByIde(turn) }
-        if (!completed) return
-        sendReply(tabId, tab(tabId) { takeReply() })
-        sendBackgroundRunning(tabId)
+        if (completed) {
+            sendReply(tabId, tab(tabId) { takeReply() })
+            sendBackgroundRunning(tabId)
+        }
+        sendAfterReply(tabId)
+    }
+
+    /**
+     * 说这一轮状态的提示（例如结对审查开始）：这一轮的回复已经发出就立即发，否则排在回复之后。
+     * 回复晚到（结束标记还没写进记录）时，这样状态不会抢在回复前面。
+     */
+    suspend fun onAfterReply(
+        tabId: String,
+        text: String,
+    ) {
+        if (tab(tabId) { queueAfterReply(text) }) return
+        onStatus(tabId, text)
+    }
+
+    /** 完成信号到了但没能结算（读取边界不可靠）：排着的状态也不能一直压着。 */
+    suspend fun flushAfterReply(tabId: String) = sendAfterReply(tabId)
+
+    /** 换了会话：之前记下的后台任务全部作废。 */
+    fun resetBackground(tabId: String) = tab(tabId) { clearBackground() }
+
+    private suspend fun sendAfterReply(tabId: String) {
+        for (text in tab(tabId) { takeAfterReply() }) onStatus(tabId, text)
     }
 
     /**
      * 一轮结算后还有后台任务在运行：回复之后补一条，远程用户才知道这个会话还没真正做完。
-     * 任务结束时 CLI 会再开一轮回应它，那一轮的回复照常发出，所以结束不另行提示。
+     * 任务列表和上一次提示的一样就不重复。任务结束时 CLI 会再开一轮回应它，那一轮的回复照常发出，所以结束不另行提示。
      */
     private suspend fun sendBackgroundRunning(tabId: String) {
-        val tasks = tab(tabId) { runningBackground() }
-        if (tasks.isEmpty()) return
+        val tasks = tab(tabId) { backgroundHint() } ?: return
         val binding = bindings.bindingForTab(tabId) ?: return
         send(binding, texts.backgroundRunning(tasks))
     }
@@ -289,6 +318,7 @@ class BridgeRouter(
     }
 
     suspend fun onTranscriptRestarted(tabId: String) {
+        resetBackground(tabId)
         val binding = bindings.bindingForTab(tabId) ?: return
         send(binding, texts.transcriptRestarted())
     }

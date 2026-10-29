@@ -281,6 +281,55 @@ class BridgeRouterTest {
             )
         }
 
+    private suspend fun turn(vararg events: SessionEvent) =
+        router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted) + events + SessionEvent.TurnEnded)
+
+    @Test
+    fun `后台任务列表和上次提示的一样就不重复，变了或清空后再出现才提示`() =
+        runBlocking {
+            registry.bind(robot, target)
+            turn(SessionEvent.BackgroundStarted("a1", null, "A"), SessionEvent.BackgroundStarted("b1", null, "B"), SessionEvent.AssistantText("第一轮"))
+            turn(SessionEvent.AssistantText("第二轮"))
+            turn(SessionEvent.BackgroundEnded("a1"), SessionEvent.AssistantText("第三轮"))
+            turn(SessionEvent.BackgroundEnded("b1"), SessionEvent.AssistantText("第四轮"))
+            turn(SessionEvent.BackgroundStarted("b1", null), SessionEvent.AssistantText("第五轮"))
+            assertEquals(listOf("第一轮", "BG(A,B)", "第二轮", "第三轮", "BG(B)", "第四轮", "第五轮", "BG(B)"), sentTexts())
+        }
+
+    @Test
+    fun `换了会话或会话记录被替换后，之前的后台任务不再提示`() =
+        runBlocking {
+            registry.bind(robot, target)
+            turn(SessionEvent.BackgroundStarted("a1", null, "A"), SessionEvent.AssistantText("第一轮"))
+            router.resetBackground("tab-1")
+            turn(SessionEvent.AssistantText("新会话"))
+            turn(SessionEvent.BackgroundStarted("b1", null, "B"), SessionEvent.AssistantText("又开了一个"))
+            router.onTranscriptRestarted("tab-1")
+            turn(SessionEvent.AssistantText("记录替换后"))
+            assertEquals(listOf("第一轮", "BG(A)", "新会话", "又开了一个", "BG(B)", "RESTARTED", "记录替换后"), sentTexts())
+        }
+
+    @Test
+    fun `说这一轮状态的提示：回复还没到就排在回复之后，已经发出就立即发`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.AssistantText("结论还没写完")))
+            router.onAfterReply("tab-1", "审查中")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded))
+            router.onAfterReply("tab-1", "到上限")
+            assertEquals(listOf("结论还没写完\n\n结论", "审查中", "到上限"), sentTexts())
+        }
+
+    @Test
+    fun `没等到结算就开了新一轮：排着的提示先发，不落到新输入后面`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted))
+            router.onAfterReply("tab-1", "审查中")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("新的一句")))
+            assertEquals(listOf("审查中", "LOCAL:\n新的一句"), sentTexts())
+        }
+
     @Test
     fun `续跑的后台子代理沿用上次的说明`() =
         runBlocking {

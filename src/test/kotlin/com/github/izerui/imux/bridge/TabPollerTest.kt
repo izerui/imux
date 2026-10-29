@@ -128,6 +128,29 @@ class TabPollerTest {
         }
 
     @Test
+    fun `结对审查开始时本轮结论还没写进记录：等完成信号结算后，结论在前、审查在后`() =
+        runBlocking {
+            start()
+            write(user("第一句"))
+            poller.afterTurn("tab", "审查中")
+            write(assistant("第一轮结论"))
+            poller.completed("tab", tails.mark("tab"))
+            assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "审查中"), sent)
+        }
+
+    @Test
+    fun `完成信号的边界不可靠、没能结算时，排着的提示照样发出`() =
+        runBlocking {
+            start()
+            write(user("第一句"))
+            poller.poll("tab")
+            poller.afterTurn("tab", "审查中")
+            // 边界为空：不结算
+            poller.completed("tab", null)
+            assertEquals(listOf("LOCAL:\n第一句", "审查中"), sent)
+        }
+
+    @Test
     fun `完成信号按记下的边界结算本轮结论`() =
         runBlocking {
             start()

@@ -60,8 +60,45 @@ internal class TabState {
         running -= taskId
     }
 
-    /** 还在运行的后台任务的说明；没有说明的记为 null，由调用方给个统称。 */
-    fun runningBackground(): List<String?> = running.map { taskNames[it] }
+    /** 上一次提示时还在运行的任务；列表没变就不再提示。 */
+    private var lastHinted: Set<String> = emptySet()
+
+    /**
+     * 这一轮结算后要不要提示还有后台任务在运行：有任务、且和上一次提示的不完全一样时，返回它们的说明
+     * （没有说明的记为 null，由调用方给个统称）；否则返回 null。
+     */
+    fun backgroundHint(): List<String?>? {
+        val current = running.toSet()
+        if (current.isEmpty() || current == lastHinted) {
+            lastHinted = current
+            return null
+        }
+        lastHinted = current
+        return running.map { taskNames[it] }
+    }
+
+    /**
+     * 换了会话或会话记录被替换：之前记下的后台任务对不上了，全部丢掉。
+     * 宁可漏报一次，也不能让一个再也等不到结束通知的任务每轮都被报“还在运行”。
+     */
+    fun clearBackground() {
+        launches.clear()
+        taskNames.clear()
+        running.clear()
+        lastHinted = emptySet()
+    }
+
+    /** 说的是这一轮的状态（例如结对审查开始），要等这一轮的回复发出后再发。 */
+    private val afterReply = ArrayList<String>()
+
+    /** 本轮已结算就返回 false，调用方立即发；否则排队，等结算时随回复之后发出。 */
+    fun queueAfterReply(text: String): Boolean {
+        if (settled) return false
+        afterReply += text
+        return true
+    }
+
+    fun takeAfterReply(): List<String> = afterReply.toList().also { afterReply.clear() }
 
     /** 有人说话或注入消息开启了新一轮（也可能是轮次进行中插话）：没结算的过程说明丢弃。 */
     fun startTurn() {

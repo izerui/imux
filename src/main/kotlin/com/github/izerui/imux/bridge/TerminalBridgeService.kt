@@ -157,6 +157,8 @@ class TerminalBridgeService(
         val tabId = tabIdOf(to) ?: return
         val binding = hub.bindings.migrateSession(tabId, to) ?: return
         tails.migrated(tabId, binding.epoch)
+        // 同一个标签换成了另一个会话（/clear、新开会话）：之前会话的后台任务不再有结束通知
+        hub.router.resetBackground(tabId)
     }
 
     private fun bindingsInProject(): List<Binding> = hub.bindings.snapshot().filter { it.target.projectPath == projectPath }
