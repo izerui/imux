@@ -23,8 +23,9 @@ internal fun peerReviewText(
             when (outcome.kind) {
                 PeerOutcomeKind.PASSED -> message("bridge.peer.passed", listOf(reviewer))
                 PeerOutcomeKind.FAILED -> message("bridge.peer.failed", listOf(reviewer, outcome.detail.orEmpty()))
-                // 意见交给主会话后，手机上随后就是那条「电脑端输入」，不再重复说
-                PeerOutcomeKind.FEEDBACK -> null
+                // 意见自动交给主会话后，手机上随后就是那条「电脑端输入」，不再重复说；
+                // 只填进输入框的不会有那条输入，要说一声
+                PeerOutcomeKind.FEEDBACK -> if (event.autoInjected) null else message("bridge.peer.feedback.staged", listOf(reviewer))
             }
         }
         is PeerReviewEvent.Stopped ->
@@ -35,6 +36,7 @@ internal fun peerReviewText(
                 PeerStopReason.TURN_STARTED -> null
                 PeerStopReason.MAX_ROUNDS -> message("bridge.peer.maxRounds", listOf(event.maxRounds))
                 PeerStopReason.INTERRUPTED -> message("bridge.peer.interrupted", listOf(reviewer))
+                PeerStopReason.SESSION_CHANGED -> message("bridge.peer.sessionChanged", listOf(reviewer))
             }
     }?.trim()
 }

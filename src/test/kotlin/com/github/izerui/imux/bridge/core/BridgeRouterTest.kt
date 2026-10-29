@@ -321,6 +321,15 @@ class BridgeRouterTest {
         }
 
     @Test
+    fun `完成信号没能结算时也补后台任务提示`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.BackgroundStarted("a1", null, "A")))
+            router.flushAfterReply("tab-1")
+            assertEquals(listOf("BG(A)"), sentTexts())
+        }
+
+    @Test
     fun `没等到结算就开了新一轮：排着的提示先发，不落到新输入后面`() =
         runBlocking {
             registry.bind(robot, target)

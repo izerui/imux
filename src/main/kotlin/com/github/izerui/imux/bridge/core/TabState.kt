@@ -30,11 +30,11 @@ internal class TabState {
 
     private val remoteEchoes = ArrayDeque<String>()
 
-    /** 后台调用的说明，按工具调用 id；等结果给出任务 id 时取走。 */
-    private val launches = HashMap<String, String>()
+    /** 后台调用的说明，按工具调用 id；等结果给出任务 id 时取走。调用失败就等不到结果，所以限量。 */
+    private val launches = boundedMap<String, String>()
 
-    /** 见过的后台任务的说明，按任务 id；续跑时沿用。 */
-    private val taskNames = HashMap<String, String>()
+    /** 见过的后台任务的说明，按任务 id；续跑时沿用。只增不减，限量。 */
+    private val taskNames = boundedMap<String, String>()
 
     /** 还在运行的后台任务，按开始顺序。不随轮次清空：后台任务本来就跨轮运行。 */
     private val running = LinkedHashSet<String>()
@@ -160,6 +160,13 @@ internal class TabState {
 
     private companion object {
         const val ECHO_CAPACITY = 20
+        const val BACKGROUND_CAPACITY = 200
+
+        /** 超过 [BACKGROUND_CAPACITY] 时丢掉最早的。 */
+        fun <K, V> boundedMap(): MutableMap<K, V> =
+            object : LinkedHashMap<K, V>() {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>?) = size > BACKGROUND_CAPACITY
+            }
         val WHITESPACE = Regex("\\s+")
     }
 }

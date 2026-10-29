@@ -56,23 +56,37 @@ internal class TabPoller(
 
     /**
      * 说的是主会话刚结束那一轮的状态（结对审查开始、已达审查上限）：手机上要排在这一轮的回复之后。
-     * 先读出已写入的记录；这一轮已经结算就立即发，否则排队，等结束标记或随后的完成信号结算时随回复发出。
+     * [mark] 是那一轮结束时记下的读取边界：只读到那里，下一轮已写入的输入不会先被读进来、把状态挂到下一轮名下。
+     * 这一轮已经结算就立即发，否则排队，等结束标记或随后的完成信号结算时随回复发出；
+     * 边界不可靠（已越过、尾随器重建）时，那一轮已经过去，立即发。
      */
     suspend fun afterTurn(
         tabId: String,
         text: String,
+        mark: ReadMark?,
     ) = lock(tabId).withLock {
         if (!enabled()) return@withLock
-        deliver(tabId, tails.read(tabId))
-        router.onAfterReply(tabId, text)
+        when (val read = tails.readUpTo(tabId, mark)) {
+            is BoundedRead.Unreliable -> {
+                deliver(tabId, read.poll)
+                router.onStatus(tabId, text)
+            }
+            is BoundedRead.Reached -> {
+                deliver(tabId, read.poll)
+                router.onAfterReply(tabId, text)
+            }
+        }
     }
 
-    /** 与轮次无关的状态（审查结果、取消）：排在这个标签已在发送的内容之后。 */
+    /**
+     * 与轮次结算无关的状态（审查结果、取消、单次审查开始）：同样不抢在当前这一轮的回复前面——
+     * 「正在审查」还排着时，结果排在它后面。
+     */
     suspend fun status(
         tabId: String,
         text: String,
     ) = lock(tabId).withLock {
-        if (enabled()) router.onStatus(tabId, text)
+        if (enabled()) router.onAfterReply(tabId, text)
     }
 
     /** IDE 报告等待确认：先读出之前的内容，再推等待提示。 */

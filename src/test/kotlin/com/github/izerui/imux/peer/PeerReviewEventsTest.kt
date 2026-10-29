@@ -153,6 +153,25 @@ class PeerReviewEventsTest {
     fun `审查中主会话开了新一轮：报告审查中止`() = stoppedWhileRunning(PeerStopReason.TURN_STARTED) { it.onTurnStarted("s1") }
 
     @Test
+    fun `审查中换了伙伴：报告已取消`() = stoppedWhileRunning(PeerStopReason.CANCELLED) { it.bind("s1", AgentType.CLAUDE) }
+
+    @Test
+    fun `审查中标签换成了另一个会话：按新会话报告审查中止`() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        using(coordinator(runCli = blockingCli(entered, release))) { c ->
+            c.bind("s1", AgentType.CODEX)
+            c.onTurnCompleted("s1")
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            c.migrateSessionKey("s1", "s2")
+            release.countDown()
+            Thread.sleep(200)
+            assertEquals(PeerReviewEvent.Stopped("s2", AgentType.CODEX, PeerStopReason.SESSION_CHANGED), events.last())
+            assertEquals(2, events.size)
+        }
+    }
+
+    @Test
     fun `没有在途审查时停止结对或开新一轮不报告`() =
         using(coordinator(runCli = output("PASS"))) { c ->
             c.bind("s1", AgentType.CODEX)

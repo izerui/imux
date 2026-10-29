@@ -42,15 +42,20 @@ class PeerReviewTextsTest {
         for (event in idle + started) {
             val text = zh(event)!!
             assertTrue(text, text.contains("结对编程"))
-            assertTrue(text, !text.contains("会话"))
+            assertTrue(text, !text.contains("空闲") && !text.contains("忙"))
         }
     }
 
     @Test
-    fun `提了意见和主会话开新一轮不推，手机上随后看得到那条输入`() {
+    fun `意见自动注入和主会话开新一轮不推，手机上随后看得到那条输入`() {
         assertEquals(null, zh(injected))
-        assertEquals(null, zh(staged))
         assertEquals(null, zh(turnStarted))
+    }
+
+    @Test
+    fun `意见只填进输入框时说一声，手机上不会有那条输入`() {
+        val text = zh(staged)!!
+        assertTrue(text.contains("IDE") && !text.contains("第 12 行空指针"))
     }
 
     @Test
@@ -61,7 +66,7 @@ class PeerReviewTextsTest {
 
     @Test
     fun `每种语言都能排出完整的文字`() {
-        for (language in PluginLanguage.entries) for (event in idle + started + startedOnce) {
+        for (language in PluginLanguage.entries) for (event in idle + started + startedOnce + staged) {
             val text = peerReviewText(event) { key, args -> ImuxBundle.message(language, key, *args.toTypedArray()) }
             assertTrue("$language $event", !text.isNullOrBlank() && !text.contains("{") && !text.contains("''"))
         }

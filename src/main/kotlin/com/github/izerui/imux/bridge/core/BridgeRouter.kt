@@ -262,8 +262,13 @@ class BridgeRouter(
         onStatus(tabId, text)
     }
 
-    /** 完成信号到了但没能结算（读取边界不可靠）：排着的状态也不能一直压着。 */
-    suspend fun flushAfterReply(tabId: String) = sendAfterReply(tabId)
+    /**
+     * 完成信号到了但没能结算（读取边界不可靠）：后台任务提示照常补，排着的状态也不能一直压着。
+     */
+    suspend fun flushAfterReply(tabId: String) {
+        sendBackgroundRunning(tabId)
+        sendAfterReply(tabId)
+    }
 
     /** 换了会话：之前记下的后台任务全部作废。 */
     fun resetBackground(tabId: String) = tab(tabId) { clearBackground() }

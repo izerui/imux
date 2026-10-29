@@ -122,7 +122,7 @@ class TabPollerTest {
             start()
             write(user("第一句"), assistant("第一轮结论"))
             val mark = tails.mark("tab")
-            poller.afterTurn("tab", "审查中")
+            poller.afterTurn("tab", "审查中", mark)
             poller.completed("tab", mark)
             assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "审查中"), sent)
         }
@@ -132,7 +132,7 @@ class TabPollerTest {
         runBlocking {
             start()
             write(user("第一句"))
-            poller.afterTurn("tab", "审查中")
+            poller.afterTurn("tab", "审查中", tails.mark("tab"))
             write(assistant("第一轮结论"))
             poller.completed("tab", tails.mark("tab"))
             assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "审查中"), sent)
@@ -144,10 +144,35 @@ class TabPollerTest {
             start()
             write(user("第一句"))
             poller.poll("tab")
-            poller.afterTurn("tab", "审查中")
+            poller.afterTurn("tab", "审查中", tails.mark("tab"))
             // 边界为空：不结算
             poller.completed("tab", null)
             assertEquals(listOf("LOCAL:\n第一句", "审查中"), sent)
+        }
+
+    @Test
+    fun `审查开始时下一轮的输入已写进记录：只读到本轮边界，审查提示不挂到下一轮名下`() =
+        runBlocking {
+            start()
+            write(user("第一句"), assistant("第一轮结论"))
+            val mark = tails.mark("tab")
+            write(user("第二句"))
+            poller.afterTurn("tab", "审查中", mark)
+            poller.completed("tab", mark)
+            poller.poll("tab")
+            assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "审查中", "LOCAL:\n第二句"), sent)
+        }
+
+    @Test
+    fun `审查很快失败：结果排在还没发出的审查开始之后`() =
+        runBlocking {
+            start()
+            write(user("第一句"), assistant("第一轮结论"))
+            val mark = tails.mark("tab")
+            poller.afterTurn("tab", "审查中", mark)
+            poller.status("tab", "审查失败")
+            poller.completed("tab", mark)
+            assertEquals(listOf("LOCAL:\n第一句", "第一轮结论", "审查中", "审查失败"), sent)
         }
 
     @Test

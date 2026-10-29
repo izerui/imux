@@ -83,6 +83,9 @@ enum class PeerStopReason {
 
     /** 审查结束了但没有结论能交出去（例如终端已关闭、意见没送到）。 */
     INTERRUPTED,
+
+    /** 标签换成了另一个会话（/clear、新开会话），上一个会话的审查作废。 */
+    SESSION_CHANGED,
 }
 
 /**
@@ -231,7 +234,10 @@ class PeerCoordinator internal constructor(
     ) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
+        val previousTarget = bindings[sessionKey]?.targetAgentType
         val cancelledRun = unbindInner(sessionKey)
+        // 换伙伴时正在进行的那一轮审查作废
+        announceStopped(sessionKey, previousTarget, cancelledRun, PeerStopReason.CANCELLED)
         // 失败结果的「重试」绑定在当时的伙伴与方式上；重新绑定后它已过时，否则提示写着旧伙伴、重试却由新伙伴来审
         outcomes.computeIfPresent(sessionKey) { _, outcome -> outcome.takeIf { it.kind != PeerOutcomeKind.FAILED } }
         bindings[sessionKey] = PeerBinding(targetAgentType)
@@ -397,6 +403,8 @@ class PeerCoordinator internal constructor(
         if (disposed) return
         val wasOneShot = oneShotSessions.remove(from) != null
         val binding = bindings.remove(from)
+        val fromTarget = binding?.targetAgentType
+        val toTarget = bindings[to]?.targetAgentType
         roundCounts.remove(from)
         peerInjectedSessions.remove(from)
         feedbackHints.remove(from)
@@ -417,6 +425,9 @@ class PeerCoordinator internal constructor(
             bindings[to] = binding.copy(task = "")
         }
         listOfNotNull(r1, r2).forEach { it.killProcess() }
+        // 标签此刻已对应新会话，按新 key 报告，手机桥接才找得到这个标签
+        announceStopped(to, fromTarget, r1, PeerStopReason.SESSION_CHANGED)
+        announceStopped(to, toTarget, r2, PeerStopReason.SESSION_CHANGED)
         LOG.info("结对编程：迁移绑定 $from -> $to")
         notifyStateChanged(from)
         notifyStateChanged(to)

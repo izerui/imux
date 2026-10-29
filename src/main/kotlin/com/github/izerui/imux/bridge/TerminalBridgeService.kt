@@ -18,6 +18,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -46,6 +47,10 @@ class TerminalBridgeService(
         )
 
     private val poller = TabPoller(tails, hub.router) { BridgeSettings.getInstance().state.enabled }
+
+    /** 结对审查提示按发生顺序逐条处理。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val peerEvents = Dispatchers.IO.limitedParallelism(1)
     private val seenTabs = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
@@ -127,9 +132,12 @@ class TerminalBridgeService(
         val text = peerReviewText(event) ?: return
         val tabId = tabIdOf(event.sessionKey) ?: return
         if (hub.bindings.bindingForTab(tabId) == null) return
+        // 与轮次完成信号一样，在这一刻同步记下读取边界
+        val mark = if (event.followsTurn()) tails.mark(tabId) else null
         val followsTurn = event.followsTurn()
-        scope.launch(Dispatchers.IO) {
-            if (followsTurn) poller.afterTurn(tabId, text) else poller.status(tabId, text)
+        // 单线程依次发出：开始与结果分属不同协程时，先发生的先拿到标签锁
+        scope.launch(peerEvents) {
+            if (followsTurn) poller.afterTurn(tabId, text, mark) else poller.status(tabId, text)
         }
     }
 
