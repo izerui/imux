@@ -8,6 +8,7 @@ import com.github.izerui.imux.bridge.json.obj
 import com.github.izerui.imux.bridge.json.primitiveText
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlin.coroutines.cancellation.CancellationException
 
 /** 与官方 wecom-cli 一致：1 macOS、2 Windows、3 Linux、0 其他。 */
 fun wecomPlat(osName: String = System.getProperty("os.name")): Int {
@@ -44,13 +45,20 @@ class WecomOnboarding(
 
     override suspend fun poll(): OnboardingStep {
         val code = scode ?: return OnboardingStep.Failed("bridge.onboarding.noQr")
-        val data = http.get("$BASE/query_result?scode=${URLEncoder.encode(code, StandardCharsets.UTF_8)}").obj("data")
-        if (data?.primitiveText("status") != "success") return OnboardingStep.Waiting
-        val info = data.obj("bot_info")
-        val botId = info?.primitiveText("botid") ?: info?.primitiveText("bot_id")
-        val secret = info?.primitiveText("secret")
-        if (botId.isNullOrEmpty() || secret.isNullOrEmpty()) return OnboardingStep.Failed("bridge.onboarding.noCredentials")
-        return OnboardingStep.Succeeded(mapOf("bot_id" to botId, "secret" to secret), ownerId = null, suggestedName = null)
+        return try {
+            val data = http.get("$BASE/query_result?scode=${URLEncoder.encode(code, StandardCharsets.UTF_8)}").obj("data")
+            if (data?.primitiveText("status") != "success") return OnboardingStep.Waiting
+            val info = data.obj("bot_info")
+            val botId = info?.primitiveText("botid") ?: info?.primitiveText("bot_id")
+            val secret = info?.primitiveText("secret")
+            if (botId.isNullOrEmpty() || secret.isNullOrEmpty()) return OnboardingStep.Failed("bridge.onboarding.noCredentials")
+            OnboardingStep.Succeeded(mapOf("bot_id" to botId, "secret" to secret), ownerId = null, suggestedName = null)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // 网络抖动时返回等待，总超时由驱动层（OnboardingDriver）兜底
+            OnboardingStep.Waiting
+        }
     }
 
 

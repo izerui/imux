@@ -210,17 +210,17 @@ class PhoneTool(
                         key = "phone:problem:${current.model.robotId.value}:${current.model.problemKind}",
                         tone = NoticeTone.WARNING,
                         text = ImuxBundle.message("bridge.notice.problem", robotLabel(current.model), current.problem),
-                        actions =
-                            listOf(
-                                NoticeAction(ImuxBundle.message("bridge.settings.reconnect")) {
+                        actions = buildList {
+                            // 收发受阻（SendFailing）重连解决不了，不提供重新连接
+                            if (current.model.problemKind != ConnectionStatus.SendFailing::class.simpleName) {
+                                add(NoticeAction(ImuxBundle.message("bridge.settings.reconnect")) {
                                     RobotManager.getInstance().reconnect(current.model.robotId)
-                                },
-                                NoticeAction(ImuxBundle.message("bridge.banner.rebind")) { anchor ->
-                                    showRebindMenu(
-                                        anchor
-                                    )
-                                },
-                            ),
+                                })
+                            }
+                            add(NoticeAction(ImuxBundle.message("bridge.banner.rebind")) { anchor ->
+                                showRebindMenu(anchor)
+                            })
+                        },
                     )
 
                 else -> null

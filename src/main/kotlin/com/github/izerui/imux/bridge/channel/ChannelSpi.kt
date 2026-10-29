@@ -24,8 +24,8 @@ sealed interface ConnectionStatus {
     data object NoCredentials : ConnectionStatus
 
     /**
-     * 连接在、收得到消息，但发送被平台拒绝（额度用完、缺权限等）。
-     * [messageKey] 是 ImuxBundle 的键，[detail] 填进它的 {0}。下一次发送成功后回到 Online。
+     * 连接在，但收发受阻（额度用完、缺权限等）：飞书、钉钉的发送被平台拒绝，或钉钉收消息额度用完。
+     * [messageKey] 是 ImuxBundle 的键，[detail] 填进它的 {0}。受阻原因消除后回到 Online。
      */
     data class SendFailing(
         val messageKey: String,
@@ -33,7 +33,10 @@ sealed interface ConnectionStatus {
     ) : ConnectionStatus
 }
 
-/** 连接在工作或正在建立：消息与配对码收得到，不需要重连。发送受阻不影响接收。 */
+/**
+ * 连接在工作或正在建立，不需要重连。[ConnectionStatus.SendFailing] 也算：重连解决不了受阻，
+ * 但它可能表示接收受阻（钉钉收消息额度用完、没有 staffId），此时消息与配对码未必收得到，界面应显示原因。
+ */
 val ConnectionStatus?.isWorking: Boolean
     get() = this == ConnectionStatus.Online || this == ConnectionStatus.Connecting || this is ConnectionStatus.SendFailing
 

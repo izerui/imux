@@ -395,7 +395,10 @@ class AddRobotDialog(
                     statusLabel(status, paired = false)
                 )
 
-                else -> ImuxBundle.message("bridge.add.pair.waiting")
+                // 收发受阻仍算工作中、继续等，但要说明原因：钉钉机器人未发布时消息没有 staffId，配对码永远到不了
+                else ->
+                    ImuxBundle.message("bridge.add.pair.waiting") +
+                        if (status is ConnectionStatus.SendFailing) " " + statusLabel(status, paired = false) else ""
             }
         // 原型：等待与异常都是黄点
         setStatus(pairStatus, text, PROBLEM_DOT)

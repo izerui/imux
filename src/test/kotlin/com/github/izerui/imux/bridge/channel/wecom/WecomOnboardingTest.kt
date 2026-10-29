@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class WecomOnboardingTest {
     private val urls = mutableListOf<String>()
@@ -61,6 +62,38 @@ class WecomOnboardingTest {
             assertEquals(OnboardingStep.Failed("bridge.onboarding.noCredentials"), missing.poll())
             assertEquals(OnboardingStep.Failed("bridge.onboarding.noQr"), WecomOnboarding(http("""{"data":{}}"""), plat = 1).start())
             assertEquals(OnboardingStep.Failed("bridge.onboarding.noQr"), WecomOnboarding(http(), plat = 1).poll())
+        }
+
+    @Test
+    fun `轮询遇网络异常返回 Waiting 而非失败`() =
+        runBlocking {
+            val onboarding =
+                WecomOnboarding(
+                    http = object : HttpJsonGet {
+                        private var callCount = 0
+
+                        override suspend fun get(url: String): com.google.gson.JsonObject {
+                            callCount++
+                            return when (callCount) {
+                                // start() 正常
+                                1 -> JsonParser.parseString("""{"data":{"scode":"S1","auth_url":"A"}}""").asJsonObject
+                                // 第一次 poll() 抛网络异常
+                                2 -> throw IOException("network error")
+                                // 第二次 poll() 正常返回成功
+                                else -> JsonParser.parseString("""{"data":{"status":"success","bot_info":{"botid":"B","secret":"X"}}}""").asJsonObject
+                            }
+                        }
+                    },
+                    plat = 1,
+                )
+            onboarding.start()
+            // 网络异常应返回 Waiting，不应冒泡
+            assertEquals(OnboardingStep.Waiting, onboarding.poll())
+            // 下次正常轮询应成功
+            assertEquals(
+                OnboardingStep.Succeeded(mapOf("bot_id" to "B", "secret" to "X"), ownerId = null, suggestedName = null),
+                onboarding.poll(),
+            )
         }
 
     @Test

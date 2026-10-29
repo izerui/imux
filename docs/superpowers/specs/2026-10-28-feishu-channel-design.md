@@ -104,7 +104,7 @@ robot/、根包              不改（RobotManager.add 已支持 ownerId 非空�
 4. **下载带请求头**：`HttpFileDownload.download` 增加 `headers: Map<String, String> = emptyMap()`。
 5. **扫码轮询间隔可变**：`ChannelOnboarding.pollIntervalMillis` 改为每次轮询前读取（接口形状不变，`OnboardingDriver` 本来每次都读）；KDoc 写明“可随轮询结果变化”。
 6. **附件种类**：`AttachmentKind` 增加 `AUDIO`；`AttachmentNames` 识别 `OggS` 文件头为 `.ogg`，无文件名时命名 `audio-HHmmss.<扩展名>`。
-7. **发送失败状态**：`ConnectionStatus` 增加 `SendFailing(messageKey: String, detail: String?)`：连接在、能收消息，但发送被平台拒绝。`isWorking` 为真（配对和收消息不受影响），界面按“需要注意”显示。下一次发送成功后恢复 `Online`。企业微信暂不使用。
+7. **发送失败状态**：`ConnectionStatus` 增加 `SendFailing(messageKey: String, detail: String?)`：连接在、能收消息，但发送被平台拒绝。`isWorking` 为真（配对和收消息不受影响），界面按“需要注意”显示。下一次发送成功后恢复 `Online`。飞书的受阻标记跨重连保留：长连接不在线时照样记下但不显示（如实显示链路状态），链路回到在线时显示 `SendFailing ?: Online`，只在 stop() 或下一次发送成功时清除（2026-10-30 审查修复，与钉钉一致）。企业微信暂不使用。
 
 ## 4. 扫码接入
 
@@ -118,7 +118,7 @@ start():
   → ShowQr(verification_uri_complete)
 
 poll():
-  POST ...  action=poll&device_code=..&tp=ob_app   （4xx 正文照常解析）
+  POST ...  action=poll&device_code=..&tp=ob_app   （4xx 正文照常解析；网络异常 → Waiting，下一轮再查）
   user_info.tenant_brand == "lark" 且尚未切换 → domain = LARK（同一响应若已带凭据，照常成功）
   有 client_id 与 client_secret → Succeeded(
         credentials = {app_id, app_secret, domain},
@@ -142,19 +142,20 @@ poll():
 ```
 runLoop:
   循环直到 stop()：
-    上报 Connecting（失败过则 Retrying(原因)）
+    上报 Connecting（失败过则 Retrying(原因)；掉线时已报过 Connecting 则不重复）
     runSession() 结束原因：
       Fatal(原因)      → 上报 Failed，退出（凭据无效、连接数超限、403）
-      Dropped(原因)    → 等待重连间隔，继续
+      Dropped(原因)    → 在线后被断开：立即上报 Connecting；否则上报 Retrying(原因)；等待重连间隔，继续
 runSession:
   1. FeishuApi.endpoint()：code=0 取 URL 与 ClientConfig；
      code 为 1（系统繁忙）或 1000040343（内部错误）→ Dropped；其余非 0 → Fatal
   2. transport.open(URL)；握手被拒：514+1000040350 或 403 → Fatal，其他 → Dropped
+     其他异常 → Dropped(异常类名)：异常消息可能带完整 wss 地址（含 ticket 等），原因会写进日志
   3. 上报 Online，启动心跳；等待会话结束
 ```
 
-- **重连间隔**：遵循服务端下发的参数。首次重连先随机等待 `[0, ReconnectNonce)` 秒，之后每次间隔 `ReconnectInterval` 秒；`ReconnectCount ≥ 0` 时用完次数上报 Failed。因为默认间隔长达 120 秒，**第一次重连失败就上报 `Retrying(原因)`**，不像企业微信等 5 次。
-- **心跳**：每 `PingInterval` 秒发 ping；收到 pong 时如带 `ClientConfig` 就更新参数。**另加一条存活检查**：超过 3 个心跳周期没有收到任何帧，判定连接已死，按 Dropped 重连。官方 SDK 只靠读错误发现断线，这是我们加的保护（对应企业微信“连续 2 次 ping 无回应”）。
+- **重连间隔**：遵循服务端下发的参数。首次重连先随机等待 `[0, ReconnectNonce)` 秒，之后每次间隔 `ReconnectInterval` 秒；`ReconnectCount ≥ 0` 时用完次数上报 Failed。因为默认间隔长达 120 秒，**第一次重连失败就上报 `Retrying(原因)`**，不像企业微信等 5 次。在线后被断开**立即**上报 `Connecting` 再等随机抖动，不让界面在掉线后仍显示“在线”最多约 30 秒（2026-10-30 审查修复）。
+- **心跳**：每 `PingInterval` 秒发 ping；收到 pong 时如带 `ClientConfig` 就更新参数。**另加一条存活检查**：超过 3 个心跳周期没有收到任何帧，判定连接已死，按 Dropped 重连。ping 的发送限时一个心跳周期，写入挂起时也能照常做存活检查。官方 SDK 只靠读错误发现断线，这是我们加的保护（对应企业微信“连续 2 次 ping 无回应”）。
 - **stop()**：取消循环、关闭传输、上报 Stopped，与企业微信一致。
 
 ### 5.2 收帧
@@ -172,8 +173,8 @@ onBinary(bytes):
     type=card：不处理、不回写（与 SDK 相同）
 ```
 
-- **处理后确认**：对齐 Node SDK，拼齐并处理后才确认；这里处理完成指取引用、语音转写并调用 `sink.accept` 完成，不等待 CLI 执行完成。处理异常回 500，并移除本次去重标记以允许重投。慢处理可能触发平台重投，按消息 id 去重。
-- **入站队列**：每个连接一个单消费者协程，按到达顺序处理：取引用文字（有 `parent_id` 时）→ 组装 `InboundMessage` → `sink.accept`。取引用失败时 `quote = null`，照常转交。这样既满足 `InboundSink` 的顺序要求，也不阻塞确认。
+- **处理后确认**：与官方 SDK 一致（`lark-oapi` `ws/client.py` `_handle_data_frame`：先调用事件处理，处理完再回写确认帧），拼齐并处理后才确认；这里处理完成指取引用、语音转写并调用 `sink.accept` 完成，不等待 CLI 执行完成。成功回 200，处理异常回 500，并移除本次去重标记以允许平台重投。慢处理可能触发平台重投，按消息 id 去重。2026-10-30 用户要求与官方 SDK 保持一致，撤回本轮曾改的“先确认后处理”。
+- **入站队列**：每个连接一个单消费者协程，按到达顺序处理：取引用文字（有 `parent_id` 时）→ 组装 `InboundMessage` → `sink.accept`，完成后用事件到达时的会话回写确认（掉线后旧会话写不出去，平台会重投）。取引用失败时 `quote = null`，照常转交。这样满足 `InboundSink` 的顺序要求，与 SDK 收帧循环按序处理一致。
 - **去重**：按 `message_id`（平台重投用同一个），容量 1000，与企业微信相同。
 
 ## 6. 收消息解析
@@ -197,14 +198,14 @@ onBinary(bytes):
 ## 7. 发消息
 
 - **格式**：`msg_type=post`，`content = {"zh_cn":{"content":[[{"tag":"md","text":<分段文本>}]]}}`（JSON 字符串）。
-- **分段**：`maxTextBytes = 15_000`。富文本请求体上限 30 KB，而正文要在 JSON 里被转义两层（换行、引号会变长），取一半作余量；发送前再算一次请求体字节数，超过 30 KB 直接 `Rejected("too large")`，不发。
+- **分段**：`maxTextBytes = 15_000`。富文本请求体上限 30 KB，而正文要在 JSON 里被转义两层（换行、引号会变长），取一半作余量；发送前再算一次请求体字节数，超过 30 KB（引号、反斜杠多的正文转义后会超）时在渠道内把这段对半切开分别发送，优先切在中点附近的换行之后、不切开代理对，递归直到每段不超限（只剩一个字符仍超限时 `Rejected("too large")`，实际不会发生，只为防止无限递归）。每段照常过限频；全部成功返回 `Accepted`，遇到第一段失败即返回该失败，已发出的不撤回（2026-10-30 审查修复，原先整段拒发）。
 - **限频**：`SlidingWindowLimiter(5, 1000 毫秒)` 按 `chatId`；等待超过 20 秒则 `Rejected("rate limited")`，与企业微信相同。
 - **令牌**：`FeishuApi` 缓存令牌，剩余有效期不足 10 分钟就重新获取（与官方 SDK 相同）；遇到令牌无效类错误码，清空缓存重取并**只重试一次**。令牌只在内存，不落盘；断网多久都不影响，恢复后随用随取。
 - **结果映射**：
 
 | 情况 | 返回 | 状态 |
 |---|---|---|
-| `code=0` | `Accepted` | 若之前是 `SendFailing`，恢复 `Online` |
+| `code=0` | `Accepted` | 若之前是 `SendFailing`，恢复 `Online`（链路在线时） |
 | 网络异常、超时 | `Unknown` | 不变 |
 | 限频（99991400 / 1000004 / 1000005） | `Rejected("rate limited")` | 不变 |
 | 额度用完（99991403） | `Rejected` | `SendFailing("bridge.feishu.quota")` |
@@ -212,7 +213,7 @@ onBinary(bytes):
 | 凭据或应用不可用（取令牌返回 10014 / 10015 / 11207 / 11209 / 99991662 / 99991673 / 20009） | `Rejected` | `SendFailing("bridge.feishu.app", 错误码)` |
 | 其他业务错误 | `Rejected("<code> <msg>")` | 不变 |
 
-- 不自动重发失败的消息（现有约定）；`SendFailing` 只负责让界面如实显示。额度用完后不做任何定时恢复，下一次发送成功自然回到 `Online`（失败的调用不占额度）。
+- 不自动重发失败的消息（现有约定）；`SendFailing` 只负责让界面如实显示。额度用完后不做任何定时恢复，下一次发送成功自然回到 `Online`（失败的调用不占额度）。受阻标记跨重连保留，见第 3 节第 7 条。
 - 不使用 `uuid` 去重：我们不重发，用不上。
 
 ## 8. 附件下载
@@ -248,7 +249,7 @@ onBinary(bytes):
 | `FeishuEventsTest` | 各消息类型的解析表；非 p2p、非 user、非 receive_v1 被忽略；post 带语言外壳；`parent_id` |
 | `FeishuOnboardingTest` | 假 HTTP：正常成功、`slow_down` 间隔递增、Lark 切换且同一响应带凭据、`access_denied`、`expired_token`、init 不支持、缺 `open_id` 时 `ownerId=null` |
 | `FeishuApiTest` | 令牌缓存与提前刷新；令牌无效重取只重试一次；各错误码分类 |
-| `FeishuConnectionTest` | 假传输：处理成功后确认；异常回 500 且允许重投；缺片不确认；非法元数据不处理；拼包；去重；入站顺序（第一条取引用慢，第二条也不会先到）；pong 更新心跳间隔；3 个周期无帧判死重连；握手 514+1000040350 不重连；endpoint 业务错误分类；额度用完 → `SendFailing`，随后成功 → `Online`；stop 上报 Stopped |
+| `FeishuConnectionTest` | 假传输：处理成功后确认（取引用完成并交出后才确认）；异常回 500 且允许重投；缺片不确认；非法元数据不处理；拼包；去重；入站顺序（第一条取引用慢，第二条也不会先到）；pong 更新心跳间隔；3 个周期无帧判死重连；握手 514+1000040350 不重连；endpoint 业务错误分类；额度用完 → `SendFailing`，随后成功 → `Online`；受阻跨重连保留；ping 发送挂起仍判死；掉线立即报 Connecting；超限正文分段发出；建连异常原因不含地址；stop 上报 Stopped |
 | `FeishuAttachmentTest` | 带令牌请求头；文件名优先级；超限 |
 | `OggOpusTest` | 用 ffmpeg（libopus）生成的单声道 16k、立体声 48k 样本：时长与非静音；超限、非 Ogg、截断报错 |
 | `FeishuSpeechTest` | 整段一次识别、请求参数、临时文件删除；识别报错、结果为空、解码失败、异常大文件都返回 null |

@@ -107,12 +107,15 @@ class WecomConnection(
     }
 
     override suspend fun send(message: OutboundMessage): DeliveryResult {
-        val s = session ?: return DeliveryResult.Rejected("offline")
-        val transport = s.transport ?: return DeliveryResult.Rejected("offline")
+        var s = session ?: return DeliveryResult.Rejected("offline")
+        var transport = s.transport ?: return DeliveryResult.Rejected("offline")
         var wait = limiter.tryAcquire(message.chatId)
         if (wait > 0) {
             if (wait > maxRateWaitMillis) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
             delay(wait)
+            // 限频等待期间可能已重连或断线，重新读取当前会话
+            s = session ?: return DeliveryResult.Rejected("offline")
+            transport = s.transport ?: return DeliveryResult.Rejected("offline")
             wait = limiter.tryAcquire(message.chatId)
             if (wait > 0) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
         }
@@ -123,6 +126,9 @@ class WecomConnection(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: IOException) {
+                return DeliveryResult.Unknown
+            } catch (_: IllegalStateException) {
+                // 取消挂起的 JDK WebSocket send 后，下一次 sendText 可能抛 IllegalStateException
                 return DeliveryResult.Unknown
             } ?: return DeliveryResult.Unknown
         return when (ack.errcode) {
@@ -262,8 +268,12 @@ class WecomConnection(
         val deferred = CompletableDeferred<WecomFrame.Ack>()
         state.pending[reqId] = deferred
         try {
-            transport.send(frame)
-            return withTimeoutOrNull(ackTimeoutMillis) { deferred.await() }
+            // 发送与等回执整体计时：网络假死时 send 缓冲写满会永久挂住，
+            // 放进超时后心跳的 request(ping) 也能正常超时、missed 递增、判死重连
+            return withTimeoutOrNull(ackTimeoutMillis) {
+                transport.send(frame)
+                deferred.await()
+            }
         } finally {
             state.pending.remove(reqId)
         }

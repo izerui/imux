@@ -62,7 +62,10 @@ data class FeishuClientConfig(
 data class FeishuEndpoint(
     val url: String,
     val config: FeishuClientConfig,
-)
+) {
+    /** 地址带 ticket 等一次性凭据，不能进入日志或异常消息。 */
+    override fun toString(): String = "FeishuEndpoint(url=***, config=$config)"
+}
 
 /** 官方通用错误码与发送消息文档里用到的错误码（见设计第 2 节）。 */
 object FeishuCodes {

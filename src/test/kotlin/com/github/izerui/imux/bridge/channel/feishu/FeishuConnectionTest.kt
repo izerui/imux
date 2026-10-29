@@ -13,10 +13,12 @@ import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
 import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
+import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -28,6 +30,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
 import java.nio.file.Files
 import java.util.Random
 import java.util.concurrent.CopyOnWriteArrayList
@@ -43,6 +46,9 @@ class FeishuConnectionTest {
     private class FakeTransport(
         private val opens: AtomicInteger,
         private val reject: WebSocketHandshakeRejected?,
+        private val openError: Exception? = null,
+        /** ping 发送永不返回，模拟写入挂起。 */
+        private val hangPings: Boolean = false,
     ) : FrameTransport {
         val frames = CopyOnWriteArrayList<FeishuFrame>()
 
@@ -55,13 +61,16 @@ class FeishuConnectionTest {
         ) {
             opens.incrementAndGet()
             reject?.let { throw it }
+            openError?.let { throw it }
             this.listener = listener
         }
 
         override suspend fun send(text: String) = Unit
 
         override suspend fun sendBinary(bytes: ByteArray) {
-            frames += FeishuFrameCodec.decode(bytes)
+            val frame = FeishuFrameCodec.decode(bytes)
+            if (hangPings && frame.header("type") == "ping") awaitCancellation()
+            frames += frame
         }
 
         override fun close() {
@@ -100,10 +109,25 @@ class FeishuConnectionTest {
     @Volatile
     private var speechCode = 0
 
+    /** 之后新建的连接 open 时抛出此异常。 */
+    @Volatile
+    private var laterOpenError: Exception? = null
+
+    @Volatile
+    private var hangPings = false
+
+    /** 取地址在此等待放行；用来让链路停在“连接中”。 */
+    @Volatile
+    private var endpointGate: CompletableDeferred<Unit>? = null
+
     private val http =
         FakeHttpJson { method, url, _ ->
             when {
-                url.endsWith("/callback/ws/endpoint") -> 200 to endpointBody
+                url.endsWith("/callback/ws/endpoint") -> {
+                    endpointGate?.await()
+                    200 to endpointBody
+                }
+
                 url.endsWith("/tenant_access_token/internal") -> 200 to """{"code":0,"tenant_access_token":"T","expire":7200}"""
                 method == "POST" && url.contains("/im/v1/messages?") -> 200 to """{"code":$sendCode,"msg":"m"}"""
                 url.endsWith("/speech_to_text/v1/speech/file_recognize") -> 200 to """{"code":$speechCode,"msg":"m","data":{"recognition_text":"跑一下单测"}}"""
@@ -140,7 +164,9 @@ class FeishuConnectionTest {
         robotId = RobotId("r"),
         api = FeishuApi("cli", "sec", FeishuDomain.FEISHU, http),
         scope = scope,
-        transportFactory = { FakeTransport(opens, reject ?: laterReject).also { transports += it } },
+        transportFactory = {
+            FakeTransport(opens, reject ?: laterReject, laterOpenError, hangPings).also { transports += it }
+        },
         download =
             HttpFileDownload { _, _, _ ->
                 val file = temp.newFile().toPath()
@@ -323,9 +349,10 @@ class FeishuConnectionTest {
             transport.emit(dataFrame("f1", payload.substring(half), sum = 2, seq = 1))
             transport.emit(dataFrame("f1", payload.substring(0, half), sum = 2, seq = 0))
             transport.emit(dataFrame("f2", payload))
-            withTimeout(2_000) { while (received.isEmpty()) delay(5) }
-            delay(100)
-            assertEquals(listOf("拼起来"), received.map { it.text })
+            // 屏障：按序交出，om_3 交出时重投的 f2 一定已处理完
+            transport.emit(dataFrame("f3", textEvent("om_3", "三")))
+            withTimeout(2_000) { while (received.size < 2) delay(5) }
+            assertEquals(listOf("拼起来", "三"), received.map { it.text })
         }
 
     @Test
@@ -343,7 +370,7 @@ class FeishuConnectionTest {
     @Test
     fun `连接数超限或 403 不重连`() =
         runBlocking {
-            start(
+            val conn =
                 connection(
                     WebSocketHandshakeRejected(
                         400,
@@ -354,10 +381,12 @@ class FeishuConnectionTest {
                         )
                     )
                 )
-            )
+            start(conn)
             withTimeout(2_000) { while (statuses.none { it is ConnectionStatus.Failed }) delay(5) }
-            delay(100)
+            // 运行循环报“失败”后立即退出；停止后“已停止”之前的就是全部状态
+            stopAndAwait(conn)
             assertEquals(1, opens.get())
+            assertEquals(1, statuses.count { it is ConnectionStatus.Failed })
         }
 
     @Test
@@ -414,17 +443,38 @@ class FeishuConnectionTest {
             )
         }
 
+    /** 发消息请求里的 md 正文。 */
+    private fun sentTexts(from: Int) =
+        http.calls.drop(from).filter { it.method == "POST" && it.url.contains("/im/v1/messages?") }.map { call ->
+            val content = JsonParser.parseString(call.body).asJsonObject["content"].asString
+            JsonParser.parseString(content).asJsonObject["zh_cn"].asJsonObject["content"]
+                .asJsonArray[0].asJsonArray[0].asJsonObject["text"].asString
+        }
+
     @Test
-    fun `正文转义后超过 30 KB 时不发`() =
+    fun `15000 字节全是引号的正文转义后超过 30 KB，在渠道内分段发出`() =
         runBlocking {
             val conn = connection()
             startAndAwaitOnline(conn)
             val before = http.calls.size
-            assertEquals(
-                DeliveryResult.Rejected("too large"),
-                conn.send(OutboundMessage(RobotId("r"), "ou_me", "\"".repeat(9_000)))
-            )
-            assertEquals(before, http.calls.size)
+            val text = "\"".repeat(15_000)
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "ou_me", text)))
+            val bodies = http.calls.drop(before).filter { it.method == "POST" && it.url.contains("/im/v1/messages?") }
+            assertTrue(bodies.size >= 2)
+            assertTrue(bodies.all { it.body!!.toByteArray(Charsets.UTF_8).size <= FeishuApi.MAX_POST_BODY_BYTES })
+            assertEquals(text, sentTexts(before).joinToString(""))
+        }
+
+    @Test
+    fun `分段优先在换行处切开`() =
+        runBlocking {
+            val conn = connection()
+            startAndAwaitOnline(conn)
+            val before = http.calls.size
+            val first = "\"".repeat(5_000) + "\n"
+            val second = "\"".repeat(6_000)
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "ou_me", first + second)))
+            assertEquals(listOf(first, second), sentTexts(before))
         }
 
     private fun audioEvent(messageId: String) =
@@ -463,11 +513,15 @@ class FeishuConnectionTest {
     @Test
     fun `握手 403 不重连`() =
         runBlocking {
-            start(connection(WebSocketHandshakeRejected(403, emptyMap())))
+            val conn = connection(WebSocketHandshakeRejected(403, emptyMap()))
+            start(conn)
             withTimeout(2_000) { while (statuses.none { it is ConnectionStatus.Failed }) delay(5) }
-            delay(100)
+            stopAndAwait(conn)
             assertEquals(1, opens.get())
-            assertEquals(ConnectionStatus.Failed("handshake 403"), statuses.last())
+            assertEquals(
+                listOf(ConnectionStatus.Failed("handshake 403"), ConnectionStatus.Stopped),
+                statuses.takeLast(2)
+            )
         }
 
     @Test
@@ -613,11 +667,15 @@ class FeishuConnectionTest {
     fun `重连次数用完报失败`() =
         runBlocking {
             endpointBody = endpoint(pingSeconds = 1_000, reconnectInterval = 1, reconnectCount = 2)
-            start(connection(WebSocketHandshakeRejected(500, emptyMap())))
+            val conn = connection(WebSocketHandshakeRejected(500, emptyMap()))
+            start(conn)
             withTimeout(2_000) { while (statuses.none { it is ConnectionStatus.Failed }) delay(5) }
-            delay(100)
+            stopAndAwait(conn)
             assertEquals(3, opens.get())
-            assertEquals(ConnectionStatus.Failed("handshake 500"), statuses.last())
+            assertEquals(
+                listOf(ConnectionStatus.Failed("handshake 500"), ConnectionStatus.Stopped),
+                statuses.takeLast(2)
+            )
         }
 
     @Test
@@ -643,24 +701,142 @@ class FeishuConnectionTest {
                 ) else it
             }, payload = card.payload))
             transport.emit(dataFrame("f2", textEvent("om_2", "二")))
+            // 帧在 emit 内同步分拣、按序处理：f2 交出并确认时，此前的 card 帧已被丢弃
             withTimeout(2_000) { while (received.isEmpty() || acks(transport).isEmpty()) delay(5) }
-            delay(100)
             assertEquals(listOf("om_2"), received.map { it.externalMessageId })
             assertEquals(listOf("f2"), acks(transport).map { it.header("message_id") })
         }
 
     @Test
-    fun `正文过大不占限频名额`() =
+    fun `正文过大分段发送，每段各占一个限频名额`() =
         runBlocking {
-            // 时钟冻结、不允许等待：名额一旦被占满，第 6 条会立即被拒为限频
+            // 时钟冻结、不允许等待：名额一旦被占满，下一段会立即被拒为限频
             val conn = connection(limiter = SlidingWindowLimiter(5, 1_000) { 0L }, maxRateWaitMillis = 0)
             startAndAwaitOnline(conn)
-            repeat(5) {
-                assertEquals(
-                    DeliveryResult.Rejected("too large"),
-                    conn.send(OutboundMessage(RobotId("r"), "ou_me", "\"".repeat(9_000)))
-                )
-            }
-            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "ou_me", "x")))
+            val before = http.calls.size
+            // 9000 个引号转义后约 36 KB，切成两段
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "ou_me", "\"".repeat(9_000))))
+            assertEquals(2, sentTexts(before).size)
+            repeat(3) { assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "ou_me", "x"))) }
+            assertEquals(
+                DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED),
+                conn.send(OutboundMessage(RobotId("r"), "ou_me", "x"))
+            )
         }
+
+    @Test
+    fun `分段中某段失败即返回该失败，已发出的不撤回`() =
+        runBlocking {
+            val conn = connection(limiter = SlidingWindowLimiter(1, 1_000) { 0L }, maxRateWaitMillis = 0)
+            startAndAwaitOnline(conn)
+            val before = http.calls.size
+            assertEquals(
+                DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED),
+                conn.send(OutboundMessage(RobotId("r"), "ou_me", "\"".repeat(9_000)))
+            )
+            assertEquals(1, sentTexts(before).size)
+        }
+
+    @Test
+    fun `受阻后服务端断开重连，上线后仍显示发送受阻，发送成功才回到在线`() =
+        runBlocking {
+            val conn = connection()
+            startAndAwaitOnline(conn)
+            sendCode = 99991403
+            conn.send(OutboundMessage(RobotId("r"), "ou_me", "x"))
+            awaitLast(ConnectionStatus.SendFailing("bridge.feishu.quota"))
+            transports.first().close()
+            withTimeout(2_000) {
+                while (opens.get() < 2 || statuses.last() != ConnectionStatus.SendFailing("bridge.feishu.quota")) delay(5)
+            }
+            sendCode = 0
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "ou_me", "x")))
+            stopAndAwait(conn)
+            assertEquals(
+                listOf(
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.Online,
+                    ConnectionStatus.SendFailing("bridge.feishu.quota"),
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.SendFailing("bridge.feishu.quota"),
+                    ConnectionStatus.Online,
+                    ConnectionStatus.Stopped,
+                ),
+                statuses.toList(),
+            )
+        }
+
+    @Test
+    fun `链路重连期间发送被拒，记下但不显示，上线后显示发送受阻`() =
+        runBlocking {
+            val conn = connection()
+            startAndAwaitOnline(conn)
+            val gate = CompletableDeferred<Unit>()
+            endpointGate = gate
+            transports.first().close()
+            // 第二次取地址被挡住，链路停在“连接中”
+            withTimeout(2_000) { while (endpointCalls() < 2) delay(5) }
+            awaitLast(ConnectionStatus.Connecting)
+            sendCode = 99991403
+            assertTrue(conn.send(OutboundMessage(RobotId("r"), "ou_me", "x")) is DeliveryResult.Rejected)
+            gate.complete(Unit)
+            awaitLast(ConnectionStatus.SendFailing("bridge.feishu.quota"))
+            stopAndAwait(conn)
+            assertEquals(
+                listOf(
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.Online,
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.SendFailing("bridge.feishu.quota"),
+                    ConnectionStatus.Stopped,
+                ),
+                statuses.toList(),
+            )
+        }
+
+    @Test
+    fun `ping 发送挂起时仍按周期检查存活，判死重连`() =
+        runBlocking {
+            endpointBody = endpoint(pingSeconds = 1)
+            hangPings = true
+            startAndAwaitOnline(connection())
+            withTimeout(2_000) { while (opens.get() < 2) delay(5) }
+        }
+
+    @Test
+    fun `在线后被断开立即报连接中，不等重连抖动`() =
+        runBlocking {
+            // Random(7) 首个 nextDouble 约 0.73，ReconnectNonce=1000 时首次重连要等约 14.6 秒
+            endpointBody = endpoint(pingSeconds = 1_000, reconnectNonce = 1_000)
+            val conn = connection()
+            startAndAwaitOnline(conn)
+            transports.first().close()
+            awaitLast(ConnectionStatus.Connecting)
+            assertEquals(1, opens.get())
+            stopAndAwait(conn)
+            assertEquals(
+                listOf(
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.Online,
+                    ConnectionStatus.Connecting,
+                    ConnectionStatus.Stopped,
+                ),
+                statuses.toList(),
+            )
+        }
+
+    @Test
+    fun `建连异常的原因只带异常类名，不带地址里的凭据`() =
+        runBlocking {
+            endpointBody = endpoint(pingSeconds = 1_000, reconnectNonce = 1_000)
+            laterOpenError = IOException("connect wss://x/ws?service_id=7&access_key=secret failed")
+            val conn = connection()
+            start(conn)
+            withTimeout(2_000) { while (statuses.none { it is ConnectionStatus.Retrying }) delay(5) }
+            val reason = statuses.filterIsInstance<ConnectionStatus.Retrying>().single().reason
+            assertTrue(reason, "secret" !in reason)
+            assertEquals("IOException", reason)
+            stopAndAwait(conn)
+        }
+
 }

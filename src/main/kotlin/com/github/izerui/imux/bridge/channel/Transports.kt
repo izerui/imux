@@ -7,6 +7,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -35,6 +36,9 @@ interface FrameListener {
     /** 二进制帧（已拼完分片）。只用文本帧的渠道不必实现。 */
     fun onBinary(bytes: ByteArray) {}
 
+    /** WebSocket pong（回应 [FrameTransport.sendPing]）。不发 ping 的渠道不必实现。 */
+    fun onPong() {}
+
     fun onClosed(reason: String)
 }
 
@@ -50,6 +54,12 @@ interface FrameTransport {
 
     /** 二进制帧；与 [send] 共用同一串行顺序。只用文本帧的渠道不必实现。 */
     suspend fun sendBinary(bytes: ByteArray): Unit = throw UnsupportedOperationException("不支持二进制帧")
+
+    /**
+     * WebSocket 级 ping，与 [send] 共用同一串行顺序。服务端应用层心跳频率不明时（钉钉）用它判断存活；
+     * 不需要的渠道不必实现。
+     */
+    suspend fun sendPing(): Unit = throw UnsupportedOperationException("不支持 ping")
 
     fun close()
 }
@@ -102,56 +112,77 @@ class JdkWebSocketTransport(
     ) {
         val assembler = TextFrameAssembler()
         val binary = BinaryFrameAssembler()
+        val future =
+            client.newWebSocketBuilder()
+                .connectTimeout(NETWORK_TIMEOUT)
+                .buildAsync(
+                    URI(url),
+                    object : WebSocket.Listener {
+                        override fun onText(
+                            webSocket: WebSocket,
+                            data: CharSequence,
+                            last: Boolean,
+                        ): CompletionStage<*>? {
+                            assembler.accept(data, last)?.let(listener::onText)
+                            webSocket.request(1)
+                            return null
+                        }
+
+                        override fun onBinary(
+                            webSocket: WebSocket,
+                            data: ByteBuffer,
+                            last: Boolean,
+                        ): CompletionStage<*>? {
+                            binary.accept(data, last)?.let(listener::onBinary)
+                            webSocket.request(1)
+                            return null
+                        }
+
+                        override fun onPong(
+                            webSocket: WebSocket,
+                            message: ByteBuffer,
+                        ): CompletionStage<*>? {
+                            listener.onPong()
+                            webSocket.request(1)
+                            return null
+                        }
+
+                        override fun onClose(
+                            webSocket: WebSocket,
+                            statusCode: Int,
+                            reason: String,
+                        ): CompletionStage<*>? {
+                            listener.onClosed("$statusCode $reason")
+                            return null
+                        }
+
+                        override fun onError(
+                            webSocket: WebSocket,
+                            error: Throwable,
+                        ) {
+                            listener.onClosed(error.message ?: error.javaClass.simpleName)
+                        }
+                    },
+                )
         socket =
-            try {
-                client.newWebSocketBuilder()
-                    .connectTimeout(NETWORK_TIMEOUT)
-                    .buildAsync(
-                        URI(url),
-                        object : WebSocket.Listener {
-                            override fun onText(
-                                webSocket: WebSocket,
-                                data: CharSequence,
-                                last: Boolean,
-                            ): CompletionStage<*>? {
-                                assembler.accept(data, last)?.let(listener::onText)
-                                webSocket.request(1)
-                                return null
-                            }
-
-                            override fun onBinary(
-                                webSocket: WebSocket,
-                                data: ByteBuffer,
-                                last: Boolean,
-                            ): CompletionStage<*>? {
-                                binary.accept(data, last)?.let(listener::onBinary)
-                                webSocket.request(1)
-                                return null
-                            }
-
-                            override fun onClose(
-                                webSocket: WebSocket,
-                                statusCode: Int,
-                                reason: String,
-                            ): CompletionStage<*>? {
-                                listener.onClosed("$statusCode $reason")
-                                return null
-                            }
-
-                            override fun onError(
-                                webSocket: WebSocket,
-                                error: Throwable,
-                            ) {
-                                listener.onClosed(error.message ?: error.javaClass.simpleName)
-                            }
-                        },
-                    ).await()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val cause = (e as? CompletionException)?.cause ?: e
-                if (cause is WebSocketHandshakeException) throw handshakeRejected(cause)
-                throw e
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation {
+                    // 协程被取消，但 JDK 握手可能仍在进行或已完成——挂回调确保晚到的连接被关闭
+                    future.thenAccept { ws -> ws.abort() }
+                }
+                future.whenComplete { ws, ex ->
+                    if (cont.isCancelled) return@whenComplete
+                    if (ex != null) {
+                        val cause = (ex as? CompletionException)?.cause ?: ex
+                        if (cause is WebSocketHandshakeException) {
+                            cont.resumeWith(Result.failure(handshakeRejected(cause)))
+                        } else {
+                            cont.resumeWith(Result.failure(cause))
+                        }
+                    } else {
+                        cont.resume(ws) { _, _, _ -> ws.abort() }
+                    }
+                }
             }
     }
 
@@ -159,6 +190,13 @@ class JdkWebSocketTransport(
         sendLock.withLock {
             val current = socket ?: throw IOException("WebSocket 未连接")
             current.sendBinary(ByteBuffer.wrap(bytes), true).await()
+        }
+    }
+
+    override suspend fun sendPing() {
+        sendLock.withLock {
+            val current = socket ?: throw IOException("WebSocket 未连接")
+            current.sendPing(ByteBuffer.allocate(0)).await()
         }
     }
 

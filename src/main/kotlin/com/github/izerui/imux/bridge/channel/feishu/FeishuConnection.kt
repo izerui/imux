@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.net.URLDecoder
@@ -36,12 +37,13 @@ import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.Random
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.abs
 
 /**
  * 飞书长连接（docs/superpowers/specs/2026-10-28-feishu-channel-design.md 第 5 至 7 节）。
  *
  * 收消息走 WebSocket（protobuf 帧），发消息走 HTTP，两者互不依赖：长连接重连期间照样能发。
- * 按 Node SDK 拼齐事件后处理，成功回 200、异常回 500；单个协程按到达顺序交给 [InboundSink]。
+ * 与官方 SDK 一致，拼齐事件后先处理再确认：成功回 200、异常回 500；单个协程按到达顺序交给 [InboundSink]。
  * 飞书没有踢线事件，不会上报 Kicked。
  */
 class FeishuConnection(
@@ -115,7 +117,7 @@ class FeishuConnection(
     /** 长连接的真实状态，只由运行循环和 stop() 写入。 */
     private var linkStatus: ConnectionStatus? = null
 
-    /** 发送受阻标记：只在长连接在线时生效，长连接状态一变就清掉。 */
+    /** 发送受阻标记：跨重连保留，只在 stop() 或下一次发送成功时清除；只在长连接在线时显示。 */
     private var sendBlocked: ConnectionStatus.SendFailing? = null
 
     override fun start(
@@ -166,16 +168,31 @@ class FeishuConnection(
 
     override suspend fun send(message: OutboundMessage): DeliveryResult {
         val current = run ?: return DeliveryResult.Rejected("offline")
-        // 先查大小：超限的消息不占限频名额
-        val body = FeishuApi.markdownBody(message.chatId, message.text)
-        if (body.toByteArray(StandardCharsets.UTF_8).size > FeishuApi.MAX_POST_BODY_BYTES) return DeliveryResult.Rejected(
-            "too large"
-        )
-        var wait = limiter.tryAcquire(message.chatId)
+        return sendText(current, message.chatId, message.text)
+    }
+
+    /**
+     * 路由器按 [maxTextBytes] 切段，但引号、反斜杠多的正文经两层转义后请求体仍可能超过 30 KB，整段拒发会丢掉这段回复；
+     * 超限时在这里对半切开分别发送（递归），每段照常过限频。遇到第一段失败即返回该失败，已发出的不撤回。
+     */
+    private suspend fun sendText(
+        current: Run,
+        chatId: String,
+        text: String,
+    ): DeliveryResult {
+        // 先查大小再取限频名额：超限的整段不占名额，切开后每段各占一个
+        val body = FeishuApi.markdownBody(chatId, text)
+        if (body.toByteArray(StandardCharsets.UTF_8).size > FeishuApi.MAX_POST_BODY_BYTES) {
+            val cut = splitIndex(text) ?: return DeliveryResult.Rejected("too large")
+            val head = sendText(current, chatId, text.substring(0, cut))
+            if (head != DeliveryResult.Accepted) return head
+            return sendText(current, chatId, text.substring(cut))
+        }
+        var wait = limiter.tryAcquire(chatId)
         if (wait > 0) {
             if (wait > maxRateWaitMillis) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
             delay(wait)
-            wait = limiter.tryAcquire(message.chatId)
+            wait = limiter.tryAcquire(chatId)
             if (wait > 0) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
         }
         return when (val result = api.send(body)) {
@@ -194,6 +211,20 @@ class FeishuConnection(
         }
     }
 
+    /**
+     * 切分点：中点附近（中间一半范围内）有换行就切在最近的换行之后，否则切在中点；不切开代理对。
+     * 切不出两段非空文本（只剩一个字符）时返回 null，防止无限递归。
+     */
+    private fun splitIndex(text: String): Int? {
+        val middle = text.length / 2
+        val range = maxOf(text.length / 4, 1)..minOf(text.length - text.length / 4, text.length - 1)
+        val before = text.lastIndexOf('\n', middle).takeIf { it >= 0 }?.plus(1)
+        val after = text.indexOf('\n', middle).takeIf { it >= 0 }?.plus(1)
+        var cut = listOfNotNull(before, after).filter { it in range }.minByOrNull { abs(it - middle) } ?: middle
+        if (cut in 1 until text.length && Character.isLowSurrogate(text[cut]) && Character.isHighSurrogate(text[cut - 1])) cut--
+        return cut.takeIf { it in 1 until text.length }
+    }
+
     private fun sendFailing(code: Int): ConnectionStatus.SendFailing? =
         when {
             code == FeishuCodes.QUOTA_EXCEEDED -> ConnectionStatus.SendFailing("bridge.feishu.quota")
@@ -207,8 +238,8 @@ class FeishuConnection(
         }
 
     /**
-     * 上报长连接状态并清掉发送受阻标记。与 stop() 同锁：stop() 先取消再在锁内报“已停止”，
-     * 之后被取消的运行在锁内看到自己已不活跃，不会再把状态改回去。
+     * 上报长连接状态。发送受阻标记保留：额度、权限问题不因重连消失，重连上线后如实显示之前记下的受阻状态。
+     * 与 stop() 同锁：stop() 先取消再在锁内报“已停止”，之后被取消的运行在锁内看到自己已不活跃，不会再把状态改回去。
      */
     private fun reportLink(
         current: Run,
@@ -216,32 +247,31 @@ class FeishuConnection(
     ) = synchronized(statusLock) {
         if (!current.job.isActive) return@synchronized
         linkStatus = status
-        sendBlocked = null
-        current.statuses.trySend(status)
+        current.statuses.trySend(if (status == ConnectionStatus.Online) sendBlocked ?: status else status)
     }
 
-    /** 只有长连接在线时才显示发送受阻；长连接失败、重连中时如实显示长连接状态，以便界面能发起重连。 */
+    /** 总是记下；只有长连接在线时才显示，长连接失败、重连中时如实显示长连接状态，以便界面能发起重连。 */
     private fun sendBlocked(
         current: Run,
         status: ConnectionStatus.SendFailing,
     ) = synchronized(statusLock) {
-        if (run !== current || linkStatus != ConnectionStatus.Online) return@synchronized
+        if (run !== current) return@synchronized
         sendBlocked = status
-        current.statuses.trySend(status)
+        if (linkStatus == ConnectionStatus.Online) current.statuses.trySend(status)
     }
 
-    /** 发送恢复：正在显示发送受阻时改回长连接的真实状态（此时必为在线）。 */
+    /** 发送恢复：清掉受阻标记；长连接在线时改回“在线”，不在线时显示的本就是长连接状态，不动。 */
     private fun sendRecovered(current: Run) =
         synchronized(statusLock) {
             if (run !== current || sendBlocked == null) return@synchronized
             sendBlocked = null
-            linkStatus?.let { current.statuses.trySend(it) }
+            if (linkStatus == ConnectionStatus.Online) current.statuses.trySend(ConnectionStatus.Online)
         }
 
     /**
      * 重连节奏遵循服务端参数：断线后先随机等待 [0, ReconnectNonce) 秒，之后每次间隔 ReconnectInterval 秒；
      * ReconnectCount ≥ 0 时用完次数即失败。首次连接或某次重连失败时立即报“连接失败，正在重试”；
-     * 在线后被断开，首次重连报“连接中”，这次重连失败才报“正在重试”。
+     * 在线后被断开立即报“连接中”（不等随机抖动，否则界面会在断线后仍显示“在线”最多约 30 秒），这次重连失败才报“正在重试”。
      */
     private suspend fun runLoop(
         owner: Run,
@@ -255,6 +285,8 @@ class FeishuConnection(
             var first = true
             // 正在显示的“连接失败，正在重试”的原因；下一次尝试开始时不闪回“连接中”
             var retrying: String? = null
+            // 掉线时已报过“连接中”，下一次尝试开始时不重复上报
+            var connectingShown = false
             while (isActive) {
                 if (!first) {
                     val current = config
@@ -273,7 +305,8 @@ class FeishuConnection(
                     reconnects++
                 }
                 first = false
-                if (retrying == null) reportLink(owner, ConnectionStatus.Connecting)
+                if (retrying == null && !connectingShown) reportLink(owner, ConnectionStatus.Connecting)
+                connectingShown = false
                 var reachedOnline = false
                 when (val end = runSession(owner, inbound) {
                     reconnects = 0
@@ -288,9 +321,12 @@ class FeishuConnection(
 
                     is SessionEnd.Dropped -> {
                         lastFailure = end.reason
-                        // 首次连接或一次重连本身失败：立即如实上报，不等下一次尝试（之间可能隔着 ReconnectInterval）。
-                        // 在线后被断开不算失败，首次重连照常报“连接中”
-                        if (!reachedOnline && retrying != end.reason) {
+                        if (reachedOnline) {
+                            // 在线后被断开不算失败：立即报“连接中”，再等待重连
+                            reportLink(owner, ConnectionStatus.Connecting)
+                            connectingShown = true
+                        } else if (retrying != end.reason) {
+                            // 首次连接或一次重连本身失败：立即如实上报，不等下一次尝试（之间可能隔着 ReconnectInterval）
                             reportLink(owner, ConnectionStatus.Retrying(end.reason))
                             retrying = end.reason
                         }
@@ -363,7 +399,8 @@ class FeishuConnection(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return SessionEnd.Dropped(e.message ?: e.javaClass.simpleName)
+            // 异常消息可能带完整 wss 地址（含 ticket 等凭据），而原因会经上层写进日志：只留异常类名
+            return SessionEnd.Dropped(e.javaClass.simpleName.ifEmpty { e.javaClass.name })
         } finally {
             if (session === state) session = null
             transport.close()
@@ -381,7 +418,10 @@ class FeishuConnection(
         return if (fatal) SessionEnd.Fatal(reason) else SessionEnd.Dropped(reason)
     }
 
-    /** 每个心跳周期发一次 ping；超过 [DEAD_AFTER_PINGS] 个周期没收到任何帧，判定连接已死（官方 SDK 没有这条，是我们加的保护）。 */
+    /**
+     * 每个心跳周期发一次 ping；超过 [DEAD_AFTER_PINGS] 个周期没收到任何帧，判定连接已死（官方 SDK 没有这条，是我们加的保护）。
+     * ping 发送限时一个周期：半死的连接上写入可能一直挂起，不限时就再也走不到存活检查。
+     */
     private suspend fun heartbeat(
         state: SessionState,
         ended: CompletableDeferred<SessionEnd>,
@@ -398,12 +438,14 @@ class FeishuConnection(
                 method = FeishuFrame.METHOD_CONTROL,
                 headers = listOf(FeishuHeader("type", "ping"))
             )
-            try {
-                state.transport.sendBinary(FeishuFrameCodec.encode(ping))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // 发不出去由存活检查兜底
+            withTimeoutOrNull(interval) {
+                try {
+                    state.transport.sendBinary(FeishuFrameCodec.encode(ping))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // 发不出去由存活检查兜底
+                }
             }
         }
     }

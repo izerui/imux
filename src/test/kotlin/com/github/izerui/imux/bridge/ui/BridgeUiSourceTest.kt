@@ -101,4 +101,14 @@ class RobotsSettingsRecoverySourceTest {
         assertTrue(renew.startsWith("{reconnectIfDown(id)manager.renewPairCode(id)"))
         assertTrue(dialog.compact(dialog.normalized).contains("renewButton.addActionListener{robotId?.let(::renew)}"))
     }
+
+    @Test
+    fun `等待配对时收发受阻，在等待文案后附上受阻原因`() {
+        val state = dialog.compact(dialog.bodyAfter("private fun renderPairState(", '{'))
+        assertTrue(
+            state.contains(
+                "ImuxBundle.message(\"bridge.add.pair.waiting\")+if(statusisConnectionStatus.SendFailing)\"\"+statusLabel(status,paired=false)else\"\"",
+            ),
+        )
+    }
 }

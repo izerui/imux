@@ -4,6 +4,7 @@ import com.github.izerui.imux.bridge.channel.OnboardingStep
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.io.IOException
 
 class FeishuOnboardingTest {
     private fun onboarding(vararg responses: Pair<Int, String>): Pair<FeishuOnboarding, FakeHttpJson> {
@@ -79,6 +80,27 @@ class FeishuOnboardingTest {
             val (flow, _) = onboarding(init, begin, 200 to """{"client_id":"cli_1","client_secret":"S"}""")
             flow.start()
             assertEquals(null, (flow.poll() as OnboardingStep.Succeeded).ownerId)
+        }
+
+    @Test
+    fun `轮询遇到网络异常时继续等待，下一次照常成功`() =
+        runBlocking {
+            val responses =
+                ArrayDeque(listOf(init, begin, 200 to """{"client_id":"cli_1","client_secret":"S","user_info":{"open_id":"ou_me"}}"""))
+            var failNext = false
+            val http =
+                FakeHttpJson { _, _, _ ->
+                    if (failNext) {
+                        failNext = false
+                        throw IOException("timeout")
+                    }
+                    responses.removeFirst()
+                }
+            val flow = FeishuOnboarding(http)
+            flow.start()
+            failNext = true
+            assertEquals(OnboardingStep.Waiting, flow.poll())
+            assertEquals("ou_me", (flow.poll() as OnboardingStep.Succeeded).ownerId)
         }
 
     @Test

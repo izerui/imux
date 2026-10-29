@@ -10,6 +10,7 @@ import com.github.izerui.imux.bridge.json.string
 import com.google.gson.JsonObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * 飞书扫码创建应用：OAuth 设备授权流程（官方 SDK RegisterApp；参数与 Hermes、DeepTutor 一致）。
@@ -56,8 +57,15 @@ class FeishuOnboarding(
 
     override suspend fun poll(): OnboardingStep {
         val code = deviceCode ?: return OnboardingStep.Failed("bridge.onboarding.noQr")
-        val result = register(listOf("action" to "poll", "device_code" to code, "tp" to "ob_app"))
-            ?: return OnboardingStep.Waiting
+        val result =
+            try {
+                register(listOf("action" to "poll", "device_code" to code, "tp" to "ob_app"))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // 轮询期间偶发的网络异常不该结束扫码；下一轮照常再查，总超时由调用方负责
+                null
+            } ?: return OnboardingStep.Waiting
         val user = result.obj("user_info")
         if (user?.string("tenant_brand") == FeishuDomain.LARK.id) domain = FeishuDomain.LARK
         val appId = result.primitiveText("client_id")

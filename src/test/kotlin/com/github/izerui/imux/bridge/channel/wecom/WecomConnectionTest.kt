@@ -17,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -38,6 +39,10 @@ class WecomConnectionTest {
         val sent = CopyOnWriteArrayList<String>()
         var listener: FrameListener? = null
 
+        /** 设为 true 后 send 永不返回，模拟网络假死 */
+        @Volatile
+        var hangSend = false
+
         override suspend fun open(
             url: String,
             listener: FrameListener,
@@ -47,6 +52,7 @@ class WecomConnectionTest {
         }
 
         override suspend fun send(text: String) {
+            if (hangSend) awaitCancellation()
             sent += text
             val frame = JsonParser.parseString(text).asJsonObject
             val cmd = frame["cmd"].asString
@@ -76,6 +82,8 @@ class WecomConnectionTest {
         heartbeatMillis: Long = 60_000,
         limiter: SlidingWindowLimiter = SlidingWindowLimiter(30, 60_000),
         acker: (String) -> Int? = { 0 },
+        ackTimeoutMillis: Long = 200,
+        maxRateWaitMillis: Long = 50,
     ) = WecomConnection(
         robotId = RobotId("r"),
         botId = "B",
@@ -84,10 +92,10 @@ class WecomConnectionTest {
         transportFactory = { FakeTransport(opens, acker).also { transports += it } },
         random = Random(7),
         heartbeatMillis = heartbeatMillis,
-        ackTimeoutMillis = 200,
+        ackTimeoutMillis = ackTimeoutMillis,
         backoff = { 0L },
         limiter = limiter,
-        maxRateWaitMillis = 50,
+        maxRateWaitMillis = maxRateWaitMillis,
         download = HttpFileDownload { _, _, _ -> DownloadResult.Failed("test") },
     )
 
@@ -225,14 +233,15 @@ class WecomConnectionTest {
     @Test
     fun `会话断开时进行中的发送返回 Unknown`() =
         runBlocking {
-            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") null else 0 })
+            // 回执超时远大于断言等待，证明是断开（endPending）而非超时让它返回
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") null else 0 }, ackTimeoutMillis = 10_000)
             startAndAwaitOnline(conn)
             val result = async(Dispatchers.Default) {
                 conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
             }
-            delay(30)
+            withTimeout(1_000) { while (transports.first().sent.none { "aibot_send_msg" in it }) delay(5) }
             transports.first().close()
-            assertEquals(DeliveryResult.Unknown, result.await())
+            assertEquals(DeliveryResult.Unknown, withTimeout(1_000) { result.await() })
         }
 
     @Test
@@ -278,6 +287,36 @@ class WecomConnectionTest {
         assertEquals(listOf("aibot_subscribe"), t.sent.map { JsonParser.parseString(it).asJsonObject["cmd"].asString })
         assertEquals(listOf(InboundMessage(RobotId("r"), "m1", "u1", "u1", "继续")), received.toList())
     }
+
+    @Test
+    fun `发送永久挂起时心跳仍能判死并重连`() =
+        runBlocking {
+            val conn = connection(heartbeatMillis = 50, ackTimeoutMillis = 150)
+            startAndAwaitOnline(conn)
+            transports.first().hangSend = true
+            val sendResult = async(Dispatchers.Default) {
+                conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
+            }
+            // 心跳应在约 MAX_MISSED_PINGS 个周期后触发重连
+            withTimeout(5_000) { while (opens.get() < 2) delay(5) }
+            // 同时进行的 send 应在超时后返回 Unknown
+            assertEquals(DeliveryResult.Unknown, withTimeout(2_000) { sendResult.await() })
+        }
+
+    @Test
+    fun `限频等待期间断线后返回 Rejected 而非 Unknown`() =
+        runBlocking {
+            val conn = connection(limiter = SlidingWindowLimiter(1, 2_000), maxRateWaitMillis = 5_000)
+            startAndAwaitOnline(conn)
+            assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "u1", "a")))
+            val result = async(Dispatchers.Default) {
+                conn.send(OutboundMessage(RobotId("r"), "u1", "b"))
+            }
+            delay(30) // 让限频等待开始
+            conn.stop() // 断线，session = null
+            val r = withTimeout(3_000) { result.await() }
+            assertEquals(DeliveryResult.Rejected("offline"), r)
+        }
 
     @Test
     fun `退避从 1 秒翻倍到 30 秒封顶`() {

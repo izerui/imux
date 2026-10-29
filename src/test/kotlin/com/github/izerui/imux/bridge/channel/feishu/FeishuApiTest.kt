@@ -38,6 +38,14 @@ class FeishuApiTest {
         }
 
     @Test
+    fun `长连接地址不出现在 toString 里`() {
+        val endpoint = FeishuEndpoint("wss://x/ws?service_id=7&access_key=secret&ticket=t", FeishuClientConfig(-1, 60, 10, 90))
+        val text = endpoint.toString()
+        assertTrue(text, "secret" !in text && "wss://" !in text)
+        assertTrue(text, "pingIntervalSeconds=90" in text)
+    }
+
+    @Test
     fun `长连接地址的业务错误与网络错误分开返回`() =
         runBlocking {
             assertEquals(

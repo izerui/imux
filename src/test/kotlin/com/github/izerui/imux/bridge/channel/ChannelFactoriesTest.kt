@@ -1,5 +1,8 @@
 package com.github.izerui.imux.bridge.channel
 
+import com.github.izerui.imux.bridge.channel.dingtalk.DingtalkChannelFactory
+import com.github.izerui.imux.bridge.channel.dingtalk.DingtalkConnection
+import com.github.izerui.imux.bridge.channel.dingtalk.DingtalkOnboarding
 import com.github.izerui.imux.bridge.channel.feishu.FeishuChannelFactory
 import com.github.izerui.imux.bridge.channel.feishu.FeishuConnection
 import com.github.izerui.imux.bridge.channel.feishu.FeishuOnboarding
@@ -30,5 +33,25 @@ class ChannelFactoriesTest {
             )
         assertTrue(connection is FeishuConnection)
         assertEquals(RobotId("r"), connection.robotId)
+    }
+
+    @Test
+    fun `钉钉已登记，扫码说明用自己的文案`() {
+        assertEquals(DingtalkChannelFactory, ChannelFactories.forKind(ChannelKind.DINGTALK))
+        assertEquals("bridge.add.scan.steps.dingtalk", DingtalkChannelFactory.scanStepsKey)
+        assertTrue(DingtalkChannelFactory.onboarding() is DingtalkOnboarding)
+    }
+
+    @Test
+    fun `按凭据建立钉钉连接`() {
+        val connection =
+            DingtalkChannelFactory.connect(
+                RobotId("r"),
+                mapOf("client_id" to "cid", "client_secret" to "s"),
+                CoroutineScope(Dispatchers.Default),
+            )
+        assertTrue(connection is DingtalkConnection)
+        assertEquals(RobotId("r"), connection.robotId)
+        assertEquals(6_000, connection.maxTextBytes)
     }
 }

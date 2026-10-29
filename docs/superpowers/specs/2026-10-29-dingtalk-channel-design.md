@@ -129,16 +129,21 @@ runLoop:
   循环直到 stop()：
     上报 Connecting（连续失败达到 5 次后上报 Retrying(原因)）
     runSession() 结束原因：
-      Fatal(原因)       → 上报 Failed，退出（凭据连续无效）
+      Fatal(原因)       → 上报 Failed，退出（凭据被拒累计达上限）
       Disconnect        → 立即重建，不计失败
       Dropped(原因)     → 退避后重连
 runSession:
   1. DingtalkApi.openConnection()：成功取 endpoint、ticket；
-     凭据类错误（HTTP 401/403 或 code=invalidClientIdOrSecret）计一次鉴权失败，连续 5 次 → Fatal；其他 → Dropped
+     凭据类错误（HTTP 401/403 或 code=invalidClientIdOrSecret）计一次鉴权失败；其他 → Dropped
   2. transport.open("$endpoint?ticket=<urlencode>")
-  3. 上报 Online（若之前有收发受阻状态则保留），启动存活检查；等待会话结束
+  3. 并行启动：writer（发 ACK 与回复）、keepAlive（存活检查）
+  4. 收到第一帧（任意文本帧或 pong）时上报 Online（若之前有收发受阻状态则保留）；等待会话结束
+     在线以收到第一帧为准；与官方 SDK 一致，握手后不主动 ping，只在空闲周期 ping（官方 Java SDK KeepAliveHandler）。
+     服务端连上后不发帧时，在线显示可能延后到首次空闲 ping 的 pong（2026-10-30 用户要求与 SDK 保持一致，去掉握手后立即 ping）
+     未收到任何帧即断开的会话不报 Online，直接按 Dropped 处理
 ```
 
+- **凭据失败**：凭据被拒累计 5 次、期间未成功上线即报 Failed（2026-10-30 决定：只有会话真正上线才清零 `authFailures`，网络错误导致的 Dropped 不清零，避免凭据失效又遇网络不稳时永远到不了 Failed）。
 - **退避**：2、4、8…秒，上限 60 秒；成功连上后清零。
 - **存活**：每 60 秒 `sendPing()`；距上一次收到任何帧或 pong 超过 120 秒，判定连接已死，按 Dropped 重连。
 - **disconnect**：收到后立即结束本会话、关闭传输、重新取 ticket 建连；已收到的消息照常处理完。
@@ -215,7 +220,7 @@ onText(text):
 
 ## 9. 状态、文案与界面
 
-- 添加对话框：钉钉登记后自动可选；扫码说明用 `bridge.add.scan.steps.dingtalk`；配对页沿用现有流程。
+- 添加对话框：钉钉登记后自动可选；扫码说明用 `bridge.add.scan.steps.dingtalk`；配对页沿用现有流程，但等待配对码时若连接处于收发受阻（如 `noStaffId`），在“等待配对码”后附上该状态文字（整体评审后用户 2026-10-29 同意改 `AddRobotDialog`，对所有渠道生效）。
 - 新增文案（10 种语言）：
   - `bridge.add.scan.steps.dingtalk`（见第 4 节）
   - `bridge.dingtalk.onboardingFailed`：“钉钉扫码授权失败，请重试。”

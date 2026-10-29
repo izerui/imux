@@ -13,8 +13,54 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.swing.JPanel
+import javax.swing.Icon
+import java.awt.image.BufferedImage
 
 class AgentTerminalFileIconProviderTest {
+    @Test
+    fun `Claude 圆形图标旋转时尺寸稳定且图案变化`() {
+        val animation = AgentIcons.busy(AgentType.CLAUDE) as EditorTabAnimatedIcon
+        for (scale in listOf(1, 2)) {
+            fun render(icon: Icon): BufferedImage {
+                val image = BufferedImage(16 * scale, 16 * scale, BufferedImage.TYPE_INT_ARGB)
+                val graphics = image.createGraphics()
+                try {
+                    graphics.scale(scale.toDouble(), scale.toDouble())
+                    icon.paintIcon(null, graphics, 0, 0)
+                } finally {
+                    graphics.dispose()
+                }
+                return image
+            }
+            val images = animation.frames.map { render(it.icon) }
+            val first = images.first()
+            assertEquals("四角透明，不能退回方形底板", 0, first.getRGB(0, 0).ushr(24))
+            assertTrue("不能渲染成空白图标", first.getRGB(8 * scale, 8 * scale).ushr(24) > 0)
+            images.forEachIndexed { frame, image ->
+                assertEquals(16 * scale, image.width)
+                assertEquals(16 * scale, image.height)
+                for (y in 0 until image.height) {
+                    for (x in 0 until image.width) {
+                        val radius = image.width / 2.0
+                        val distance = kotlin.math.hypot(x + 0.5 - radius, y + 0.5 - radius)
+                        val alpha = image.getRGB(x, y).ushr(24)
+                        if (distance < radius - scale) {
+                            assertTrue("scale=$scale frame=$frame 圆内不能削空", alpha >= 240)
+                        }
+                        if (distance > radius + scale) {
+                            assertTrue("scale=$scale frame=$frame 圆外不能伸出方角", alpha <= 5)
+                        }
+                    }
+                }
+            }
+            assertTrue("星芒必须实际转动", images.drop(1).any { image ->
+                (0 until image.height).any { y ->
+                    (0 until image.width).any { x -> image.getRGB(x, y) != first.getRGB(x, y) }
+                }
+            })
+        }
+    }
+
     @Test
     fun `Claude 与 Codex 使用不同的 16 像素图标`() {
         val claude = AgentIcons.forAgent(AgentType.CLAUDE)
