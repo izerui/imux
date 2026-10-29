@@ -4,6 +4,7 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BindingService
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.RobotManager
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.SessionTitles
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.BannerColors
@@ -80,7 +81,10 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
                         override fun update(e: AnActionEvent) {
-                            e.presentation.isEnabled = selected(table) != null
+                            // 收发受阻（SendFailing）重连解决不了，禁用重新连接
+                            e.presentation.isEnabled = selected(table)?.let { row ->
+                                RobotManager.getInstance().statusOf(row.id) !is ConnectionStatus.SendFailing
+                            } == true
                         }
 
                         override fun actionPerformed(e: AnActionEvent) = reconnect(table)

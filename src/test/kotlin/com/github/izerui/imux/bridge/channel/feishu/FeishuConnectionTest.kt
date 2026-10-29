@@ -277,11 +277,14 @@ class FeishuConnectionTest {
             transport.emit(event)
             withTimeout(2_000) { while (acks(transport).isEmpty()) delay(5) }
             assertEquals("""{"code":500}""", String(acks(transport).single().payload!!, Charsets.UTF_8))
+            // 与官方 SDK 一致：biz_rt 只在处理成功后写入
+            assertEquals(null, acks(transport).single().header("biz_rt"))
             assertTrue(received.isEmpty())
             transport.emit(event)
             withTimeout(2_000) { while (acks(transport).size < 2) delay(5) }
             assertEquals(listOf("重试"), received.map { it.text })
             assertEquals("""{"code":200}""", String(acks(transport).last().payload!!, Charsets.UTF_8))
+            assertTrue(acks(transport).last().header("biz_rt")!!.toLong() >= 0)
         }
 
     @Test

@@ -34,7 +34,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * 钉钉 Stream 长连接（docs/superpowers/specs/2026-10-29-dingtalk-channel-design.md 第 5 至 7 节）。
  *
  * 收消息走 WebSocket（JSON 帧），发消息走 HTTP（batchSend），两者互不依赖：长连接重连期间照样能发。
- * 推送一到就回 ACK（不等处理），再由单个协程按到达顺序交给 [InboundSink]。
+ * 收帧与回应对齐官方 Node SDK 与官方连接器（用户 2026-10-30 决定选这种简单写法，不强求与某一 SDK 逐字节一致）：
+ * 系统 ping 原样回传，disconnect 不回应、直接重建；机器人消息一到就确认，再由单个协程按到达顺序解析、去重、交给 [InboundSink]，
+ * 处理出错只跳过这一条。按序处理是本插件的补充（满足 InboundSink 的顺序约定）。
  * 钉钉多连接随机投递、没有踢线，不会上报 Kicked。
  */
 class DingtalkConnection(
@@ -72,14 +74,14 @@ class DingtalkConnection(
         @Volatile
         var lastFrameAt: Long = startedAt
 
-        /** 收到过任意文本帧或 pong：握手成功后立刻被关的连接不算连上，失败计数不清零。 */
+        /** 收到过可解析的帧或 pong：握手成功后立刻被关的连接不算连上，失败计数不清零。 */
         @Volatile
         var alive = false
 
         /** 只在 [DingtalkConnection.statusLock] 内读写。 */
         var onlineReported = false
 
-        /** ACK 与 pong：收帧回调里只入队，由会话协程按序发出。 */
+        /** 回应只入队，由会话协程按收帧顺序发出。 */
         val replies = Channel<String>(Channel.UNLIMITED)
     }
 
@@ -282,8 +284,9 @@ class DingtalkConnection(
         sink: InboundSink,
     ) {
         coroutineScope {
-            val inbound = Channel<DingtalkInbound>(Channel.UNLIMITED)
-            launch { for (event in inbound) handle(owner, event, sink) }
+            // 机器人消息的 data，按到达顺序处理
+            val inbound = Channel<String>(Channel.UNLIMITED)
+            launch { for (data in inbound) handle(owner, data, sink) }
             var failures = 0
             var authFailures = 0
             var immediate = true
@@ -332,7 +335,7 @@ class DingtalkConnection(
 
     private suspend fun runSession(
         owner: Run,
-        inbound: SendChannel<DingtalkInbound>,
+        inbound: SendChannel<String>,
         onAlive: () -> Unit,
     ): SessionEnd {
         val endpoint =
@@ -357,10 +360,12 @@ class DingtalkConnection(
         val frameListener =
             object : FrameListener {
                 override fun onText(text: String) {
+                    // 解析不了或不是对象的帧直接丢弃：不回应、不算收到帧，也不断开
+                    val frame = DingtalkEvents.frame(text) ?: return
                     state.lastFrameAt = now()
                     state.alive = true
                     tryReportOnline(owner, state)
-                    onFrame(state, text, inbound, ended)
+                    onFrame(state, frame, inbound, ended)
                 }
 
                 override fun onPong() {
@@ -394,7 +399,7 @@ class DingtalkConnection(
                 val keepAlive = launch { keepAlive(state, ended) }
                 val end = ended.await()
                 keepAlive.cancel()
-                // disconnect 后服务端还会等 10 秒，已入队的 ACK 尽量发完
+                // disconnect 后服务端还会等 10 秒，已入队的回应尽量发完再关连接
                 state.replies.close()
                 withTimeoutOrNull(REPLY_DRAIN_MILLIS) { writer.join() }
                 writer.cancel()
@@ -449,49 +454,54 @@ class DingtalkConnection(
         }
     }
 
+    /** 同官方 Node SDK onDownStream/onSystem：只处理 ping、disconnect 与机器人消息，其余帧（EVENT、其它 topic）忽略。 */
     private fun onFrame(
         state: SessionState,
-        text: String,
-        inbound: SendChannel<DingtalkInbound>,
+        frame: DingtalkFrame,
+        inbound: SendChannel<String>,
         ended: CompletableDeferred<SessionEnd>,
     ) {
-        val frame = DingtalkEvents.frame(text) ?: return
-        if (frame.type == DingtalkEvents.TYPE_SYSTEM) {
-            when (frame.topic) {
-                DingtalkEvents.TOPIC_PING -> frame.messageId?.let { state.replies.trySend(DingtalkEvents.pong(it, frame.data)) }
-                DingtalkEvents.TOPIC_DISCONNECT -> ended.complete(SessionEnd.Disconnect)
-            }
-            return
+        when (frame.type) {
+            DingtalkEvents.TYPE_SYSTEM ->
+                when (frame.topic) {
+                    DingtalkEvents.TOPIC_PING -> state.replies.trySend(DingtalkEvents.pong(frame))
+                    DingtalkEvents.TOPIC_DISCONNECT -> ended.complete(SessionEnd.Disconnect)
+                }
+
+            DingtalkEvents.TYPE_CALLBACK ->
+                if (frame.topic == DingtalkEvents.TOPIC_BOT_MESSAGE) {
+                    // 同官方连接器：一到就确认，不等处理；缺 messageId 时同 Node SDK send 不回应
+                    frame.messageId?.takeIf(String::isNotEmpty)?.let { state.replies.trySend(DingtalkEvents.ack(it)) }
+                    frame.dataText?.let { inbound.trySend(it) }
+                }
         }
-        // 先回 ACK 再处理：不等转交终端
-        frame.messageId?.let { state.replies.trySend(DingtalkEvents.ack(it)) }
-        if (frame.type != DingtalkEvents.TYPE_CALLBACK || frame.topic != DingtalkEvents.TOPIC_BOT_MESSAGE) return
-        frame.data?.let(DingtalkEvents::message)?.let { inbound.trySend(it) }
     }
 
+    /** 解析、去重、交出或设置收发受阻状态。确认在收帧时已发出；处理出错只跳过这一条，去重标记不撤销。 */
     private fun handle(
         owner: Run,
-        event: DingtalkInbound,
+        data: String,
         sink: InboundSink,
     ) {
-        when (event) {
-            is DingtalkInbound.QuotaExceeded -> blockReceive(owner, ConnectionStatus.SendFailing("bridge.dingtalk.receiveQuota"))
-            is DingtalkInbound.MissingStaffId ->
-                if (markSeen(event.msgId)) blockReceive(owner, ConnectionStatus.SendFailing("bridge.dingtalk.noStaffId"))
+        try {
+            when (val event = DingtalkEvents.message(data)) {
+                null -> Unit
+                is DingtalkInbound.QuotaExceeded -> blockReceive(owner, ConnectionStatus.SendFailing("bridge.dingtalk.receiveQuota"))
+                is DingtalkInbound.MissingStaffId ->
+                    if (markSeen(event.msgId)) blockReceive(owner, ConnectionStatus.SendFailing("bridge.dingtalk.noStaffId"))
 
-            is DingtalkInbound.Message -> {
-                if (!markSeen(event.msgId)) return
-                val attachments = event.media.map { DingtalkAttachment(it, api, download) }
-                try {
-                    sink.accept(InboundMessage(robotId, event.msgId, event.staffId, event.staffId, event.text.orEmpty(), attachments, event.quote))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    // 交出失败不能挡住后面的消息
-                }
-                // 先交出再恢复显示：界面回到“在线”时，这条消息已经交给桥接
-                blockReceive(owner, null)
+                is DingtalkInbound.Message ->
+                    if (markSeen(event.msgId)) {
+                        val attachments = event.media.map { DingtalkAttachment(it, api, download) }
+                        sink.accept(InboundMessage(robotId, event.msgId, event.staffId, event.staffId, event.text.orEmpty(), attachments, event.quote))
+                        // 先交出再恢复显示：界面回到“在线”时，这条消息已经交给桥接
+                        blockReceive(owner, null)
+                    }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // 一条消息出错不能挡住后面的消息
         }
     }
 

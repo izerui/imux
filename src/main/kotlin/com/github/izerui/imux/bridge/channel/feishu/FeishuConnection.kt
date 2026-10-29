@@ -43,7 +43,8 @@ import kotlin.math.abs
  * 飞书长连接（docs/superpowers/specs/2026-10-28-feishu-channel-design.md 第 5 至 7 节）。
  *
  * 收消息走 WebSocket（protobuf 帧），发消息走 HTTP，两者互不依赖：长连接重连期间照样能发。
- * 与官方 SDK 一致，拼齐事件后先处理再确认：成功回 200、异常回 500；单个协程按到达顺序交给 [InboundSink]。
+ * 与官方 SDK 一致，拼齐事件后先处理再确认：成功回 200、异常回 500。
+ * 由单个协程按到达顺序交给 [InboundSink]：按序处理是本插件为满足顺序约定的补充，SDK 是并发处理。
  * 飞书没有踢线事件，不会上报 Kicked。
  */
 class FeishuConnection(
@@ -514,9 +515,9 @@ class FeishuConnection(
         code: Int,
         elapsedMillis: Long,
     ) {
-        // biz_rt 记录本次业务处理耗时，不包含排队时间。
-        val ack = frame.withHeader("biz_rt", elapsedMillis.coerceAtLeast(0).toString())
-            .copy(payload = """{"code":$code}""".toByteArray(StandardCharsets.UTF_8))
+        // biz_rt 记录本次业务处理耗时，不包含排队时间；与官方 SDK 一致，只在处理成功时写入。
+        val timed = if (code == 200) frame.withHeader("biz_rt", elapsedMillis.coerceAtLeast(0).toString()) else frame
+        val ack = timed.copy(payload = """{"code":$code}""".toByteArray(StandardCharsets.UTF_8))
         try {
             state.transport.sendBinary(FeishuFrameCodec.encode(ack))
         } catch (e: CancellationException) {

@@ -49,6 +49,9 @@ class DingtalkConnectionTest {
         val sent = CopyOnWriteArrayList<String>()
         val pings = AtomicInteger()
 
+        /** 关闭后才发出的回包数：真实连接关闭后发不出去。 */
+        val sentAfterClose = AtomicInteger()
+
         @Volatile
         var url: String? = null
 
@@ -79,6 +82,7 @@ class DingtalkConnectionTest {
         override suspend fun send(text: String) {
             // 开场系统 ping 的回应不计入，各测试只看业务回包
             if (GREETING_ID in text) return
+            if (closed) sentAfterClose.incrementAndGet()
             sent += text
         }
 
@@ -189,13 +193,31 @@ class DingtalkConnectionTest {
     private fun callback(
         headerId: String,
         data: String,
+        topic: String = "/v1.0/im/bot/messages/get",
     ) = JsonObject().apply {
         addProperty("specVersion", "1.0")
         addProperty("type", "CALLBACK")
         add(
             "headers",
             JsonObject().apply {
-                addProperty("topic", "/v1.0/im/bot/messages/get")
+                addProperty("topic", topic)
+                addProperty("messageId", headerId)
+                addProperty("contentType", "application/json")
+            },
+        )
+        addProperty("data", data)
+    }.toString()
+
+    private fun event(
+        headerId: String,
+        data: String,
+    ) = JsonObject().apply {
+        addProperty("specVersion", "1.0")
+        addProperty("type", "EVENT")
+        add(
+            "headers",
+            JsonObject().apply {
+                addProperty("eventType", "chat_update_title")
                 addProperty("messageId", headerId)
                 addProperty("contentType", "application/json")
             },
@@ -236,56 +258,144 @@ class DingtalkConnectionTest {
 
     private fun send(conn: DingtalkConnection) = runBlocking { conn.send(OutboundMessage(RobotId("r"), "u1", "结论")) }
 
+    /** 机器人消息的确认：同官方连接器 socketCallBackResponse(messageId, {success:true})。 */
+    private fun assertBotAck(
+        ack: JsonObject,
+        headerId: String,
+    ) {
+        assertEquals(200, ack["code"].asInt)
+        assertEquals("OK", ack["message"].asString)
+        assertEquals(headerId, ack["headers"].asJsonObject["messageId"].asString)
+        assertEquals("application/json", ack["headers"].asJsonObject["contentType"].asString)
+        assertEquals("""{"response":{"success":true}}""", ack["data"].asString)
+    }
+
+    private fun ids(transport: FakeTransport) = replies(transport).map { it["headers"].asJsonObject["messageId"].asString }
+
     @Test
-    fun `收到消息先回 ACK，再交出`() =
+    fun `机器人消息收到即确认，处理被阻塞时确认已发出`() =
         runBlocking {
-            startAndAwaitOnline(connection())
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val conn = connection()
+            conn.start(
+                InboundSink {
+                    entered.countDown()
+                    release.await(5, TimeUnit.SECONDS)
+                    received += it
+                },
+            ) { statuses += it }
+            withTimeout(2_000) { while (ConnectionStatus.Online !in statuses) delay(5) }
             val transport = transports.first()
             assertEquals("wss://x/connect?ticket=t1", transport.url)
             transport.emit(callback("h1", textData("m1", "你好")))
-            withTimeout(2_000) { while (received.isEmpty() || transport.sent.isEmpty()) delay(5) }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            // 处理还卡在 InboundSink 里，确认已经发出
+            withTimeout(2_000) { while (transport.sent.isEmpty()) delay(5) }
+            assertBotAck(replies(transport).single(), "h1")
+            assertTrue(received.isEmpty())
+            release.countDown()
+            withTimeout(2_000) { while (received.isEmpty()) delay(5) }
             assertEquals(InboundMessage(RobotId("r"), "m1", "u1", "u1", "你好"), received.single())
-            val ack = replies(transport).single()
-            assertEquals(200, ack["code"].asInt)
-            assertEquals("h1", ack["headers"].asJsonObject["messageId"].asString)
-            assertEquals("""{"response": null}""", ack["data"].asString)
         }
 
     @Test
-    fun `系统 ping 原样回传`() =
+    fun `处理出错只吞掉、继续下一条，不撤销去重`() =
+        runBlocking {
+            val failures = AtomicInteger()
+            val conn = connection()
+            conn.start(
+                InboundSink {
+                    if (it.externalMessageId == "m1" && failures.getAndIncrement() == 0) throw IllegalStateException("boom")
+                    received += it
+                },
+            ) { statuses += it }
+            withTimeout(2_000) { while (ConnectionStatus.Online !in statuses) delay(5) }
+            val transport = transports.first()
+            transport.emit(callback("h1", textData("m1", "你好")))
+            transport.emit(callback("h2", textData("m2", "第二条")))
+            // 平台重推同一 msgId：去重标记还在，只确认不再交出
+            transport.emit(callback("h3", textData("m1", "你好")))
+            // 屏障：按序处理，m3 交出时前面几条都处理完了
+            transport.emit(callback("h4", textData("m3", "第三条")))
+            withTimeout(2_000) { while (received.size < 2) delay(5) }
+            assertEquals(listOf("m2", "m3"), received.map { it.externalMessageId })
+            assertEquals(1, failures.get())
+            assertEquals(listOf("h1", "h2", "h3", "h4"), ids(transport))
+            replies(transport).zip(listOf("h1", "h2", "h3", "h4")).forEach { (ack, id) -> assertBotAck(ack, id) }
+        }
+
+    @Test
+    fun `系统 ping 原样回传 headers 与 data`() =
         runBlocking {
             startAndAwaitOnline(connection())
             val transport = transports.first()
-            transport.emit(system("ping", "p1", """{"opaque":"o"}"""))
+            val headers = """{"topic":"ping","messageId":"p1","time":"1700000000000","extra":{"k":1}}"""
+            transport.emit("""{"specVersion":"1.0","type":"SYSTEM","headers":$headers,"data":"{\"opaque\":\"o\"}"}""")
             withTimeout(2_000) { while (transport.sent.isEmpty()) delay(5) }
             val pong = replies(transport).single()
-            assertEquals("p1", pong["headers"].asJsonObject["messageId"].asString)
+            assertEquals(200, pong["code"].asInt)
+            assertEquals("OK", pong["message"].asString)
+            assertEquals(JsonParser.parseString(headers), pong["headers"])
             assertEquals("""{"opaque":"o"}""", pong["data"].asString)
             assertTrue(received.isEmpty())
         }
 
     @Test
-    fun `disconnect 后立即重建，不算失败`() =
+    fun `disconnect 不回应，关闭并立即重建，不算失败`() =
         runBlocking {
             startAndAwaitOnline(connection())
-            transports.first().emit(system("disconnect", "s1", "{}"))
+            val first = transports.first()
+            first.emit(system("disconnect", "s1", """{"reason":"x"}"""))
             withTimeout(2_000) { while (statuses.count { it == ConnectionStatus.Online } < 2) delay(5) }
             assertEquals(2, http.calls("/v1.0/gateway/connections/open").size)
             assertTrue(statuses.none { it is ConnectionStatus.Retrying })
+            // 第二次上线时第一次会话已排空回复队列并关闭
+            assertTrue(first.sent.isEmpty())
         }
 
     @Test
-    fun `按 msgId 去重，每次推送都回 ACK`() =
+    fun `EVENT 与其它 CALLBACK topic 不回应、不处理`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            transport.emit(callback("c1", """{"a":1}""", topic = "/v1.0/card/instances/callback"))
+            transport.emit(event("e1", """{"eventId":"x"}"""))
+            transport.emit(system("KEEPALIVE", "k1", "{}"))
+            assertEquals(listOf("barrier"), barrier(transport))
+            assertTrue(received.isEmpty())
+            assertEquals(1, opens.get())
+        }
+
+    @Test
+    fun `重复 msgId 仍确认，但只交出一次`() =
         runBlocking {
             startAndAwaitOnline(connection())
             val transport = transports.first()
             transport.emit(callback("h1", textData("m1", "你好")))
             transport.emit(callback("h2", textData("m1", "你好")))
             transport.emit(callback("h3", textData("m2", "第二条")))
-            withTimeout(2_000) { while (received.size < 2 || transport.sent.size < 3) delay(5) }
-            delay(50)
+            // 屏障：按序处理，m2 交出时重复的 m1 已处理完
+            withTimeout(2_000) { while (received.size < 2) delay(5) }
             assertEquals(listOf("m1", "m2"), received.map { it.externalMessageId })
-            assertEquals(listOf("h1", "h2", "h3"), replies(transport).map { it["headers"].asJsonObject["messageId"].asString })
+            assertEquals(listOf("h1", "h2", "h3"), ids(transport))
+            replies(transport).zip(listOf("h1", "h2", "h3")).forEach { (ack, id) -> assertBotAck(ack, id) }
+        }
+
+    @Test
+    fun `群聊、不支持类型、额度用完、缺 staffId 都照常确认`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            transport.emit(callback("g1", """{"conversationType":"2","msgId":"x1","senderStaffId":"u1","msgtype":"text","text":{"content":"群"}}"""))
+            transport.emit(callback("t1", """{"conversationType":"1","msgId":"x2","senderStaffId":"u1","msgtype":"interactiveCard"}"""))
+            transport.emit(callback("q1", """{"conversationType":"1","errorCode":20001,"errorMessage":"超量"}"""))
+            transport.emit(callback("s1", textData("x3", "你好", staffId = null)))
+            withTimeout(2_000) { while (transport.sent.size < 4) delay(5) }
+            val expected = listOf("g1", "t1", "q1", "s1")
+            assertEquals(expected, ids(transport))
+            replies(transport).zip(expected).forEach { (ack, id) -> assertBotAck(ack, id) }
+            assertTrue(received.isEmpty())
         }
 
     @Test
@@ -707,6 +817,86 @@ class DingtalkConnectionTest {
             gate.countDown()
             stopAndAwait(conn)
         }
+
+    /** 构造一个没有 headers.messageId 的机器人消息回调帧。 */
+    private fun callbackNoId(data: String) = JsonObject().apply {
+        addProperty("specVersion", "1.0")
+        addProperty("type", "CALLBACK")
+        add(
+            "headers",
+            JsonObject().apply {
+                addProperty("topic", "/v1.0/im/bot/messages/get")
+                addProperty("contentType", "application/json")
+            },
+        )
+        addProperty("data", data)
+    }.toString()
+
+    @Test
+    fun `机器人消息缺 messageId 时不回应，照常处理`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            transport.emit(callbackNoId(textData("m1", "你好")))
+            withTimeout(2_000) { while (received.isEmpty()) delay(5) }
+            assertEquals("m1", received.single().externalMessageId)
+            assertEquals(listOf("barrier"), barrier(transport))
+        }
+
+    @Test
+    fun `机器人消息 data 解析不了或不是字符串时仍确认，不交出、不影响后续`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            transport.emit(callback("h1", "not json at all"))
+            transport.emit(callback("h2", ""))
+            transport.emit(callback("h3", "[]"))
+            transport.emit("""{"type":"CALLBACK","headers":{"topic":"/v1.0/im/bot/messages/get","messageId":"h4"},"data":{"msgId":"x"}}""")
+            transport.emit(callback("h5", textData("m5", "合法消息")))
+            withTimeout(2_000) { while (received.isEmpty()) delay(5) }
+            assertEquals(listOf("m5"), received.map { it.externalMessageId })
+            assertEquals(listOf("h1", "h2", "h3", "h4", "h5"), ids(transport))
+        }
+
+    @Test
+    fun `不可解析或不是对象的帧被丢弃：不回应、不断开，后续照常`() =
+        runBlocking {
+            startAndAwaitOnline(connection())
+            val transport = transports.first()
+            for (text in listOf("this is not json at all", "[]", "123", "\"x\"", "null", "[".repeat(100_000))) transport.emit(text)
+            assertEquals(listOf("barrier"), barrier(transport))
+            transport.emit(callback("h1", textData("m1", "你好")))
+            withTimeout(2_000) { while (received.isEmpty()) delay(5) }
+            assertEquals(1, opens.get())
+        }
+
+    @Test
+    fun `丢弃的帧不算收到帧，不上线`() =
+        runBlocking {
+            val conn = connection(autoPong = false, pingIntervalMillis = 20, emitOnOpen = "not json")
+            start(conn)
+            // 屏障：已发过空闲 ping，会话赋值后的上线补报早已做过
+            withTimeout(2_000) { while (transports.isEmpty() || transports.first().pings.get() < 1) delay(5) }
+            val transport = transports.first()
+            transport.emit("[]")
+            transport.emit("{")
+            val pings = transport.pings.get()
+            withTimeout(2_000) { while (transport.pings.get() < pings + 2) delay(5) }
+            assertTrue("丢弃的帧不应触发上线", statuses.none { it == ConnectionStatus.Online })
+            transport.emit(system("ping", "p1", "{}"))
+            withTimeout(2_000) { while (ConnectionStatus.Online !in statuses) delay(5) }
+            assertEquals(1, opens.get())
+        }
+
+    /** 屏障：发一个系统 ping，等它的回应到达；回应按收帧顺序发出，之前的帧若有回应必排在它前面。 */
+    private suspend fun barrier(
+        transport: FakeTransport,
+        id: String = "barrier",
+    ): List<String> {
+        transport.emit(system("ping", id, "{}"))
+        withTimeout(2_000) { while (transport.sent.none { id in it }) delay(5) }
+        return ids(transport)
+    }
 
     @Test
     fun `监听器阻塞时 stop 不被卡住`() {

@@ -6,16 +6,26 @@ import com.github.izerui.imux.bridge.json.obj
 import com.github.izerui.imux.bridge.json.objects
 import com.github.izerui.imux.bridge.json.primitiveText
 import com.github.izerui.imux.bridge.json.string
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
-/** Stream 推送帧。[data] 是 JSON 字符串，原样保留（系统 ping 要原样回传）。 */
+/**
+ * Stream 推送帧。[headers]、[data] 是帧里的原值：系统 ping 要原样回传（同官方 Node SDK）。
+ * 机器人消息的 data 是消息 JSON 的字符串，见 [dataText]。
+ */
 data class DingtalkFrame(
-    val type: String,
-    val topic: String?,
-    val messageId: String?,
-    val data: String?,
-)
+    val type: String?,
+    val headers: JsonObject?,
+    val data: JsonElement?,
+) {
+    val topic: String? get() = headers?.string("topic")
+
+    val messageId: String? get() = headers?.string("messageId")
+
+    /** data 是字符串时的内容，其余情况为 null。 */
+    val dataText: String? get() = data?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+}
 
 /** 消息里的一个附件：只记下载码，路由器放行后才换地址下载。 */
 data class DingtalkMediaRef(
@@ -58,23 +68,39 @@ object DingtalkEvents {
     private const val SINGLE_CHAT = "1"
     private const val RECEIVE_QUOTA_EXCEEDED = "20001"
 
-    /** 机器人消息的回应内容平台不看，按官方示例固定。 */
-    private const val ACK_DATA = """{"response": null}"""
+    /** 同官方连接器 socketCallBackResponse(messageId, {success: true})。 */
+    private val ACK_DATA =
+        JsonObject().apply { add("response", JsonObject().apply { addProperty("success", true) }) }.toString()
 
+    /** 解析整帧；解析不了或不是对象时为 null，由调用方丢弃。 */
     fun frame(text: String): DingtalkFrame? {
-        val json = parseObject(text) ?: return null
-        val type = json.string("type") ?: return null
-        val headers = json.obj("headers")
-        return DingtalkFrame(type, headers?.string("topic"), headers?.string("messageId"), json.string("data"))
+        val root = parseObject(text) ?: return null
+        return DingtalkFrame(root.string("type"), root.obj("headers"), root.get("data"))
     }
 
-    fun ack(messageId: String): String = reply(messageId, ACK_DATA)
+    /** 机器人消息的确认，同官方 Node SDK send：headers 只有 contentType 与 messageId，data 为 {"response":{"success":true}} 的字符串。 */
+    fun ack(messageId: String): String =
+        JsonObject().apply {
+            addProperty("code", 200)
+            add(
+                "headers",
+                JsonObject().apply {
+                    addProperty("contentType", "application/json")
+                    addProperty("messageId", messageId)
+                },
+            )
+            addProperty("message", "OK")
+            addProperty("data", ACK_DATA)
+        }.toString()
 
-    /** 系统 ping 的回应：data 原样回传。 */
-    fun pong(
-        messageId: String,
-        data: String?,
-    ): String = reply(messageId, data.orEmpty())
+    /** 系统 ping 的回应，同官方 Node SDK onSystem：headers、data 原样带回；帧里没有的字段也不带（同 JSON.stringify 略去 undefined）。 */
+    fun pong(frame: DingtalkFrame): String =
+        JsonObject().apply {
+            addProperty("code", 200)
+            frame.headers?.let { add("headers", it) }
+            addProperty("message", "OK")
+            frame.data?.let { add("data", it) }
+        }.toString()
 
     fun message(data: String): DingtalkInbound? {
         val json = parseObject(data) ?: return null
@@ -155,21 +181,4 @@ object DingtalkEvents {
 
     private fun parseObject(text: String): JsonObject? =
         runCatching { JsonParser.parseString(text) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
-
-    private fun reply(
-        messageId: String,
-        data: String,
-    ): String =
-        JsonObject().apply {
-            addProperty("code", 200)
-            add(
-                "headers",
-                JsonObject().apply {
-                    addProperty("messageId", messageId)
-                    addProperty("contentType", "application/json")
-                },
-            )
-            addProperty("message", "OK")
-            addProperty("data", data)
-        }.toString()
 }

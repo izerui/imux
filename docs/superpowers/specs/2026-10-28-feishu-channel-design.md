@@ -37,7 +37,7 @@
 | 帧 | protobuf `pbbp2.Frame`：`SeqID(1,uint64) LogID(2,uint64) service(3,int32) method(4,int32) headers(5,repeated Header{key=1,value=2}) payload_encoding(6) payload_type(7) payload(8,bytes) LogIDNew(9)`；前 4 个是 proto2 required | 官方 SDK 内嵌的 `pbbp2.proto` 描述 |
 | 控制帧 | `method=0`；ping 帧 header `type=ping`、`service=service_id`；pong 的 payload 可能带新 `ClientConfig` | 官方 SDK |
 | 数据帧 | `method=1`；header `message_id`、`sum`、`seq`、`type`（`event` / `card`）、`trace_id`；`sum>1` 时按 `seq` 拼包 | 官方 SDK |
-| 确认 | 把原帧回写，payload 换成 `{"code":200}`，加 header `biz_rt`；须 3 秒内；处理失败按 15 秒、5 分钟、1 小时、6 小时最多重推 4 次 | 官方 SDK；官方长连接说明 |
+| 确认 | 把原帧回写，payload 换成 `{"code":200}` 或 `{"code":500}`；成功回 200 并带 header `biz_rt`；处理异常回 500，不带 `biz_rt`（同 `lark-oapi` `client.py:361-379`）；须 3 秒内；处理失败按 15 秒、5 分钟、1 小时、6 小时最多重推 4 次 | 官方 SDK；官方长连接说明 |
 | 握手失败 | 响应头 `handshake-status`、`handshake-msg`、`handshake-autherrcode`；514 + 1000040350（连接数超限）或 403 不重连 | 官方 SDK |
 | 重连参数 | `ReconnectCount`（-1 无限）、`ReconnectInterval`（秒，默认 120）、`ReconnectNonce`（首次随机抖动上限，默认 30）、`PingInterval`（秒，默认 120） | 官方 SDK |
 | 多连接 | 每应用最多 50 条；同一事件只随机投给一条；没有踢线事件 | 官方 |
@@ -169,12 +169,12 @@ onBinary(bytes):
     按 message_id 拼包（缓存 10 秒，与 Node SDK 相同）；未齐则返回
     type=event：
       解析事件，交给入站队列处理
-      成功回写 {"code":200}，处理异常回写 {"code":500}，biz_rt 记录处理耗时
+      成功回写 {"code":200} 并带 biz_rt；处理异常回写 {"code":500}，不带 biz_rt
     type=card：不处理、不回写（与 SDK 相同）
 ```
 
 - **处理后确认**：与官方 SDK 一致（`lark-oapi` `ws/client.py` `_handle_data_frame`：先调用事件处理，处理完再回写确认帧），拼齐并处理后才确认；这里处理完成指取引用、语音转写并调用 `sink.accept` 完成，不等待 CLI 执行完成。成功回 200，处理异常回 500，并移除本次去重标记以允许平台重投。慢处理可能触发平台重投，按消息 id 去重。2026-10-30 用户要求与官方 SDK 保持一致，撤回本轮曾改的“先确认后处理”。
-- **入站队列**：每个连接一个单消费者协程，按到达顺序处理：取引用文字（有 `parent_id` 时）→ 组装 `InboundMessage` → `sink.accept`，完成后用事件到达时的会话回写确认（掉线后旧会话写不出去，平台会重投）。取引用失败时 `quote = null`，照常转交。这样满足 `InboundSink` 的顺序要求，与 SDK 收帧循环按序处理一致。
+- **入站队列**：每个连接一个单消费者协程，按到达顺序处理：取引用文字（有 `parent_id` 时）→ 语音识别（有语音时；失败则作为音频附件）→ 组装 `InboundMessage` → `sink.accept`，完成后用事件到达时的会话回写确认（掉线后旧会话写不出去，平台会重投）。取引用失败时 `quote = null`，照常转交。按序处理是本项目为满足 `InboundSink` 顺序要求的补充，SDK 为并发处理（`lark-oapi` 1.7.5 `ws/client.py:243` 对每条消息 `loop.create_task(self._handle_message(msg))`）。
 - **去重**：按 `message_id`（平台重投用同一个），容量 1000，与企业微信相同。
 
 ## 6. 收消息解析

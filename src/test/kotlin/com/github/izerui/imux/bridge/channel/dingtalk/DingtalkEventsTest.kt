@@ -46,27 +46,52 @@ class DingtalkEventsTest {
     }
 
     @Test
-    fun `解析推送帧`() {
+    fun `解析推送帧：headers 与 data 原样保留`() {
         val frame =
             DingtalkEvents.frame(
-                """{"specVersion":"1.0","type":"CALLBACK","headers":{"topic":"/v1.0/im/bot/messages/get","messageId":"h1","contentType":"application/json"},"data":"{\"a\":1}"}""",
-            )
-        assertEquals(DingtalkFrame("CALLBACK", "/v1.0/im/bot/messages/get", "h1", """{"a":1}"""), frame)
-        assertNull(DingtalkEvents.frame("not json"))
-        assertNull(DingtalkEvents.frame("""{"headers":{}}"""))
+                """{"specVersion":"1.0","type":"CALLBACK","headers":{"topic":"/v1.0/im/bot/messages/get","messageId":"h1","time":"1"},"data":"{\"a\":1}"}""",
+            )!!
+        assertEquals("CALLBACK", frame.type)
+        assertEquals("/v1.0/im/bot/messages/get", frame.topic)
+        assertEquals("h1", frame.messageId)
+        assertEquals(JsonParser.parseString("""{"topic":"/v1.0/im/bot/messages/get","messageId":"h1","time":"1"}"""), frame.headers)
+        assertEquals("""{"a":1}""", frame.dataText)
+        // data 不是字符串时没有文本，但原值保留
+        val objectData = DingtalkEvents.frame("""{"type":"SYSTEM","headers":{"topic":"ping"},"data":{"k":1}}""")!!
+        assertNull(objectData.dataText)
+        assertEquals(JsonParser.parseString("""{"k":1}"""), objectData.data)
     }
 
     @Test
-    fun `ACK 与 pong 的格式`() {
+    fun `解析不了或不是对象的帧为空`() {
+        for (text in listOf("not json", "", "[]", "123", "\"x\"", "null", "{", "[".repeat(100_000))) {
+            assertNull(text.take(20), DingtalkEvents.frame(text))
+        }
+    }
+
+    @Test
+    fun `机器人消息确认的格式同官方连接器：200、OK、data 为 response success`() {
         val ack = JsonParser.parseString(DingtalkEvents.ack("h1")).asJsonObject
         assertEquals(200, ack["code"].asInt)
-        assertEquals("h1", ack["headers"].asJsonObject["messageId"].asString)
-        assertEquals("application/json", ack["headers"].asJsonObject["contentType"].asString)
+        assertEquals(
+            JsonParser.parseString("""{"contentType":"application/json","messageId":"h1"}"""),
+            ack["headers"],
+        )
         assertEquals("OK", ack["message"].asString)
-        assertEquals("""{"response": null}""", ack["data"].asString)
-        val pong = JsonParser.parseString(DingtalkEvents.pong("p1", """{"opaque":"x"}""")).asJsonObject
-        assertEquals("p1", pong["headers"].asJsonObject["messageId"].asString)
+        assertEquals("""{"response":{"success":true}}""", ack["data"].asString)
+    }
+
+    @Test
+    fun `ping 回应同官方 Node SDK：headers 与 data 原样`() {
+        val frame = DingtalkEvents.frame("""{"type":"SYSTEM","headers":{"topic":"ping","messageId":"p1","time":"9"},"data":"{\"opaque\":\"x\"}"}""")!!
+        val pong = JsonParser.parseString(DingtalkEvents.pong(frame)).asJsonObject
+        assertEquals(200, pong["code"].asInt)
+        assertEquals(frame.headers, pong["headers"])
+        assertEquals("OK", pong["message"].asString)
         assertEquals("""{"opaque":"x"}""", pong["data"].asString)
+        // 没有 data 就不带 data（同 JSON.stringify 略去 undefined）
+        val bare = DingtalkEvents.frame("""{"type":"SYSTEM","headers":{"topic":"ping"}}""")!!
+        assertFalse(JsonParser.parseString(DingtalkEvents.pong(bare)).asJsonObject.has("data"))
     }
 
     @Test

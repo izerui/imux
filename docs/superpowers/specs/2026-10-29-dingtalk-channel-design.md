@@ -35,8 +35,8 @@
 | 身份 | poll 不返回任何用户身份 | 连接器 + 实测 |
 | robotCode | 等于 `client_id` | 连接器；待真机 |
 | 建连 | `POST https://api.dingtalk.com/v1.0/gateway/connections/open`，`Accept: application/json`，`{clientId, clientSecret, subscriptions:[{type:"CALLBACK",topic:"/v1.0/im/bot/messages/get"}], ua}` → `{endpoint, ticket}`；ticket 90 秒一次性；`endpoint` 已含 `/connect` | 官方 |
-| 帧 | `{specVersion,type,headers{topic,messageId,contentType,time},data:"<json>"}`；ACK `{"code":200,"headers":{"messageId","contentType":"application/json"},"message":"OK","data":"{\"response\": null}"}` | 官方 |
-| 系统帧 | `ping`：原样回传 `data` 与 `messageId`；`disconnect`：不再推送，10 秒后断开，应立即重建 | 官方 |
+| 帧 | `{specVersion,type,headers{topic,messageId,contentType,time},data:"<json>"}`；回应 `{"code","headers","message","data":"<json>"}`：机器人消息确认的 headers 为 `{"messageId","contentType":"application/json"}`，系统 ping 原样带回原 headers，见 5.2 | 官方 |
+| 系统帧 | `ping`：原样回传 `headers` 与 `data`（官方 Node SDK）；`disconnect`：不再推送，10 秒后断开，应立即重建 | 官方 |
 | 重推 | 文档说不重推；连接器记录过超 60 秒被重推，`headers.messageId` 变、`data.msgId` 不变 | 官方 / 连接器 |
 | 多连接 | 每条消息随机推给其中一条连接；未见互踢 | 官方 |
 | 消息字段 | `msgId`、`conversationType`（`"1"` 单聊）、`senderStaffId`（发布上线后才返回）、`senderId`（加密）、`robotCode`、`msgtype`、`createAt` 等 | 官方 |
@@ -136,8 +136,8 @@ runSession:
   1. DingtalkApi.openConnection()：成功取 endpoint、ticket；
      凭据类错误（HTTP 401/403 或 code=invalidClientIdOrSecret）计一次鉴权失败；其他 → Dropped
   2. transport.open("$endpoint?ticket=<urlencode>")
-  3. 并行启动：writer（发 ACK 与回复）、keepAlive（存活检查）
-  4. 收到第一帧（任意文本帧或 pong）时上报 Online（若之前有收发受阻状态则保留）；等待会话结束
+  3. 并行启动：writer（按入队顺序发出各帧回应与机器人消息确认）、keepAlive（存活检查）
+  4. 收到第一帧（任意可解析的帧或 pong）时上报 Online（若之前有收发受阻状态则保留）；等待会话结束
      在线以收到第一帧为准；与官方 SDK 一致，握手后不主动 ping，只在空闲周期 ping（官方 Java SDK KeepAliveHandler）。
      服务端连上后不发帧时，在线显示可能延后到首次空闲 ping 的 pong（2026-10-30 用户要求与 SDK 保持一致，去掉握手后立即 ping）
      未收到任何帧即断开的会话不报 Online，直接按 Dropped 处理
@@ -146,28 +146,38 @@ runSession:
 - **凭据失败**：凭据被拒累计 5 次、期间未成功上线即报 Failed（2026-10-30 决定：只有会话真正上线才清零 `authFailures`，网络错误导致的 Dropped 不清零，避免凭据失效又遇网络不稳时永远到不了 Failed）。
 - **退避**：2、4、8…秒，上限 60 秒；成功连上后清零。
 - **存活**：每 60 秒 `sendPing()`；距上一次收到任何帧或 pong 超过 120 秒，判定连接已死，按 Dropped 重连。
-- **disconnect**：收到后立即结束本会话、关闭传输、重新取 ticket 建连；已收到的消息照常处理完。
+- **disconnect**：不回应（同官方 Node SDK），结束本会话、关闭传输、重新取 ticket 建连；已收到的消息照常处理完，已入队的确认尽量在关连接前发出。
 - **stop()**：取消循环、关闭传输、上报 Stopped。
 - 不上报 Kicked（钉钉多连接随机投递，没有踢线）。
 
 ### 5.2 收帧
 
+对齐官方 Node SDK `dingtalk-stream` 2.1.6（`client.cjs` `onDownStream`、`onSystem`、`send`、`socketCallBackResponse`）与官方连接器 `@dingtalk-real-ai/dingtalk-connector` 0.8.27（`connection-*.mjs` 机器人回调“已立即确认回调”），两者是有成功案例的写法。用户 2026-10-30 决定选这种简单写法，不强求与某一 SDK 逐字节一致；此前逐项贴合 Python SDK 的畸形帧处理（自写严格 JSON 解析、Python 真假值与 `int()` 判定、整帧非法即重连、处理完才确认等）已删除。
+
 ```
 onText(text):
-  frame = DingtalkEvents.frame(text)   解析失败记日志丢弃
+  Gson 解析整帧；解析失败或不是对象 → 丢弃：不回应、不算收到帧（不置 alive、不更新 lastFrameAt、不上报 Online）、不断开
+  其余帧 → 置 alive、更新 lastFrameAt、上报 Online，再按 type 分发：
   type=SYSTEM：
-    topic=ping → 回 {"code":200,"headers":{"messageId","contentType":"application/json"},"message":"OK","data":<原 data>}
-    topic=disconnect → 结束会话（Disconnect）
-    其他 → 忽略
+    topic=ping → 回 {"code":200,"headers":<原 headers 原样>,"message":"OK","data":<原 data 原样>}（同 Node onSystem）
+    topic=disconnect → 不回应（Node 只做标记），结束会话（Disconnect），随后立即重建
+    其他 topic → 忽略
   type=CALLBACK 且 topic=/v1.0/im/bot/messages/get：
-    立即回写 ACK
-    解析 data → 交给入站队列
-  其他 → 回写 ACK 后忽略
+    立即回 {"code":200,"headers":{"contentType":"application/json","messageId":<推送的 messageId>},"message":"OK","data":"{\"response\":{\"success\":true}}"}
+      （同连接器 socketCallBackResponse(messageId, {success:true})，格式同 Node send；经当前会话的回复队列发出）
+      缺 messageId → 不回应（Node send 要求 messageId）
+    data 是字符串 → 交给入站队列；不是字符串 → 无内容
+  EVENT、其他 CALLBACK topic、未知 type → 忽略（只订阅机器人 topic）
+入站队列（单协程按序）：
+  解析 data → 按 msgId 去重 → 交给 InboundSink / 设置收发受阻状态
+  处理出错 → 只跳过这一条，继续下一条（取消照常抛出）；不撤销去重标记，也不补发回应
 ```
 
-- **先 ACK 后处理**：ACK 在 WebSocket 回调里经串行发送锁同步发出，不等解析和转交。
-- **去重**：按 `data.msgId`，容量 1000（与企业微信、飞书相同）；不用 `headers.messageId`。
-- **入站队列**：单消费者协程按到达顺序转交，满足 `InboundSink` 的顺序要求。
+- **收到即确认**：同官方连接器。确认不等处理，处理是否成功都不影响平台；重推（第 2 节）到来时按 `data.msgId` 去重，只确认不再交出。
+- **去重（补充）**：按 `data.msgId`，容量 1000（与企业微信、飞书相同）；不用 `headers.messageId`。
+- **入站队列（补充）**：单消费者协程按到达顺序处理，满足 `InboundSink` 的顺序要求。
+- **已知差异**：Gson `JsonParser` 比 Node `JSON.parse` 宽松（如接受未加引号的键），嵌套超过 Gson 默认上限（255 层）的帧解析失败、按丢弃处理；Node 对 EVENT 回应、对 `KEEPALIVE`/`REGISTERED` 做标记，我们只订阅机器人 topic，一律忽略。平台正常推送不会触发前两项，不为此增加代码。
+- **其他补充**（官方 SDK 没有）：收发受阻显示；收到第一帧才报 Online；凭据计数只在上线后清零。
 
 ## 6. 收消息解析
 
@@ -241,10 +251,10 @@ onText(text):
 
 | 测试 | 覆盖 |
 |---|---|
-| `DingtalkEventsTest` | 帧解析（SYSTEM/CALLBACK、topic、messageId）；消息类型表；richText 拼接与图片；语音有无 recognition；引用（对象与字符串两种 content）；非单聊忽略；无 staffId、`errorCode` 标记 |
+| `DingtalkEventsTest` | 帧解析（headers、data 原样保留，解析不了或不是对象为空）；两种回应格式（机器人确认 200、"OK"、data `{"response":{"success":true}}`；ping 原样回传 headers 与 data）；消息类型表；richText 拼接与图片；语音有无 recognition；引用（对象与字符串两种 content）；非单聊忽略；无 staffId、`errorCode` 标记 |
 | `DingtalkOnboardingTest` | 假 HTTP：正常成功（source 为 `DING_DWS_CLAW`、`ownerId=null`）；WAITING；EXPIRED；FAIL；缺凭据；网络错误继续等；init/begin 失败 |
 | `DingtalkApiTest` | 令牌缓存与提前刷新；令牌失效重取只重试一次；`batchSend` 请求体（robotCode、userIds、msgKey、msgParam 为 JSON 字符串）；两个名单与各错误码分类；`downloadUrl` |
-| `DingtalkConnectionTest` | 假传输：先 ACK 再处理；ping 原样回传；disconnect 立即重建且不计失败；msgId 去重（headers.messageId 不同）；入站顺序；ping 超时判死重连；凭据连续无效 → Failed；退避与 Retrying；无 staffId / 20001 显示与恢复；发送结果映射与 SendFailing 清除；stop 上报 Stopped |
+| `DingtalkConnectionTest` | 假传输：机器人消息收到即确认（交出被挡住时确认已发出）；处理出错只跳过、不撤销去重；重复 msgId 仍确认但只交出一次；群聊、不支持类型、额度用完、缺 staffId 都照常确认；缺 messageId 不回应但照常处理；data 解析不了仍确认、不交出；ping 原样回传 headers 与 data；disconnect 不回应、立即重建且不计失败；EVENT 与其它 topic 不回应；不可解析或不是对象的帧被丢弃、不断开、不算收到帧；入站顺序；ping 超时判死重连；凭据连续无效 → Failed；退避与 Retrying；无 staffId / 20001 显示与恢复；发送结果映射与 SendFailing 清除；stop 上报 Stopped |
 | `DingtalkAttachmentTest` | 两步下载；文件名优先级；换地址失败；超限 |
 | 传输层 | `JdkWebSocketTransport` 的 ping/pong（如现有测试方式可行） |
 | 现有测试 | `ChannelIsolationSourceTest` 自动覆盖新目录，并新增“渠道子包之间不得互相 import”；企业微信、飞书测试全部保持通过 |
@@ -264,7 +274,7 @@ onText(text):
 4. `sampleMarkdown` 中代码块、表格的实际显示；单聊长度上限。
 5. 语音是否总带 `recognition`；引用字段实际形态。
 6. 后台“资源管理”显示的版本与额度；收消息是否计入 Webhook&Stream 额度。
-7. 服务端 ping、disconnect 的实际频率；不 ACK 是否重推。
+7. 服务端 ping、disconnect 的实际频率；确认后是否仍会重推（重推时 headers.messageId 变、data.msgId 不变，靠 msgId 去重）。
 
 ## 13. 文档更新
 

@@ -110,10 +110,10 @@
 **Stream 长连接**（官方《Stream模式协议接入说明》、开发者百科）
 - `POST https://api.dingtalk.com/v1.0/gateway/connections/open` `{clientId, clientSecret, subscriptions:[{type:"CALLBACK",topic:"/v1.0/im/bot/messages/get"}], ua?, localIp?}`，请求头带 `Accept: application/json`（否则可能返回 XML）→ `{endpoint, ticket}`；`ua`、`localIp` 非必填；ticket 90 秒内一次性。
 - `endpoint` 已含 `/connect`，直接 `{endpoint}?ticket=<urlencode>` 建 WebSocket。
-- 推送帧 `{specVersion,type:SYSTEM|EVENT|CALLBACK,headers{topic,messageId,contentType,time,appId},data:"<json>"}`；ACK `{"code":200,"headers":{"messageId","contentType":"application/json"},"message":"OK","data":"{\"response\": null}"}`。
-- 系统帧：`ping` 原样回传 data（opaque）与 messageId；`disconnect` 后不再推送新消息，10 秒后断开，应立即重新取 ticket 建新连接。
+- 推送帧 `{specVersion,type:SYSTEM|EVENT|CALLBACK,headers{topic,messageId,contentType,time,appId},data:"<json>"}`；机器人消息确认 `{"code":200,"headers":{"contentType":"application/json","messageId"},"message":"OK","data":"{\"response\":{\"success\":true}}"}`（官方 Node SDK `socketCallBackResponse(messageId, {success:true})`，同官方连接器）。
+- 系统帧：`ping` 回 `{"code":200,"headers":<原 headers>,"message":"OK","data":<原 data>}`（官方 Node SDK）；`disconnect` 不回应，之后不再推送新消息，10 秒后断开，应立即重新取 ticket 建新连接。
 - 同一应用多条连接时，每条消息随机推给其中一条（百科 FAQ）；连接数上限、是否互踢未查到。
-- 重推：百科说机器人消息不因超时重推；连接器发布说明记录过处理超 60 秒后被重推，重推时 `headers.messageId` 变、`data.msgId` 不变。按可能重推设计：收到即 ACK，用 `data.msgId` 去重。
+- 重推：百科说机器人消息不因超时重推；连接器发布说明记录过处理超 60 秒后被重推，重推时 `headers.messageId` 变、`data.msgId` 不变。机器人消息收到即确认（同官方连接器“已立即确认回调”，用户 2026-10-30 决定，见钉钉设计 5.2），可能的重推用 `data.msgId` 去重。
 - SDK 心跳参考：Java 空闲 60 秒发 WS ping、5 秒无 pong 断开；连接器每 10 秒应用层 ping。
 
 **机器人消息**（官方《消息发送与接收类型》2026-05-15）

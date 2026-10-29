@@ -254,9 +254,12 @@ class PhoneTool(
         group.add(Separator.create(ImuxBundle.message("bridge.banner.rebind")))
         addRobots(group)
         group.addSeparator()
-        group.add(phoneAction(ImuxBundle.message("bridge.settings.reconnect")) {
-            RobotManager.getInstance().reconnect(current.robotId)
-        })
+        // 收发受阻（SendFailing）重连解决不了，不提供重新连接
+        if (current.problemKind != ConnectionStatus.SendFailing::class.simpleName) {
+            group.add(phoneAction(ImuxBundle.message("bridge.settings.reconnect")) {
+                RobotManager.getInstance().reconnect(current.robotId)
+            })
+        }
         group.add(phoneAction(ImuxBundle.message("bridge.action.disconnect")) {
             PhoneOperations.disconnect(
                 project,
