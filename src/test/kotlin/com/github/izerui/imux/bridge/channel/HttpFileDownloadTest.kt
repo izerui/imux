@@ -152,4 +152,83 @@ class HttpFileDownloadTest {
             }
             assertEquals("不应残留临时文件", 0L, Files.list(dir).use { it.count() })
         }
+
+    @Test
+    fun `下载时带上调用方给的请求头`() =
+        runBlocking {
+            var authorization: String? = null
+            server.createContext("/auth") { exchange ->
+                authorization = exchange.requestHeaders.getFirst("Authorization")
+                val body = "ok".toByteArray()
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            if (!started) {
+                server.start()
+                started = true
+            }
+            val result =
+                JdkHttpFileDownload(tempDir = temp.root.toPath())
+                    .download("http://127.0.0.1:${server.address.port}/auth", 100, mapOf("Authorization" to "Bearer T"))
+            assertTrue(result is DownloadResult.Ok)
+            assertEquals("Bearer T", authorization)
+        }
+
+    @Test
+    fun `带请求头时跳转到别的主机不转发 Authorization，同源跳转照常带上`() =
+        runBlocking {
+            val other = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            val otherAuthorization = mutableListOf<String?>()
+            other.createContext("/file") { exchange ->
+                synchronized(otherAuthorization) { otherAuthorization += exchange.requestHeaders.getFirst("Authorization") }
+                val body = "cdn".toByteArray()
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            other.start()
+            try {
+                val sameAuthorization = mutableListOf<String?>()
+                server.createContext("/cross") { exchange ->
+                    exchange.responseHeaders.add("Location", "http://127.0.0.1:${other.address.port}/file")
+                    exchange.sendResponseHeaders(302, -1)
+                    exchange.close()
+                }
+                server.createContext("/same") { exchange ->
+                    exchange.responseHeaders.add("Location", "/target")
+                    exchange.sendResponseHeaders(302, -1)
+                    exchange.close()
+                }
+                server.createContext("/target") { exchange ->
+                    synchronized(sameAuthorization) { sameAuthorization += exchange.requestHeaders.getFirst("Authorization") }
+                    val body = "same".toByteArray()
+                    exchange.sendResponseHeaders(200, body.size.toLong())
+                    exchange.responseBody.use { it.write(body) }
+                }
+                val download = JdkHttpFileDownload(tempDir = temp.root.toPath())
+                val auth = mapOf("Authorization" to "Bearer T")
+
+                val cross = download.download(url("/cross"), 100, auth) as DownloadResult.Ok
+                assertEquals("cdn", String(Files.readAllBytes(cross.path)))
+                assertEquals("跨主机跳转不能带上调用方的 Authorization", listOf<String?>(null), otherAuthorization)
+
+                val same = download.download(url("/same"), 100, auth) as DownloadResult.Ok
+                assertEquals("same", String(Files.readAllBytes(same.path)))
+                assertEquals(listOf<String?>("Bearer T"), sameAuthorization)
+            } finally {
+                other.stop(0)
+            }
+        }
+
+    @Test
+    fun `不带请求头时照常自动跟随跳转`() =
+        runBlocking {
+            serve("/plain-target", "ok".toByteArray())
+            server.createContext("/plain") { exchange ->
+                exchange.responseHeaders.add("Location", "/plain-target")
+                exchange.sendResponseHeaders(302, -1)
+                exchange.close()
+            }
+            val result = JdkHttpFileDownload(tempDir = temp.root.toPath()).download(url("/plain"), 100) as DownloadResult.Ok
+            assertEquals("ok", String(Files.readAllBytes(result.path)))
+        }
 }

@@ -18,7 +18,7 @@ data class SessionTarget(
     val sessionId: String?,
 )
 
-enum class AttachmentKind { IMAGE, FILE, VIDEO }
+enum class AttachmentKind { IMAGE, FILE, VIDEO, AUDIO }
 
 /** 渠道取回并解密后的临时文件；调用方负责移走或删除。[suggestedName] 是平台给的原始文件名，未清理。 */
 data class FetchedFile(

@@ -65,6 +65,12 @@ class RobotRowsTest {
     }
 
     @Test
+    fun `发送受阻算需要注意`() {
+        assertEquals(RobotHealth.ATTENTION, robotHealth(ConnectionStatus.SendFailing("k"), paired = true, bridgeEnabled = true))
+        assertEquals(true, needsAttention(ConnectionStatus.SendFailing("k", "230013")))
+    }
+
+    @Test
     fun `只是状态变化时视为同一批机器人，增删或换序时不是`() {
         fun row(id: String, status: String = "在线") = RobotRow(RobotId(id), id, "企业微信", status, null)
         org.junit.Assert.assertTrue(sameRobotsInOrder(listOf(row("a"), row("b")), listOf(row("a", "连接中"), row("b"))))

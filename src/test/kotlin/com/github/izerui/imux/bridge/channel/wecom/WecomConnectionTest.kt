@@ -88,7 +88,7 @@ class WecomConnectionTest {
         backoff = { 0L },
         limiter = limiter,
         maxRateWaitMillis = 50,
-        download = HttpFileDownload { _, _ -> DownloadResult.Failed("test") },
+        download = HttpFileDownload { _, _, _ -> DownloadResult.Failed("test") },
     )
 
     private fun startAndAwaitOnline(conn: WecomConnection) =

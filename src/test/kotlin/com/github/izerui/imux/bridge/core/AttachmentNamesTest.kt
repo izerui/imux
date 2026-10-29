@@ -94,6 +94,13 @@ class AttachmentNamesTest {
     }
 
     @Test
+    fun `识别 Ogg 音频并按 audio 命名`() {
+        val head = "OggS".toByteArray() + ByteArray(8)
+        assertEquals("ogg", AttachmentNames.extensionOf(head))
+        assertEquals("audio-090501.ogg", AttachmentNames.fallback(AttachmentKind.AUDIO, java.time.LocalTime.of(9, 5, 1), "ogg"))
+    }
+
+    @Test
     fun `去掉 Unicode 格式字符，防止伪装扩展名`() {
         assertEquals("invoicefdp.exe", AttachmentNames.sanitize("invoice\u202Efdp.exe"))
         assertEquals("ab.txt", AttachmentNames.sanitize("a\u200Bb\uFEFF.txt"))

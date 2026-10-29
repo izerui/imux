@@ -22,11 +22,20 @@ sealed interface ConnectionStatus {
 
     /** 本地取不到凭据（钥匙串被清空等），连不上；只能移除后重新添加。 */
     data object NoCredentials : ConnectionStatus
+
+    /**
+     * 连接在、收得到消息，但发送被平台拒绝（额度用完、缺权限等）。
+     * [messageKey] 是 ImuxBundle 的键，[detail] 填进它的 {0}。下一次发送成功后回到 Online。
+     */
+    data class SendFailing(
+        val messageKey: String,
+        val detail: String? = null,
+    ) : ConnectionStatus
 }
 
-/** 连接在工作或正在建立：消息与配对码收得到，不需要重连。 */
+/** 连接在工作或正在建立：消息与配对码收得到，不需要重连。发送受阻不影响接收。 */
 val ConnectionStatus?.isWorking: Boolean
-    get() = this == ConnectionStatus.Online || this == ConnectionStatus.Connecting
+    get() = this == ConnectionStatus.Online || this == ConnectionStatus.Connecting || this is ConnectionStatus.SendFailing
 
 sealed interface OnboardingStep {
     data class ShowQr(val content: String) : OnboardingStep
@@ -50,6 +59,7 @@ sealed interface OnboardingStep {
 
 /** 一次扫码接入。调用方按 [pollIntervalMillis] 反复 [poll]，并负责总超时。 */
 interface ChannelOnboarding {
+    /** 调用方每次轮询前读取；可随轮询结果变化（如飞书要求放慢）。 */
     val pollIntervalMillis: Long
 
     suspend fun start(): OnboardingStep
@@ -76,6 +86,10 @@ interface ChannelConnection : ChannelAdapter {
 
 interface ChannelFactory {
     val kind: ChannelKind
+
+    /** 添加对话框里扫码说明的文案键（ImuxBundle），参数 {0} 是渠道名。 */
+    val scanStepsKey: String
+        get() = "bridge.add.scan.steps"
 
     fun onboarding(): ChannelOnboarding
 

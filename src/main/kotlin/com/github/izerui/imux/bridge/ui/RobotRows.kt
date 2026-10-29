@@ -77,6 +77,8 @@ fun statusLabel(
 ): String =
     when {
         status == ConnectionStatus.NoCredentials -> ImuxBundle.message("bridge.robot.status.noCredentials")
+        status is ConnectionStatus.SendFailing ->
+            status.detail?.let { ImuxBundle.message(status.messageKey, it) } ?: ImuxBundle.message(status.messageKey)
         status is ConnectionStatus.Failed -> ImuxBundle.message("bridge.robot.status.failed", status.reason)
         status is ConnectionStatus.Retrying -> ImuxBundle.message("bridge.robot.status.retrying", status.reason)
         status == ConnectionStatus.Kicked -> ImuxBundle.message("bridge.robot.status.kicked")

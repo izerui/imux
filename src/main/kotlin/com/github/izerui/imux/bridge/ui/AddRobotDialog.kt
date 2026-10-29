@@ -266,7 +266,7 @@ class AddRobotDialog(
         job?.cancel()
         qrLabel.icon = null
         qrTitle.text = ImuxBundle.message("bridge.add.scan", channelLabel(kind))
-        qrSteps.text = html(ImuxBundle.message("bridge.add.scan.steps", channelLabel(kind)))
+        qrSteps.text = html(ImuxBundle.message(ChannelFactories.forKind(kind)?.scanStepsKey ?: "bridge.add.scan.steps", channelLabel(kind)))
         retryButton.isVisible = false
         val factory = ChannelFactories.forKind(kind) ?: return
         val current = OnboardingDriver(factory.onboarding(), { state -> ui { render(state) } })

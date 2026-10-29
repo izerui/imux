@@ -20,20 +20,27 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
 import java.net.http.WebSocket
+import java.net.http.WebSocketHandshakeException
+import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.concurrent.CompletionException
 import java.util.concurrent.CompletionStage
 import kotlin.coroutines.cancellation.CancellationException
 
 interface FrameListener {
     fun onText(text: String)
 
+    /** 二进制帧（已拼完分片）。只用文本帧的渠道不必实现。 */
+    fun onBinary(bytes: ByteArray) {}
+
     fun onClosed(reason: String)
 }
 
-/** 文本帧传输。渠道连接只依赖这个端口，测试用假实现。 */
+/** 帧传输。渠道连接只依赖这个端口，测试用假实现。 */
 interface FrameTransport {
+    /** 握手被服务端拒绝时抛 [WebSocketHandshakeRejected]。 */
     suspend fun open(
         url: String,
         listener: FrameListener,
@@ -41,7 +48,39 @@ interface FrameTransport {
 
     suspend fun send(text: String)
 
+    /** 二进制帧；与 [send] 共用同一串行顺序。只用文本帧的渠道不必实现。 */
+    suspend fun sendBinary(bytes: ByteArray): Unit = throw UnsupportedOperationException("不支持二进制帧")
+
     fun close()
+}
+
+/** WebSocket 握手被服务端拒绝（非 101）。[headers] 的键统一为小写，每个键只取第一个值。 */
+class WebSocketHandshakeRejected(
+    val status: Int,
+    val headers: Map<String, String>,
+) : IOException("WebSocket 握手被拒绝：HTTP $status")
+
+data class HttpJsonResponse(
+    val status: Int,
+    val json: JsonObject?,
+)
+
+/**
+ * JSON 接口客户端。4xx/5xx 不抛异常：正文是 JSON 对象时照常返回，便于读取平台的业务错误码
+ * （飞书扫码的等待态和业务错误都这样返回）。网络错误照常抛出。
+ */
+interface HttpJson {
+    suspend fun get(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpJsonResponse
+
+    suspend fun post(
+        url: String,
+        contentType: String,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpJsonResponse
 }
 
 fun interface HttpJsonGet {
@@ -62,39 +101,74 @@ class JdkWebSocketTransport(
         listener: FrameListener,
     ) {
         val assembler = TextFrameAssembler()
+        val binary = BinaryFrameAssembler()
         socket =
-            client.newWebSocketBuilder()
-                .connectTimeout(NETWORK_TIMEOUT)
-                .buildAsync(
-                    URI(url),
-                    object : WebSocket.Listener {
-                        override fun onText(
-                            webSocket: WebSocket,
-                            data: CharSequence,
-                            last: Boolean,
-                        ): CompletionStage<*>? {
-                            assembler.accept(data, last)?.let(listener::onText)
-                            webSocket.request(1)
-                            return null
-                        }
+            try {
+                client.newWebSocketBuilder()
+                    .connectTimeout(NETWORK_TIMEOUT)
+                    .buildAsync(
+                        URI(url),
+                        object : WebSocket.Listener {
+                            override fun onText(
+                                webSocket: WebSocket,
+                                data: CharSequence,
+                                last: Boolean,
+                            ): CompletionStage<*>? {
+                                assembler.accept(data, last)?.let(listener::onText)
+                                webSocket.request(1)
+                                return null
+                            }
 
-                        override fun onClose(
-                            webSocket: WebSocket,
-                            statusCode: Int,
-                            reason: String,
-                        ): CompletionStage<*>? {
-                            listener.onClosed("$statusCode $reason")
-                            return null
-                        }
+                            override fun onBinary(
+                                webSocket: WebSocket,
+                                data: ByteBuffer,
+                                last: Boolean,
+                            ): CompletionStage<*>? {
+                                binary.accept(data, last)?.let(listener::onBinary)
+                                webSocket.request(1)
+                                return null
+                            }
 
-                        override fun onError(
-                            webSocket: WebSocket,
-                            error: Throwable,
-                        ) {
-                            listener.onClosed(error.message ?: error.javaClass.simpleName)
-                        }
-                    },
-                ).await()
+                            override fun onClose(
+                                webSocket: WebSocket,
+                                statusCode: Int,
+                                reason: String,
+                            ): CompletionStage<*>? {
+                                listener.onClosed("$statusCode $reason")
+                                return null
+                            }
+
+                            override fun onError(
+                                webSocket: WebSocket,
+                                error: Throwable,
+                            ) {
+                                listener.onClosed(error.message ?: error.javaClass.simpleName)
+                            }
+                        },
+                    ).await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val cause = (e as? CompletionException)?.cause ?: e
+                if (cause is WebSocketHandshakeException) throw handshakeRejected(cause)
+                throw e
+            }
+    }
+
+    override suspend fun sendBinary(bytes: ByteArray) {
+        sendLock.withLock {
+            val current = socket ?: throw IOException("WebSocket 未连接")
+            current.sendBinary(ByteBuffer.wrap(bytes), true).await()
+        }
+    }
+
+    private fun handshakeRejected(e: WebSocketHandshakeException): WebSocketHandshakeRejected {
+        val response = e.response
+        val headers =
+            response.headers().map().entries
+                .mapNotNull { (key, values) -> values.firstOrNull()?.let { key.lowercase() to it } }
+                .toMap()
+        return WebSocketHandshakeRejected(response.statusCode(), headers)
     }
 
     override suspend fun send(text: String) {
@@ -123,6 +197,37 @@ class JdkHttpJsonGet(
     }
 }
 
+/** 不显式设代理：JDK 走默认 ProxySelector，IDE 中即 IDE 的代理设置。 */
+class JdkHttpJson(
+    private val client: HttpClient = HttpClient.newBuilder().connectTimeout(NETWORK_TIMEOUT).build(),
+) : HttpJson {
+    override suspend fun get(
+        url: String,
+        headers: Map<String, String>,
+    ): HttpJsonResponse = execute(HttpRequest.newBuilder(URI(url)).GET(), headers)
+
+    override suspend fun post(
+        url: String,
+        contentType: String,
+        body: String,
+        headers: Map<String, String>,
+    ): HttpJsonResponse =
+        execute(
+            HttpRequest.newBuilder(URI(url)).header("Content-Type", contentType).POST(HttpRequest.BodyPublishers.ofString(body)),
+            headers,
+        )
+
+    private suspend fun execute(
+        builder: HttpRequest.Builder,
+        headers: Map<String, String>,
+    ): HttpJsonResponse {
+        headers.forEach { (name, value) -> builder.header(name, value) }
+        val response = client.sendAsync(builder.timeout(NETWORK_TIMEOUT).build(), HttpResponse.BodyHandlers.ofString()).await()
+        val json = runCatching { JsonParser.parseString(response.body()) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+        return HttpJsonResponse(response.statusCode(), json)
+    }
+}
+
 sealed interface DownloadResult {
     data class Ok(
         val path: Path,
@@ -140,14 +245,24 @@ fun interface HttpFileDownload {
     suspend fun download(
         url: String,
         maxBytes: Long,
+        headers: Map<String, String>,
     ): DownloadResult
 }
+
+suspend fun HttpFileDownload.download(
+    url: String,
+    maxBytes: Long,
+): DownloadResult = download(url, maxBytes, emptyMap())
 
 /**
  * 不显式设代理：JDK 走默认 ProxySelector，IDE 中即 IDE 的代理设置。
  * [timeout] 限制整次下载（响应头加正文）；超时返回 `Failed("timeout")`，调用方的取消照常抛出。
  */
 class JdkHttpFileDownload(
+    /**
+     * 自动跟随跳转是安全的：JDK HttpClient 跳到不同 scheme 或 host:port 时会去掉 Authorization、Cookie 等请求头
+     * （jdk.internal.net.http.HttpRequestImpl.newInstanceForRedirection），调用方的令牌不会被转发给别的主机；见 HttpFileDownloadTest。
+     */
     private val client: HttpClient =
         HttpClient.newBuilder().connectTimeout(NETWORK_TIMEOUT).followRedirects(HttpClient.Redirect.NORMAL).build(),
     private val timeout: Duration = Duration.ofSeconds(60),
@@ -157,19 +272,23 @@ class JdkHttpFileDownload(
     override suspend fun download(
         url: String,
         maxBytes: Long,
+        headers: Map<String, String>,
     ): DownloadResult =
         withContext(Dispatchers.IO) {
             // 只有本层的超时会得到 null；外层取消照常以 CancellationException 抛出
-            withTimeoutOrNull(timeout.toMillis()) { fetch(url, maxBytes) } ?: DownloadResult.Failed("timeout")
+            withTimeoutOrNull(timeout.toMillis()) { fetch(url, maxBytes, headers) } ?: DownloadResult.Failed("timeout")
         }
 
     private suspend fun fetch(
         url: String,
         maxBytes: Long,
+        headers: Map<String, String>,
     ): DownloadResult {
         val response =
             try {
-                val request = HttpRequest.newBuilder(URI(url)).timeout(timeout).GET().build()
+                val builder = HttpRequest.newBuilder(URI(url)).timeout(timeout).GET()
+                headers.forEach { (name, value) -> builder.header(name, value) }
+                val request = builder.build()
                 client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()).await()
             } catch (e: CancellationException) {
                 throw e

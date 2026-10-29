@@ -14,7 +14,7 @@
 | 语音 | voice.content 即转写 | 无转写，需下载后转写 | content.recognition | attachments[].asr_refer_text | voice_item.text |
 | 回复凭证 | 无（主动推送需用户先发过消息） | 无 | sessionWebhook（约 90 分钟，未核实） | msg_id（5 或 60 分钟，文档矛盾） | context_token（有效期未核实，必须带） |
 | 主动发送 | aibot_send_msg，chat_type=1 | im/v1/messages?receive_id_type=open_id | oToMessages/batchSend（需 staffId） | /v2/users/{openid}/messages（用户可关闭） | 实际上依赖 context_token |
-| 官方 Java SDK | 无 | 有（oapi-sdk 2.8.7，21 MB，依赖可能冲突） | 有（app-stream-client 1.3.12，5.4 MB，已 shade） | 无 | 无 |
+| 官方 Java SDK | 无 | 有，但不引入：长连接与 HTTP 自实现（2026-10-28 决定） | 有（app-stream-client 1.3.12，5.4 MB，已 shade） | 无 | 无 |
 | 扫码接口是否公开 | 否（ai/qc/* 为后台接口） | 是（RegisterApp，OAuth device flow） | 否（官方 connector 源码） | 否（混淆 npm 包） | 否（开源客户端协议） |
 
 框架约定：
@@ -78,11 +78,20 @@
 - 帧为 protobuf `pbbp2.Frame`（SeqID=1, LogID=2, service=3, method=4[0 控制/1 数据], headers=5, payload_encoding=6, payload_type=7, payload=8, LogIDNew=9）；心跳为控制帧 header `type=ping`，默认 120 秒；分片按 header `sum/seq` 合并。
 - 收到数据帧后须在 **3 秒内** 回写同帧（payload `{"code":200}`），处理放到异步队列。
 - 每应用最多 50 条连接，事件随机投给其中一个；握手 514+autherrcode 1000040350 或 403 时不重连。
-- 选型：自实现（protobuf 9 个字段）或引入 SDK（21 MB，guava/httpclient/gson 2.9 等可能与平台冲突，`ws.Client` 线程池不随 close 释放）。
+- 实现：自实现，不引入 SDK。帧格式以官方 Python SDK `lark-oapi` 1.7.5 内嵌的 `pbbp2.proto` 为准，测试样本字节由该 SDK 生成。收到数据帧立即回写确认，处理放到按序队列；官方 SDK 只靠读错误发现断线，我们另加"3 个心跳周期无任何帧即重连"。
 
 **收发**
 - 事件 `im.message.receive_v1`：`sender.sender_id.open_id`、`sender.sender_type`(user/bot)、`message.message_id/chat_type(p2p)/message_type/content`（JSON 字符串，文本为 `{"text":..}`）；用 `message_id` 去重。
 - 发送：`POST /open-apis/im/v1/messages?receive_id_type=open_id`，`Authorization: Bearer <tenant_access_token>`（`/open-apis/auth/v3/tenant_access_token/internal`），body `{"receive_id","msg_type":"text","content":"{\"text\":..}","uuid"}`；同一用户 5 QPS；文本请求体 ≤ 150 KB。
+
+**本轮核实（2026-10-28）**
+- 发 Markdown：`msg_type=post`，`content={"zh_cn":{"content":[[{"tag":"md","text":..}]]}}`；`md` 支持 CommonMark 0.31 + GFM；富文本请求体 ≤ 30 KB。
+- 收消息类型：text、post（接收时 `md` 会被转成其他标签）、image（`image_key`）、file（`file_key`、`file_name`）、media（视频）、audio（`file_key`、`duration`，**无转写**）。
+- 下载附件：`GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type=image|file`，音频与视频用 `file`；100 MB 以下整包下载，更大需 Range 分片（本版不做）；内容不加密。
+- 引用：事件只有 `parent_id`，文字需 `GET /open-apis/im/v1/messages/{message_id}` 获取。
+- 语音：消息是 Opus（Ogg 封装）；识别接口 `speech_to_text/v1/speech/file_recognize` 只收 16k pcm、适合 60 秒以内、权限 `speech_to_text:speech`。插件用 Concentus 解码后按 50 秒切段识别，失败时退回音频附件。
+- 令牌：`tenant_access_token` 最长 2 小时；剩余不足 30 分钟时再取会得到新令牌。
+- 错误码：令牌无效 99991661 / 99991663 / 99991665 / 20005 / 20013；应用不可用 10014 / 10015 / 11207 / 11209 / 99991662 / 99991673 / 20009；限频 99991400 / 1000004 / 1000005；额度 99991403；权限 99991672 / 99991676；不在可用范围 230013；未启用机器人 230006。
 
 ## 3. 钉钉
 
@@ -136,7 +145,7 @@
 ## 6. 待真实账号确认
 
 - 企业微信：流式回复实际时长；加密 userid 能否用于主动推送；扫码能否选已有机器人。
-- 飞书：PersonalAgent 默认模板是否已开启长连接与 p2p 收消息权限。
+- 飞书：扫码返回的 open_id 与消息发送人是否一致；PersonalAgent 默认模板是否已开启长连接、单聊收发与语音识别（speech_to_text:speech）权限；语音文件是否为标准 Ogg Opus；pcm 字节序；语音识别是否计入月度额度。
 - 钉钉：自定义 source 是否被接受；扫码创建的应用是否已发布机器人（否则没有 senderStaffId）。
 - QQ：msg_id 有效期；重复扫码是否复用机器人；扫码机器人是否为沙箱。
 - 普通微信：context_token 有效期；非官方客户端身份是否被拒；ilink_user_id 与 from_user_id 是否一致。

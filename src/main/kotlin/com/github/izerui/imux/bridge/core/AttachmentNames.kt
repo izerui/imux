@@ -73,6 +73,7 @@ object AttachmentNames {
             head.startsWithAscii("BM") -> "bmp"
             head.startsWithAscii("%PDF") -> "pdf"
             head.startsWith(0x50, 0x4B, 0x03, 0x04) -> "zip"
+            head.startsWithAscii("OggS") -> "ogg"
             head.asciiAt(4, "ftyp") -> "mp4"
             else -> null
         }

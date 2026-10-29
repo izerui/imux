@@ -67,6 +67,7 @@ class WecomMediaTest {
         override suspend fun download(
             url: String,
             maxBytes: Long,
+            headers: Map<String, String>,
         ): DownloadResult {
             this.maxBytes = maxBytes
             return result()
@@ -116,6 +117,7 @@ class WecomMediaTest {
                     override suspend fun download(
                         url: String,
                         maxBytes: Long,
+                        headers: Map<String, String>,
                     ): DownloadResult {
                         currentCoroutineContext().job.cancel()
                         return DownloadResult.Ok(encrypted, null)

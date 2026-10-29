@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge.channel.wecom
 
 import com.github.izerui.imux.bridge.channel.DownloadResult
 import com.github.izerui.imux.bridge.channel.HttpFileDownload
+import com.github.izerui.imux.bridge.channel.download
 import com.github.izerui.imux.bridge.core.AttachmentKind
 import com.github.izerui.imux.bridge.core.FetchResult
 import com.github.izerui.imux.bridge.core.FetchedFile

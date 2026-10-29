@@ -31,6 +31,9 @@ dependencies {
     // 通讯机器人扫码：在 IDE 内绘制二维码。平台未捆绑 ZXing；只用 core，不引入 javase。
     implementation("com.google.zxing:core:3.5.3")
 
+    // 飞书语音消息是 Ogg Opus，而飞书语音识别只收 16k pcm；JDK 解不了 Opus，用纯 Java 的 Concentus（BSD 风格许可证，无传递依赖）。
+    implementation("io.github.jaredmdobson:concentus:1.0.2")
+
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
