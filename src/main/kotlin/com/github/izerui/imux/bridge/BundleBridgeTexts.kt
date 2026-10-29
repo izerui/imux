@@ -25,6 +25,10 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun transcriptRestarted() = ImuxBundle.message("bridge.status.transcriptRestarted")
 
+    override fun turnWithoutReply() = ImuxBundle.message("bridge.status.turnWithoutReply")
+
+    override fun turnInterrupted() = ImuxBundle.message("bridge.status.turnInterrupted")
+
     override fun backgroundRunning(tasks: List<String?>) =
         ImuxBundle.message(
             "bridge.status.backgroundRunning",
@@ -36,6 +40,12 @@ internal object BundleBridgeTexts : BridgeTexts {
         agent: String,
         sessionTitle: String,
     ) = ImuxBundle.message("bridge.status.connected", project, agent, sessionTitle)
+
+    override fun reconnected(
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ) = ImuxBundle.message("bridge.status.reconnected", project, agent, sessionTitle)
 
     // 配对回复由机器人管理直接发出，不经过路由器，所以不在 BridgeTexts 接口里
     fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")

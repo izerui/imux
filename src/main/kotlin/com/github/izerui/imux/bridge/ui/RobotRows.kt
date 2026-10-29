@@ -71,6 +71,12 @@ fun robotRows(
 
 fun channelLabel(kind: ChannelKind): String = ImuxBundle.message("bridge.channel.${kind.id}")
 
+/** 菜单这类地方用的简称（企业微信写作「企微」）。 */
+fun shortChannelLabel(kind: ChannelKind): String = ImuxBundle.message("bridge.channel.${kind.id}.short")
+
+/** 菜单里区分同名机器人：「企微 · imux001」。 */
+fun robotMenuName(robot: RobotRecord): String = shortChannelLabel(robot.kind) + " · " + robot.name
+
 fun statusLabel(
     status: ConnectionStatus?,
     paired: Boolean,

@@ -65,6 +65,16 @@ class TabPollerTest {
 
         override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"
 
+        override fun turnWithoutReply() = "NO_REPLY"
+
+        override fun turnInterrupted() = "INTERRUPTED"
+
+        override fun reconnected(
+            project: String,
+            agent: String,
+            sessionTitle: String,
+        ) = "RECONNECTED($project/$agent/$sessionTitle)"
+
         override fun connected(
             project: String,
             agent: String,

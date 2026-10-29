@@ -111,10 +111,10 @@ class WecomConnection(
         val transport = s.transport ?: return DeliveryResult.Rejected("offline")
         var wait = limiter.tryAcquire(message.chatId)
         if (wait > 0) {
-            if (wait > maxRateWaitMillis) return DeliveryResult.Rejected("rate limited")
+            if (wait > maxRateWaitMillis) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
             delay(wait)
             wait = limiter.tryAcquire(message.chatId)
-            if (wait > 0) return DeliveryResult.Rejected("rate limited")
+            if (wait > 0) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
         }
         val reqId = WecomProtocol.reqId("aibot_send_msg", now(), random)
         val ack =
@@ -125,7 +125,12 @@ class WecomConnection(
             } catch (_: IOException) {
                 return DeliveryResult.Unknown
             } ?: return DeliveryResult.Unknown
-        return if (ack.errcode == 0) DeliveryResult.Accepted else DeliveryResult.Rejected("${ack.errcode} ${ack.errmsg.orEmpty()}".trim())
+        return when (ack.errcode) {
+            0 -> DeliveryResult.Accepted
+            // 服务端的会话限频（每会话 30 条/分钟、1000 条/小时）
+            ERRCODE_RATE_LIMITED -> DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
+            else -> DeliveryResult.Rejected("${ack.errcode} ${ack.errmsg.orEmpty()}".trim())
+        }
     }
 
     private suspend fun runLoop(
@@ -280,6 +285,7 @@ class WecomConnection(
     }
 
     private companion object {
+        private const val ERRCODE_RATE_LIMITED = 846607
         const val MAX_AUTH_FAILURES = 5
 
         // 连续这么多次没连上（上线即清零），状态从“连接中”改报“连接失败，正在重试”

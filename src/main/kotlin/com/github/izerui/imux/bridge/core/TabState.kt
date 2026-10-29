@@ -93,15 +93,29 @@ internal class TabState {
 
     /** 本轮已结算就返回 false，调用方立即发；否则排队，等结算时随回复之后发出。 */
     fun queueAfterReply(text: String): Boolean {
-        if (settled) return false
+        if (settled && awaitingReplySince == null) return false
         afterReply += text
         return true
     }
 
     fun takeAfterReply(): List<String> = afterReply.toList().also { afterReply.clear() }
 
+    /**
+     * IDE 已结算这一轮，但回复还没读到（完成信号可能先于最终回复写进记录）：从 [awaitReply] 给的时刻起等它。
+     * 等待期间这一轮的状态提示继续排队，回复到了或确认没有回复时再一起发。
+     */
+    var awaitingReplySince: Long? = null
+        private set
+
+    fun awaitReply(since: Long) {
+        awaitingReplySince = since
+    }
+
+    fun stopAwaitingReply(): Boolean = (awaitingReplySince != null).also { awaitingReplySince = null }
+
     /** 有人说话或注入消息开启了新一轮（也可能是轮次进行中插话）：没结算的过程说明丢弃。 */
     fun startTurn() {
+        awaitingReplySince = null
         turn++
         pending = null
         settled = false
@@ -123,6 +137,14 @@ internal class TabState {
         current.text.append(text)
     }
 
+    /** 这一轮被中断：中断前的过程说明作废，按已收尾处理，之后的完成信号不再结算。 */
+    fun interrupt() {
+        awaitingReplySince = null
+        pending = null
+        endedByMarker = true
+        settled = true
+    }
+
     /** 记录里读到本轮结束标记：结算，交出待发的回复。 */
     fun endByMarker(): PendingReply? {
         endedByMarker = true
@@ -132,7 +154,8 @@ internal class TabState {
 
     /** IDE 报告第 [turn] 轮完成：属于当前轮且这一轮没有结束标记时结算，返回 true。 */
     fun completeByIde(turn: Long): Boolean {
-        if (turn != this.turn || endedByMarker) return false
+        // 同一轮重复到达的完成信号（含中断后的）只结算一次，“没有文字回复”的提示才不会重复
+        if (turn != this.turn || endedByMarker || settled) return false
         settled = true
         return true
     }

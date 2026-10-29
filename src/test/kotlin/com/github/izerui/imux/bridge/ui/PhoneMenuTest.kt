@@ -66,6 +66,35 @@ class PhoneMenuTest {
     }
 
     @Test
+    fun `菜单里的机器人名带上渠道，各种状态都用同一个名字`() {
+        val bindings = mapOf("b" to binding("b", "other"))
+        val entries =
+            phoneMenuModel(
+                listOf(robot("a"), robot("b")),
+                bindingOf = { bindings[it.value] },
+                statusOf = { ConnectionStatus.Online },
+                thisTabId = "this",
+                titleOf = { "T" },
+                labels = labels,
+                nameOf = { "企微 · " + it.name },
+            )
+        assertEquals(
+            listOf("企微 · bot-a/idle", "企微 · bot-b/bound:T"),
+            entries.filterIsInstance<PhoneMenuEntry.Robot>().map { it.label },
+        )
+    }
+
+    @Test
+    fun `渠道简称：中文把企业微信写作企微，其它渠道沿用原名`() {
+        for (kind in ChannelKind.entries) for (language in com.github.izerui.imux.settings.PluginLanguage.entries) {
+            val short = com.github.izerui.imux.ImuxBundle.message(language, "bridge.channel.${kind.id}.short")
+            val full = com.github.izerui.imux.ImuxBundle.message(language, "bridge.channel.${kind.id}")
+            val chinese = language.name.contains("CHINESE")
+            if (kind == ChannelKind.WECOM && chinese) assertEquals("企微", short) else assertEquals(full, short)
+        }
+    }
+
+    @Test
     fun `没有机器人`() {
         assertEquals(
             listOf(PhoneMenuEntry.NoRobots, PhoneMenuEntry.AddRobot),

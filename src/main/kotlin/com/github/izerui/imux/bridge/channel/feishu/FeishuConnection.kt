@@ -166,10 +166,10 @@ class FeishuConnection(
         )
         var wait = limiter.tryAcquire(message.chatId)
         if (wait > 0) {
-            if (wait > maxRateWaitMillis) return DeliveryResult.Rejected("rate limited")
+            if (wait > maxRateWaitMillis) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
             delay(wait)
             wait = limiter.tryAcquire(message.chatId)
-            if (wait > 0) return DeliveryResult.Rejected("rate limited")
+            if (wait > 0) return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
         }
         return when (val result = api.send(body)) {
             is FeishuResult.Ok -> {
@@ -180,7 +180,7 @@ class FeishuConnection(
             is FeishuResult.Network -> DeliveryResult.Unknown
             is FeishuResult.Error -> {
                 sendFailing(result.code)?.let { sendBlocked(current, it) }
-                if (result.code in FeishuCodes.RATE_LIMITED) DeliveryResult.Rejected("rate limited") else DeliveryResult.Rejected(
+                if (result.code in FeishuCodes.RATE_LIMITED) DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED) else DeliveryResult.Rejected(
                     "${result.code} ${result.msg}".trim()
                 )
             }

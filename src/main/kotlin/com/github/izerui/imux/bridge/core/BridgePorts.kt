@@ -50,10 +50,23 @@ interface BridgeTexts {
 
     fun transcriptRestarted(): String
 
+    /** 一轮结束了，但没有文字回复（只调了工具、只执行了命令）。 */
+    fun turnWithoutReply(): String
+
+    /** 这一轮在电脑上被中断。 */
+    fun turnInterrupted(): String
+
     /** 一轮回复发出后还有后台任务在运行；[tasks] 是它们的说明，没有说明的为 null。 */
     fun backgroundRunning(tasks: List<String?>): String
 
     fun connected(
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ): String
+
+    /** IDE 重启或项目重新打开后，绑定自动接回同一个会话。 */
+    fun reconnected(
         project: String,
         agent: String,
         sessionTitle: String,

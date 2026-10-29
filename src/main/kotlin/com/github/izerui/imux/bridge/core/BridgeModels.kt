@@ -102,6 +102,9 @@ sealed interface SessionEvent {
 
     /** CLI 报告后台任务结束（完成、失败或被停止）。 */
     data class BackgroundEnded(val taskId: String) : SessionEvent
+
+    /** 这一轮在电脑上被中断（Esc）：不会再有结论，也没有结束标记。 */
+    data object TurnInterrupted : SessionEvent
 }
 
 enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }
@@ -110,6 +113,11 @@ sealed interface DeliveryResult {
     data object Accepted : DeliveryResult
     data class Rejected(val reason: String) : DeliveryResult
     data object Unknown : DeliveryResult
+
+    companion object {
+        /** 渠道因限频拒发时 [Rejected.reason] 的取值；路由器据此稍后重发，而不是丢掉。 */
+        const val RATE_LIMITED = "rate limited"
+    }
 }
 
 enum class InboundOutcome {

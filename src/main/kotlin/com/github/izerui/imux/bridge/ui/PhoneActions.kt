@@ -112,5 +112,5 @@ internal fun showRobotSettings(project: Project?) = ShowSettingsUtil.getInstance
 internal fun phoneMenuFor(tabId: String): List<PhoneMenuEntry> {
     val manager = RobotManager.getInstance()
     val hub = BridgeHub.getInstance()
-    return phoneMenuModel(manager.robots(), hub.bindings::bindingOf, manager::statusOf, tabId, SessionTitles::of, BundleMenuLabels)
+    return phoneMenuModel(manager.robots(), hub.bindings::bindingOf, manager::statusOf, tabId, SessionTitles::of, BundleMenuLabels, ::robotMenuName)
 }

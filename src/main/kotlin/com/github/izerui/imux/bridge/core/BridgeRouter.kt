@@ -28,6 +28,13 @@ class BridgeRouter(
     private val attachmentStore: AttachmentStore = AttachmentStore.NONE,
     /** 终端未就绪时两次尝试之间的间隔；测试传 0。 */
     private val notReadyRetryDelayMs: Long = 300,
+    /** 渠道限频拒发后等多久重发；测试传 0。 */
+    private val rateLimitRetryDelayMs: Long = 20_000,
+    /** IDE 完成信号到了却还没读到回复时，最多等多久再判定这一轮没有文字回复。 */
+    private val noReplyGraceMs: Long = 3_000,
+    private val now: () -> Long = System::currentTimeMillis,
+    /** 自动接回后等机器人上线的最长时间；测试传 0。 */
+    private val reconnectWaitMs: Long = 30_000,
     /** 警告日志出口（core 不依赖 IDE 日志）；只传原因，不含路径、对端 id、正文与密钥。 */
     private val onWarning: (String) -> Unit = {},
 ) {
@@ -219,7 +226,13 @@ class BridgeRouter(
                     tab(tabId) { startTurn() }
                 }
                 SessionEvent.TurnEnded -> {
-                    sendReply(tabId, tab(tabId) { endByMarker() })
+                    sendSettledReply(tabId, tab(tabId) { endByMarker() })
+                    sendBackgroundRunning(tabId)
+                    sendAfterReply(tabId)
+                }
+                SessionEvent.TurnInterrupted -> {
+                    tab(tabId) { interrupt() }
+                    send(binding, texts.turnInterrupted())
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
                 }
@@ -228,7 +241,33 @@ class BridgeRouter(
                 is SessionEvent.BackgroundEnded -> tab(tabId) { backgroundEnded(event.taskId) }
             }
         }
-        sendReply(tabId, tab(tabId) { takeIfSettled() })
+        // 结算之后才读到的回复（完成信号先到）：立即发；若这一轮正等着它，排着的提示随后发
+        val late = tab(tabId) { takeIfSettled() }
+        if (late != null) {
+            val awaited = tab(tabId) { stopAwaitingReply() }
+            sendReply(tabId, late)
+            if (awaited) {
+                sendBackgroundRunning(tabId)
+                sendAfterReply(tabId)
+            }
+        }
+    }
+
+    /**
+     * 定时轮询时调用：IDE 结算后等了 [noReplyGraceMs] 仍没读到回复，判定这一轮没有文字回复，
+     * 说一声已完成，再发排着的提示。
+     */
+    suspend fun onQuiet(tabId: String) {
+        val due =
+            tab(tabId) {
+                val since = awaitingReplySince ?: return@tab false
+                (now() - since >= noReplyGraceMs).also { if (it) stopAwaitingReply() }
+            }
+        if (!due) return
+        val binding = bindings.bindingForTab(tabId) ?: return
+        send(binding, texts.turnWithoutReply())
+        sendBackgroundRunning(tabId)
+        sendAfterReply(tabId)
     }
 
     /** 这个标签当前读到的轮次，供 IDE 完成信号标明它属于哪一轮。 */
@@ -244,7 +283,13 @@ class BridgeRouter(
     ) {
         val completed = tab(tabId) { completeByIde(turn) }
         if (completed) {
-            sendReply(tabId, tab(tabId) { takeReply() })
+            val reply = tab(tabId) { takeReply() }
+            if (reply == null) {
+                // 完成信号可能先于最终回复写进记录：先等，见 onQuiet
+                tab(tabId) { awaitReply(now()) }
+                return
+            }
+            sendReply(tabId, reply)
             sendBackgroundRunning(tabId)
         }
         sendAfterReply(tabId)
@@ -294,6 +339,19 @@ class BridgeRouter(
         val tasks = tab(tabId) { backgroundHint() } ?: return
         val binding = bindings.bindingForTab(tabId) ?: return
         send(binding, texts.backgroundRunning(tasks))
+    }
+
+    /**
+     * 结束标记结算时发出这一轮的回复。结束标记写在回复之后，此刻还没有回复就是真的没有：说一声已完成，
+     * 否则手机上什么也看不到，会以为还在跑。
+     */
+    private suspend fun sendSettledReply(
+        tabId: String,
+        reply: PendingReply?,
+    ) {
+        if (reply != null) return sendReply(tabId, reply)
+        val binding = bindings.bindingForTab(tabId) ?: return
+        send(binding, texts.turnWithoutReply())
     }
 
     /** 发出本轮回复；换绑后旧绑定攒下的作废，不落到新目标的聊天里（切换空档漏消息可接受）。 */
@@ -364,6 +422,24 @@ class BridgeRouter(
     }
 
     /**
+     * IDE 重启或项目重新打开后，绑定自动接回了同一个会话：告诉本人连接已恢复。
+     * 重启时标签可能比机器人先就绪，等机器人上线（最多 [reconnectWaitMs]）再发，否则这条会因为还没有连接而丢掉。
+     */
+    suspend fun onReattached(
+        binding: Binding,
+        project: String,
+        agent: String,
+        sessionTitle: String,
+    ) {
+        var waited = 0L
+        while ((ownerOf(binding.robotId) == null || channelOf(binding.robotId) == null) && waited < reconnectWaitMs) {
+            delay(RECONNECT_POLL_MS)
+            waited += RECONNECT_POLL_MS
+        }
+        send(binding, texts.reconnected(project, agent, sessionTitle))
+    }
+
+    /**
      * 绑定已被移除后调用：不再做 epoch 校验，只向原聊天发断开提示。
      * 释放时没有完成信号，缓存里只是过程说明，不发；旧代次的缓存之后按代次作废。
      */
@@ -391,7 +467,7 @@ class BridgeRouter(
         for (segment in TextSegmenter.split(text, channel.maxTextBytes)) {
             // 每段发送前都核对：分段途中被换绑，剩余内容不能落到新目标的聊天里
             if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
-            deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment))
+            deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment)) { bindings.isCurrent(binding.robotId, binding.epoch) }
         }
     }
 
@@ -404,20 +480,33 @@ class BridgeRouter(
         deliver(channel, OutboundMessage(robotId, owner.chatId, text))
     }
 
+    /**
+     * 发一条消息。被渠道限频拒发时稍后重发（最多 [RATE_LIMIT_RETRIES] 次），不直接丢掉：
+     * 丢掉的若是一轮的最终回复，手机上会一直以为还在跑。重发期间同一标签后面的消息排在后面，顺序不乱；
+     * [stillCurrent] 为 false（已换绑或断开）就不再重发。结果不明（网络异常）不重发，以免重复。
+     */
     private suspend fun deliver(
         channel: ChannelAdapter,
         message: OutboundMessage,
+        stillCurrent: () -> Boolean = { true },
     ) {
-        val result =
-            try {
-                channel.send(message)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // 渠道异常不能冒泡到终端或监控；结果不明，交给上层显示，不自动重发
-                DeliveryResult.Unknown
+        repeat(RATE_LIMIT_RETRIES + 1) { attempt ->
+            if (attempt > 0) {
+                delay(rateLimitRetryDelayMs)
+                if (!stillCurrent()) return
             }
-        onDelivery(message, result)
+            val result =
+                try {
+                    channel.send(message)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // 渠道异常不能冒泡到终端或监控；结果不明，交给上层显示，不自动重发
+                    DeliveryResult.Unknown
+                }
+            onDelivery(message, result)
+            if (result != DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)) return
+        }
     }
 
     private fun markSeen(
@@ -439,6 +528,8 @@ class BridgeRouter(
     }
 
     private companion object {
+        const val RECONNECT_POLL_MS = 500L
+        const val RATE_LIMIT_RETRIES = 6
         const val SEEN_CAPACITY = 1000
         const val NOT_READY_ATTEMPTS = 3
     }

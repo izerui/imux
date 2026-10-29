@@ -46,22 +46,25 @@ fun phoneMenuModel(
     thisTabId: String,
     titleOf: (Binding) -> String,
     labels: MenuLabels,
+    /** 菜单里显示的机器人名，默认只用名字；IDE 里带上渠道简称，见 [robotMenuName]。 */
+    nameOf: (RobotRecord) -> String = { it.name },
 ): List<PhoneMenuEntry> {
     val entries = mutableListOf<PhoneMenuEntry>()
     var currentRobot: RobotId? = null
     robots.forEach { robot ->
         val binding = bindingOf(robot.id)
+        val name = nameOf(robot)
         entries +=
             when {
-                robot.owner() == null -> PhoneMenuEntry.Robot(robot.id, labels.unpaired(robot.name), false)
+                robot.owner() == null -> PhoneMenuEntry.Robot(robot.id, labels.unpaired(name), false)
                 binding?.target?.tabId == thisTabId -> {
                     currentRobot = robot.id
-                    PhoneMenuEntry.Robot(robot.id, labels.current(robot.name), false)
+                    PhoneMenuEntry.Robot(robot.id, labels.current(name), false)
                 }
-                binding != null -> PhoneMenuEntry.Robot(robot.id, labels.bound(robot.name, titleOf(binding)), true)
+                binding != null -> PhoneMenuEntry.Robot(robot.id, labels.bound(name, titleOf(binding)), true)
                 // 不在线也可以先连上，恢复在线后自动收发；只是不能谎称“空闲”
-                statusOf(robot.id) != ConnectionStatus.Online -> PhoneMenuEntry.Robot(robot.id, labels.offline(robot.name, statusOf(robot.id)), true)
-                else -> PhoneMenuEntry.Robot(robot.id, labels.idle(robot.name), true)
+                statusOf(robot.id) != ConnectionStatus.Online -> PhoneMenuEntry.Robot(robot.id, labels.offline(name, statusOf(robot.id)), true)
+                else -> PhoneMenuEntry.Robot(robot.id, labels.idle(name), true)
             }
     }
     if (robots.isEmpty()) entries += PhoneMenuEntry.NoRobots

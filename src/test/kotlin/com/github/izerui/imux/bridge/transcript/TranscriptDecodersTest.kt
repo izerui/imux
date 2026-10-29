@@ -34,7 +34,6 @@ class TranscriptDecodersTest {
             """{"type":"user","isMeta":true,"message":{"role":"user","content":"meta"}}""",
             """{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"摘要"}}""",
             """{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"子代理"}]}}""",
-            """{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"}}""",
             """{"type":"summary","summary":"x"}""",
             "not json",
         ).forEach { assertTrue(it, ClaudeTranscriptDecoder.decode(it).isEmpty()) }
@@ -59,7 +58,7 @@ class TranscriptDecodersTest {
             """{"type":"message","message":{"role":"assistant","stopReason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
         assertEquals(listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded), PiTranscriptDecoder.decode(pi("stop")))
         assertEquals(listOf(SessionEvent.AssistantText("结论")), PiTranscriptDecoder.decode(pi("toolUse")))
-        assertEquals(listOf(SessionEvent.AssistantText("结论")), PiTranscriptDecoder.decode(pi("aborted")))
+        assertEquals("被中断：中断前的半句话不算结论", listOf(SessionEvent.TurnInterrupted), PiTranscriptDecoder.decode(pi("aborted")))
     }
 
     @Test
@@ -239,6 +238,18 @@ class TranscriptDecodersTest {
         val waiting =
             """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a7</task-id>\n<summary>Agent \"评审\" is waiting on its own background work</summary>\n</task-notification>"}"""
         assertTrue("子代理还在等自己的后台工作，不算结束", ClaudeTranscriptDecoder.decode(waiting).isEmpty())
+    }
+
+    @Test
+    fun `用户中断：Claude 的中断标记、Codex 的 turn_aborted、Pi 的 aborted`() {
+        for (text in listOf("[Request interrupted by user]", "[Request interrupted by user for tool use]")) {
+            val line = """{"type":"user","message":{"role":"user","content":[{"type":"text","text":"$text"}]}}"""
+            assertEquals(text, listOf(SessionEvent.TurnInterrupted), ClaudeTranscriptDecoder.decode(line))
+        }
+        val aborted = """{"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}"""
+        assertEquals(listOf(SessionEvent.TurnInterrupted), CodexTranscriptDecoder.decode(aborted))
+        val replaced = """{"type":"event_msg","payload":{"type":"turn_aborted","reason":"replaced"}}"""
+        assertTrue("被新输入替换不算中断", CodexTranscriptDecoder.decode(replaced).isEmpty())
     }
 
     @Test

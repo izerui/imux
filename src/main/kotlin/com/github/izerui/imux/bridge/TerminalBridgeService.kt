@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.bridge.core.Binding
+import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.terminal.TabChange
 import com.github.izerui.imux.bridge.terminal.tabChangeFor
 import com.github.izerui.imux.bridge.transcript.SessionFile
@@ -9,8 +10,10 @@ import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.peer.PeerReviewEvent
 import com.github.izerui.imux.terminal.TerminalHost
 import com.github.izerui.imux.turn.TurnEventsListener
+import com.intellij.ide.AppLifecycleListener
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
@@ -18,10 +21,10 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
@@ -49,9 +52,9 @@ class TerminalBridgeService(
     private val poller = TabPoller(tails, hub.router) { BridgeSettings.getInstance().state.enabled }
 
     /** 结对审查提示按发生顺序逐条处理。 */
-    @OptIn(ExperimentalCoroutinesApi::class)
     private val peerEvents = Dispatchers.IO.limitedParallelism(1)
     private val seenTabs = ConcurrentHashMap.newKeySet<String>()
+    private val pendingReleases = ConcurrentHashMap.newKeySet<RobotId>()
 
     @Volatile
     private var projectClosing = false
@@ -68,8 +71,22 @@ class TerminalBridgeService(
         project.messageBus.connect(this).subscribe(
             ProjectCloseListener.TOPIC,
             object : ProjectCloseListener {
+                // 保存前就记下：退出时终端可能先于 projectClosing 被关掉，不能当成用户关了标签去断开手机
+                override fun projectClosingBeforeSave(project: Project) {
+                    if (project === this@TerminalBridgeService.project) projectClosing = true
+                }
+
                 override fun projectClosing(project: Project) {
                     if (project === this@TerminalBridgeService.project) projectClosing = true
+                }
+            },
+        )
+        // 确定要退出时记下（appClosing 之后还可能被取消，不用它）：之后关掉的标签都是退出顺带关的，绑定要留到重启后接回
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            AppLifecycleListener.TOPIC,
+            object : AppLifecycleListener {
+                override fun appWillBeClosed(isRestart: Boolean) {
+                    projectClosing = true
                 }
             },
         )
@@ -152,15 +169,45 @@ class TerminalBridgeService(
         seenTabs += open.keys
         for (binding in bindingsInProject()) {
             if (binding.target.tabId in open) SessionTitles.remember(binding)
-            when (val change = tabChangeFor(binding, open, seenTabs, projectClosing)) {
+            when (val change = tabChangeFor(binding, open, seenTabs, projectClosing || project.isDisposed)) {
                 TabChange.Keep -> Unit
-                is TabChange.Reattach -> hub.bindings.reattach(binding.robotId, change.tabId)
-                TabChange.Release -> release(binding)
+                is TabChange.Reattach -> hub.bindings.reattach(binding.robotId, change.tabId)?.let(::reattached)
+                TabChange.Release -> scheduleRelease(binding)
+            }
+        }
+    }
+
+    /** 同一个会话在新标签里恢复（IDE 重启、项目重新打开）：告诉手机连接已自动恢复。 */
+    private fun reattached(binding: Binding) {
+        LOG.info("会话标签恢复，机器人 ${binding.robotId.value} 自动接回")
+        SessionTitles.remember(binding)
+        val title = SessionTitles.of(binding)
+        hub.launch { hub.router.onReattached(binding, project.name, binding.target.agentType.displayName, title) }
+    }
+
+    /**
+     * 标签不见了先等一会儿再断开：IDE 退出、关项目时，终端可能比关闭信号先被关掉，立即断开会给手机发一条
+     * 「已断开」，重启后绑定却又自动接回。等待期间收到关闭信号就不断开；服务随项目关闭销毁时，这次等待一并取消。
+     */
+    private fun scheduleRelease(binding: Binding) {
+        if (!pendingReleases.add(binding.robotId)) return
+        scope.launch {
+            try {
+                delay(RELEASE_GRACE_MS)
+                withContext(Dispatchers.EDT) {
+                    if (projectClosing || project.isDisposed) return@withContext
+                    val current = hub.bindings.bindingOf(binding.robotId)?.takeIf { it.epoch == binding.epoch } ?: return@withContext
+                    val open = TerminalHost.getInstance(project).openTabsByTabId()
+                    if (tabChangeFor(current, open, seenTabs, projectClosing = false) == TabChange.Release) release(current)
+                }
+            } finally {
+                pendingReleases.remove(binding.robotId)
             }
         }
     }
 
     private fun release(binding: Binding) {
+        LOG.info("绑定的标签已关闭，断开机器人 ${binding.robotId.value}")
         // 标签已关闭，SessionTitles 用它还开着时记下的名字
         BindingService.release(binding, SessionTitles.of(binding))
         SessionTitles.forget(binding.target.tabId)
@@ -184,6 +231,7 @@ class TerminalBridgeService(
     companion object {
         private val LOG = logger<TerminalBridgeService>()
         private const val POLL_INTERVAL_MS = 1_000L
+        private const val RELEASE_GRACE_MS = 2_000L
 
         fun getInstance(project: Project): TerminalBridgeService = project.getService(TerminalBridgeService::class.java)
     }

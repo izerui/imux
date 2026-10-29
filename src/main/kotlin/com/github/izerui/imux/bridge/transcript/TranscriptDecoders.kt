@@ -103,7 +103,9 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         human: Boolean,
     ): List<SessionEvent> {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return emptyList()
+        if (trimmed.isEmpty()) return emptyList()
+        // 用户按 Esc 中断：Claude 记一条“[Request interrupted by user…]”
+        if (trimmed.startsWith(CLAUDE_INTERRUPTED_PREFIX)) return listOf(SessionEvent.TurnInterrupted)
         // 不是输入的（后台任务通知等）：不转发，但它们会开启新一轮；后台任务通知同时说明那个任务结束了
         if (!human) return listOfNotNull(backgroundEnded(trimmed), SessionEvent.TurnStarted)
         // 输入的斜杠命令记成 <command-name> 标记，转成原样的“/命令 参数”
@@ -198,6 +200,8 @@ object CodexTranscriptDecoder : TranscriptDecoder {
         when (payload.string("type")) {
             "task_started" -> listOf(SessionEvent.TurnStarted)
             "task_complete" -> listOf(SessionEvent.TurnEnded)
+            // 被新输入替换（replaced）时紧接着就是新一轮，只有用户中断才说
+            "turn_aborted" -> if (payload.string("reason") == "interrupted") listOf(SessionEvent.TurnInterrupted) else emptyList()
             "item_completed" -> {
                 val item = payload.obj("item")
                 if (item?.string("type") != "UserMessage") {
@@ -256,8 +260,12 @@ object PiTranscriptDecoder : TranscriptDecoder {
                             else -> null
                         }
                     }
-                // stop 正常结束，length 截断、error 出错也已停下；toolUse 还要继续，aborted 是被打断
-                if (message.string("stopReason") in PI_TURN_ENDS) events + SessionEvent.TurnEnded else events
+                // stop 正常结束，length 截断、error 出错也已停下；toolUse 还要继续，aborted 是被用户中断
+                when (message.string("stopReason")) {
+                    in PI_TURN_ENDS -> events + SessionEvent.TurnEnded
+                    "aborted" -> listOf(SessionEvent.TurnInterrupted)
+                    else -> events
+                }
             }
             else -> emptyList()
         }

@@ -37,4 +37,18 @@ class TerminalBridgeServiceSourceTest {
         assertTrue(lifecycle.compact(lifecycle.bodyAfter("private fun start()", '{')).contains("synchronized(this){switchGeneration++}"))
         assertTrue(lifecycle.compact(lifecycle.bodyAfter("private fun stop()", '{')).contains("BridgeHub.getInstance().router.discardPending()"))
     }
+
+    @Test
+    fun `标签不见了先等一会儿再断开，退出与关项目期间不断开，自动接回时告诉手机`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/TerminalBridgeService.kt")
+        val code = source.normalized
+        assertTrue("释放走延迟复核", code.contains("TabChange.Release -> scheduleRelease(binding)"))
+        val schedule = source.bodyAfter("private fun scheduleRelease(binding: Binding)", '{')
+        assertTrue(schedule.contains("delay(RELEASE_GRACE_MS)"))
+        assertTrue("等待后关闭中或已销毁就不断开", schedule.contains("if (projectClosing || project.isDisposed) return@withContext"))
+        assertTrue("保存前就记下项目在关闭", code.contains("override fun projectClosingBeforeSave(project: Project)"))
+        assertTrue("确定退出时记下，不用可被取消的 appClosing", code.contains("override fun appWillBeClosed(isRestart: Boolean)") && !code.contains("override fun appClosing()"))
+        assertTrue("自动接回后通知手机", code.contains("hub.bindings.reattach(binding.robotId, change.tabId)?.let(::reattached)"))
+        assertTrue(source.bodyAfter("private fun reattached(binding: Binding)", '{').contains("hub.router.onReattached("))
+    }
 }

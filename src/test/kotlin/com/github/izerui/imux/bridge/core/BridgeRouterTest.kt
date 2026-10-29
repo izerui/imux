@@ -4,6 +4,7 @@ import com.github.izerui.imux.model.AgentType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
@@ -64,6 +65,16 @@ class BridgeRouterTest {
         override fun transcriptRestarted() = "RESTARTED"
 
         override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"
+
+        override fun turnWithoutReply() = "NO_REPLY"
+
+        override fun turnInterrupted() = "INTERRUPTED"
+
+        override fun reconnected(
+            project: String,
+            agent: String,
+            sessionTitle: String,
+        ) = "RECONNECTED($project/$agent/$sessionTitle)"
 
         override fun connected(
             project: String,
@@ -354,6 +365,102 @@ class BridgeRouterTest {
                 ),
             )
             assertEquals(listOf("已让它继续", "BG(评审子代理)"), sentTexts())
+        }
+
+    @Test
+    fun `自动接回后等机器人上线再告诉手机已重新连接`() =
+        runBlocking {
+            registry.bind(robot, target)
+            var online = false
+            val waiting =
+                BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot && online) channel else null }, Texts, reconnectWaitMs = 5_000)
+            val job = launch { waiting.onReattached(registry.bindingOf(robot)!!, "imux", "Claude", "修复登录") }
+            delay(100)
+            assertTrue("机器人还没上线，不发", sentTexts().isEmpty())
+            online = true
+            job.join()
+            assertEquals(listOf("RECONNECTED(imux/Claude/修复登录)"), sentTexts())
+        }
+
+    @Test
+    fun `结束标记时没有文字回复：说一声已完成`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.AssistantText("我先跑一下"), SessionEvent.ToolStarted, SessionEvent.TurnEnded))
+            assertEquals(listOf("NO_REPLY"), sentTexts())
+        }
+
+    private var clock = 0L
+
+    private val clocked =
+        BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) channel else null }, Texts, noReplyGraceMs = 3_000, now = { clock })
+
+    @Test
+    fun `完成信号到了还没有回复：等一会儿仍没有才说已完成，排着的提示随后`() =
+        runBlocking {
+            registry.bind(robot, target)
+            clocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.ToolStarted))
+            clocked.onTurnCompleted("tab-1", clocked.currentTurn("tab-1"))
+            clocked.onAfterReply("tab-1", "审查中")
+            clock = 2_000
+            clocked.onQuiet("tab-1")
+            assertTrue("还在等迟到的回复", sentTexts().isEmpty())
+            clock = 3_000
+            clocked.onQuiet("tab-1")
+            clocked.onQuiet("tab-1")
+            assertEquals(listOf("NO_REPLY", "审查中"), sentTexts())
+        }
+
+    @Test
+    fun `完成信号先到、回复随后读到：照常发回复，不说没有回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            clocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted))
+            clocked.onTurnCompleted("tab-1", clocked.currentTurn("tab-1"))
+            clocked.onAfterReply("tab-1", "审查中")
+            clocked.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("结论")))
+            clock = 10_000
+            clocked.onQuiet("tab-1")
+            assertEquals(listOf("结论", "审查中"), sentTexts())
+        }
+
+    @Test
+    fun `电脑上中断这一轮：丢掉过程说明、说一声已中断，之后的完成信号不再说没有回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            clocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.AssistantText("我先看看"), SessionEvent.TurnInterrupted))
+            clocked.onTurnCompleted("tab-1", clocked.currentTurn("tab-1"))
+            clock = 10_000
+            clocked.onQuiet("tab-1")
+            assertEquals(listOf("INTERRUPTED"), sentTexts())
+        }
+
+    @Test
+    fun `渠道限频拒发时稍后重发，换绑后不再重发`() =
+        runBlocking {
+            registry.bind(robot, target)
+            var rejections = 2
+            val limited =
+                object : ChannelAdapter {
+                    override val robotId = robot
+                    override val maxTextBytes = 1000
+                    val attempts = mutableListOf<String>()
+
+                    override suspend fun send(message: OutboundMessage): DeliveryResult {
+                        attempts += message.text
+                        return if (rejections-- > 0) DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED) else DeliveryResult.Accepted
+                    }
+                }
+            val retrying = BridgeRouter(registry, { if (it == robot) owner else null }, port, { limited }, Texts, rateLimitRetryDelayMs = 0)
+            retrying.onStatus("tab-1", "结论")
+            assertEquals("限频两次后第三次发出", listOf("结论", "结论", "结论"), limited.attempts)
+
+            limited.attempts.clear()
+            rejections = 100
+            val rebinding =
+                BridgeRouter(registry, { if (it == robot) owner else null }, port, { limited }, Texts, rateLimitRetryDelayMs = 0, onDelivery = { _, _ -> registry.unbind(robot) })
+            rebinding.onStatus("tab-1", "另一条")
+            assertEquals("断开后不再重发", listOf("另一条"), limited.attempts)
         }
 
     @Test

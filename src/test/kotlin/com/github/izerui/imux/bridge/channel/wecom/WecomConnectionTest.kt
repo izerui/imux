@@ -175,12 +175,20 @@ class WecomConnectionTest {
         }
 
     @Test
-    fun `主动推送单聊 markdown 并按确认结果返回`() =
+    fun `服务端会话限频按限频返回，交给路由器稍后重发`() =
         runBlocking {
             val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") 846607 else 0 })
             startAndAwaitOnline(conn)
+            assertEquals(DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED), conn.send(OutboundMessage(RobotId("r"), "u1", "hi")))
+        }
+
+    @Test
+    fun `主动推送单聊 markdown 并按确认结果返回`() =
+        runBlocking {
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") 93000 else 0 })
+            startAndAwaitOnline(conn)
             val result = conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
-            assertEquals(DeliveryResult.Rejected("846607 e"), result)
+            assertEquals(DeliveryResult.Rejected("93000 e"), result)
             val frame = JsonParser.parseString(transports.first().sent.last()).asJsonObject
             assertEquals(1, frame["body"].asJsonObject["chat_type"].asInt)
             assertEquals("u1", frame["body"].asJsonObject["chatid"].asString)

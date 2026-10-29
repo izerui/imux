@@ -28,7 +28,10 @@ internal class TabPoller(
     suspend fun poll(tabId: String) =
         lock(tabId).withLock {
             // 关闭期间不读；读取位置留着，重新开启后按开关代次作废
-            if (enabled()) deliver(tabId, tails.read(tabId))
+            if (enabled()) {
+                deliver(tabId, tails.read(tabId))
+                router.onQuiet(tabId)
+            }
         }
 
     /**
