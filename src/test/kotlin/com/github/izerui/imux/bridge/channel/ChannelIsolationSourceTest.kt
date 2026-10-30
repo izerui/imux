@@ -23,7 +23,7 @@ class ChannelIsolationSourceTest {
     fun `渠道子包之间互不引用`() {
         val root = File("src/main/kotlin/com/github/izerui/imux/bridge/channel")
         val channels = root.listFiles().orEmpty().filter { it.isDirectory }.map { it.name }
-        assertTrue("没有找到渠道子包：$channels", channels.containsAll(listOf("wecom", "feishu", "dingtalk")))
+        assertTrue("没有找到渠道子包：$channels", channels.containsAll(listOf("wecom", "feishu", "dingtalk", "weixin")))
         channels.forEach { own ->
             File(root, own).walkTopDown().filter { it.isFile && it.extension == "kt" }.forEach { file ->
                 val code = SourceCode(file.path).normalized

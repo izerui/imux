@@ -40,6 +40,16 @@ class TranscriptDecodersTest {
     }
 
     @Test
+    fun `Claude 恢复会话补的占位回复不转发，合成的 API 报错照常算结论`() {
+        val placeholder =
+            """{"type":"assistant","isApiErrorMessage":false,"message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"No response requested."}]}}"""
+        val apiError =
+            """{"type":"assistant","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"API Error: 503"}]}}"""
+        assertTrue(ClaudeTranscriptDecoder.decode(placeholder).isEmpty())
+        assertEquals(listOf(SessionEvent.AssistantText("API Error: 503"), SessionEvent.TurnEnded), ClaudeTranscriptDecoder.decode(apiError))
+    }
+
+    @Test
     fun `本轮结束标记：Claude 只在含正文的 end_turn 行，Codex 为 task_complete，Pi 为 stop`() {
         val claudeText =
             """{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"结论"}]}}"""

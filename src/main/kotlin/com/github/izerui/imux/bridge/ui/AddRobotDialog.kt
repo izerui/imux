@@ -173,6 +173,13 @@ class AddRobotDialog(
     private companion object {
         /** 状态行超过这个宽度（未缩放像素）就换行；扫码页右栏在二维码旁边，按它取窄的。 */
         const val STATUS_WIDTH = 300
+
+        /** 渠道按推荐顺序排列，第一个默认选中（用户 2026-10-30 决定）。 */
+        val RECOMMENDED_ORDER = listOf(ChannelKind.FEISHU, ChannelKind.WECOM, ChannelKind.DINGTALK, ChannelKind.WEIXIN)
+
+        /** 名字后标“推荐”的渠道。 */
+        val RECOMMENDED = setOf(ChannelKind.FEISHU, ChannelKind.WECOM)
+
         val ONLINE_DOT = StatusDotIcon(BannerColors.ONLINE)
         val PROBLEM_DOT = StatusDotIcon(BannerColors.PROBLEM)
     }
@@ -191,7 +198,7 @@ class AddRobotDialog(
                 row { label(ImuxBundle.message("bridge.add.title")).bold() }
                 row { comment(ImuxBundle.message("bridge.add.subtitle")) }
                 buttonsGroup {
-                    ChannelKind.entries.chunked(2).forEach { kinds ->
+                    RECOMMENDED_ORDER.chunked(2).forEach { kinds ->
                         row {
                             kinds.forEach { kind ->
                                 radioButton(label(kind))
@@ -203,7 +210,7 @@ class AddRobotDialog(
                     }
                 }
             }
-        radios.getValue(ChannelKind.WECOM).isSelected = true
+        radios.getValue(RECOMMENDED_ORDER.first()).isSelected = true
 
         retryButton.addActionListener { startScan() }
         retryButton.isVisible = false
@@ -426,10 +433,7 @@ class AddRobotDialog(
     ) {
         label.icon = dot
         // 内容居中，超宽的一行会左右两头都被截掉：长文字限宽换行
-        label.text = if (label.getFontMetrics(label.font).stringWidth(text) > JBUI.scale(STATUS_WIDTH)) html(
-            text,
-            STATUS_WIDTH
-        ) else text
+        label.text = if (label.getFontMetrics(label.font).stringWidth(text) > JBUI.scale(STATUS_WIDTH)) html(text) else text
     }
 
     private fun show(card: Card) {
@@ -444,16 +448,19 @@ class AddRobotDialog(
     private fun spaced(code: String): String = code.toList().joinToString(" ")
 
     /** 多行说明用 HTML 换行；先转义，文案里的尖括号不会被当成标签。 */
-    private fun html(
-        text: String,
-        width: Int? = null,
-    ): String {
+    private fun html(text: String): String {
         val body = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")
-        return if (width == null) "<html>$body</html>" else "<html><div style='width:${width}px'>$body</div></html>"
+        // 限宽换行：长说明（如微信的推送限制提示）不撑宽对话框
+        return "<html><div style='width:${STATUS_WIDTH}px'>$body</div></html>"
     }
 
     private fun label(kind: ChannelKind): String =
-        channelLabel(kind) + if (ChannelFactories.forKind(kind) == null) "（" + ImuxBundle.message("bridge.channel.later") + "）" else ""
+        channelLabel(kind) +
+            when {
+                ChannelFactories.forKind(kind) == null -> "（" + ImuxBundle.message("bridge.channel.later") + "）"
+                kind in RECOMMENDED -> "（" + ImuxBundle.message("bridge.channel.recommended") + "）"
+                else -> ""
+            }
 
     private fun ui(block: () -> Unit) {
         ApplicationManager.getApplication().invokeLater({ if (!isDisposed) block() }, ModalityState.any())

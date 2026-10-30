@@ -7,6 +7,9 @@ import com.github.izerui.imux.bridge.channel.feishu.FeishuChannelFactory
 import com.github.izerui.imux.bridge.channel.feishu.FeishuConnection
 import com.github.izerui.imux.bridge.channel.feishu.FeishuOnboarding
 import com.github.izerui.imux.bridge.channel.wecom.WecomChannelFactory
+import com.github.izerui.imux.bridge.channel.weixin.WeixinChannelFactory
+import com.github.izerui.imux.bridge.channel.weixin.WeixinConnection
+import com.github.izerui.imux.bridge.channel.weixin.WeixinOnboarding
 import com.github.izerui.imux.bridge.core.RobotId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,5 +56,25 @@ class ChannelFactoriesTest {
         assertTrue(connection is DingtalkConnection)
         assertEquals(RobotId("r"), connection.robotId)
         assertEquals(6_000, connection.maxTextBytes)
+    }
+
+    @Test
+    fun `微信已登记，扫码说明用自己的文案`() {
+        assertEquals(WeixinChannelFactory, ChannelFactories.forKind(ChannelKind.WEIXIN))
+        assertEquals("bridge.add.scan.steps.weixin", WeixinChannelFactory.scanStepsKey)
+        assertTrue(WeixinChannelFactory.onboarding() is WeixinOnboarding)
+    }
+
+    @Test
+    fun `按凭据建立微信连接`() {
+        val connection =
+            WeixinChannelFactory.connect(
+                RobotId("r"),
+                mapOf("bot_token" to "BT", "base_url" to "https://x.weixin.qq.com", "bot_id" to "b", "user_id" to "u"),
+                CoroutineScope(Dispatchers.Default),
+            )
+        assertTrue(connection is WeixinConnection)
+        assertEquals(RobotId("r"), connection.robotId)
+        assertEquals(4_000, connection.maxTextBytes)
     }
 }

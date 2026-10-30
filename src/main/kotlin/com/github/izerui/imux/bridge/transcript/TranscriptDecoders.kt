@@ -35,6 +35,9 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         // 子代理、注入的元数据与压缩摘要都不是这条会话里人和助手说的话
         if (root.flag("isSidechain") || root.flag("isMeta") || root.flag("isCompactSummary")) return emptyList()
         val message = root.obj("message") ?: return emptyList()
+        // Claude Code 恢复会话时给没回答的那一轮补的占位 “No response requested.”（model 为 <synthetic>）不是回复；
+        // 同为合成消息的 API 报错（isApiErrorMessage）照常转发，手机上才知道这一轮失败了
+        if (message.string("model") == "<synthetic>" && !root.flag("isApiErrorMessage")) return emptyList()
         val content = message.get("content") ?: return emptyList()
         return when (message.string("role")) {
             "user" -> backgroundStarted(root, content) + userEvents(content, humanOrigin(root))

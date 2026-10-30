@@ -238,6 +238,8 @@ class JdkHttpJsonGet(
 /** 不显式设代理：JDK 走默认 ProxySelector，IDE 中即 IDE 的代理设置。 */
 class JdkHttpJson(
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(NETWORK_TIMEOUT).build(),
+    /** 整次请求的超时；长轮询（服务端挂起数十秒）需要比默认更长。 */
+    private val requestTimeout: Duration = NETWORK_TIMEOUT,
 ) : HttpJson {
     override suspend fun get(
         url: String,
@@ -260,7 +262,7 @@ class JdkHttpJson(
         headers: Map<String, String>,
     ): HttpJsonResponse {
         headers.forEach { (name, value) -> builder.header(name, value) }
-        val response = client.sendAsync(builder.timeout(NETWORK_TIMEOUT).build(), HttpResponse.BodyHandlers.ofString()).await()
+        val response = client.sendAsync(builder.timeout(requestTimeout).build(), HttpResponse.BodyHandlers.ofString()).await()
         val json = runCatching { JsonParser.parseString(response.body()) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
         return HttpJsonResponse(response.statusCode(), json)
     }
