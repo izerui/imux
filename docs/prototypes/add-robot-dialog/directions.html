@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>添加机器人 · 三个布局方向</title>
+<!--
+  imux“添加机器人”对话框三页（选渠道 → 扫码 → 配对）的三个布局方向。
+  约束：IntelliJ 深色主题（New UI 色值，沿用 terminal-channel-bridge.html），对话框内容区 560×360，
+  只用 Swing / Kotlin UI DSL 能做到的东西：标签、单选、按钮、图片、间距、对齐；没有阴影动画等网页效果。
+  二维码、配对码为示意数据。
+-->
+<style>
+  :root {
+    --ide-bg:#1e1f22; --ide-panel:#2b2d30; --ide-border:#393b40; --ide-select:#2e436e;
+    --ide-text:#dfe1e5; --ide-dim:#8c8f96; --ide-accent:#3574f0; --ide-green:#5fb865; --ide-yellow:#e0b153;
+    --stage:#0f1012;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--stage); color:var(--ide-text);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; font-size:13px; }
+  .mono { font-family:"JetBrains Mono",Menlo,Consolas,monospace; }
+  header.page { padding:28px 40px 8px; max-width:1900px; }
+  header.page h1 { font-size:18px; font-weight:600; margin:0 0 6px; }
+  header.page p { margin:0; color:var(--ide-dim); line-height:1.7; max-width:980px; }
+  section.dir { padding:22px 40px 30px; border-top:1px solid #23252a; }
+  section.dir h2 { font-size:15px; margin:0 0 4px; font-weight:600; }
+  section.dir .why { color:var(--ide-dim); margin:0 0 16px; line-height:1.7; max-width:1100px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; }
+  .cap { color:var(--ide-dim); font-size:12px; margin:8px 2px 0; }
+
+  /* 对话框外壳：标题栏 + 560×360 内容区 + 按钮栏，与截图中的 macOS 对话框一致 */
+  .dlg { width:600px; background:var(--ide-panel); border:1px solid #44474d; border-radius:10px; overflow:hidden; }
+  .dlg .tb { height:30px; display:flex; align-items:center; justify-content:center; position:relative; color:#b4b8bf; font-size:13px; }
+  .dlg .tb i { position:absolute; top:10px; width:12px; height:12px; border-radius:50%; }
+  .dlg .tb i:nth-child(1){left:12px;background:#ff5f57}.dlg .tb i:nth-child(2){left:32px;background:#5a5d63}.dlg .tb i:nth-child(3){left:52px;background:#28c840}
+  .dlg .body { height:360px; padding:0 20px; position:relative; }
+  .dlg .ft { height:56px; display:flex; align-items:center; justify-content:flex-end; gap:10px; padding:0 14px; }
+  .btn { height:28px; padding:0 18px; border-radius:6px; border:1px solid #5a5d63; display:inline-flex; align-items:center; color:var(--ide-text); }
+  .btn.def { border:2px solid var(--ide-accent); }
+  .btn.pri { background:var(--ide-accent); border-color:var(--ide-accent); color:#fff; }
+  .btn.off { color:#6f737a; border-color:#43454a; }
+  .link { color:#548af7; }
+  .dim { color:var(--ide-dim); }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex:none; }
+  .y { background:var(--ide-yellow); } .g { background:var(--ide-green); }
+  .status { display:flex; align-items:center; gap:8px; }
+  .radio { width:14px; height:14px; border-radius:50%; border:1px solid #6f737a; display:inline-block; flex:none; position:relative; top:2px; }
+  .radio.on { border:4px solid var(--ide-accent); background:#fff; }
+  .qr { background:#fff; padding:10px; border-radius:2px; display:inline-block; line-height:0; }
+  .steps { line-height:1.75; }
+  .code { font-size:32px; letter-spacing:12px; font-weight:700; }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>“添加机器人”三页的布局方向</h1>
+  <p>现在的问题：扫码页说明用固定宽度的 HTML 换行，标签比文字宽出一截，整块内容偏左；选渠道页、扫码页、配对页各自对齐，翻页时内容位置来回跳。
+  三个方向都只用 Swing 现有控件，内容区 560×360 不变，区别在“对齐的那根轴”放在哪里。</p>
+</header>
+
+<section class="dir">
+  <h2>方向 A　居中的固定栏</h2>
+  <p class="why">三页共用一根 420px 宽、水平居中、顶部对齐的内容栏，栏内文字左对齐（IntelliJ 向导的写法）。标题始终在同一高度，翻页时只有栏内内容换，位置不跳。扫码页二维码和说明在栏内左右排，整体居中。</p>
+  <div class="row" id="dirA"></div>
+</section>
+
+<section class="dir">
+  <h2>方向 B　一根中轴</h2>
+  <p class="why">参照微信、飞书桌面端扫码登录：所有内容沿垂直中轴居中堆叠。选渠道是一排四个等宽卡片；扫码页二维码在上、说明在下；配对码居中放大。最直观，“居中”最彻底，但说明要短，长提示会换成多行。</p>
+  <div class="row" id="dirB"></div>
+</section>
+
+<section class="dir">
+  <h2>方向 C　左列表 + 右内容（合并前两页）</h2>
+  <p class="why">参照 IntelliJ 设置页：左边固定渠道列表，点哪个右边直接出它的二维码，“选渠道”和“扫码”合成一页，少点一次“下一步”。右侧内容在剩余区域里居中。改动最大：流程从三页变两页。</p>
+  <div class="row" id="dirC"></div>
+</section>
+
+<script>
+const CH = [
+  ['飞书','扫码创建个人机器人'],
+  ['企业微信','扫码创建智能机器人，长连接收发'],
+  ['钉钉','扫码一键创建机器人'],
+  ['微信','扫码登录 ClawBot；每个微信号一个入口'],
+];
+// 示意二维码：确定性伪随机方块 + 三个定位角
+function qr(size){
+  const n=25, c=size/n; let s='', seed=7;
+  const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+  const finder=(x,y)=>`<rect x="${x*c}" y="${y*c}" width="${7*c}" height="${7*c}" fill="#000"/><rect x="${(x+1)*c}" y="${(y+1)*c}" width="${5*c}" height="${5*c}" fill="#fff"/><rect x="${(x+2)*c}" y="${(y+2)*c}" width="${3*c}" height="${3*c}" fill="#000"/>`;
+  const inF=(i,j)=>(i<8&&j<8)||(i>n-9&&j<8)||(i<8&&j>n-9);
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){ if(inF(i,j))continue; if(rnd()<.5) s+=`<rect x="${i*c}" y="${j*c}" width="${c+.3}" height="${c+.3}" fill="#000"/>`; }
+  return `<span class="qr"><svg width="${size}" height="${size}">${s}${finder(0,0)}${finder(n-7,0)}${finder(0,n-7)}</svg></span>`;
+}
+const frame=(body,ft,cap)=>`<div><div class="dlg"><div class="tb"><i></i><i></i><i></i>添加机器人</div><div class="body">${body}</div><div class="ft">${ft}</div></div><div class="cap">${cap}</div></div>`;
+const FT1=`<span class="btn def">Cancel</span><span class="btn pri">下一步</span>`;
+const FT2=`<span class="btn def">Cancel</span><span class="btn off">下一步</span>`;
+const FT3=`<span class="btn">Cancel</span><span class="btn off">完成</span>`;
+const STEPS_WX='1. 打开手机微信，扫一扫<br>2. 在手机上确认登录<br>3. 扫码后自动完成，无需配对码';
+const TIP='提示：你每给机器人发一条消息，它最多回 10 条（长回复每段算一条）';
+
+/* ---------- A ---------- */
+const colA=(inner)=>`<div style="position:absolute;left:50%;top:28px;width:420px;margin-left:-210px">${inner}</div>`;
+const A1=colA(`<div style="font-weight:600;font-size:14px">添加机器人</div>
+  <div class="dim" style="margin:4px 0 16px">只需手机扫码确认，无需配置开发者后台或复制密钥。</div>
+  ${CH.map((c,i)=>`<div style="display:flex;gap:10px;margin-bottom:12px"><span class="radio ${i?'':'on'}"></span><div><div>${c[0]}</div><div class="dim" style="font-size:12px;margin-top:2px">${c[1]}</div></div></div>`).join('')}`);
+const A2=colA(`<div style="font-weight:600;font-size:14px">用微信扫码</div>
+  <div class="dim" style="margin:4px 0 16px">二维码 5 分钟内有效</div>
+  <div style="display:flex;gap:22px;align-items:flex-start">${qr(170)}
+   <div><div class="dim steps">${STEPS_WX}</div>
+   <div class="dim" style="font-size:12px;margin-top:10px;line-height:1.6">${TIP}</div>
+   <div class="status" style="margin-top:16px"><span class="dot y"></span>等待扫码…</div></div></div>`);
+const A3=colA(`<div style="font-weight:600;font-size:14px">发送配对码</div>
+  <div class="dim" style="margin:4px 0 16px">扫码成功，已创建「imux 机器人 1」</div>
+  <div>为确认是你本人，请在企业微信里把下面的配对码发给这个机器人：</div>
+  <div class="mono code" style="margin:16px 0 6px">482 913</div>
+  <div class="dim" style="font-size:12px">5 分钟内有效。配对后只认你本人的消息。</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px"><span class="status"><span class="dot y"></span>等待配对码…</span><span class="link">换一个</span></div>`);
+document.getElementById('dirA').innerHTML=frame(A1,FT1,'1 选渠道')+frame(A2,FT2,'2 扫码（微信，带提示）')+frame(A3,FT3,'3 配对（企业微信、钉钉）');
+
+/* ---------- B ---------- */
+const mid=(inner)=>`<div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center">${inner}</div>`;
+const B1=mid(`<div style="font-weight:600;font-size:15px">添加机器人</div>
+  <div class="dim" style="margin:6px 0 22px">只需手机扫码确认，无需配置开发者后台或复制密钥。</div>
+  <div style="display:flex;gap:10px">${CH.map((c,i)=>`<div style="width:122px;height:118px;border:${i?'1px solid #4e5157':'2px solid var(--ide-accent)'};background:${i?'transparent':'#25324d'};border-radius:8px;padding:14px 10px;text-align:center">
+     <div style="font-weight:600">${c[0]}</div><div class="dim" style="font-size:12px;margin-top:8px;line-height:1.5">${c[1]}</div></div>`).join('')}</div>`);
+const B2=mid(`${qr(150)}
+  <div style="font-weight:600;font-size:14px;margin-top:14px">用微信扫码</div>
+  <div class="dim" style="margin-top:4px">打开手机微信扫一扫，在手机上确认登录，扫码后自动完成</div>
+  <div class="dim" style="font-size:12px;margin-top:6px">${TIP}</div>
+  <div class="status" style="margin-top:12px"><span class="dot y"></span>等待扫码，二维码 5 分钟内有效</div>`);
+const B3=mid(`<div class="status" style="font-weight:600;font-size:14px"><span class="dot g"></span>扫码成功，已创建「imux 机器人 1」</div>
+  <div class="dim" style="margin-top:10px">请在企业微信里把配对码发给这个机器人，确认是你本人</div>
+  <div class="mono code" style="margin:22px 0 10px;font-size:40px">482 913</div>
+  <div class="dim" style="font-size:12px">5 分钟内有效。配对后只认你本人的消息。</div>
+  <div class="status" style="margin-top:20px"><span class="dot y"></span>等待配对码…<span class="link" style="margin-left:14px">换一个</span></div>`);
+document.getElementById('dirB').innerHTML=frame(B1,FT1,'1 选渠道（卡片一排）')+frame(B2,FT2,'2 扫码（上图下文）')+frame(B3,FT3,'3 配对');
+
+/* ---------- C ---------- */
+const split=(sel,right)=>`<div style="display:flex;height:100%;margin:0 -20px">
+  <div style="width:150px;border-right:1px solid var(--ide-border);padding:14px 8px">
+   <div class="dim" style="font-size:12px;padding:0 8px 8px">渠道</div>
+   ${CH.map((c,i)=>`<div style="padding:7px 10px;border-radius:5px;margin-bottom:2px;${i===sel?'background:var(--ide-select)':''}">${c[0]}</div>`).join('')}
+  </div>
+  <div style="flex:1;display:flex;align-items:center;justify-content:center">${right}</div></div>`;
+const C1=split(3,`<div style="display:flex;gap:20px;align-items:center">${qr(150)}
+  <div style="width:190px"><div style="font-weight:600;font-size:14px">用微信扫码</div>
+  <div class="dim steps" style="margin-top:6px">${STEPS_WX}</div>
+  <div class="dim" style="font-size:12px;margin-top:8px;line-height:1.6">${TIP}</div>
+  <div class="status" style="margin-top:12px"><span class="dot y"></span>等待扫码…</div></div></div>`);
+const C1b=split(1,`<div style="display:flex;gap:20px;align-items:center">${qr(150)}
+  <div style="width:190px"><div style="font-weight:600;font-size:14px">用企业微信扫码</div>
+  <div class="dim steps" style="margin-top:6px">1. 打开手机企业微信，扫一扫<br>2. 确认创建机器人<br>3. 回到这里继续配对</div>
+  <div class="status" style="margin-top:12px"><span class="dot y"></span>等待扫码…</div></div></div>`);
+const C2=split(1,`<div style="width:300px"><div class="status" style="font-weight:600;font-size:14px"><span class="dot g"></span>已创建「imux 机器人 1」</div>
+  <div class="dim" style="margin-top:8px;line-height:1.6">在企业微信里把配对码发给这个机器人，确认是你本人：</div>
+  <div class="mono code" style="margin:16px 0 8px">482 913</div>
+  <div class="dim" style="font-size:12px">5 分钟内有效</div>
+  <div style="display:flex;justify-content:space-between;margin-top:16px"><span class="status"><span class="dot y"></span>等待配对码…</span><span class="link">换一个</span></div></div>`);
+document.getElementById('dirC').innerHTML=frame(C1b,FT2,'1 选渠道即扫码（企业微信）')+frame(C1,FT2,'1 选渠道即扫码（微信，带提示）')+frame(C2,FT3,'2 配对');
+</script>
+</body>
+</html>

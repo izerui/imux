@@ -18,11 +18,14 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.text.StringUtil
+import com.intellij.ui.JBColor
+import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBRadioButton
+import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.AlignY
 import com.intellij.ui.dsl.builder.Row
-import com.intellij.ui.dsl.builder.RowLayout
 import com.intellij.ui.dsl.builder.TopGap
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBFont
@@ -32,6 +35,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Font
 import java.awt.GridBagLayout
@@ -39,7 +43,9 @@ import javax.swing.Icon
 import javax.swing.ImageIcon
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.ListSelectionModel
 
 /**
  * 等待认主的一次检查结果。[INVALIDATED]、[EXPIRED]、[DISCONNECTED] 时这个配对码已经不可能成功，
@@ -125,8 +131,9 @@ internal class PairStateView(
 }
 
 /**
- * 添加机器人：选渠道 → 扫码 →（需要时）配对，配对成功留在配对页显示完成态。
- * 传入 [pairRobotId] 时直接进入配对卡片，为已保存但未认主的机器人重新配对。
+ * 添加机器人：左边渠道列表，选中即在右边扫码 →（需要时）配对，配对成功留在配对页显示完成态
+ * （版式见 docs/prototypes/add-robot-dialog，用户 2026-10-30 选定方向 C）。
+ * 扫码成功、机器人建好后锁定列表。传入 [pairRobotId] 时直接进入配对卡片，为已保存但未认主的机器人重新配对。
  * 网络与轮询在 RobotManager 的协程里进行，界面状态经 invokeLater(ModalityState.any()) 刷新。
  */
 class AddRobotDialog(
@@ -135,8 +142,26 @@ class AddRobotDialog(
 ) : DialogWrapper(project, true) {
     private val manager = RobotManager.getInstance()
     private val cards = CardLayout()
-    private val root = JPanel(cards)
-    private val radios = mutableMapOf<ChannelKind, JBRadioButton>()
+    private val content = JPanel(cards)
+    private val channelList =
+        JBList(CHANNELS).apply {
+            selectionMode = ListSelectionModel.SINGLE_SELECTION
+            cellRenderer =
+                object : ColoredListCellRenderer<ChannelKind>() {
+                    override fun customizeCellRenderer(
+                        list: JList<out ChannelKind>,
+                        value: ChannelKind,
+                        index: Int,
+                        selected: Boolean,
+                        hasFocus: Boolean,
+                    ) {
+                        val ready = ChannelFactories.forKind(value) != null
+                        append(label(value), if (ready) SimpleTextAttributes.REGULAR_ATTRIBUTES else SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                        toolTipText = ImuxBundle.message("bridge.channel.${value.id}.desc")
+                        ipad = JBUI.insets(5, 10)
+                    }
+                }
+        }
     private val qrLabel = JBLabel()
     private val qrTitle = JBLabel().apply { font = JBFont.label().asBold() }
     private val qrSteps = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
@@ -159,26 +184,34 @@ class AddRobotDialog(
     private val renewButton = JButton(ImuxBundle.message("bridge.add.pair.renew"))
     private var job: Job? = null
     private var driver: OnboardingDriver? = null
-    private var kind: ChannelKind = ChannelKind.WECOM
+    private var kind: ChannelKind = CHANNELS.first()
 
     @Volatile
     private var robotId: RobotId? = null
-    private var step = Card.CHANNEL
 
     /** 配对卡片实际显示的状态，只在 EDT 上用。 */
     private val pairView = PairStateView(::renderPairState)
 
-    private enum class Card { CHANNEL, QR, PAIR }
+    private enum class Card { QR, PAIR }
 
     private companion object {
-        /** 状态行超过这个宽度（未缩放像素）就换行；扫码页右栏在二维码旁边，按它取窄的。 */
-        const val STATUS_WIDTH = 300
+        /** 扫码页二维码旁说明栏的宽度（未缩放像素），超过就换行。 */
+        const val SCAN_TEXT_WIDTH = 210
 
-        /** 渠道按推荐顺序排列，第一个默认选中（用户 2026-10-30 决定）。 */
-        val RECOMMENDED_ORDER = listOf(ChannelKind.FEISHU, ChannelKind.WECOM, ChannelKind.DINGTALK, ChannelKind.WEIXIN)
+        /** 配对页文字的宽度（未缩放像素），超过就换行。 */
+        const val PAIR_TEXT_WIDTH = 320
 
-        /** 名字后标“推荐”的渠道。 */
-        val RECOMMENDED = setOf(ChannelKind.FEISHU, ChannelKind.WECOM)
+        /** 配对页备注每行最多字数，与 [PAIR_TEXT_WIDTH] 大致同宽。 */
+        const val NOTE_LINE_LENGTH = 26
+
+        /** 二维码边长（未缩放像素）。 */
+        const val QR_SIZE = 170
+
+        /** 左侧渠道列表宽度（未缩放像素）。 */
+        const val LIST_WIDTH = 140
+
+        /** 渠道按推荐顺序排列，打开时选中第一个（用户 2026-10-30 决定）。 */
+        val CHANNELS = listOf(ChannelKind.FEISHU, ChannelKind.WECOM, ChannelKind.DINGTALK, ChannelKind.WEIXIN)
 
         val ONLINE_DOT = StatusDotIcon(BannerColors.ONLINE)
         val PROBLEM_DOT = StatusDotIcon(BannerColors.PROBLEM)
@@ -186,44 +219,32 @@ class AddRobotDialog(
 
     init {
         title = ImuxBundle.message("bridge.add.title")
-        setOKButtonText(ImuxBundle.message("bridge.add.next"))
+        setOKButtonText(CommonBundle.getOkButtonText())
         init()
-        if (pairRobotId != null) startPairing(pairRobotId)
+        isOKActionEnabled = false
+        if (pairRobotId != null) {
+            startPairing(pairRobotId)
+        } else {
+            channelList.addListSelectionListener { e ->
+                if (!e.valueIsAdjusting) channelList.selectedValue?.let(::pick)
+            }
+            channelList.selectedIndex = 0
+        }
     }
 
     override fun createCenterPanel(): JComponent {
-        // 版式与文案对齐 docs/prototypes/terminal-channel-bridge.html 的“添加机器人 / 扫码 / 配对”三页
-        val channelPanel =
-            panel {
-                row { label(ImuxBundle.message("bridge.add.title")).bold() }
-                row { comment(ImuxBundle.message("bridge.add.subtitle")) }
-                buttonsGroup {
-                    RECOMMENDED_ORDER.chunked(2).forEach { kinds ->
-                        row {
-                            kinds.forEach { kind ->
-                                radioButton(label(kind))
-                                    .comment(ImuxBundle.message("bridge.channel.${kind.id}.desc"))
-                                    .enabled(ChannelFactories.forKind(kind) != null)
-                                    .applyToComponent { radios[kind] = this }
-                            }
-                        }.layout(RowLayout.PARENT_GRID).topGap(TopGap.SMALL)
-                    }
-                }
-            }
-        radios.getValue(RECOMMENDED_ORDER.first()).isSelected = true
-
         retryButton.addActionListener { startScan() }
         retryButton.isVisible = false
         val qrPanel =
             panel {
                 row {
-                    cell(qrLabel).align(AlignY.TOP)
+                    cell(qrLabel).align(AlignY.CENTER)
                     panel {
                         row { cell(qrTitle) }
-                        row { cell(qrSteps) }
+                        row { cell(qrSteps) }.topGap(TopGap.SMALL)
                         row { cell(qrStatus) }.topGap(TopGap.SMALL)
                         row { cell(retryButton) }
-                    }.align(AlignY.TOP)
+                    }.align(AlignY.CENTER)
                 }
             }
 
@@ -234,31 +255,36 @@ class AddRobotDialog(
                 row { cell(pairTitle) }
                 instructionRow = row { cell(pairInstruction) }.topGap(TopGap.SMALL)
                 codeRow = row { cell(pairCode) }
-                noteRow = row { comment(ImuxBundle.message("bridge.add.pair.note")) }
+                noteRow = row { comment(ImuxBundle.message("bridge.add.pair.note"), NOTE_LINE_LENGTH) }
                 row { cell(pairStatus) }.topGap(TopGap.SMALL)
                 renewRow = row { cell(renewButton) }
             }
 
-        // 选渠道页按原样靠左上排；扫码、配对页内容居中
-        root.add(channelPanel, Card.CHANNEL.name)
-        root.add(centered(qrPanel), Card.QR.name)
-        root.add(centered(pairPanel), Card.PAIR.name)
-        root.preferredSize = JBUI.size(560, 320)
-        return root
+        // 右边内容在剩余区域里居中
+        content.add(centered(qrPanel), Card.QR.name)
+        content.add(centered(pairPanel), Card.PAIR.name)
+        val list =
+            JBScrollPane(channelList).apply {
+                border = JBUI.Borders.customLineRight(JBColor.border())
+                preferredSize = JBUI.size(LIST_WIDTH, 0)
+            }
+        return JPanel(BorderLayout()).apply {
+            add(list, BorderLayout.WEST)
+            add(content, BorderLayout.CENTER)
+            preferredSize = JBUI.size(560, 360)
+        }
     }
 
     override fun doOKAction() {
-        when (step) {
-            Card.CHANNEL -> {
-                kind = radios.entries.first { it.value.isSelected }.key
-                show(Card.QR)
-                isOKActionEnabled = false
-                startScan()
-            }
+        if (paired) super.doOKAction()
+    }
 
-            Card.PAIR -> if (paired) super.doOKAction()
-            Card.QR -> Unit
-        }
+    /** 选中渠道即扫码；换渠道时取消上一个渠道的扫码。 */
+    private fun pick(selected: ChannelKind) {
+        if (ChannelFactories.forKind(selected) == null) return
+        kind = selected
+        show(Card.QR)
+        startScan()
     }
 
     override fun dispose() {
@@ -270,11 +296,10 @@ class AddRobotDialog(
         job?.cancel()
         qrLabel.icon = null
         qrTitle.text = ImuxBundle.message("bridge.add.scan", channelLabel(kind))
-        qrSteps.text = html(
-            ImuxBundle.message(
-                ChannelFactories.forKind(kind)?.scanStepsKey ?: "bridge.add.scan.steps",
-                channelLabel(kind)
-            )
+        setText(
+            qrSteps,
+            ImuxBundle.message(ChannelFactories.forKind(kind)?.scanStepsKey ?: "bridge.add.scan.steps", channelLabel(kind)),
+            SCAN_TEXT_WIDTH,
         )
         retryButton.isVisible = false
         val factory = ChannelFactories.forKind(kind) ?: return
@@ -287,7 +312,7 @@ class AddRobotDialog(
         when (state) {
             DriverState.Starting -> setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.starting"), PROBLEM_DOT)
             is DriverState.Qr -> {
-                qrLabel.icon = ImageIcon(qrImage(state.content, JBUI.scale(200)))
+                qrLabel.icon = ImageIcon(qrImage(state.content, JBUI.scale(QR_SIZE)))
                 setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.waiting"), PROBLEM_DOT)
             }
 
@@ -305,7 +330,11 @@ class AddRobotDialog(
                 retryButton.isVisible = true
             }
 
-            is DriverState.Done -> created(state.step)
+            is DriverState.Done -> {
+                // 机器人已建好，不能再换渠道
+                channelList.isEnabled = false
+                created(state.step)
+            }
         }
     }
 
@@ -329,6 +358,7 @@ class AddRobotDialog(
                             PROBLEM_DOT
                         )
                         retryButton.isVisible = true
+                        channelList.isEnabled = true
                     }
                 }
             }
@@ -339,7 +369,8 @@ class AddRobotDialog(
         val record = manager.robot(id) ?: return
         kind = record.kind
         robotId = id
-        isOKActionEnabled = false
+        channelList.setSelectedValue(kind, true)
+        channelList.isEnabled = false
         pairTitle.text = ImuxBundle.message("bridge.add.pair.repair", record.name)
         if (record.owner() != null) {
             finish()
@@ -380,7 +411,7 @@ class AddRobotDialog(
 
     private fun showPair(code: String) {
         shownCode = code
-        pairInstruction.text = ImuxBundle.message("bridge.add.pair.instruction", channelLabel(kind))
+        setText(pairInstruction, ImuxBundle.message("bridge.add.pair.instruction", channelLabel(kind)), PAIR_TEXT_WIDTH)
         pairCode.text = spaced(code)
         // 绿点只表示可用，等待配对时标题不带点，状态行的黄点说明进度
         pairTitle.icon = null
@@ -408,7 +439,7 @@ class AddRobotDialog(
                         if (status is ConnectionStatus.SendFailing) " " + statusLabel(status, paired = false) else ""
             }
         // 原型：等待与异常都是黄点
-        setStatus(pairStatus, text, PROBLEM_DOT)
+        setStatus(pairStatus, text, PROBLEM_DOT, PAIR_TEXT_WIDTH)
     }
 
     /** 配对成功：留在配对页，划掉配对码、绿点提示可以连接会话（原型的完成态）。 */
@@ -420,9 +451,8 @@ class AddRobotDialog(
         codeRow.visible(shownCode.isNotEmpty())
         pairCode.isEnabled = false
         pairCode.text = "<html><s>" + spaced(shownCode) + "</s></html>"
-        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), ONLINE_DOT)
+        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), ONLINE_DOT, PAIR_TEXT_WIDTH)
         show(Card.PAIR)
-        setOKButtonText(CommonBundle.getOkButtonText())
         isOKActionEnabled = true
     }
 
@@ -430,15 +460,28 @@ class AddRobotDialog(
         label: JBLabel,
         text: String,
         dot: Icon,
+        width: Int = SCAN_TEXT_WIDTH,
     ) {
         label.icon = dot
-        // 内容居中，超宽的一行会左右两头都被截掉：长文字限宽换行
-        label.text = if (label.getFontMetrics(label.font).stringWidth(text) > JBUI.scale(STATUS_WIDTH)) html(text) else text
+        setText(label, text, width)
+    }
+
+    /**
+     * 多行文字用 HTML 换行；只有某一行超过 [width] 才限宽折行。短文字不限宽，标签按文字实际宽度占位，
+     * 整块内容才能真正居中（一律限宽时标签比文字宽，内容会偏向一边）。
+     */
+    private fun setText(
+        label: JBLabel,
+        text: String,
+        width: Int,
+    ) {
+        val metrics = label.getFontMetrics(label.font)
+        val tooWide = text.lines().any { metrics.stringWidth(it) > JBUI.scale(width) }
+        label.text = if (tooWide || text.contains('\n')) html(text, width.takeIf { tooWide }) else text
     }
 
     private fun show(card: Card) {
-        step = card
-        cards.show(root, card.name)
+        cards.show(content, card.name)
     }
 
     /** 内容作为一个整体在对话框里水平、垂直居中，不贴左上角留出大片空白。 */
@@ -447,20 +490,17 @@ class AddRobotDialog(
     /** 原型里配对码逐位隔开，便于对照着在手机上输入。 */
     private fun spaced(code: String): String = code.toList().joinToString(" ")
 
-    /** 多行说明用 HTML 换行；先转义，文案里的尖括号不会被当成标签。 */
-    private fun html(text: String): String {
+    /** 先转义，文案里的尖括号不会被当成标签。 */
+    private fun html(
+        text: String,
+        width: Int?,
+    ): String {
         val body = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")
-        // 限宽换行：长说明（如微信的推送限制提示）不撑宽对话框
-        return "<html><div style='width:${STATUS_WIDTH}px'>$body</div></html>"
+        return if (width == null) "<html>$body</html>" else "<html><div style='width:${width}px'>$body</div></html>"
     }
 
     private fun label(kind: ChannelKind): String =
-        channelLabel(kind) +
-            when {
-                ChannelFactories.forKind(kind) == null -> "（" + ImuxBundle.message("bridge.channel.later") + "）"
-                kind in RECOMMENDED -> "（" + ImuxBundle.message("bridge.channel.recommended") + "）"
-                else -> ""
-            }
+        channelLabel(kind) + if (ChannelFactories.forKind(kind) == null) "（" + ImuxBundle.message("bridge.channel.later") + "）" else ""
 
     private fun ui(block: () -> Unit) {
         ApplicationManager.getApplication().invokeLater({ if (!isDisposed) block() }, ModalityState.any())
