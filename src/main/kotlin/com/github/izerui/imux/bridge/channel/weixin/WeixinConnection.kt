@@ -201,7 +201,8 @@ class WeixinConnection(
         coroutineScope {
             val inbound = Channel<WeixinMessage>(Channel.UNLIMITED)
             launch { for (message in inbound) deliver(message, sink) }
-            val connectedAt = now()
+            // 历史过滤基准：每次从断线或暂停恢复时更新，断开期间的消息不补（AGENTS.md）
+            var connectedAt = now()
             var cursor = ""
             var failures = 0
             var online = false
@@ -222,7 +223,8 @@ class WeixinConnection(
                             continue
                         }
 
-                        is WeixinResult.Network -> if (result.timeout) continue else result.reason
+                        // 服务端最长挂起约 35 秒，挂满请求超时（60 秒）说明链路不正常，与其它网络错误一样计入失败
+                        is WeixinResult.Network -> result.reason
                         is WeixinResult.Error -> {
                             if (result.expired) {
                                 val paused = reason(result)
@@ -233,6 +235,7 @@ class WeixinConnection(
                                     reportLink(owner, ConnectionStatus.Retrying(paused))
                                 }
                                 delay(expiredPauseMillis)
+                                connectedAt = now()
                                 continue
                             }
                             reason(result)
@@ -248,6 +251,7 @@ class WeixinConnection(
                     reportLink(owner, ConnectionStatus.Retrying(failure))
                 }
                 delay(if (failures % BACKOFF_EVERY == 0) backoffMillis else retryDelayMillis)
+                connectedAt = now()
             }
             inbound.close()
         }

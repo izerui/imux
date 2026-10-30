@@ -286,17 +286,23 @@ class DingtalkConnection(
         coroutineScope {
             // 机器人消息的 data，按到达顺序处理
             val inbound = Channel<String>(Channel.UNLIMITED)
-            launch { for (data in inbound) handle(owner, data, sink) }
+            launch {
+                for (data in inbound) {
+                    // 通道里已有消息时取出不挂起、不检查取消：stop 之后不再交出排队的消息
+                    ensureActive()
+                    handle(owner, data, sink)
+                }
+            }
             var failures = 0
             var authFailures = 0
             var immediate = true
             while (isActive) {
-                if (!immediate) delay(backoff(failures))
-                immediate = false
-                // 已在显示 Retrying 时保持，不闪回 Connecting
+                // 已在显示 Retrying 时保持，不闪回 Connecting；退避之前就报，断线后不再停在“在线”
                 if (failures < REPORT_RETRYING_AFTER) {
                     reportLink(owner, ConnectionStatus.Connecting)
                 }
+                if (!immediate) delay(backoff(failures))
+                immediate = false
                 when (
                     val end =
                         runSession(owner, inbound) {

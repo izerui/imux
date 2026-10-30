@@ -5,6 +5,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.Base64
@@ -68,6 +69,14 @@ class WeixinEventsTest {
     fun `非图片缺密钥或缺地址时不作为附件`() {
         assertNull(WeixinEvents.message(msg("""{"type":4,"file_item":{"file_name":"a","media":{"full_url":"https://cdn/f"}}}""")))
         assertNull(WeixinEvents.message(msg("""{"type":2,"image_item":{"media":{}}}""")))
+        assertNull(
+            "图片给了密钥却解析不了时不下载，免得把密文当图片交出",
+            WeixinEvents.message(msg("""{"type":2,"image_item":{"aeskey":"not-hex","media":{"full_url":"https://cdn/i"}}}""")),
+        )
+        assertNotNull(
+            "图片没有密钥字段时按明文",
+            WeixinEvents.message(msg("""{"type":2,"image_item":{"media":{"full_url":"https://cdn/i"}}}""")),
+        )
     }
 
     @Test

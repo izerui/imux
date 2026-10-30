@@ -16,6 +16,7 @@ import com.github.izerui.imux.bridge.robot.RobotStore
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -96,7 +97,14 @@ class RobotManager(parentScope: CoroutineScope) {
             )
         store.update { it.add(record) }
         bump()
-        withContext(Dispatchers.IO) { connect(record) }
+        // 记录已存下：连不上只如实显示失败（可重连），不抛给调用方，否则添加界面会当成没建好、重试再建一个
+        try {
+            withContext(Dispatchers.IO) { connect(record) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            setStatus(id, ConnectionStatus.Failed(e.message ?: e.javaClass.simpleName))
+        }
         return record
     }
 

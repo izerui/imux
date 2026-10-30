@@ -9,8 +9,6 @@ import com.github.izerui.imux.bridge.json.string
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.net.URLEncoder
-import java.net.http.HttpConnectTimeoutException
-import java.net.http.HttpTimeoutException
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.time.Duration
@@ -40,10 +38,9 @@ sealed interface WeixinResult<out T> {
             get() = if (ret == null && errcode == null && status !in 200..299) "HTTP $status" else "${ret ?: 0}/${errcode ?: 0}"
     }
 
-    /** 网络错误或响应无法解析；原因只含异常类名或 HTTP 状态，不含地址。[timeout] 为请求超时（长轮询里等同于没有新消息）。 */
+    /** 网络错误（含请求超时）或响应无法解析；原因只含异常类名或 HTTP 状态，不含地址。 */
     data class Network(
         val reason: String,
-        val timeout: Boolean = false,
     ) : WeixinResult<Nothing>
 
     companion object {
@@ -210,14 +207,16 @@ class WeixinApi(
                 throw e
             } catch (e: Exception) {
                 val cause = (e as? CompletionException)?.cause ?: e
-                // 异常消息可能带完整地址，只留类名。连接超时是连不上，不是长轮询挂满，要计入失败
-                return if (cause is HttpTimeoutException && cause !is HttpConnectTimeoutException) {
-                    WeixinResult.Network("timeout", timeout = true)
-                } else {
-                    WeixinResult.Network(cause.javaClass.simpleName.ifEmpty { cause.javaClass.name })
-                }
+                // 异常消息可能带完整地址，只留类名
+                return WeixinResult.Network(cause.javaClass.simpleName.ifEmpty { cause.javaClass.name })
             }
-        val json = response.json ?: return WeixinResult.Network("HTTP ${response.status}")
+        // 4xx 是确定的拒绝（如网关返回的 HTML 错误页），不是结果不明
+        val json =
+            response.json ?: return if (response.status in 400..499) {
+                WeixinResult.Error(response.status, null, null, "")
+            } else {
+                WeixinResult.Network("HTTP ${response.status}")
+            }
         val ret = json.primitiveText("ret")?.toIntOrNull()
         val errcode = json.primitiveText("errcode")?.toIntOrNull()
         val rejected = response.status !in 200..299 || (ret ?: 0) != 0 || (errcode ?: 0) != 0

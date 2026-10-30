@@ -31,7 +31,7 @@ class BridgeUiSourceTest {
 
     @Test
     fun `创建机器人失败时显示错误并可重试`() {
-        val createdBody = dialog.bodyAfter("private fun created(result: OnboardingStep.Succeeded)", '{')
+        val createdBody = dialog.bodyAfter("private fun created(", '{')
         assertTrue(
             "created() 必须捕获异常并显示 bridge.add.failed",
             dialog.compact(createdBody).contains("bridge.add.failed"),

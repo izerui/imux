@@ -119,6 +119,8 @@ class WeixinApiTest {
             assertEquals("unknown error", rejected.message)
             answer = 500 to "<html>"
             assertEquals(WeixinResult.Network("HTTP 500"), api.send("https://b", "T", "u", "x", null))
+            answer = 401 to "<html>"
+            assertEquals("4xx 错误页是确定的拒绝", "HTTP 401", (api.send("https://b", "T", "u", "x", null) as WeixinResult.Error).code)
             answer = 502 to """{"errmsg":"bad gateway"}"""
             assertEquals("没有 ret、errcode 时显示 HTTP 状态", "HTTP 502", (api.send("https://b", "T", "u", "x", null) as WeixinResult.Error).code)
             answer = 400 to """{"ret":-1}"""
@@ -131,11 +133,10 @@ class WeixinApiTest {
     fun `网络错误与超时`() =
         runBlocking {
             val timeoutApi = WeixinApi(WeixinFakeHttp { _, _, _ -> throw HttpTimeoutException("slow https://secret") }, WeixinFakeHttp { _, _, _ -> throw HttpTimeoutException("slow") })
-            assertEquals(WeixinResult.Network("timeout", timeout = true), timeoutApi.updates("https://b", "T", ""))
+            assertEquals(WeixinResult.Network("HttpTimeoutException"), timeoutApi.updates("https://b", "T", ""))
             val brokenApi = WeixinApi(WeixinFakeHttp { _, _, _ -> throw IOException("reset https://secret") }, WeixinFakeHttp { _, _, _ -> throw IOException("x") })
             val network = brokenApi.send("https://b", "T", "u", "x", null) as WeixinResult.Network
             assertEquals("IOException", network.reason)
-            assertFalse(network.timeout)
         }
 
     @Test

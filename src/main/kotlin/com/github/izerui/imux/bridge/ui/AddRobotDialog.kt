@@ -222,9 +222,8 @@ class AddRobotDialog(
         setOKButtonText(CommonBundle.getOkButtonText())
         init()
         isOKActionEnabled = false
-        if (pairRobotId != null) {
-            startPairing(pairRobotId)
-        } else {
+        // 要重新配对的机器人已被删除时，按正常添加流程走
+        if (pairRobotId == null || !startPairing(pairRobotId)) {
             channelList.addListSelectionListener { e ->
                 if (!e.valueIsAdjusting) channelList.selectedValue?.let(::pick)
             }
@@ -302,16 +301,28 @@ class AddRobotDialog(
             SCAN_TEXT_WIDTH,
         )
         retryButton.isVisible = false
+        driver = null
         val factory = ChannelFactories.forKind(kind) ?: return
-        val current = OnboardingDriver(factory.onboarding(), { state -> ui { render(state) } })
+        val scanKind = kind
+        lateinit var current: OnboardingDriver
+        // 换渠道后，旧扫码已投递到界面线程、还没执行的回调不再生效
+        current = OnboardingDriver(factory.onboarding(), { state -> ui { if (driver === current) render(state, scanKind) } })
         driver = current
         job = manager.launch { current.run() }
     }
 
-    private fun render(state: DriverState) {
+    private fun render(
+        state: DriverState,
+        scanKind: ChannelKind,
+    ) {
         when (state) {
-            DriverState.Starting -> setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.starting"), PROBLEM_DOT)
+            DriverState.Starting -> {
+                qrLabel.icon = null
+                setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.starting"), PROBLEM_DOT)
+            }
+
             is DriverState.Qr -> {
+                retryButton.isVisible = false
                 qrLabel.icon = ImageIcon(qrImage(state.content, JBUI.scale(QR_SIZE)))
                 setStatus(qrStatus, ImuxBundle.message("bridge.add.scan.waiting"), PROBLEM_DOT)
             }
@@ -333,17 +344,20 @@ class AddRobotDialog(
             is DriverState.Done -> {
                 // 机器人已建好，不能再换渠道
                 channelList.isEnabled = false
-                created(state.step)
+                created(state.step, scanKind)
             }
         }
     }
 
-    private fun created(result: OnboardingStep.Succeeded) {
+    private fun created(
+        result: OnboardingStep.Succeeded,
+        scanKind: ChannelKind,
+    ) {
         val name = result.suggestedName ?: ImuxBundle.message("bridge.add.defaultName", manager.robots().size + 1)
         job =
             manager.launch {
                 try {
-                    val record = manager.add(kind, result.credentials, result.ownerId, name)
+                    val record = manager.add(scanKind, result.credentials, result.ownerId, name)
                     robotId = record.id
                     ui { pairTitle.text = ImuxBundle.message("bridge.add.pair.created", record.name) }
                     if (record.owner() == null) ui { showPair(record.pairCode.orEmpty()) }
@@ -365,8 +379,8 @@ class AddRobotDialog(
     }
 
     /** 为已保存的机器人重新配对：续期配对码、确保连接在线，再等待认主。 */
-    private fun startPairing(id: RobotId) {
-        val record = manager.robot(id) ?: return
+    private fun startPairing(id: RobotId): Boolean {
+        val record = manager.robot(id) ?: return false
         kind = record.kind
         robotId = id
         channelList.setSelectedValue(kind, true)
@@ -374,11 +388,12 @@ class AddRobotDialog(
         pairTitle.text = ImuxBundle.message("bridge.add.pair.repair", record.name)
         if (record.owner() != null) {
             finish()
-            return
+            return true
         }
         reconnectIfDown(id)
         manager.renewPairCode(id)?.let { showPair(it.pairCode.orEmpty()) }
         job = manager.launch { awaitPaired(id) }
+        return true
     }
 
     /** 重新生成配对码；连接已失败、被接管或停止时一并重连，否则新配对码同样收不到。 */
@@ -496,7 +511,8 @@ class AddRobotDialog(
         width: Int?,
     ): String {
         val body = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")
-        return if (width == null) "<html>$body</html>" else "<html><div style='width:${width}px'>$body</div></html>"
+        // HTML 里的像素不随 IDE 缩放，按缩放后的宽度写，与判断超宽时一致
+        return if (width == null) "<html>$body</html>" else "<html><div style='width:${JBUI.scale(width)}px'>$body</div></html>"
     }
 
     private fun label(kind: ChannelKind): String =

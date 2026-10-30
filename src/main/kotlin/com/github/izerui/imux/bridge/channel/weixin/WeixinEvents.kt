@@ -90,9 +90,12 @@ object WeixinEvents {
         when (type(item)) {
             ITEM_IMAGE ->
                 item.obj("image_item")?.let { image ->
-                    // 图片优先用 image_item.aeskey；都没有时为明文（官方 media-download.ts:43-63）
-                    val key = image.string("aeskey")?.let(::hexKey) ?: image.obj("media")?.string("aes_key")?.let(::base64Key)
-                    ref(AttachmentKind.IMAGE, image.obj("media"), key, null, keyRequired = false)
+                    // 图片优先用 image_item.aeskey；都没有时为明文（官方 media-download.ts:43-63）。
+                    // 给了密钥却解析不了时不下载，否则会把密文当图片交出（官方 pic-decrypt.ts 此时报错）
+                    val rawHex = image.string("aeskey")?.takeIf(String::isNotBlank)
+                    val rawBase64 = image.obj("media")?.string("aes_key")?.takeIf(String::isNotBlank)
+                    val key = rawHex?.let(::hexKey) ?: rawBase64?.let(::base64Key)
+                    ref(AttachmentKind.IMAGE, image.obj("media"), key, null, keyRequired = rawHex != null || rawBase64 != null)
                 }
 
             // 有转写就当文字，不再下载音频

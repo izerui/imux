@@ -102,8 +102,8 @@ poll():（调用方每 1 秒调用；单次请求服务端最长挂 35 秒，请
 runLoop（直到 stop）：
   首轮：游标 = ""，connectedAt = now()，上报 Connecting
   循环：
-    POST getupdates（Bearer，请求超时固定 60 秒；请求超时按“本轮无新消息”处理，不计失败，立即下一轮；
-                     连接超时 HttpConnectTimeoutException 是连不上，按网络错误计入失败）
+    POST getupdates（Bearer，请求超时固定 60 秒；服务端最长挂约 35 秒，挂满 60 秒说明链路不正常，
+                     请求超时与连接超时都按网络错误计入失败，2026-10-30 整体审查后修正）
     成功（ret、errcode 为 0 或缺省）：
       首次成功 → 上报 Online（失败计数清零）
       返回游标非空 → 替换（只在内存）
@@ -114,7 +114,7 @@ runLoop（直到 stop）：
                          连续失败 5 次起上报 Retrying(原因)（如实显示，可重连）
 ```
 
-- **不补历史**（AGENTS.md）：游标只在内存，不落盘；每次 `start()` 从空游标开始，**丢弃 `create_time_ms` 早于本次 `connectedAt` 减 60 秒的消息**（空游标可能推送积压历史；留 60 秒余量防本机与服务器时钟偏差把新消息误丢）。没有 `create_time_ms` 的消息照常处理。
+- **不补历史**（AGENTS.md）：游标只在内存，不落盘；每次 `start()` 从空游标开始，**丢弃 `create_time_ms` 早于 `connectedAt` 减 60 秒的消息**；`connectedAt` 在每次失败等待、-14 暂停结束后更新为当前时间，断线或暂停期间的消息不补（空游标可能推送积压历史；留 60 秒余量防本机与服务器时钟偏差把新消息误丢）。没有 `create_time_ms` 的消息照常处理。
 - **过滤**：只处理 `message_type == 1` 且 `group_id` 为空的消息。
 - **身份**：`senderId = chatId = from_user_id`（满足 `ChannelSpi` 单聊约定）。
 - **去重**：按 `message_id`（字符串）去重，容量 1000；无 `message_id` 时用 `seq` 兜底（DT 做法），都没有则不去重。
@@ -149,7 +149,8 @@ runLoop（直到 stop）：
 | HTTP 2xx 且 ret、errcode 均为 0（或缺省） | `Accepted` | 清除发送受阻 |
 | ret 或 errcode == -14 且带了 context_token | 丢弃该用户的 context_token，不带 token 重发一次（不再占限频名额；HM weixin.py:1020-1042）；重发成功 `Accepted`，仍失败按下一行 | 不影响链路（官方 api.ts:585-596 发送失败只抛普通错误） |
 | 其它非 0 ret/errcode（含没带 token 的 -14、重发仍失败） | `Rejected("<code> <errmsg>")` | `SendFailing("bridge.weixin.sendRejected", "<code>")`；code 为 `<ret>/<errcode>`，两者都缺省且 HTTP 非 2xx 时为 `HTTP <status>` |
-| 网络异常、超时 | `Unknown` | 不变 |
+| 网络异常、超时、5xx 且无 JSON | `Unknown` | 不变 |
+| 4xx 且无 JSON（如网关错误页） | `Rejected("HTTP <status> ")` | `SendFailing("bridge.weixin.sendRejected", "HTTP <status>")` |
 
 - **为什么所有拒绝（含重发后仍 -14）都显示同一提示**：官方没有定义其它错误码；参考工程的经验值互相矛盾（DT：上下文闲置约 90–160 秒失效、约 7 条/5 分钟；CCW 依据第三方 SDK：24 小时 10 条、超出返回 -3；HM：-2 视为限频或会话失效），都不是官方结论。最简单且如实的做法是：发送被拒就显示“微信拒收：可能是会话过期或发送过多，请在微信给机器人发任意一条消息后再试（{0}）”，下一次发送成功自动恢复。**不在本地按经验值预先拦截**，以服务端返回为准。
 - **推送条数限制只做提示**（用户 2026-10-30 决定）：用户每发一条消息后机器人最多推 10 条（CCW `weixinStateStore.ts` `PUSH_QUOTA_LIMIT = 10`，用户实测一致），在添加机器人的扫码说明 `bridge.add.scan.steps.weixin` 末行简短提示（“你每给机器人发一条消息，它最多回 10 条（长回复每段算一条）”）；其它渠道的限额在个人日常使用中碰不到或已有超额状态显示，不加提示；代码不计数、不拦截、不排队。

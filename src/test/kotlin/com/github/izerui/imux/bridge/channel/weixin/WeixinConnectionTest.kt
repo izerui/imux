@@ -34,7 +34,8 @@ class WeixinConnectionTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val statuses = CopyOnWriteArrayList<ConnectionStatus>()
     private val received = CopyOnWriteArrayList<InboundMessage>()
-    private val clock = 1_700_000_000_000L
+    @Volatile
+    private var clock = 1_700_000_000_000L
 
     /** getupdates 的应答按入队顺序给出；队列空时挂起（模拟长轮询）。元素为 null 表示抛超时，"!" 开头表示抛 IOException。 */
     private val polls = Channel<String?>(Channel.UNLIMITED)
@@ -183,16 +184,33 @@ class WeixinConnectionTest {
         }
 
     @Test
-    fun `长轮询超时不算失败，立即下一轮`() =
+    fun `长轮询请求超时计入失败，恢复后在线`() =
         runBlocking {
-            val conn = connection()
-            start(conn)
+            start(connection())
             polls.send(updates())
+            awaitLast(ConnectionStatus.Online)
             polls.send(null)
-            polls.send(null)
-            awaitPolls(4)
-            stopAndAwait(conn)
-            assertEquals(listOf(ConnectionStatus.Connecting, ConnectionStatus.Online, ConnectionStatus.Stopped), statuses.toList())
+            awaitLast(ConnectionStatus.Connecting)
+            polls.send(updates())
+            awaitLast(ConnectionStatus.Online)
+            assertEquals(
+                listOf(ConnectionStatus.Connecting, ConnectionStatus.Online, ConnectionStatus.Connecting, ConnectionStatus.Online),
+                statuses.toList(),
+            )
+        }
+
+    @Test
+    fun `断线恢复后不交出断线期间的旧消息`() =
+        runBlocking {
+            start(connection())
+            polls.send(updates())
+            awaitLast(ConnectionStatus.Online)
+            val before = clock
+            clock += 10 * 60_000
+            polls.send("!reset")
+            polls.send(updates(text("1", "断线期间", time = before), text("2", "恢复后", time = clock)))
+            withTimeout(2_000) { while (received.none { it.externalMessageId == "2" }) delay(5) }
+            assertEquals(listOf("2"), received.map { it.externalMessageId })
         }
 
     @Test
