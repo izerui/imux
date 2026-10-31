@@ -24,6 +24,7 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.AlignY
 import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.TopGap
@@ -46,6 +47,33 @@ import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
+
+/**
+ * 把文字折成每行不超过 [width] 的若干行：原有换行保留；中日韩字符可在任意字之间断开，
+ * 其它文字按词断开（一个词本身超宽时独占一行）。
+ */
+internal fun wrapLines(
+    text: String,
+    width: Int,
+    measure: (String) -> Int,
+): List<String> =
+    text.split('\n').flatMap { paragraph ->
+        val lines = mutableListOf<String>()
+        var line = ""
+        for (token in WRAP_TOKEN.findAll(paragraph).map { it.value }) {
+            val candidate = line + token
+            if (line.isNotEmpty() && measure(candidate.trimEnd()) > width) {
+                lines += line.trimEnd()
+                line = token.trimStart()
+            } else {
+                line = candidate
+            }
+        }
+        lines + line.trimEnd()
+    }
+
+/** 折行单位：单个中日韩字符或全角标点，或一个连同后面空白的词。 */
+private val WRAP_TOKEN = Regex("[\\u2E80-\\u9FFF\\uF900-\\uFAFF\\uFF00-\\uFFEF\\u3000-\\u303F]|[^\\s\\u2E80-\\u9FFF\\uF900-\\uFAFF\\uFF00-\\uFFEF\\u3000-\\u303F]+\\s*|\\s+")
 
 /**
  * 等待认主的一次检查结果。[INVALIDATED]、[EXPIRED]、[DISCONNECTED] 时这个配对码已经不可能成功，
@@ -170,6 +198,7 @@ class AddRobotDialog(
     private val pairTitle = JBLabel().apply { font = JBFont.label().asBold() }
     private val pairCode = JBLabel()
     private val pairInstruction = JBLabel()
+    private val pairNote = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
     private val pairStatus = JBLabel()
 
     /** 当前配对码，配对成功后划掉显示；扫码即认主的渠道没有配对码。 */
@@ -200,9 +229,6 @@ class AddRobotDialog(
 
         /** 配对页文字的宽度（未缩放像素），超过就换行。 */
         const val PAIR_TEXT_WIDTH = 320
-
-        /** 配对页备注每行最多字数，与 [PAIR_TEXT_WIDTH] 大致同宽。 */
-        const val NOTE_LINE_LENGTH = 26
 
         /** 二维码边长（未缩放像素）。 */
         const val QR_SIZE = 170
@@ -251,13 +277,15 @@ class AddRobotDialog(
         renewButton.addActionListener { robotId?.let(::renew) }
         val pairPanel =
             panel {
-                row { cell(pairTitle) }
-                instructionRow = row { cell(pairInstruction) }.topGap(TopGap.SMALL)
-                codeRow = row { cell(pairCode) }
-                noteRow = row { comment(ImuxBundle.message("bridge.add.pair.note"), NOTE_LINE_LENGTH) }
-                row { cell(pairStatus) }.topGap(TopGap.SMALL)
-                renewRow = row { cell(renewButton) }
+                // 配对页各行在右侧居中，文字居中排
+                row { cell(pairTitle).align(AlignX.CENTER) }
+                instructionRow = row { cell(pairInstruction).align(AlignX.CENTER) }.topGap(TopGap.SMALL)
+                codeRow = row { cell(pairCode).align(AlignX.CENTER) }.topGap(TopGap.SMALL)
+                noteRow = row { cell(pairNote).align(AlignX.CENTER) }
+                row { cell(pairStatus).align(AlignX.CENTER) }.topGap(TopGap.MEDIUM)
+                renewRow = row { cell(renewButton).align(AlignX.CENTER) }
             }
+        setText(pairNote, ImuxBundle.message("bridge.add.pair.note"), PAIR_TEXT_WIDTH, center = true)
 
         // 右边内容在剩余区域里居中
         content.add(centered(qrPanel), Card.QR.name)
@@ -426,7 +454,7 @@ class AddRobotDialog(
 
     private fun showPair(code: String) {
         shownCode = code
-        setText(pairInstruction, ImuxBundle.message("bridge.add.pair.instruction", channelLabel(kind)), PAIR_TEXT_WIDTH)
+        setText(pairInstruction, ImuxBundle.message("bridge.add.pair.instruction", channelLabel(kind)), PAIR_TEXT_WIDTH, center = true)
         pairCode.text = spaced(code)
         // 绿点只表示可用，等待配对时标题不带点，状态行的黄点说明进度
         pairTitle.icon = null
@@ -454,7 +482,7 @@ class AddRobotDialog(
                         if (status is ConnectionStatus.SendFailing) " " + statusLabel(status, paired = false) else ""
             }
         // 原型：等待与异常都是黄点
-        setStatus(pairStatus, text, PROBLEM_DOT, PAIR_TEXT_WIDTH)
+        setStatus(pairStatus, text, PROBLEM_DOT, PAIR_TEXT_WIDTH, center = true)
     }
 
     /** 配对成功：留在配对页，划掉配对码、绿点提示可以连接会话（原型的完成态）。 */
@@ -466,7 +494,7 @@ class AddRobotDialog(
         codeRow.visible(shownCode.isNotEmpty())
         pairCode.isEnabled = false
         pairCode.text = "<html><s>" + spaced(shownCode) + "</s></html>"
-        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), ONLINE_DOT, PAIR_TEXT_WIDTH)
+        setStatus(pairStatus, ImuxBundle.message("bridge.add.pair.done"), ONLINE_DOT, PAIR_TEXT_WIDTH, center = true)
         show(Card.PAIR)
         isOKActionEnabled = true
     }
@@ -476,23 +504,25 @@ class AddRobotDialog(
         text: String,
         dot: Icon,
         width: Int = SCAN_TEXT_WIDTH,
+        center: Boolean = false,
     ) {
         label.icon = dot
-        setText(label, text, width)
+        setText(label, text, width, center)
     }
 
     /**
-     * 多行文字用 HTML 换行；只有某一行超过 [width] 才限宽折行。短文字不限宽，标签按文字实际宽度占位，
-     * 整块内容才能真正居中（一律限宽时标签比文字宽，内容会偏向一边）。
+     * 超过 [width] 的行按字体实际宽度自己折行，再用 HTML 换行显示。不用 CSS 宽度：Swing 换算 CSS 像素后
+     * 实际宽度比写的大，长文字不折、短文字又把标签撑宽，内容就偏向一边。
      */
     private fun setText(
         label: JBLabel,
         text: String,
         width: Int,
+        center: Boolean = false,
     ) {
         val metrics = label.getFontMetrics(label.font)
-        val tooWide = text.lines().any { metrics.stringWidth(it) > JBUI.scale(width) }
-        label.text = if (tooWide || text.contains('\n')) html(text, width.takeIf { tooWide }) else text
+        val lines = wrapLines(text, JBUI.scale(width), metrics::stringWidth)
+        label.text = if (lines.size == 1) lines.single() else html(lines, center)
     }
 
     private fun show(card: Card) {
@@ -507,12 +537,11 @@ class AddRobotDialog(
 
     /** 先转义，文案里的尖括号不会被当成标签。 */
     private fun html(
-        text: String,
-        width: Int?,
+        lines: List<String>,
+        center: Boolean,
     ): String {
-        val body = StringUtil.escapeXmlEntities(text).replace("\n", "<br>")
-        // HTML 里的像素不随 IDE 缩放，按缩放后的宽度写，与判断超宽时一致
-        return if (width == null) "<html>$body</html>" else "<html><div style='width:${JBUI.scale(width)}px'>$body</div></html>"
+        val body = lines.joinToString("<br>") { StringUtil.escapeXmlEntities(it) }
+        return if (center) "<html><center>$body</center></html>" else "<html>$body</html>"
     }
 
     private fun label(kind: ChannelKind): String =
