@@ -29,12 +29,15 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `Claude 跳过元数据、压缩摘要、子代理与中断标记`() {
+    fun `Claude 跳过元数据、压缩摘要、子代理与请求内容副本`() {
         listOf(
             """{"type":"user","isMeta":true,"message":{"role":"user","content":"meta"}}""",
             """{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"摘要"}}""",
             """{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"子代理"}]}}""",
             """{"type":"summary","summary":"x"}""",
+            // 发给模型的请求内容会把已有消息再抄一遍，不能当成第二次中断或新一轮
+            """{"type":"api-request-blob","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}""",
+            """{"type":"api-request-blob","message":{"role":"assistant","content":[{"type":"text","text":"结论"}]}}""",
             "not json",
         ).forEach { assertTrue(it, ClaudeTranscriptDecoder.decode(it).isEmpty()) }
     }
@@ -72,7 +75,7 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `带正文停下的其它收尾也算本轮结束：Claude 截断或报错，Pi 截断或出错`() {
+    fun `带正文停下的其它收尾：Claude 截断或报错算本轮结束，Pi 截断或出错不算`() {
         fun claude(stop: String) =
             """{"type":"assistant","message":{"role":"assistant","stop_reason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
         for (stop in listOf("max_tokens", "stop_sequence", "refusal")) {
@@ -85,7 +88,7 @@ class TranscriptDecodersTest {
         fun pi(stop: String) =
             """{"type":"message","message":{"role":"assistant","stopReason":"$stop","content":[{"type":"text","text":"结论"}]}}"""
         for (stop in listOf("length", "error")) {
-            assertEquals(stop, listOf(SessionEvent.AssistantText("结论"), SessionEvent.TurnEnded), PiTranscriptDecoder.decode(pi(stop)))
+            assertEquals("$stop 之后 Pi 可能自动压缩或重试接着干，不算本轮结束", listOf(SessionEvent.AssistantText("结论")), PiTranscriptDecoder.decode(pi(stop)))
         }
     }
 

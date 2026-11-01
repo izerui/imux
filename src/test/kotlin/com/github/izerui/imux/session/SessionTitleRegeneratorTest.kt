@@ -578,6 +578,13 @@ class SessionTitleRegeneratorTest {
     }
 
     @Test
+    fun `Claude 发给模型的请求内容副本不当成消息`() {
+        val blob = """{"type":"api-request-blob","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"""
+        assertNull(transcriptMessage(blob, AgentType.CLAUDE, 1_000))
+        assertNull(parseNavigatorTranscriptMessage(blob, AgentType.CLAUDE, 1_000))
+    }
+
+    @Test
     fun `导航器用户消息不受第一段截断影响`() {
         val line = """{"message":{"role":"user","content":[{"type":"text","text":"检查这个文件"},{"type":"tool_result","tool_use_id":"t1","content":"file content"},{"type":"text","text":"然后修复 bug"}]}}"""
 

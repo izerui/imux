@@ -32,6 +32,8 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val root = parseObject(line) ?: return emptyList()
         // 后台任务在主会话忙时结束：通知先排进队列，这一刻任务已经结束
         if (root.string("type") == "queue-operation") return listOfNotNull(root.string("content")?.let(::backgroundEnded))
+        // 只认对话行：api-request-blob 等是 Claude Code 记下的发给模型的请求内容，会把已有消息（含中断标记）再抄一遍
+        if (root.string("type") !in CLAUDE_MESSAGE_TYPES) return emptyList()
         // 子代理、注入的元数据与压缩摘要都不是这条会话里人和助手说的话
         if (root.flag("isSidechain") || root.flag("isMeta") || root.flag("isCompactSummary")) return emptyList()
         val message = root.obj("message") ?: return emptyList()
@@ -141,6 +143,7 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
 
     // 与 SessionTitleRegenerator 中的私有常量同值；那边是标题逻辑的私有细节，不跨包引用
     private const val CLAUDE_INTERRUPTED_PREFIX = "[Request interrupted by user"
+    private val CLAUDE_MESSAGE_TYPES = setOf("user", "assistant")
     private const val TASK_NOTIFICATION = "<task-notification>"
     private const val WAITING_ON_CHILDREN = "is waiting on its own background work"
     private val TASK_ID = Regex("<task-id>([^<]*)</task-id>")
@@ -263,7 +266,8 @@ object PiTranscriptDecoder : TranscriptDecoder {
                             else -> null
                         }
                     }
-                // stop 正常结束，length 截断、error 出错也已停下；toolUse 还要继续，aborted 是被用户中断
+                // 只有 stop 算本轮结束：length、error 之后 Pi 可能自动压缩或重试接着干（与 TurnSignalParser 一致），
+                // 真停在这两种上的由 agent_settled 上报的 IDE 完成信号结算。toolUse 还要继续，aborted 是被用户中断
                 when (message.string("stopReason")) {
                     in PI_TURN_ENDS -> events + SessionEvent.TurnEnded
                     "aborted" -> listOf(SessionEvent.TurnInterrupted)
@@ -275,7 +279,7 @@ object PiTranscriptDecoder : TranscriptDecoder {
     }
 }
 
-private val PI_TURN_ENDS = setOf("stop", "length", "error")
+private val PI_TURN_ENDS = setOf("stop")
 
 private fun claudeTurnEnds(stopReason: String?): Boolean = stopReason != null && stopReason != "tool_use" && stopReason != "pause_turn"
 

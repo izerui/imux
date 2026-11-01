@@ -121,6 +121,18 @@ class TabPollerTest {
 
     private fun assistant(text: String) = """{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"$text"}]}}"""
 
+    /** Pi 记录里带 stopReason 的助手正文。 */
+    private fun piAssistant(
+        text: String,
+        stopReason: String,
+    ) = """{"type":"message","message":{"role":"assistant","stopReason":"$stopReason","content":[{"type":"text","text":"$text"}]}}"""
+
+    /** Pi 记录里调用工具的助手消息。 */
+    private fun piToolCall() = """{"type":"message","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"c1","name":"read","arguments":{}}]}}"""
+
+    /** Claude 记录里没有 stop_reason 的助手正文。 */
+    private fun claudeAssistant(text: String) = """{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"$text"}]}}"""
+
     private fun start() =
         runBlocking {
             poller
@@ -143,7 +155,7 @@ class TabPollerTest {
             write(
                 """{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"第一句"}}""",
                 """{"type":"user","toolUseResult":{"backgroundTaskId":"task1","description":"后台测试"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool1","content":"running"}]}}""",
-                assistant("第一轮结论"),
+                claudeAssistant("第一轮结论"),
             )
             // 故意不写 stop_reason，复现依靠 IDE 轮次事件兜底的路径。
             val first = tracker.completedSince(runtime("shell"))
@@ -155,7 +167,7 @@ class TabPollerTest {
             tracker.completedSince(runtime("busy"))
             write(
                 """{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"第二句"}}""",
-                assistant("第二轮结论"),
+                claudeAssistant("第二轮结论"),
             )
             val second = tracker.completedSince(runtime("shell"))
             assertEquals(listOf("s1"), second.completed)
@@ -166,6 +178,39 @@ class TabPollerTest {
                 sent,
             )
             assertEquals(emptyList<String>(), tracker.completedSince(runtime("idle")).completed)
+        }
+
+    @Test
+    fun `Pi 截断或出错后接着干：不提前发完成提示，最终 stop 只发一次`() =
+        runBlocking {
+            start()
+            write(user("第一句"), piAssistant("被截断的半句", "length"))
+            poller.poll("tab")
+            write(piAssistant("临时错误", "error"))
+            poller.poll("tab")
+            assertEquals("截断、出错之后还在干，不发完成提示", listOf("LOCAL:\n第一句"), sent)
+
+            write(piToolCall(), piAssistant("最终结论", "stop"))
+            poller.poll("tab")
+            // 迟到的完成信号不重复发
+            poller.completed("tab", tails.mark("tab"))
+            assertEquals(listOf("LOCAL:\n第一句", "最终结论"), sent)
+        }
+
+    @Test
+    fun `Pi 最终停在截断或出错：由 IDE 完成信号结算发出`() =
+        runBlocking {
+            start()
+            write(user("第一句"), piAssistant("截断的结论", "length"))
+            poller.poll("tab")
+            assertEquals(listOf("LOCAL:\n第一句"), sent)
+            poller.completed("tab", tails.mark("tab"))
+            assertEquals(listOf("LOCAL:\n第一句", "截断的结论"), sent)
+
+            write(user("第二句"), piAssistant("出错前的输出", "error"))
+            poller.poll("tab")
+            poller.completed("tab", tails.mark("tab"))
+            assertEquals(listOf("LOCAL:\n第一句", "截断的结论", "LOCAL:\n第二句", "出错前的输出"), sent)
         }
 
     @Test

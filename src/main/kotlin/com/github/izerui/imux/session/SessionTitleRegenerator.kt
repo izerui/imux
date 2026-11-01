@@ -375,6 +375,8 @@ internal fun parseNavigatorTranscriptMessage(
     )
 }
 
+private val CLAUDE_TRANSCRIPT_LINE_TYPES = setOf(null, "user", "assistant")
+
 internal fun transcriptMessage(
     line: String,
     agentType: AgentType,
@@ -387,7 +389,12 @@ internal fun transcriptMessage(
     val root = runCatching { JsonParser.parseString(line).asJsonObject }.getOrNull() ?: return null
     val message =
         when (agentType) {
-            AgentType.CLAUDE, AgentType.PI -> {
+            // Claude 只认对话行：api-request-blob 是发给模型的请求内容，会把已有消息再抄一遍（没有 type 的旧行照常读）
+            AgentType.CLAUDE -> {
+                root.takeIf { it.string("type") in CLAUDE_TRANSCRIPT_LINE_TYPES }?.getAsJsonObject("message")
+            }
+
+            AgentType.PI -> {
                 root.getAsJsonObject("message")
             }
 
