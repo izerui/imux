@@ -23,13 +23,21 @@ internal class PlatformNameSync(
     private val latest = HashMap<RobotId, Long>()
     private var nextTicket = 0L
 
-    /** [isCurrent] 在 [lock] 内调用，判断发起请求的连接是否仍是该机器人的当前连接。 */
+    /**
+     * [isCurrent] 在 [lock] 内调用，判断发起请求的连接是否仍是该机器人的当前连接。
+     * 领序号前也要先查：旧连接的上线回调可能晚于新连接才执行到这里，若照样领号，会把新连接的请求作废。
+     * 连接已失效时不发请求，返回 null。
+     */
     fun sync(
         id: RobotId,
         isCurrent: () -> Boolean,
         fetch: suspend () -> String?,
-    ): Job {
-        val ticket = synchronized(lock) { (++nextTicket).also { latest[id] = it } }
+    ): Job? {
+        val ticket =
+            synchronized(lock) {
+                if (!isCurrent()) return null
+                (++nextTicket).also { latest[id] = it }
+            }
         return scope.launch {
             val name = fetch() ?: return@launch
             val wrote = synchronized(lock) { latest[id] == ticket && isCurrent() && write(id, name) }

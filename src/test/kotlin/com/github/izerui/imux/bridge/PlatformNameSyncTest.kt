@@ -51,7 +51,7 @@ class PlatformNameSyncTest {
     @Test
     fun `上线后写入平台名称并通知界面`() =
         runBlocking {
-            withTimeout(2_000) { sync.sync(robot, current()) { "我的助手" }.join() }
+            withTimeout(2_000) { sync.sync(robot, current()) { "我的助手" }!!.join() }
             assertEquals("我的助手", names[robot])
             assertEquals(1, changes.get())
             assertTrue(unlocked.toString(), unlocked.isEmpty())
@@ -62,8 +62,8 @@ class PlatformNameSyncTest {
         runBlocking {
             val older = CompletableDeferred<String?>()
             val newer = CompletableDeferred<String?>()
-            val first = sync.sync(robot, current()) { older.await() }
-            val second = sync.sync(robot, current()) { newer.await() }
+            val first = sync.sync(robot, current()) { older.await() }!!
+            val second = sync.sync(robot, current()) { newer.await() }!!
             withTimeout(2_000) {
                 newer.complete("新名")
                 second.join()
@@ -79,9 +79,9 @@ class PlatformNameSyncTest {
     fun `最新请求取不到名称时，较早请求的结果也不采用`() =
         runBlocking {
             val older = CompletableDeferred<String?>()
-            val first = sync.sync(robot, current()) { older.await() }
+            val first = sync.sync(robot, current()) { older.await() }!!
             withTimeout(2_000) {
-                sync.sync(robot, current()) { null }.join()
+                sync.sync(robot, current()) { null }!!.join()
                 older.complete("旧名")
                 first.join()
             }
@@ -94,9 +94,9 @@ class PlatformNameSyncTest {
         runBlocking {
             val other = RobotId("o")
             val gate = CompletableDeferred<String?>()
-            val first = sync.sync(robot, current()) { gate.await() }
+            val first = sync.sync(robot, current()) { gate.await() }!!
             withTimeout(2_000) {
-                sync.sync(other, current()) { "另一个" }.join()
+                sync.sync(other, current()) { "另一个" }!!.join()
                 gate.complete("我的助手")
                 first.join()
             }
@@ -113,7 +113,7 @@ class PlatformNameSyncTest {
                 sync.sync(robot, {
                     if (!Thread.holdsLock(lock)) unlocked += "isCurrent"
                     !replaced
-                }) { gate.await() }
+                }) { gate.await() }!!
             withTimeout(2_000) {
                 // 连接的替换与校验共用同一把锁：持锁替换后再放行请求
                 synchronized(lock) { replaced = true }
@@ -126,12 +126,37 @@ class PlatformNameSyncTest {
         }
 
     @Test
+    fun `新连接请求等待期间旧连接才发起同步，不作废新请求，新名字照常写入`() =
+        runBlocking {
+            // 模拟 RobotManager.connections[id]：新连接已登记，旧连接已失效
+            val currentConnection = "new"
+            fun connection(name: String): () -> Boolean = {
+                if (!Thread.holdsLock(lock)) unlocked += "isCurrent"
+                currentConnection == name
+            }
+            val newer = CompletableDeferred<String?>()
+            val fetchedByOld = AtomicInteger()
+            val job = sync.sync(robot, connection("new")) { newer.await() }!!
+            // 旧连接的上线回调晚到：此时它已不是当前连接
+            val stale = sync.sync(robot, connection("old")) { fetchedByOld.incrementAndGet(); "旧名" }
+            assertEquals(null, stale)
+            withTimeout(2_000) {
+                newer.complete("新名")
+                job.join()
+            }
+            assertEquals("新名", names[robot])
+            assertEquals(listOf(robot to "新名"), writes)
+            assertEquals(0, fetchedByOld.get())
+            assertTrue(unlocked.toString(), unlocked.isEmpty())
+        }
+
+    @Test
     fun `取不到名称或名称没变时不通知界面`() =
         runBlocking {
             names[robot] = "我的助手"
             withTimeout(2_000) {
-                sync.sync(robot, current()) { null }.join()
-                sync.sync(robot, current()) { "我的助手" }.join()
+                sync.sync(robot, current()) { null }!!.join()
+                sync.sync(robot, current()) { "我的助手" }!!.join()
             }
             assertEquals(0, changes.get())
         }
@@ -139,7 +164,7 @@ class PlatformNameSyncTest {
     @Test
     fun `校验与写入在锁内进行，持锁期间请求结果只能等待`() =
         runBlocking {
-            val job = sync.sync(robot, current()) { "我的助手" }
+            val job = sync.sync(robot, current()) { "我的助手" }!!
             synchronized(lock) {
                 Thread.sleep(100)
                 // 锁被占着，请求虽已返回也写不进去
