@@ -15,6 +15,7 @@ import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 
 /** Application-level imux preferences. */
 class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
@@ -94,6 +95,14 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     intTextField(1..50)
                         .bindIntText(settings.state::peerMaxRounds)
                         .comment(ImuxBundle.message("settings.peer.max.rounds.comment"))
+                }
+                row(ImuxBundle.message("settings.peer.default.partner")) {
+                    comboBox(listOf<AgentType?>(null) + AgentType.entries, textListCellRenderer(ImuxBundle.message("settings.peer.default.partner.auto")) { it.displayName })
+                        .bindItem(
+                            { AgentType.entries.firstOrNull { it.cli == settings.state.peerDefaultPartner } },
+                            { settings.state.peerDefaultPartner = it?.cli },
+                        )
+                        .comment(ImuxBundle.message("settings.peer.default.partner.comment"))
                 }
                 row(ImuxBundle.message("settings.peer.prompt")) {
                     promptArea = textArea()

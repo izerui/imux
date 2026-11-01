@@ -39,10 +39,11 @@
 
 ## 组件
 
-- `bridge/mcp/McpJsonRpc.kt`（从 `MobileMcpProtocol` 抽出）：JSON-RPC 校验、`initialize` / `ping` / `tools/list` 分发、`rpcError` / `rpcResult` / `toolResult`。`MobileMcpProtocol` 改为使用它，行为与测试不变。
-- `bridge/mcp/McpHttpGate.kt`（从 `MobileMcpHandler` 抽出）：回环地址、Host/Origin、Bearer、方法、Content-Type、Accept、协议版本、大小校验。两个 handler 共用。
+- `mcp/McpJsonRpc.kt`（中立包 `com.github.izerui.imux.mcp`，从 `MobileMcpProtocol` 抽出）：JSON-RPC 校验、`initialize` / `ping` / `tools/list` 分发、`rpcError` / `rpcResult` / `toolResult`。`MobileMcpProtocol` 改为使用它，行为与测试不变。
+- `mcp/LocalMcpHandler.kt`（从 `MobileMcpHandler` 抽出的抽象 handler）：回环地址、Host/Origin、Bearer、方法、Content-Type、Accept、协议版本、大小校验。两个 handler 共用。
+- `peer/mcp/PeerSessionTools.kt`：开关逻辑（默认伙伴、各 outcome、会话已关闭），直接操作 `PeerCoordinator`，须在 EDT 调用。
 - `peer/mcp/PeerMcpProtocol.kt`：三个工具的定义与参数校验，依赖 `PeerToolsBackend` 接口（`status()`、`enable(agent: String?)`、`disable()`）。
-- `peer/mcp/PeerMcpService.kt`（APP 级 service）：令牌登记与撤销，实现 backend（tabId → sessionKey → coordinator，切到 EDT）。
+- `peer/mcp/PeerMcpService.kt`（APP 级 service）：令牌登记与撤销，把 `PeerSessionTools` 包成 backend（切到 EDT），发留痕通知。
 - `peer/mcp/PeerMcpHandler.kt`：路径 `/imux/session-mcp`。
 - `peer/mcp/PeerLaunchContributor.kt`：注入 `TerminalMcpServer("imux_session", url, "IMUX_SESSION_TOKEN")` 与环境变量 `IMUX_SESSION_URL` / `IMUX_SESSION_TOKEN`；Pi 加载扩展脚本。plugin.xml 注册 contributor 与 handler。
 - Pi：`pi-imux-mobile-mcp.js` 泛化为按环境变量注册多个服务的 `pi-imux-mcp.js`（`imux_mobile` 与 `imux_session` 各自读自己的 URL/令牌，缺哪个跳过哪个），两个 contributor 共用这一个脚本，Pi 只加载一次（`piExtensions` 去重）。
@@ -62,7 +63,7 @@
 ## 测试
 
 - `PeerMcpProtocolTest`：`tools/list` 内容；参数校验（多余参数、`agent` 非字符串、未知 agent）；各 outcome 映射；`session_closed`。
-- `PeerMcpServiceTest`：默认伙伴选择规则（设置优先、跳过当前类型、仅一个类型时回落）；tabId→sessionKey 映射与 key 迁移；令牌撤销后返回 `session_closed`；同伙伴幂等不调 `bind`。
+- `PeerSessionToolsTest`：默认伙伴选择规则（设置优先、跳过当前类型、仅一个类型时回落）；tabId→sessionKey 映射与 key 迁移；令牌撤销后返回 `session_closed`；同伙伴幂等不调 `bind`。
 - 抽取公共代码后 `bridge/mcp` 现有测试全部通过。
 - Pi 脚本：仅设 session 环境变量时只注册 `imux_session`；两者都设时注册两个。
 - 启动注入：Claude / Codex 命令行配置中出现 `imux_session`。

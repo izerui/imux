@@ -205,6 +205,9 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
 
         /** 结对编程：用户自定义副驾驶提示词；null 表示使用默认。 */
         var peerPromptOverride: String? by string(null)
+
+        /** 结对编程：会话通过 MCP 开启结对且未指定伙伴时用的伙伴（cli 名）；null 表示自动选择。 */
+        var peerDefaultPartner: String? by string(null)
     }
 
     /**

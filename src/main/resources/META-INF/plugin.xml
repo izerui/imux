@@ -164,6 +164,7 @@
         -->
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.MobileMcpHandler"/>
+        <httpRequestHandler implementation="com.github.izerui.imux.peer.mcp.PeerMcpHandler"/>
 
         <statusBarWidgetFactory
                 id="imux.phoneBridge"
@@ -172,6 +173,7 @@
 
     <extensions defaultExtensionNs="com.github.izerui.imux">
         <terminalLaunchContributor implementation="com.github.izerui.imux.bridge.mcp.MobileLaunchContributor"/>
+        <terminalLaunchContributor implementation="com.github.izerui.imux.peer.mcp.PeerLaunchContributor"/>
         <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
     </extensions>
 
