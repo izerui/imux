@@ -25,7 +25,7 @@
 
 - `PeerCoordinator.reviewOnce` 增加参数 `keepPairing: Boolean = false`。为 `true` 时：`bind` 后不登记 `oneShotSessions`，立即启动一轮审查。之后所有分支（审查结束、新一轮开始、取消、停止、迁移、轮次上限）都走普通结对路径，不新增针对组合的判断。
 - 审查要求改为挂在本轮的 `PeerRun` 上（新增字段）：`runReviewAndInject` 拼接提示词、生成 `PeerOutcome` 时读本轮的要求。单次审查（不勾选）把要求同样放到它那一轮的 `PeerRun` 上，行为不变。要求随这一轮结束失效，结对后续各轮自然不带。
-- `ReviewOnceDialog` 增加勾选框，`showReviewOnceDialog` 把勾选结果传给 `reviewOnce`。文案新增一条键（`ImuxBundle.properties`、`ImuxBundle_zh_CN.properties`，其他语言回退英文）。
+- `ReviewOnceDialog` 增加勾选框，`showReviewOnceDialog` 把勾选结果传给 `reviewOnce`。文案新增一条键，加到全部 10 个语言文件（`ImuxBundleTest` 要求各语言键一致；本组其他语言沿用英文）。
 
 ## 测试
 
