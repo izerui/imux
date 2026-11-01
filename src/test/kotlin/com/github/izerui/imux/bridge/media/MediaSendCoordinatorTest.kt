@@ -102,7 +102,7 @@ class MediaSendCoordinatorTest {
         } finally { coordinator.close() }
     }
 
-    @Test fun `先到调用阻塞上传时后到调用按顺序等待`() = runBlocking {
+    @Test fun `首个上传阻塞时第二个发送可以独立完成`() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val sender = Sender().apply { beforeUpload = { if (it.fileName == "first.txt") { entered.complete(Unit); release.await() } } }
@@ -111,8 +111,8 @@ class MediaSendCoordinatorTest {
             val first = coordinator.enqueue(request("first.txt", MediaKind.FILE), Route(sender))
             entered.await()
             val second = coordinator.enqueue(request("second.txt", MediaKind.FILE), Route(sender))
-            assertFalse(second.isCompleted)
-            assertEquals(listOf("first.txt"), sender.uploads.map { it.first })
+            assertEquals("accepted", withTimeout(2000) { second.await() }.outcome)
+            assertFalse(first.isCompleted)
             release.complete(Unit)
             assertEquals("accepted", first.await().outcome)
             assertEquals("accepted", second.await().outcome)
@@ -146,21 +146,53 @@ class MediaSendCoordinatorTest {
         } finally { coordinator.close() }
     }
 
-    @Test fun `排队项过期后不会打开文件`() = runBlocking {
-        var clock = 0L
+    @Test fun `一个上传超时不会取消另一个发送`() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
-        val sender = Sender().apply { beforeUpload = { entered.complete(Unit); release.await() } }
-        val coordinator = MediaSendCoordinator(this, timeoutMillis = 1000, nanoTime = { clock })
+        val expireFirst = CompletableDeferred<Unit>()
+        var timerCount = 0
+        val sender = Sender().apply {
+            beforeUpload = { if (it.fileName == "first.txt") entered.complete(Unit); release.await() }
+        }
+        val coordinator = MediaSendCoordinator(this, waitForTimeout = {
+            if (timerCount++ == 0) expireFirst.await() else CompletableDeferred<Unit>().await()
+        })
         try {
             val first = coordinator.enqueue(request("first.txt", MediaKind.FILE), Route(sender))
             entered.await()
-            val second = coordinator.enqueue(MediaRequest("/not-present-at-all", MediaKind.FILE), Route(sender))
-            clock = 2_000_000_000
+            val second = coordinator.enqueue(request("second.txt", MediaKind.FILE), Route(sender))
+            expireFirst.complete(Unit)
+            val result = withTimeout(2000) { first.await() }
+            assertEquals("rejected", result.outcome)
+            assertEquals("timeout", result.reason)
+            assertFalse(second.isCompleted)
             release.complete(Unit)
-            first.await()
-            assertEquals("timeout", second.await().reason)
-            assertEquals(1, sender.uploads.size)
+            assertEquals("accepted", withTimeout(2000) { second.await() }.outcome)
+            assertEquals(listOf(MediaKind.FILE), sender.sends)
+        } finally { coordinator.close() }
+    }
+
+    @Test fun `关闭终端取消并发上传并拒绝新发送`() = runBlocking {
+        val firstEntered = CompletableDeferred<Unit>()
+        val secondEntered = CompletableDeferred<Unit>()
+        val sender = Sender().apply {
+            beforeUpload = {
+                if (it.fileName == "first.txt") firstEntered.complete(Unit) else secondEntered.complete(Unit)
+                CompletableDeferred<Unit>().await()
+            }
+        }
+        val coordinator = MediaSendCoordinator(this)
+        try {
+            val first = coordinator.enqueue(request("first.txt", MediaKind.FILE), Route(sender))
+            val second = coordinator.enqueue(request("second.txt", MediaKind.FILE), Route(sender))
+            withTimeout(2000) { firstEntered.await(); secondEntered.await() }
+            coordinator.close()
+            assertEquals("cancelled", first.await().reason)
+            assertEquals("rejected", first.await().outcome)
+            assertEquals("cancelled", second.await().reason)
+            assertEquals("rejected", second.await().outcome)
+            assertEquals("session_closed", coordinator.enqueue(request("third.txt"), Route(sender)).await().reason)
+            assertTrue(sender.sends.isEmpty())
         } finally { coordinator.close() }
     }
 

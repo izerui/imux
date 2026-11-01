@@ -12,15 +12,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.cancellation.CancellationException
 
-/** 快照必须在入队时捕获；[commit] 与绑定更新共享短同步边界，不执行网络 IO。 */
+/** 快照必须在接纳调用时捕获；[commit] 与绑定更新共享短同步边界，不执行网络 IO。 */
 interface MediaRoute {
     val channel: String
     val chatId: String
@@ -30,20 +25,18 @@ interface MediaRoute {
 }
 
 /**
- * 一次终端运行一条 FIFO。请求接纳和入队同步完成，慢文件准备不会改变调用顺序。
- * 取消只作用于对应请求；终端关闭则取消 worker 和剩余请求，不持久化、不补发。
+ * 每次发送独立执行，不保证调用之间的发送顺序。
+ * 取消只作用于对应请求；终端关闭则取消活动请求，不持久化、不补发。
  */
 class MediaSendCoordinator(
     private val scope: CoroutineScope,
     private val files: MediaFilePreparer = MediaFilePreparer(),
     private val timeoutMillis: Long = 120_000,
     private val waitForTimeout: suspend (Long) -> Unit = { kotlinx.coroutines.delay(it) },
-    private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private class Entry(
         val request: MediaRequest,
         val route: MediaRoute,
-        val deadline: Long,
         val result: CompletableDeferred<MediaResult>,
     ) {
         @Volatile var operation: Job? = null
@@ -54,63 +47,37 @@ class MediaSendCoordinator(
 
     private val lock = Any()
     private val pending = LinkedHashSet<Entry>()
-    private val queue = Channel<Entry>(Channel.UNLIMITED)
     private var closed = false
-    private val worker = scope.launch {
-        try {
-            for (entry in queue) {
-                if (!entry.result.isActive) {
-                    entry.timer?.cancel()
-                    synchronized(lock) { pending.remove(entry) }
-                    continue
-                }
-                val operation = scope.async(start = CoroutineStart.LAZY) {
-                    try {
-                        val remaining = (entry.deadline - nanoTime()) / 1_000_000
-                        if (remaining <= 0) return@async MediaResult.rejected(entry.request.kind, "timeout")
-                        withTimeoutOrNull(remaining) { execute(entry) }
-                            ?: interrupted(entry, "timeout")
-                    } catch (_: CancellationException) {
-                        interrupted(entry, "cancelled")
-                    } catch (e: MediaRejected) {
-                        MediaResult.rejected(entry.request.kind, e.detail)
-                    } catch (_: Exception) {
-                        interrupted(entry, "file_or_transfer_failed")
-                    }
-                }
-                entry.operation = operation
-                if (!entry.result.isActive || !entry.route.isCurrent()) operation.cancel()
-                try {
-                    val outcome = operation.await()
-                    synchronized(lock) { entry.result.complete(outcome) }
-                } catch (_: CancellationException) {
-                    currentCoroutineContext().ensureActive()
-                    synchronized(lock) { entry.result.complete(interrupted(entry, "cancelled")) }
-                } finally {
-                    entry.timer?.cancel()
-                    synchronized(lock) { pending.remove(entry) }
-                }
-            }
-        } finally {
-            synchronized(lock) {
-                pending.forEach { it.timer?.cancel(); it.operation?.cancel(); it.result.complete(interrupted(it, "cancelled")) }
-                pending.clear()
-                closed = true
-            }
-        }
+
+    fun enqueue(request: MediaRequest, route: MediaRoute): Deferred<MediaResult> {
+        val entry = synchronized(lock) { register(request, route) }
+        entry.timer?.start()
+        entry.operation?.start()
+        return entry.result
     }
 
-    fun enqueue(request: MediaRequest, route: MediaRoute): Deferred<MediaResult> = synchronized(lock) {
+    /** 调用方持有 lock；只登记状态，协程由调用方在锁外启动。 */
+    private fun register(request: MediaRequest, route: MediaRoute): Entry {
         val result = CompletableDeferred<MediaResult>()
+        val entry = Entry(request, route, result)
         if (closed) {
             result.complete(MediaResult.rejected(request.kind, "session_closed"))
         } else {
-            val entry = Entry(request, route, nanoTime() + timeoutMillis * 1_000_000, result)
             pending.add(entry)
-            result.invokeOnCompletion { if (result.isCancelled) entry.operation?.cancel() }
-            queue.trySend(entry)
-            // 等候项也按自己的总时限完成，不等前一个请求出队。
-            entry.timer = scope.launch {
+            val operation = scope.launch(start = CoroutineStart.LAZY) {
+                val outcome = try {
+                    execute(entry)
+                } catch (_: CancellationException) {
+                    interrupted(entry, "cancelled")
+                } catch (e: MediaRejected) {
+                    MediaResult.rejected(request.kind, e.detail)
+                } catch (_: Exception) {
+                    interrupted(entry, "file_or_transfer_failed")
+                }
+                synchronized(lock) { result.complete(outcome) }
+            }
+            entry.operation = operation
+            entry.timer = scope.launch(start = CoroutineStart.LAZY) {
                 waitForTimeout(timeoutMillis)
                 synchronized(lock) {
                     if (result.isActive) {
@@ -119,8 +86,17 @@ class MediaSendCoordinator(
                     }
                 }
             }
+            // completion 也覆盖父 scope 在协程启动前取消的情况。
+            operation.invokeOnCompletion {
+                synchronized(lock) {
+                    result.complete(interrupted(entry, "cancelled"))
+                    entry.timer?.cancel()
+                    pending.remove(entry)
+                }
+            }
+            result.invokeOnCompletion { if (result.isCancelled) operation.cancel() }
         }
-        result
+        return entry
     }
 
     fun invalidate() = synchronized(lock) {
@@ -138,8 +114,14 @@ class MediaSendCoordinator(
     }
 
     fun close() {
-        synchronized(lock) { closed = true; queue.close() }
-        worker.cancel()
+        synchronized(lock) {
+            closed = true
+            pending.toList().forEach {
+                it.result.complete(interrupted(it, "cancelled"))
+                it.timer?.cancel()
+                it.operation?.cancel()
+            }
+        }
     }
 
     private fun interrupted(entry: Entry, reason: String) = synchronized(lock) {
