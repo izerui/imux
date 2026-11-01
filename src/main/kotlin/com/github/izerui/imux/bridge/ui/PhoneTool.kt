@@ -165,7 +165,7 @@ class PhoneTool(
                 ToolState(
                     AgentIcons.phone, title,
                     ImuxBundle.message("bridge.banner.connected", notice.model.channel, notice.model.robotName),
-                    label = notice.model.robotName,
+                    label = "${notice.model.channel} · ${notice.model.robotName}",
                     tone = NoticeTone.SUCCESS,
                 )
         }
@@ -187,7 +187,7 @@ class PhoneTool(
             binding,
             robot,
             robot?.let { manager.statusOf(it.id) },
-            ::channelLabel
+            ::shortChannelLabel
         ) { statusLabel(it, paired = true) }
         return phoneSegmentState(true, model)
     }
