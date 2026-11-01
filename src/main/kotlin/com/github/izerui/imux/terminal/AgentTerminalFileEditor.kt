@@ -52,6 +52,7 @@ import com.intellij.openapi.wm.IdeFocusManager
 import com.intellij.openapi.wm.IdeFrame
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.GotItTooltip
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLayeredPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
@@ -858,7 +859,7 @@ internal fun showReviewOnceDialog(project: Project, file: AgentTerminalVirtualFi
     // 弹窗期间标签页可能关闭或迁移；确认后重新校验实例，并使用此刻的会话 key。
     if (TerminalHost.getInstance(project).fileFor(file.terminalView) !== file) return
     val instruction = dialog.instruction.takeIf { it.isNotBlank() }
-    coordinator.reviewOnce(file.sessionKey, dialog.selectedAgent, instruction)
+    coordinator.reviewOnce(file.sessionKey, dialog.selectedAgent, instruction, dialog.keepPairing)
 }
 
 private class ReviewOnceDialog(
@@ -867,6 +868,7 @@ private class ReviewOnceDialog(
     currentAgentType: AgentType,
 ) : DialogWrapper(project, false) {
     private val instructionField = JBTextField().apply { columns = 30 }
+    private val keepPairingBox = JBCheckBox(ImuxBundle.message("action.peer.once.input.keepPairing"))
     private val agentCombo = ComboBox(targets.toTypedArray()).apply {
         renderer = javax.swing.DefaultListCellRenderer().let { base ->
             javax.swing.ListCellRenderer<Any?> { list, value, index, isSelected, cellHasFocus ->
@@ -879,6 +881,9 @@ private class ReviewOnceDialog(
 
     val instruction: String get() = instructionField.text.orEmpty()
     val selectedAgent: AgentType get() = agentCombo.selectedItem as AgentType
+
+    /** 每次打开默认不勾，不记忆。 */
+    val keepPairing: Boolean get() = keepPairingBox.isSelected
 
     init {
         title = ImuxBundle.message("action.peer.once.input.title")
@@ -903,6 +908,9 @@ private class ReviewOnceDialog(
         panel.add(JLabel(ImuxBundle.message("action.peer.once.input.message")), gbc)
         gbc.gridx = 1; gbc.weightx = 1.0
         panel.add(instructionField, gbc)
+
+        gbc.gridx = 0; gbc.gridy += 1; gbc.gridwidth = 2; gbc.weightx = 1.0
+        panel.add(keepPairingBox, gbc)
 
         return panel
     }

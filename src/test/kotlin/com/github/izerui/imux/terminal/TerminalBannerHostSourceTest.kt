@@ -86,4 +86,10 @@ class TerminalBannerHostSourceTest {
     fun `单次审查失败后重试带上原来的审查要求`() {
         assertTrue(editor.normalized.contains("coordinator.reviewOnce(virtualFile.sessionKey, outcome.targetAgentType, outcome.instruction)"))
     }
+
+    @Test
+    fun `审查一次对话框把“同时开启结对编程”的勾选结果交给协调器`() {
+        assertTrue(editor.normalized.contains("coordinator.reviewOnce(file.sessionKey, dialog.selectedAgent, instruction, dialog.keepPairing)"))
+        assertTrue(editor.normalized.contains("JBCheckBox(ImuxBundle.message(\"action.peer.once.input.keepPairing\"))"))
+    }
 }
