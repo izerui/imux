@@ -84,7 +84,7 @@ object FeishuCodes {
 }
 
 /**
- * 飞书的 HTTP 调用：长连接地址、应用令牌、发消息、取消息。
+ * 飞书的 HTTP 调用：长连接地址、应用令牌、发消息、取消息、机器人名称。
  * 令牌只在内存，随用随取；剩余不足 10 分钟就重新获取（与官方 SDK 相同），令牌无效时清掉重取并只重试一次。
  */
 class FeishuApi(
@@ -178,6 +178,12 @@ class FeishuApi(
             is FeishuResult.Error -> result
             is FeishuResult.Network -> result
         }
+
+    /** 机器人名称，即应用名；取不到时返回 null。 */
+    suspend fun botName(): String? {
+        val result = authorized { http.get("${domain.openBase}/open-apis/bot/v3/info", bearer(it)) }
+        return (result as? FeishuResult.Ok)?.value?.obj("bot")?.string("app_name")?.trim()?.takeIf(String::isNotEmpty)
+    }
 
     /** 被引用消息的文字；取不到或不是文字类消息时返回 null。 */
     suspend fun messageText(messageId: String): String? {

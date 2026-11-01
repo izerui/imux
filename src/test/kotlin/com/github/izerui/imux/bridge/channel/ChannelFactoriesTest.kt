@@ -14,6 +14,7 @@ import com.github.izerui.imux.bridge.core.RobotId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,6 +25,23 @@ class ChannelFactoriesTest {
         assertEquals("bridge.add.scan.steps.feishu", FeishuChannelFactory.scanStepsKey)
         assertEquals("bridge.add.scan.steps", WecomChannelFactory.scanStepsKey)
         assertTrue(FeishuChannelFactory.onboarding() is FeishuOnboarding)
+    }
+
+    @Test
+    fun `飞书名称以平台为准，不能本地改名`() {
+        assertTrue(FeishuChannelFactory.namedByPlatform)
+        assertFalse(ChannelFactories.canRename(ChannelKind.FEISHU))
+    }
+
+    @Test
+    fun `其他渠道名称在本地，仍可改名`() {
+        for (factory in ChannelFactories.all().filterNot { it.kind == ChannelKind.FEISHU }) {
+            assertFalse(factory.kind.name, factory.namedByPlatform)
+            assertTrue(factory.kind.name, ChannelFactories.canRename(factory.kind))
+        }
+        assertTrue(ChannelFactories.canRename(ChannelKind.WECOM))
+        assertTrue(ChannelFactories.canRename(ChannelKind.DINGTALK))
+        assertTrue(ChannelFactories.canRename(ChannelKind.WEIXIN))
     }
 
     @Test

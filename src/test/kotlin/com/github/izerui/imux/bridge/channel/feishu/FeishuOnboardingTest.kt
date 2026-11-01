@@ -32,7 +32,7 @@ class FeishuOnboardingTest {
         }
 
     @Test
-    fun `等待、放慢、成功：凭据带域名，本人取 open_id`() =
+    fun `等待、放慢、成功：凭据带域名，本人取 open_id，名称取机器人应用名`() =
         runBlocking {
             val (flow, http) =
                 onboarding(
@@ -41,6 +41,8 @@ class FeishuOnboardingTest {
                     400 to """{"error":"authorization_pending"}""",
                     400 to """{"error":"slow_down"}""",
                     200 to """{"client_id":"cli_1","client_secret":"S","user_info":{"open_id":"ou_me","tenant_brand":"feishu"}}""",
+                    200 to """{"code":0,"tenant_access_token":"T","expire":7200}""",
+                    200 to """{"code":0,"bot":{"app_name":" 我的助手 ","open_id":"ou_bot"}}""",
                 )
             flow.start()
             assertEquals(OnboardingStep.Waiting, flow.poll())
@@ -50,11 +52,13 @@ class FeishuOnboardingTest {
                 OnboardingStep.Succeeded(
                     mapOf("app_id" to "cli_1", "app_secret" to "S", "domain" to "feishu"),
                     ownerId = "ou_me",
-                    suggestedName = null
+                    suggestedName = "我的助手"
                 ),
                 flow.poll(),
             )
-            assertEquals("action=poll&device_code=D&tp=ob_app", http.calls.last().body)
+            assertEquals("action=poll&device_code=D&tp=ob_app", http.calls[http.calls.size - 3].body)
+            assertEquals("https://open.feishu.cn/open-apis/bot/v3/info", http.calls.last().url)
+            assertEquals("Bearer T", http.calls.last().authorization)
         }
 
     @Test
@@ -71,7 +75,8 @@ class FeishuOnboardingTest {
             assertEquals(OnboardingStep.Waiting, flow.poll())
             val done = flow.poll() as OnboardingStep.Succeeded
             assertEquals("lark", done.credentials["domain"])
-            assertEquals("https://accounts.larksuite.com/oauth/v1/app/registration", http.calls.last().url)
+            assertEquals("https://accounts.larksuite.com/oauth/v1/app/registration", http.calls[3].url)
+            assertEquals("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", http.calls[4].url)
         }
 
     @Test
@@ -80,6 +85,23 @@ class FeishuOnboardingTest {
             val (flow, _) = onboarding(init, begin, 200 to """{"client_id":"cli_1","client_secret":"S"}""")
             flow.start()
             assertEquals(null, (flow.poll() as OnboardingStep.Succeeded).ownerId)
+        }
+
+    @Test
+    fun `取不到机器人名称时照常成功，名称留空`() =
+        runBlocking {
+            val (flow, _) =
+                onboarding(
+                    init,
+                    begin,
+                    200 to """{"client_id":"cli_1","client_secret":"S","user_info":{"open_id":"ou_me"}}""",
+                    200 to """{"code":0,"tenant_access_token":"T","expire":7200}""",
+                    200 to """{"code":230006,"msg":"bot not enabled"}""",
+                )
+            flow.start()
+            val done = flow.poll() as OnboardingStep.Succeeded
+            assertEquals("ou_me", done.ownerId)
+            assertEquals(null, done.suggestedName)
         }
 
     @Test

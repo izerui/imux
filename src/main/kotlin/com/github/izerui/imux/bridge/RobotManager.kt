@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -44,6 +45,9 @@ class RobotManager(parentScope: CoroutineScope) {
 
     /** 登记/摘除连接与写入状态共用一把锁：start()/stop() 都不阻塞，持锁时间很短。 */
     private val lifecycleLock = Any()
+
+    /** 名称以平台为准的渠道，每次上线同步平台名称；写入与连接登记共用 [lifecycleLock]。 */
+    private val nameSync = PlatformNameSync(scope + Dispatchers.IO, lifecycleLock, ::writePlatformName) { bump() }
 
     /** 由界面层设置：机器人被别处接管时的提示。 */
     @Volatile
@@ -116,13 +120,17 @@ class RobotManager(parentScope: CoroutineScope) {
         return book.robot(id)
     }
 
+    /** 名称以平台为准的渠道不能改名，见 [canRename]。 */
     fun rename(
         id: RobotId,
         name: String,
     ) {
+        if (!canRename(id)) return
         store.update { it.rename(id, name) }
         bump()
     }
+
+    fun canRename(id: RobotId): Boolean = robot(id)?.kind?.let(ChannelFactories::canRename) != false
 
     suspend fun remove(id: RobotId) {
         disconnect(id)
@@ -161,8 +169,21 @@ class RobotManager(parentScope: CoroutineScope) {
                         true
                     }
                 if (current && status == ConnectionStatus.Kicked) robot(record.id)?.let { notifyKicked(it) }
+                if (current && status == ConnectionStatus.Online && factory.namedByPlatform) {
+                    nameSync.sync(record.id, { connections[record.id] === connection }, connection::platformName)
+                }
             }
         }
+    }
+
+    /** 由 [nameSync] 在 [lifecycleLock] 内调用；机器人已删除或名称没变时不写。 */
+    private fun writePlatformName(
+        id: RobotId,
+        name: String,
+    ): Boolean {
+        if (robot(id)?.let { it.name != name } != true) return false
+        store.update { it.rename(id, name) }
+        return true
     }
 
     /** 先摘下再停止：连接自己报的 Stopped 会被当成旧连接的回调丢掉，所以这里直接记下。 */

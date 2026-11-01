@@ -38,6 +38,18 @@ class FeishuApiTest {
         }
 
     @Test
+    fun `机器人名称取 bot 信息里的应用名，取不到返回 null`() =
+        runBlocking {
+            val (api, http) = api { _, _, _ -> 200 to """{"code":0,"msg":"ok","bot":{"app_name":"我的助手","open_id":"ou_bot"}}""" }
+            assertEquals("我的助手", api.botName())
+            assertEquals("https://open.feishu.cn/open-apis/bot/v3/info", http.calls.last().url)
+            assertEquals("Bearer T1", http.calls.last().authorization)
+            assertNull(api { _, _, _ -> 200 to """{"code":0,"bot":{"app_name":"  "}}""" }.first.botName())
+            assertNull(api { _, _, _ -> 200 to """{"code":10014,"msg":"app unavailable"}""" }.first.botName())
+            assertNull(api { _, _, _ -> 502 to "<html>" }.first.botName())
+        }
+
+    @Test
     fun `长连接地址不出现在 toString 里`() {
         val endpoint = FeishuEndpoint("wss://x/ws?service_id=7&access_key=secret&ticket=t", FeishuClientConfig(-1, 60, 10, 90))
         val text = endpoint.toString()

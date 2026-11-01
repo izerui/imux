@@ -64,6 +64,8 @@ class FeishuConnection(
     /** 富文本请求体上限 30 KB，正文在两层 JSON 里还要转义，取一半作余量。 */
     override val maxTextBytes: Int = 15_000
 
+    override suspend fun platformName(): String? = api.botName()
+
     private sealed interface SessionEnd {
         /** 配置或权限问题，重连也没用。 */
         data class Fatal(val reason: String) : SessionEnd

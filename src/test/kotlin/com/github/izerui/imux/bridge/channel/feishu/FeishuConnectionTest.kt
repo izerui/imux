@@ -129,6 +129,7 @@ class FeishuConnectionTest {
                 }
 
                 url.endsWith("/tenant_access_token/internal") -> 200 to """{"code":0,"tenant_access_token":"T","expire":7200}"""
+                url.endsWith("/bot/v3/info") -> 200 to """{"code":0,"bot":{"app_name":"我的助手"}}"""
                 method == "POST" && url.contains("/im/v1/messages?") -> 200 to """{"code":$sendCode,"msg":"m"}"""
                 url.endsWith("/speech_to_text/v1/speech/file_recognize") -> 200 to """{"code":$speechCode,"msg":"m","data":{"recognition_text":"跑一下单测"}}"""
                 method == "GET" && url.contains("/im/v1/messages/") -> {
@@ -229,6 +230,13 @@ class FeishuConnectionTest {
     )
 
     private fun acks(transport: FakeTransport) = transport.frames.filter { it.method == FeishuFrame.METHOD_DATA }
+
+    @Test
+    fun `平台名称取机器人应用名，不依赖长连接`() =
+        runBlocking {
+            assertEquals("我的助手", connection().platformName())
+            assertTrue(http.calls.any { it.url == "https://open.feishu.cn/open-apis/bot/v3/info" && it.authorization == "Bearer T" })
+        }
 
     @Test
     fun `收到事件处理成功后回写确认`() =

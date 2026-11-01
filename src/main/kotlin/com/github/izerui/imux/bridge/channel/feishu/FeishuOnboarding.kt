@@ -15,6 +15,7 @@ import kotlin.coroutines.cancellation.CancellationException
 /**
  * 飞书扫码创建应用：OAuth 设备授权流程（官方 SDK RegisterApp；参数与 Hermes、DeepTutor 一致）。
  * 扫码结果带本人 open_id，直接认主；拿不到时返回 ownerId=null，走配对码。
+ * 成功后顺带取机器人名称，作为本地名称。
  * 本版不带 addons，依赖 PersonalAgent 默认模板的权限（设计第 4 节）。
  */
 class FeishuOnboarding(
@@ -79,7 +80,8 @@ class FeishuOnboarding(
                         FeishuCredentialKeys.DOMAIN to domain.id,
                     ),
                 ownerId = user?.string("open_id")?.takeIf(String::isNotEmpty),
-                suggestedName = null,
+                // 取不到名称不影响接入：添加时用默认名，连上后再同步
+                suggestedName = FeishuApi(appId, secret, domain, http).botName(),
             )
         }
         return when (result.string("error")) {

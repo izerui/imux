@@ -71,3 +71,43 @@ class RobotManagerReconnectSourceTest {
         assertTrue(manager.bodyAfter("fun renewPairCode(id: RobotId)", '{').contains("wrongPairAttempts.remove(id)"))
     }
 }
+
+class RobotManagerPlatformNameSourceTest {
+    private val code = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/RobotManager.kt")
+    private val settings = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/RobotsConfigurable.kt")
+
+    @Test
+    fun `上线时按渠道标记同步平台名称，校验当前连接`() {
+        val connect = code.compact(code.bodyAfter("private fun connect(record: RobotRecord)", '{'))
+        assertTrue(
+            connect.contains(
+                "if(current&&status==ConnectionStatus.Online&&factory.namedByPlatform){" +
+                    "nameSync.sync(record.id,{connections[record.id]===connection},connection::platformName)}",
+            ),
+        )
+    }
+
+    @Test
+    fun `名称同步与连接登记共用生命周期锁`() {
+        assertTrue(
+            code.compact(code.normalized)
+                .contains("PlatformNameSync(scope+Dispatchers.IO,lifecycleLock,::writePlatformName){bump()}"),
+        )
+    }
+
+    @Test
+    fun `改名先按渠道判断能否改名`() {
+        val rename = code.compact(code.bodyAfter("fun rename(", '{'))
+        // bodyAfter 从锚点之后截取，含形参；“){”之后紧跟的就是函数体第一条语句
+        assertTrue(rename, rename.contains("name:String){if(!canRename(id))return"))
+        assertTrue(code.compact(code.normalized).contains("robot(id)?.kind?.let(ChannelFactories::canRename)!=false"))
+    }
+
+    @Test
+    fun `设置页改名按钮与双击入口都按能否改名放行`() {
+        val all = settings.compact(settings.normalized)
+        assertTrue(all.contains(".setEditActionUpdater{selected(table)?.let{RobotManager.getInstance().canRename(it.id)}==true}"))
+        val rename = settings.compact(settings.bodyAfter("private fun rename(table: JBTable)", '{'))
+        assertTrue(rename, rename.startsWith("{valrow=selected(table)?.takeIf{RobotManager.getInstance().canRename(it.id)}?:return"))
+    }
+}

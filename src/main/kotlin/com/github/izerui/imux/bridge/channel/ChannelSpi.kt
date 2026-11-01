@@ -85,6 +85,9 @@ interface ChannelConnection : ChannelAdapter {
     )
 
     fun stop()
+
+    /** 平台上的机器人名称；渠道不提供或取不到时返回 null。见 [ChannelFactory.namedByPlatform]。 */
+    suspend fun platformName(): String? = null
 }
 
 interface ChannelFactory {
@@ -93,6 +96,10 @@ interface ChannelFactory {
     /** 添加对话框里扫码说明的文案键（ImuxBundle），参数 {0} 是渠道名。 */
     val scanStepsKey: String
         get() = "bridge.add.scan.steps"
+
+    /** 名称以平台为准：连上后同步成平台上的名称，本地不能改名（平台没有改名接口）。 */
+    val namedByPlatform: Boolean
+        get() = false
 
     fun onboarding(): ChannelOnboarding
 

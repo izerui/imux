@@ -13,6 +13,8 @@ object FeishuChannelFactory : ChannelFactory {
     /** 扫码直接认主，不需要配对码，说明文字与企业微信不同。 */
     override val scanStepsKey: String = "bridge.add.scan.steps.feishu"
 
+    override val namedByPlatform: Boolean = true
+
     override fun onboarding(): ChannelOnboarding = FeishuOnboarding()
 
     override fun connect(
