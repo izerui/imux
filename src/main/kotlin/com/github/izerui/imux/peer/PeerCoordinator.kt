@@ -190,7 +190,7 @@ class PeerCoordinator internal constructor(
      */
     private val sentFeedback = ConcurrentHashMap<String, ConcurrentLinkedDeque<String>>()
     private val passedSessions = ConcurrentHashMap.newKeySet<String>()
-    private data class OneShotInfo(val generation: Long, val instruction: String?)
+    private data class OneShotInfo(val generation: Long)
     private val oneShotSessions = ConcurrentHashMap<String, OneShotInfo>()
     private val outcomes = ConcurrentHashMap<String, PeerOutcome>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
@@ -258,22 +258,36 @@ class PeerCoordinator internal constructor(
         notifyStateChanged(sessionKey)
     }
 
+    /**
+     * 立即审查当前这一轮。[keepPairing] 为 false 是单次审查：跑完自动解绑。
+     * 为 true 时等同于先开启普通结对、再手动跑一轮：不登记单次标记，之后的结束、取消、新一轮、迁移都走普通结对路径。
+     * [userInstruction] 只挂在这一轮上。
+     */
     fun reviewOnce(
         sessionKey: String,
         targetAgentType: AgentType,
         userInstruction: String?,
+        keepPairing: Boolean = false,
     ) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         if (bindings.containsKey(sessionKey)) return
         bind(sessionKey, targetAgentType)
         val generation = bindings[sessionKey]?.generation ?: return
-        oneShotSessions[sessionKey] = OneShotInfo(generation, userInstruction)
+        if (!keepPairing) oneShotSessions[sessionKey] = OneShotInfo(generation)
         val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
         val result = guard.tryStart(generation, { bindings[sessionKey]?.generation }) ?: return
         result.cancelled?.killProcess()
-        LOG.info("结对编程：单次审查 sessionKey=$sessionKey agent=${targetAgentType.displayName}")
-        announce(PeerReviewEvent.Started(sessionKey, targetAgentType, round = (roundCounts[sessionKey]?.get() ?: 0) + 1, oneShot = true))
+        result.run.instruction = userInstruction
+        LOG.info("结对编程：立即审查 sessionKey=$sessionKey agent=${targetAgentType.displayName} keepPairing=$keepPairing")
+        announce(
+            PeerReviewEvent.Started(
+                sessionKey,
+                targetAgentType,
+                round = (roundCounts[sessionKey]?.get() ?: 0) + 1,
+                oneShot = !keepPairing,
+            ),
+        )
         launchReview(sessionKey, result.run, guard)
     }
 
@@ -476,7 +490,7 @@ class PeerCoordinator internal constructor(
         val buildFn: (String, String) -> String = buildPrompt ?: { task, conv -> buildReviewPrompt(task, conv, effectiveAutoInject) }
         var conversation = collectLatestConversation(mainSessionKey)
         var maxConvChars = conversation.length
-        val oneShotInstruction = oneShotSessions[mainSessionKey]?.instruction
+        val oneShotInstruction = run.instruction
         val instructionSuffix = if (!oneShotInstruction.isNullOrBlank()) {
             val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
             val header = if (isChinese) "## 本次审查要求" else "## Review Instructions"

@@ -9,6 +9,8 @@ internal class PeerRun {
     val process = AtomicReference<Process?>()
     @Volatile var bindingGeneration: Long = 0
     @Volatile var passed: Boolean = false
+    /** 本轮的审查要求（用户在“审查一次”里填的）；只属于这一轮，结对后续各轮为 null。 */
+    @Volatile var instruction: String? = null
     /** 这一轮已经对外报告了结局（结果或中止原因），之后的取消不再重复报告。 */
     @Volatile var concluded: Boolean = false
     private val progressLock = Any()
