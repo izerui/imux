@@ -37,6 +37,7 @@ internal fun launchCommand(
     ideaMcpGuidance: String? = null,
     initialPrompt: String? = null,
     pidFile: String? = null,
+    additionalMcpServers: List<TerminalMcpServer> = emptyList(),
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = agentType.cli
@@ -46,7 +47,7 @@ internal fun launchCommand(
     //
     // 两种 agent 都要带 IDEA_MCP_PROJECT_HEADER：不带它，多项目窗口下任何没写
     // projectPath 实参的工具调用都会被服务端拒绝，模型只能反过来问用户选哪个项目。
-    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance)
+    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance, additionalMcpServers)
     val script =
         when {
             resumeId == null -> {
@@ -106,11 +107,14 @@ internal fun ideaMcpCliArgument(
     agentType: AgentType,
     ideaMcp: IdeaMcpEndpoint?,
     ideaMcpGuidance: String?,
-): String? =
-    ideaMcp?.let { endpoint ->
+    additionalServers: List<TerminalMcpServer> = emptyList(),
+): String? {
+    if (ideaMcp == null && additionalServers.isEmpty()) return null
+    return run {
+        val endpoint = ideaMcp
         when (agentType) {
             AgentType.CLAUDE -> {
-                val config = claudeIdeaMcpConfig(endpoint)
+                val config = claudeIdeaMcpConfig(endpoint, additionalServers)
                 buildString {
                     append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}")
                     ideaMcpGuidance
@@ -120,13 +124,24 @@ internal fun ideaMcpCliArgument(
             }
 
             AgentType.CODEX -> {
-                val url = "mcp_servers.idea.url=${tomlBasicString(endpoint.url)}"
-                val header =
-                    "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=" +
-                            tomlBasicString(endpoint.projectPath)
                 buildString {
-                    append("-c ${quoteEmbeddingDoubleQuotes(dialect, url)} ")
-                    append("-c ${quoteEmbeddingDoubleQuotes(dialect, header)}")
+                    if (endpoint != null) {
+                        val url = "mcp_servers.idea.url=${tomlBasicString(endpoint.url)}"
+                        val header = "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=${tomlBasicString(endpoint.projectPath)}"
+                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, url)} ")
+                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, header)}")
+                    }
+                    additionalServers.forEach { server ->
+                        val prefix = "mcp_servers.${server.name}"
+                        listOf(
+                            "$prefix.url=${tomlBasicString(server.url)}",
+                            "$prefix.bearer_token_env_var=${tomlBasicString(server.tokenEnvironment)}",
+                            "$prefix.tool_timeout_sec=${server.timeoutSeconds}",
+                        ).forEach { argument ->
+                            if (isNotEmpty()) append(' ')
+                            append("-c ${quoteEmbeddingDoubleQuotes(dialect, argument)}")
+                        }
+                    }
                     ideaMcpGuidance
                         ?.takeIf(String::isNotBlank)
                         ?.let { guidance ->
@@ -139,10 +154,11 @@ internal fun ideaMcpCliArgument(
             AgentType.PI -> null
         }
     }
+}
 
 /** 用 Gson 生成配置，避免 Windows 反斜杠、引号和控制字符破坏 JSON。 */
-internal fun claudeIdeaMcpConfig(endpoint: IdeaMcpEndpoint): String {
-    val server =
+internal fun claudeIdeaMcpConfig(endpoint: IdeaMcpEndpoint?, additionalServers: List<TerminalMcpServer> = emptyList()): String {
+    val server = endpoint?.let {
         JsonObject().apply {
             addProperty("type", "http")
             addProperty("url", endpoint.url)
@@ -152,13 +168,21 @@ internal fun claudeIdeaMcpConfig(endpoint: IdeaMcpEndpoint): String {
                     addProperty(IDEA_MCP_PROJECT_HEADER, endpoint.projectPath)
                 },
             )
-        }
+        } }
     return JsonObject()
         .apply {
             add(
                 "mcpServers",
                 JsonObject().apply {
-                    add("idea", server)
+                    if (server != null) add("idea", server)
+                    additionalServers.forEach { additional ->
+                        add(additional.name, JsonObject().apply {
+                            addProperty("type", "http")
+                            addProperty("url", additional.url)
+                            addProperty("timeout", additional.timeoutSeconds * 1000)
+                            add("headers", JsonObject().apply { addProperty("Authorization", "Bearer \${${additional.tokenEnvironment}}") })
+                        })
+                    }
                 },
             )
         }.toString()

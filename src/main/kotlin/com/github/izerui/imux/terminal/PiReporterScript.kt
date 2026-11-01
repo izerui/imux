@@ -7,6 +7,7 @@ import java.nio.file.Path
 /** 打包时放进插件目录的上报脚本，见 build.gradle.kts 的 prepareSandbox 配置。 */
 private const val SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reporter.js"
 private const val IDEA_MCP_SCRIPT_RELATIVE_PATH = "scripts/pi-imux-idea-mcp.js"
+private const val PLUGIN_MCP_SCRIPT_RELATIVE_PATH = "scripts/pi-imux-mcp.js"
 internal const val PLUGIN_DIRECTORY_NAME = "imux"
 
 private object PiReporterScriptLocation
@@ -76,6 +77,12 @@ internal fun piReporterScript(): Path? {
 internal fun piIdeaMcpScript(): Path? {
     val (pluginPath, classPathEntry) = pluginScriptRoots()
     return locatePiIdeaMcpScript(pluginPath, classPathEntry)
+}
+
+/** 注册插件内置 MCP 服务（imux_mobile、imux_session）的 Pi 扩展，各服务共用一份。 */
+internal fun piPluginMcpScript(): Path? {
+    val (pluginPath, classPathEntry) = pluginScriptRoots()
+    return pluginScriptIn(pluginPath, PLUGIN_MCP_SCRIPT_RELATIVE_PATH) ?: pluginScriptNear(classPathEntry, PLUGIN_MCP_SCRIPT_RELATIVE_PATH)
 }
 
 private fun pluginScriptRoots(): Pair<Path?, Path?> {

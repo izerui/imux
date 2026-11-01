@@ -20,6 +20,7 @@ sealed interface WecomFrame {
         val reqId: String,
         val errcode: Int,
         val errmsg: String?,
+        val body: JsonObject? = null,
     ) : WecomFrame
 
     /**
@@ -115,7 +116,7 @@ object WecomProtocol {
                     else -> null
                 }
             } ?: return WecomFrame.Unknown
-            return WecomFrame.Ack(reqId, errcode, root.string("errmsg"))
+            return WecomFrame.Ack(reqId, errcode, root.string("errmsg"), root.obj("body"))
         }
         val body = root.obj("body") ?: return WecomFrame.Unknown
         return when (cmd) {

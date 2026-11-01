@@ -10,12 +10,19 @@ import com.github.izerui.imux.bridge.channel.JdkHttpFileDownload
 import com.github.izerui.imux.bridge.channel.JdkWebSocketTransport
 import com.github.izerui.imux.bridge.channel.SlidingWindowLimiter
 import com.github.izerui.imux.bridge.channel.WebSocketHandshakeRejected
+import com.github.izerui.imux.bridge.channel.awaitMediaSlot
 import com.github.izerui.imux.bridge.core.AttachmentKind
 import com.github.izerui.imux.bridge.core.DeliveryResult
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
 import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
+import com.github.izerui.imux.bridge.core.MediaSender
+import com.github.izerui.imux.bridge.core.MediaKind
+import com.github.izerui.imux.bridge.core.MediaAttempt
+import com.github.izerui.imux.bridge.core.MediaRejected
+import com.github.izerui.imux.bridge.core.PreparedMedia
+import com.github.izerui.imux.bridge.core.UploadedMedia
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -60,11 +67,37 @@ class FeishuConnection(
     private val secondMillis: Long = 1_000,
     private val limiter: SlidingWindowLimiter = SlidingWindowLimiter(5, 1_000, now),
     private val maxRateWaitMillis: Long = 20_000,
-) : ChannelConnection {
+) : ChannelConnection, MediaSender {
     /** 富文本请求体上限 30 KB，正文在两层 JSON 里还要转义，取一半作余量。 */
     override val maxTextBytes: Int = 15_000
 
     override suspend fun platformName(): String? = api.botName()
+
+    override val mediaCapabilities get() = feishuMediaCapabilities
+
+    override suspend fun uploadMedia(chatId: String, file: PreparedMedia, kind: MediaKind) =
+        uploadFeishuMedia(api, file, kind)
+
+    override suspend fun sendMedia(
+        chatId: String,
+        file: PreparedMedia,
+        uploaded: UploadedMedia,
+        commit: () -> Boolean,
+    ): MediaAttempt {
+        val current = run ?: return MediaAttempt.Rejected(MediaRejected("offline", canFallback = false))
+        if (!limiter.awaitMediaSlot(chatId)) return MediaAttempt.Rejected(MediaRejected("rate_limited", canFallback = false))
+        return when (val result = api.sendMediaBody(feishuMediaBody(chatId, uploaded), commit)) {
+            is FeishuResult.Ok -> {
+                sendRecovered(current)
+                MediaAttempt.Accepted(result.value)
+            }
+            is FeishuResult.Error -> {
+                sendFailing(result.code)?.let { sendBlocked(current, it) }
+                MediaAttempt.Rejected(feishuMediaError(result.code))
+            }
+            is FeishuResult.Network -> MediaAttempt.Unknown
+        }
+    }
 
     private sealed interface SessionEnd {
         /** 配置或权限问题，重连也没用。 */

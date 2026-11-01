@@ -121,6 +121,22 @@ class WecomConnectionTest {
     }
 
     @Test
+    fun `媒体与文字共享会话限频名额`() = runBlocking {
+        val conn = connection(limiter = SlidingWindowLimiter(1, 60_000) { 0 })
+        startAndAwaitOnline(conn)
+        assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "owner", "text")))
+        var committed = false
+        val result = conn.sendMedia(
+            "owner",
+            com.github.izerui.imux.bridge.core.PreparedMedia(java.nio.file.Path.of("/unused"), "test.pdf", 1, "pdf"),
+            com.github.izerui.imux.bridge.core.UploadedMedia(com.github.izerui.imux.bridge.core.MediaKind.FILE, mapOf("media_id" to "key")),
+        ) { committed = true; true }
+        assertTrue(result is com.github.izerui.imux.bridge.core.MediaAttempt.Rejected)
+        assertEquals(false, committed)
+        assertEquals(1, transports.first().sent.count { it.contains("\"cmd\":\"aibot_send_msg\"") })
+    }
+
+    @Test
     fun `只转交单聊文本并按 msgid 去重`() {
         startAndAwaitOnline(connection())
         val t = transports.first()

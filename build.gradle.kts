@@ -151,6 +151,7 @@ intellijPlatform {
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-idea-mcp.js") { into("${project.name}/scripts") }
+    from("src/main/js/pi-imux-mcp.js") { into("${project.name}/scripts") }
 }
 
 // 本项目有一批「源码级」测试：ImuxLspUiSourceTest、PluginXmlRegistrationTest、

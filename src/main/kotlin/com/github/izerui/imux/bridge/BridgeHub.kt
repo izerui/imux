@@ -55,6 +55,9 @@ class BridgeHub(parentScope: CoroutineScope) {
     /** 机器人、连接状态或绑定任何变化时加一；标签、会话树、提示条、状态栏与设置页据此刷新。 */
     val revision: StateFlow<Long> = _revision
 
+    internal fun mediaChannel(id: RobotId): ChannelAdapter? = channels[id]
+    internal fun mediaOwner(id: RobotId): RobotOwner? = owners[id]
+
     private val inbound =
         RobotInboundQueues(scope, onFailure = { LOG.warn("处理入站消息失败", it) }, handle = { router.onInbound(it) })
 

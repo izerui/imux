@@ -2,6 +2,10 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.ImuxBundle
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.application.EDT
 import com.github.izerui.imux.session.ClaudeRuntimeSession
 import com.github.izerui.imux.session.PiReportEndpoint
 import com.github.izerui.imux.session.blocksResume
@@ -29,6 +33,15 @@ import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import com.intellij.util.EventDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.jetbrains.plugins.terminal.block.util.TerminalDataContextUtils
@@ -85,8 +98,13 @@ internal fun selectionAfterMigration(
 @Service(Service.Level.PROJECT)
 class TerminalHost(
     private val project: Project,
+    private val scope: CoroutineScope,
 ) : Disposable {
     private val views = mutableMapOf<String, TerminalView>()
+    private val pendingOpens = mutableMapOf<String, Job>()
+    private val pendingSelections = mutableMapOf<String, Boolean>()
+    private val launchContributions = mutableMapOf<String, TerminalLaunchContribution>()
+    private val preparationLock = Mutex()
 
     /**
      * 每个 key 对应的虚拟文件实例必须缓存并复用。
@@ -222,6 +240,7 @@ class TerminalHost(
      * 用户半天就能攒下六七个隐形的 CLI 却无从收拾。
      */
     fun closeSession(file: AgentTerminalVirtualFile) {
+        launchContributions.remove(file.tabId)?.close()
         val key = file.sessionKey
         // key 会在会话迁移时变化，也可能被另一个终端重新占用。只有账上仍然是这个
         // VirtualFile，才允许清掉 key 对应的 view 与 watcher；否则只结束自身的 view。
@@ -270,6 +289,11 @@ class TerminalHost(
      */
     fun closeTabBySessionKey(key: String): Boolean {
         ApplicationManager.getApplication().assertIsDispatchThread()
+        pendingOpens.remove(key)?.let {
+            it.cancel()
+            pendingSelections.remove(key)
+            turnWatcher.unwatch(key)
+        }
         val file = files[key] ?: return true
         FileEditorManager.getInstance(project).closeFile(file)
         return !files.containsKey(key)
@@ -487,13 +511,68 @@ class TerminalHost(
         tabTitle: String,
         sessionId: String?,
         selectAsCurrent: Boolean = true,
+        preparedTabId: String? = null,
     ) {
         discardIfTerminated(key)
+        if (preparedTabId == null && !files.containsKey(key) && TerminalLaunchContributions.available()) {
+            if (pendingOpens.containsKey(key)) {
+                if (selectAsCurrent) pendingSelections[key] = true
+                return
+            }
+            val tabId = newTabId()
+            val predecessor = pendingOpens.values.lastOrNull()
+            val pending = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                val openingJob = kotlinx.coroutines.currentCoroutineContext()[Job]!!
+                var contribution: TerminalLaunchContribution? = null
+                var attached = false
+                try {
+                    // IO 调度先后不等于请求顺序，显式等待前一项才能保持恢复标签的插入顺序。
+                    predecessor?.join()
+                    // 恢复多标签时也保持调用顺序；等待端口不能阻塞 EDT。
+                    preparationLock.withLock {
+                        contribution = try {
+                            TerminalLaunchContributions.prepare(project, tabId, agentType)
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) {
+                            LOG.warn("终端附加工具未接入：${e.javaClass.simpleName}")
+                            withContext(Dispatchers.EDT) {
+                                NotificationGroupManager.getInstance().getNotificationGroup("imux.phoneBridge")
+                                    .createNotification(ImuxBundle.message("terminal.mobile.mcp.unavailable"), NotificationType.WARNING).notify(project)
+                            }
+                            TerminalLaunchContribution()
+                        }
+                        withContext(Dispatchers.EDT) {
+                            if (!pendingOpens.remove(key, openingJob)) return@withContext
+                            val select = pendingSelections.remove(key) ?: selectAsCurrent
+                            if (project.isDisposed || projectClosing) return@withContext
+                            launchContributions[tabId] = contribution
+                            open(key, agentType, command, tabTitle, sessionId, select, tabId)
+                            attached = files[key]?.tabId == tabId
+                            if (attached) {
+                                val lease = checkNotNull(contribution)
+                                files[key]!!.terminalView.coroutineScope.coroutineContext[Job]?.invokeOnCompletion { lease.close() }
+                            }
+                        }
+                    }
+                } finally {
+                    if (!attached) contribution?.close()
+                    withContext(NonCancellable + Dispatchers.EDT) {
+                        if (pendingOpens.remove(key, openingJob)) pendingSelections.remove(key)
+                        if (!attached) launchContributions.remove(tabId)
+                        if (!project.isDisposed) persistRestorableTabs()
+                    }
+                }
+            }
+            pendingOpens[key] = pending
+            pendingSelections[key] = selectAsCurrent
+            pending.start()
+            return
+        }
         val file =
             files.getOrPut(key) {
                 // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
                 // 之后从进程 env 里读回来才认得出这个终端。
-                val tabId = newTabId()
+                val tabId = preparedTabId ?: newTabId()
                 val view = views.getOrPut(key) { createView(agentType, command(tabId), tabTitle, tabId) }
                 AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId, sessionId)
                     .also(::closeTabWhenTerminated)
@@ -571,8 +650,10 @@ class TerminalHost(
      */
     private fun closeTabWhenTerminated(file: AgentTerminalVirtualFile) {
         val view = file.terminalView
+        val contribution = launchContributions[file.tabId]
         view.coroutineScope.launch {
             view.sessionState.first { it is TerminalViewSessionState.Terminated }
+            contribution?.close()
             // 不能在这里直接关：本协程属于 view 的 scope，而关标签页会取消这个 scope
             ApplicationManager.getApplication().invokeLater {
                 FileEditorManager.getInstance(project).closeFile(file)
@@ -617,6 +698,7 @@ class TerminalHost(
     ): TerminalView {
         val ideaMcp = ideaMcpEndpoint()
         val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val contribution = launchContributions[tabId]
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab =
             manager
@@ -630,7 +712,7 @@ class TerminalHost(
                         piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
                         ideaMcp = ideaMcp,
                         ideaMcpGuidance = ideaMcpGuidance,
-                    ),
+                    ) + contribution?.environment.orEmpty(),
                 ).tabName(tabTitle)
                 .requestFocus(false)
                 .createTab()
@@ -677,11 +759,12 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtensions = piExtensionsFor(agentType, ideaMcp),
+            piExtensions = piExtensionsFor(agentType, ideaMcp) + launchContributions[tabId]?.piExtensions.orEmpty(),
             ideaMcp = ideaMcp,
             ideaMcpGuidance = ideaMcpGuidance,
             initialPrompt = initialPrompt,
             pidFile = tabPidFileFor(tabId),
+            additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
         )
     }
 
@@ -700,10 +783,11 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtensions = piExtensionsFor(agentType, ideaMcp),
+            piExtensions = piExtensionsFor(agentType, ideaMcp) + launchContributions[tabId]?.piExtensions.orEmpty(),
             ideaMcp = ideaMcp,
             ideaMcpGuidance = ideaMcpGuidance,
             pidFile = tabPidFileFor(tabId),
+            additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
         )
     }
 
@@ -756,6 +840,7 @@ class TerminalHost(
     }
 
     private fun persistRestorableTabs() {
+        if (pendingOpens.isNotEmpty()) return
         if (!restorationState.canPersist(projectClosing, project.isDisposed)) return
         ApplicationManager.getApplication().assertIsDispatchThread()
 
@@ -783,6 +868,11 @@ class TerminalHost(
      * 待实机验证：若 tabs manager 会兜底释放 scope，此处的显式 cancel 应改为无操作以免重复取消。
      */
     override fun dispose() {
+        pendingOpens.values.forEach { it.cancel() }
+        pendingOpens.clear()
+        pendingSelections.clear()
+        launchContributions.values.forEach { it.close() }
+        launchContributions.clear()
         views.values.forEach { it.coroutineScope.cancel() }
         views.clear()
         files.clear()

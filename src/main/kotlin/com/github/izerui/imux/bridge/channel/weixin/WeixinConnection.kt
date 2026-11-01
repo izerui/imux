@@ -6,6 +6,13 @@ import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.channel.HttpFileDownload
 import com.github.izerui.imux.bridge.channel.JdkHttpFileDownload
 import com.github.izerui.imux.bridge.channel.SlidingWindowLimiter
+import com.github.izerui.imux.bridge.channel.awaitMediaSlot
+import com.github.izerui.imux.bridge.core.MediaSender
+import com.github.izerui.imux.bridge.core.MediaKind
+import com.github.izerui.imux.bridge.core.MediaAttempt
+import com.github.izerui.imux.bridge.core.MediaRejected
+import com.github.izerui.imux.bridge.core.PreparedMedia
+import com.github.izerui.imux.bridge.core.UploadedMedia
 import com.github.izerui.imux.bridge.core.DeliveryResult
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
@@ -44,9 +51,35 @@ class WeixinConnection(
     private val maxRateWaitMillis: Long = 20_000,
     /** getupdates 返回 -14 后暂停多久再继续（官方 session-guard.ts 为 1 小时）。 */
     private val expiredPauseMillis: Long = 3_600_000,
-) : ChannelConnection {
+    private val mediaHttp: com.github.izerui.imux.bridge.channel.MediaHttp = com.github.izerui.imux.bridge.channel.JdkMediaHttp(),
+) : ChannelConnection, MediaSender {
     /** 官方按 4000 字符分段；路由器按 UTF-8 字节切，4000 字节保证每段不超过 4000 字符。 */
     override val maxTextBytes: Int = 4_000
+    override val mediaCapabilities get() = weixinMediaCapabilities
+
+    override suspend fun uploadMedia(chatId: String, file: PreparedMedia, kind: MediaKind): UploadedMedia =
+        uploadWeixinMedia(api, mediaHttp, baseUrl, token, chatId, file, kind)
+
+    override suspend fun sendMedia(chatId: String, file: PreparedMedia, uploaded: UploadedMedia, commit: () -> Boolean): MediaAttempt {
+        val current = run ?: return MediaAttempt.Rejected(MediaRejected("offline", canFallback = false))
+        if (!limiter.awaitMediaSlot(chatId)) return MediaAttempt.Rejected(MediaRejected("rate_limited", canFallback = false))
+        val context = contextTokens[chatId]
+        val item = weixinMediaItem(file, uploaded)
+        var result = api.sendMediaItem(baseUrl, token, chatId, item, context, commit)
+        if (result is WeixinResult.Error && result.expired && context != null) {
+            contextTokens.remove(chatId, context)
+            result = api.sendMediaItem(baseUrl, token, chatId, item, null, commit)
+        }
+        return when (result) {
+            is WeixinResult.Ok -> { blockSend(current, null); MediaAttempt.Accepted() }
+            is WeixinResult.Network -> MediaAttempt.Unknown
+            is WeixinResult.Error -> {
+                blockSend(current, ConnectionStatus.SendFailing("bridge.weixin.sendRejected", result.code))
+                MediaAttempt.Rejected(MediaRejected(result.code, "微信拒收（${result.code}），请在微信给机器人发任意一条消息后再试",
+                    canFallback = !result.expired && result.status !in setOf(401, 403, 409, 429)))
+            }
+        }
+    }
 
     /**
      * 一次 start() 到 stop() 的运行。状态先在 [statusLock] 内排进 [statuses]，再由该运行自己的通知协程按序交给监听器：

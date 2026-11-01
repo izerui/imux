@@ -182,6 +182,22 @@ class FeishuConnectionTest {
 
     private fun start(conn: FeishuConnection) = conn.start(InboundSink { received += it }) { statuses += it }
 
+    @Test
+    fun `文字已占用限频名额时媒体不会另开额度发送`() = runBlocking {
+        val conn = connection(limiter = SlidingWindowLimiter(1, 60_000) { 0 })
+        startAndAwaitOnline(conn)
+        assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "owner", "text")))
+        var committed = false
+        val result = conn.sendMedia(
+            "owner",
+            com.github.izerui.imux.bridge.core.PreparedMedia(java.nio.file.Path.of("/unused"), "test.pdf", 1, "pdf"),
+            com.github.izerui.imux.bridge.core.UploadedMedia(com.github.izerui.imux.bridge.core.MediaKind.FILE, mapOf("file_key" to "key")),
+        ) { committed = true; true }
+        assertTrue(result is com.github.izerui.imux.bridge.core.MediaAttempt.Rejected)
+        assertEquals(false, committed)
+        assertEquals(1, http.calls.count { it.url.contains("/im/v1/messages?") })
+    }
+
     private fun startAndAwaitOnline(conn: FeishuConnection) =
         runBlocking {
             start(conn)

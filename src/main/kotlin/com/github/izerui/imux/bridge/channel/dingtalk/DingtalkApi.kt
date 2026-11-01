@@ -77,6 +77,7 @@ class DingtalkApi(
     private val clientId: String,
     private val clientSecret: String,
     private val http: HttpJson = JdkHttpJson(),
+    private val mediaHttp: com.github.izerui.imux.bridge.channel.MediaHttp = com.github.izerui.imux.bridge.channel.JdkMediaHttp(),
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val tokenLock = Mutex()
@@ -147,23 +148,57 @@ class DingtalkApi(
         token = null
     }
 
+    /** 旧版媒体接口使用 oapi access_token，不能把新接口的 header 原样搬过去。 */
+    suspend fun uploadMediaFile(file: com.github.izerui.imux.bridge.core.PreparedMedia, type: String): DingtalkResult<String> {
+        val response = try {
+            http.get("https://oapi.dingtalk.com/gettoken?appkey=${encodeMedia(clientId)}&appsecret=${encodeMedia(clientSecret)}")
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { return DingtalkResult.Network("token_request_failed") }
+        val code = response.json?.primitiveText("errcode")?.toIntOrNull()
+        if (response.status !in 200..299 || code != 0) return DingtalkResult.Error(response.status, code?.toString() ?: "token_error", "")
+        val legacyToken = response.json.string("access_token") ?: return DingtalkResult.Network("missing_token")
+        val uploaded = try {
+            mediaHttp.multipart(
+                "https://oapi.dingtalk.com/media/upload?access_token=${encodeMedia(legacyToken)}&type=$type",
+                emptyMap(), "media", file.path, file.fileName, emptyMap(),
+            )
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { return DingtalkResult.Network("upload_failed") }
+        val uploadCode = uploaded.json?.primitiveText("errcode")?.toIntOrNull()
+        if (uploaded.status !in 200..299 || uploadCode != 0) return DingtalkResult.Error(uploaded.status, uploadCode?.toString() ?: "upload_error", "")
+        return uploaded.json.string("media_id")?.let { DingtalkResult.Ok(it) } ?: DingtalkResult.Network("missing_media_id")
+    }
+
+    private fun encodeMedia(value: String) = URLEncoder.encode(value, StandardCharsets.UTF_8)
+
     /** 给一个人发一条 sampleMarkdown；[msgParam] 由 [markdownParam] 生成。 */
     suspend fun send(
         staffId: String,
         msgParam: String,
+        msgKey: String = MSG_KEY,
+        commit: (() -> Boolean)? = null,
     ): DingtalkResult<DingtalkSendOutcome> {
         val body =
             JsonObject().apply {
                 addProperty("robotCode", clientId)
                 add("userIds", JsonArray().apply { add(staffId) })
-                addProperty("msgKey", MSG_KEY)
+                addProperty("msgKey", msgKey)
                 addProperty("msgParam", msgParam)
             }
-        return when (val result = authorized { http.post(SEND_URL, JSON_TYPE, body.toString(), tokenHeader(it)) }) {
-            is DingtalkResult.Ok ->
-                DingtalkResult.Ok(
-                    DingtalkSendOutcome(result.value.strings("invalidStaffIdList"), result.value.strings("flowControlledStaffIdList")),
-                )
+        return when (val result = authorized {
+            if (commit != null && !commit()) HttpJsonResponse(409, JsonObject().apply { addProperty("code", "binding_changed") })
+            else http.post(SEND_URL, JSON_TYPE, body.toString(), tokenHeader(it))
+                .let { response -> if (commit != null && response.status >= 500) response.copy(json = null) else response }
+        }) {
+            is DingtalkResult.Ok -> {
+                val invalid = result.value.strings("invalidStaffIdList")
+                val limited = result.value.strings("flowControlledStaffIdList")
+                if (commit != null && result.value.string("processQueryKey").isNullOrBlank() && invalid.isEmpty() && limited.isEmpty()) {
+                    DingtalkResult.Network("missing_send_result")
+                } else {
+                    DingtalkResult.Ok(DingtalkSendOutcome(invalid, limited))
+                }
+            }
 
             is DingtalkResult.Error -> result
             is DingtalkResult.Network -> result

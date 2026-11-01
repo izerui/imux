@@ -28,6 +28,25 @@ class TerminalHostWiringSourceTest {
     private val host = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt")
     private val startup = SourceCode("src/main/kotlin/com/github/izerui/imux/monitor/ImuxStartupActivity.kt")
 
+    @Test
+    fun `关闭终端撤销启动凭证且进程退出时不等编辑器释放`() {
+        assertTrue(host.bodyAfter("fun closeSession(", '{').contains("launchContributions.remove(file.tabId)?.close()"))
+        val ended = host.bodyAfter("private fun closeTabWhenTerminated(", '{')
+        assertTrue(ended.indexOf("contribution?.close()") > ended.indexOf("view.sessionState.first"))
+        assertTrue(ended.indexOf("contribution?.close()") < ended.indexOf("invokeLater"))
+    }
+
+    @Test
+    fun `启动准备期间不把尚未打开的恢复标签从快照抹掉`() {
+        val persist = host.bodyAfter("private fun persistRestorableTabs()", '{')
+        val guard = persist.indexOf("if (pendingOpens.isNotEmpty()) return")
+        assertTrue(guard >= 0 && guard < persist.indexOf("RestorableSessionTabs.getInstance(project).replace(tabs)"))
+        val prepare = host.bodyAfter("private fun open(", '{')
+        val wait = prepare.indexOf("predecessor?.join()")
+        assertTrue(wait >= 0 && wait < prepare.indexOf("TerminalLaunchContributions.prepare("))
+        assertTrue(prepare.contains("pendingOpens.remove(key, openingJob)"))
+    }
+
     /**
      * 新建会话那条命令的**每一个实参**都被钉住。
      *
@@ -63,11 +82,12 @@ class TerminalHostWiringSourceTest {
                     ),
                     agentType,
                     resumeId = sessionId,
-                    piExtensions = piExtensionsFor(agentType, ideaMcp),
+                    piExtensions = piExtensionsFor(agentType, ideaMcp) + launchContributions[tabId]?.piExtensions.orEmpty(),
                     ideaMcp = ideaMcp,
                     ideaMcpGuidance = ideaMcpGuidance,
                     initialPrompt = initialPrompt,
                     pidFile = tabPidFileFor(tabId),
+                    additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
                 )
             }
             """,
@@ -105,10 +125,11 @@ class TerminalHostWiringSourceTest {
                     ),
                     agentType,
                     resumeId = sessionId,
-                    piExtensions = piExtensionsFor(agentType, ideaMcp),
+                    piExtensions = piExtensionsFor(agentType, ideaMcp) + launchContributions[tabId]?.piExtensions.orEmpty(),
                     ideaMcp = ideaMcp,
                     ideaMcpGuidance = ideaMcpGuidance,
                     pidFile = tabPidFileFor(tabId),
+                    additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
                 )
             }
             """,

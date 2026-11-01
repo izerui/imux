@@ -181,6 +181,35 @@ class WeixinApi(
         }
     }
 
+    suspend fun mediaUploadUrl(baseUrl: String, token: String, payload: JsonObject): WeixinResult<JsonObject> {
+        payload.add("base_info", baseInfo())
+        return request { http.post("$baseUrl/ilink/bot/getuploadurl", JSON_TYPE, payload.toString(), headers(token)) }
+    }
+
+    suspend fun sendMediaItem(baseUrl: String, token: String, to: String, item: JsonObject, contextToken: String?, commit: () -> Boolean): WeixinResult<Unit> {
+        val body = JsonObject().apply {
+            add("msg", JsonObject().apply {
+                addProperty("from_user_id", "")
+                addProperty("to_user_id", to)
+                addProperty("client_id", "imux-${UUID.randomUUID()}")
+                addProperty("message_type", MESSAGE_TYPE_BOT)
+                addProperty("message_state", MESSAGE_STATE_FINISH)
+                add("item_list", JsonArray().apply { add(item) })
+                contextToken?.let { addProperty("context_token", it) }
+            })
+            add("base_info", baseInfo())
+        }
+        if (!commit()) return WeixinResult.Error(409, null, null, "binding_changed")
+        return when (val result = request {
+            http.post("$baseUrl/ilink/bot/sendmessage", JSON_TYPE, body.toString(), headers(token))
+                .let { if (it.status >= 500) it.copy(json = null) else it }
+        }) {
+            is WeixinResult.Ok -> WeixinResult.Ok(Unit)
+            is WeixinResult.Error -> result
+            is WeixinResult.Network -> result
+        }
+    }
+
     /** 公共请求头（官方 api.ts:221-254）；Content-Type 由 POST 自己设置，这里不放，避免重复。 */
     fun headers(token: String?): Map<String, String> =
         buildMap {

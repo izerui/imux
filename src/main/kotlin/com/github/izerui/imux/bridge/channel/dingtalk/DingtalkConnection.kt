@@ -9,6 +9,13 @@ import com.github.izerui.imux.bridge.channel.HttpFileDownload
 import com.github.izerui.imux.bridge.channel.JdkHttpFileDownload
 import com.github.izerui.imux.bridge.channel.JdkWebSocketTransport
 import com.github.izerui.imux.bridge.channel.SlidingWindowLimiter
+import com.github.izerui.imux.bridge.channel.awaitMediaSlot
+import com.github.izerui.imux.bridge.core.MediaSender
+import com.github.izerui.imux.bridge.core.MediaKind
+import com.github.izerui.imux.bridge.core.MediaAttempt
+import com.github.izerui.imux.bridge.core.MediaRejected
+import com.github.izerui.imux.bridge.core.PreparedMedia
+import com.github.izerui.imux.bridge.core.UploadedMedia
 import com.github.izerui.imux.bridge.core.DeliveryResult
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
@@ -52,9 +59,31 @@ class DingtalkConnection(
     private val backoffMaxMillis: Long = 60_000,
     private val limiter: SlidingWindowLimiter = SlidingWindowLimiter(5, 1_000, now),
     private val maxRateWaitMillis: Long = 20_000,
-) : ChannelConnection {
+) : ChannelConnection, MediaSender {
     /** 单聊上限未公布；正文在 msgParam 里还要转义一层，6000 字节给 15000 字节的上限留足余量。 */
     override val maxTextBytes: Int = 6_000
+    override val mediaCapabilities get() = dingtalkMediaCapabilities
+
+    override suspend fun uploadMedia(chatId: String, file: PreparedMedia, kind: MediaKind): UploadedMedia =
+        uploadDingtalkMedia(api, file, kind)
+
+    override suspend fun sendMedia(chatId: String, file: PreparedMedia, uploaded: UploadedMedia, commit: () -> Boolean): MediaAttempt {
+        val current = run ?: return MediaAttempt.Rejected(MediaRejected("offline", canFallback = false))
+        if (!limiter.awaitMediaSlot(chatId)) return MediaAttempt.Rejected(MediaRejected("rate_limited", canFallback = false))
+        val (key, param) = dingtalkMediaMessage(file, uploaded)
+        return when (val result = api.send(chatId, param, key, commit)) {
+            is DingtalkResult.Ok -> when {
+                result.value.flowControlledStaffIds.isNotEmpty() -> MediaAttempt.Rejected(MediaRejected("rate_limited", canFallback = false))
+                result.value.invalidStaffIds.isNotEmpty() -> MediaAttempt.Rejected(MediaRejected("invalid_staff_id", canFallback = false))
+                else -> { blockSend(current, null); MediaAttempt.Accepted() }
+            }
+            is DingtalkResult.Network -> MediaAttempt.Unknown
+            is DingtalkResult.Error -> {
+                sendFailing(result)?.let { blockSend(current, it) }
+                MediaAttempt.Rejected(dingtalkMediaError(result.code))
+            }
+        }
+    }
 
     private sealed interface SessionEnd {
         /** 服务端要求换连接：立即重建，不算失败。 */

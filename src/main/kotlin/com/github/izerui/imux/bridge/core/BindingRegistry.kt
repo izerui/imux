@@ -82,6 +82,11 @@ class BindingRegistry {
 
     fun snapshot(): List<Binding> = synchronized(lock) { byRobot.values.toList() }
 
+    /** 与绑定变更共享提交边界；[claim] 只能验证快照/登记提交，不得执行 IO。 */
+    fun claimCurrent(robotId: RobotId, epoch: Long, claim: () -> Boolean): Boolean = synchronized(lock) {
+        byRobot[robotId]?.epoch == epoch && claim()
+    }
+
     /** 在锁内改表，返回（结果, 是否改动）；改动了才在锁外通知。 */
     private inline fun <T> changing(block: () -> Pair<T, Boolean>): T {
         val (result, changed) = synchronized(lock, block)

@@ -64,6 +64,10 @@
     <!-- 会话装饰：其它功能给终端标签、会话树、终端顶部加的标记与横幅。现有代码只认这个接口。 -->
     <extensionPoints>
         <extensionPoint
+                qualifiedName="com.github.izerui.imux.terminalLaunchContributor"
+                interface="com.github.izerui.imux.terminal.TerminalLaunchContributor"
+                dynamic="true"/>
+        <extensionPoint
                 qualifiedName="com.github.izerui.imux.sessionDecorator"
                 interface="com.github.izerui.imux.terminal.SessionDecorator"
                 dynamic="true"/>
@@ -159,6 +163,7 @@
           观测，只能由它自己上报，见 PiSessionReportHandler 的说明。
         -->
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
+        <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.MobileMcpHandler"/>
 
         <statusBarWidgetFactory
                 id="imux.phoneBridge"
@@ -166,6 +171,7 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.github.izerui.imux">
+        <terminalLaunchContributor implementation="com.github.izerui.imux.bridge.mcp.MobileLaunchContributor"/>
         <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
     </extensions>
 

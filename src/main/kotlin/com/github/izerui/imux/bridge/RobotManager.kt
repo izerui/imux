@@ -39,6 +39,9 @@ class RobotManager(parentScope: CoroutineScope) {
     private val vault: CredentialVault = PasswordSafeVault()
     private val connections = ConcurrentHashMap<RobotId, ChannelConnection>()
     private val statuses = ConcurrentHashMap<RobotId, ConnectionStatus>()
+    private val mediaGenerations = ConcurrentHashMap<RobotId, java.util.concurrent.atomic.AtomicLong>()
+
+    internal fun mediaGeneration(id: RobotId): Long = mediaGenerations[id]?.get() ?: 0
 
     /** 当前配对码的连续错误次数，只在内存里；配对成功或重新生成时清零。 */
     private val wrongPairAttempts = ConcurrentHashMap<RobotId, Int>()
@@ -192,6 +195,7 @@ class RobotManager(parentScope: CoroutineScope) {
             connections.remove(id)?.stop()
             hub.detachRobot(id)
             statuses[id] = ConnectionStatus.Stopped
+            mediaGenerations.computeIfAbsent(id) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
         }
     }
 
@@ -233,6 +237,9 @@ class RobotManager(parentScope: CoroutineScope) {
         id: RobotId,
         status: ConnectionStatus,
     ) {
+        if (status != ConnectionStatus.Online && status !is ConnectionStatus.SendFailing) {
+            mediaGenerations.computeIfAbsent(id) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
+        }
         // 联调与排障依据：只记状态变化，不记消息内容
         if (statuses.put(id, status) != status) LOG.info("机器人 ${robot(id)?.name ?: id} 连接状态：$status")
         bump()

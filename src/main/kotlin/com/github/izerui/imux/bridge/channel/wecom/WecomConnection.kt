@@ -9,6 +9,13 @@ import com.github.izerui.imux.bridge.channel.FrameListener
 import com.github.izerui.imux.bridge.channel.FrameTransport
 import com.github.izerui.imux.bridge.channel.JdkWebSocketTransport
 import com.github.izerui.imux.bridge.channel.SlidingWindowLimiter
+import com.github.izerui.imux.bridge.channel.awaitMediaSlot
+import com.github.izerui.imux.bridge.core.MediaSender
+import com.github.izerui.imux.bridge.core.MediaKind
+import com.github.izerui.imux.bridge.core.MediaRejected
+import com.github.izerui.imux.bridge.core.MediaAttempt
+import com.github.izerui.imux.bridge.core.PreparedMedia
+import com.github.izerui.imux.bridge.core.UploadedMedia
 import com.github.izerui.imux.bridge.core.DeliveryResult
 import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
@@ -52,8 +59,33 @@ class WecomConnection(
     private val limiter: SlidingWindowLimiter = SlidingWindowLimiter(30, 60_000, now),
     private val maxRateWaitMillis: Long = 20_000,
     private val download: HttpFileDownload = JdkHttpFileDownload(),
-) : ChannelConnection {
+) : ChannelConnection, MediaSender {
     override val maxTextBytes: Int = 20_000
+    private val uploadLimiter = SlidingWindowLimiter(30, 60_000, now)
+    override val mediaCapabilities get() = wecomMediaCapabilities
+
+    override suspend fun uploadMedia(chatId: String, file: PreparedMedia, kind: MediaKind): UploadedMedia {
+        val state = session ?: throw MediaRejected("offline", canFallback = false)
+        val transport = state.transport ?: throw MediaRejected("offline", canFallback = false)
+        if (!uploadLimiter.awaitMediaSlot(botId)) throw MediaRejected("rate_limited", canFallback = false)
+        return uploadWecomMedia(file, kind) { command, body ->
+            if (session !== state) throw MediaRejected("offline", canFallback = false)
+            val id = WecomProtocol.reqId(command, now(), random)
+            request(state, transport, id, wecomMediaFrame(command, id, body))
+        }
+    }
+
+    override suspend fun sendMedia(chatId: String, file: PreparedMedia, uploaded: UploadedMedia, commit: () -> Boolean): MediaAttempt {
+        val state = session ?: return MediaAttempt.Rejected(MediaRejected("offline", canFallback = false))
+        val transport = state.transport ?: return MediaAttempt.Rejected(MediaRejected("offline", canFallback = false))
+        if (!limiter.awaitMediaSlot(chatId)) return MediaAttempt.Rejected(MediaRejected("rate_limited", canFallback = false))
+        if (session !== state || !commit()) return MediaAttempt.Rejected(MediaRejected("binding_changed", canFallback = false))
+        val id = WecomProtocol.reqId("aibot_send_msg", now(), random)
+        val ack = request(state, transport, id, wecomMediaFrame("aibot_send_msg", id, wecomMediaBody(chatId, uploaded)))
+            ?: return MediaAttempt.Unknown
+        return if (ack.errcode == 0) MediaAttempt.Accepted()
+        else MediaAttempt.Rejected(MediaRejected(ack.errcode.toString(), canFallback = ack.errcode != ERRCODE_RATE_LIMITED))
+    }
 
     private sealed interface SessionEnd {
         data object Kicked : SessionEnd

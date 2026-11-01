@@ -92,6 +92,7 @@ class FeishuApi(
     private val appSecret: String,
     private val domain: FeishuDomain,
     private val http: HttpJson = JdkHttpJson(),
+    private val mediaHttp: com.github.izerui.imux.bridge.channel.MediaHttp = com.github.izerui.imux.bridge.channel.JdkMediaHttp(),
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val tokenLock = Mutex()
@@ -163,6 +164,45 @@ class FeishuApi(
 
     fun invalidateToken() {
         token = null
+    }
+
+    suspend fun uploadMediaFile(
+        path: java.nio.file.Path, name: String, image: Boolean, video: Boolean = false, durationMillis: Long? = null,
+    ): FeishuResult<String> {
+        val result = authorized { token ->
+            val fields = if (image) mapOf("image_type" to "message") else buildMap {
+                put("file_type", if (video) "mp4" else "stream")
+                put("file_name", name)
+                durationMillis?.let { put("duration", it.toString()) }
+            }
+            val uploaded = mediaHttp.multipart(
+                "${domain.openBase}/open-apis/im/v1/${if (image) "images" else "files"}",
+                fields, if (image) "image" else "file", path, name, bearer(token),
+            )
+            HttpJsonResponse(uploaded.status, uploaded.json)
+        }
+        return when (result) {
+            is FeishuResult.Ok -> result.value.obj("data")?.string(if (image) "image_key" else "file_key")
+                ?.let { FeishuResult.Ok(it) } ?: FeishuResult.Network("missing_resource_key")
+            is FeishuResult.Error -> result
+            is FeishuResult.Network -> result
+        }
+    }
+
+    /** 令牌被明确拒绝后最多刷新一次；每次实际提交都重新检查原绑定，未知结果不重试。 */
+    suspend fun sendMediaBody(body: String, commit: () -> Boolean): FeishuResult<String?> {
+        return when (val result = authorized { current ->
+            if (!commit()) {
+                HttpJsonResponse(409, JsonObject().apply { addProperty("code", -1); addProperty("msg", "binding_changed") })
+            } else {
+                http.post("${domain.openBase}/open-apis/im/v1/messages?receive_id_type=open_id", JSON_TYPE, body, bearer(current))
+                    .let { if (it.status >= 500) it.copy(json = null) else it }
+            }
+        }) {
+            is FeishuResult.Ok -> FeishuResult.Ok(result.value.obj("data")?.string("message_id"))
+            is FeishuResult.Error -> result
+            is FeishuResult.Network -> result
+        }
     }
 
     suspend fun send(body: String): FeishuResult<Unit> =
@@ -261,7 +301,11 @@ class FeishuApi(
             }
         val json = response.json ?: return FeishuResult.Network("HTTP ${response.status}")
         val code = json.primitiveText("code")?.toIntOrNull() ?: return FeishuResult.Network("HTTP ${response.status}")
-        return if (code == 0) FeishuResult.Ok(json) else FeishuResult.Error(code, json.string("msg").orEmpty())
+        return when {
+            code != 0 -> FeishuResult.Error(code, json.string("msg").orEmpty())
+            response.status in 200..299 -> FeishuResult.Ok(json)
+            else -> FeishuResult.Network("HTTP ${response.status}")
+        }
     }
 
     companion object {
