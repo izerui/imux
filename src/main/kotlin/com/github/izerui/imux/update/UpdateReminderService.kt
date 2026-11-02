@@ -15,7 +15,6 @@ import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.options.ShowSettingsUtil
-import com.intellij.openapi.project.ProjectManager
 import com.intellij.util.io.HttpRequests
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -107,13 +106,17 @@ class UpdateReminderService(private val scope: CoroutineScope) {
                 ImuxBundle.message("update.notify.content", latest, current),
                 NotificationType.INFORMATION,
             ).addAction(
-                NotificationAction.createSimpleExpiring(ImuxBundle.message("update.action.upgrade")) {
-                    val project = ProjectManager.getInstance().openProjects.firstOrNull()
-                    ShowSettingsUtil.getInstance().showSettingsDialog(
-                        project,
-                        Predicate { (it as? SearchableConfigurable)?.id == "preferences.pluginManager" },
-                        null as Consumer<Configurable>?,
-                    )
+                NotificationAction.createExpiring(ImuxBundle.message("update.action.upgrade")) { e, _ ->
+                    try {
+                        ShowSettingsUtil.getInstance().showSettingsDialog(
+                            e.project,
+                            Predicate { (it as? SearchableConfigurable)?.id == "preferences.pluginManager" },
+                            null as Consumer<Configurable>?,
+                        )
+                    } catch (ex: Exception) {
+                        LOG.debug("打开插件管理器失败，回退到浏览器", ex)
+                        BrowserUtil.browse(VERSIONS_URL)
+                    }
                 },
             ).addAction(
                 NotificationAction.createSimple(ImuxBundle.message("update.action.notes")) {

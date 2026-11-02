@@ -10,6 +10,12 @@
 
 设计文档：`docs/superpowers/specs/2026-11-02-new-version-reminder-design.md`
 
+## 实施偏离
+
+1. **去升级动作不使用 `PluginManagerConfigurable`**：该类标注 `@ApiStatus.Internal`，改用 `ShowSettingsUtil.showSettingsDialog(project, Predicate, null)` 按公开的 configurable id `"preferences.pluginManager"` 匹配；若匹配失败回退到 `BrowserUtil.browse(版本页)` 并 LOG.debug。project 取自通知动作事件（`AnActionEvent.project`），而非 `ProjectManager.openProjects.firstOrNull()`。
+2. **`PluginManagerCore.getPlugin` 保留为已知风险**：读取当前插件版本无公开替代 API，与 `settings/IdeaMcpPort.kt` 一致，作为已接受的 Internal API 风险保留。
+3. **轮询循环兜底所有异常**：`while (true)` 体包裹 `try/catch`，`CancellationException` 重新抛出，其余异常 LOG.debug 后继续，确保单次 RuntimeException 不会杀死整个 IDE 运行期间的调度。
+
 ## Global Constraints
 
 - 插件 ID：`com.github.izerui.imux`

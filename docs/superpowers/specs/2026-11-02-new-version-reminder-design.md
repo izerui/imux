@@ -58,7 +58,7 @@ internal fun shouldRemind(current: String, latest: String?, ignored: String?, al
 - 标题：imux 有新版本
 - 内容：`{latest} 已可用（当前 {current}）`
 - 操作：
-  - **去升级**：`ShowSettingsUtil.getInstance().showSettingsDialog(project, PluginManagerConfigurable::class.java)` 打开插件设置页（project 取当前任一打开的项目，可为 null），由 IDE 负责下载、安装和重启提示；通知关闭。
+  - **去升级**：`ShowSettingsUtil.getInstance().showSettingsDialog(project, Predicate { id == "preferences.pluginManager" }, null)` 按公开的 configurable id 打开插件设置页（project 取通知动作事件中用户所在窗口的项目），由 IDE 负责下载、安装和重启提示；若 Predicate 匹配不到（平台改名等），回退到 `BrowserUtil.browse(版本页)` 并 LOG.debug；通知关闭。读取当前版本使用 `PluginManagerCore.getPlugin`（Internal API，同 settings/IdeaMcpPort.kt，作为已知风险保留）。
   - **查看更新内容**：`BrowserUtil.browse("https://plugins.jetbrains.com/plugin/33412-imux/versions")`；通知保留。
   - **忽略此版本**：写入忽略版本，通知关闭。
 
@@ -66,7 +66,7 @@ internal fun shouldRemind(current: String, latest: String?, ignored: String?, al
 
 ## 错误处理
 
-网络失败、超时、非 2xx、XML 解析失败一律静默：记一条 `LOG.debug`，等下个周期再查。不弹错误通知，不重试。
+网络失败、超时、非 2xx、XML 解析失败一律静默：记一条 `LOG.debug`，等下个周期再查。不弹错误通知，不重试。轮询循环捕获所有非取消异常（`CancellationException` 重新抛出），LOG.debug 后继续下个周期，确保任何 RuntimeException 不会中断调度。
 
 ## 多语言
 
