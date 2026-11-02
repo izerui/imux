@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -96,18 +97,28 @@ class RobotManagerPlatformNameSourceTest {
     }
 
     @Test
-    fun `改名先按渠道判断能否改名`() {
+    fun `所有渠道都可本地改名`() {
         val rename = code.compact(code.bodyAfter("fun rename(", '{'))
         // bodyAfter 从锚点之后截取，含形参；“){”之后紧跟的就是函数体第一条语句
-        assertTrue(rename, rename.contains("name:String){if(!canRename(id))return"))
-        assertTrue(code.compact(code.normalized).contains("robot(id)?.kind?.let(ChannelFactories::canRename)!=false"))
+        assertTrue(rename, rename.contains("name:String){store.update{it.rename(id,name)}"))
+        val all = settings.compact(settings.normalized)
+        assertFalse(all.contains("setEditActionUpdater"))
+        val dialog = settings.compact(settings.bodyAfter("private fun rename(table: JBTable)", '{'))
+        assertTrue(dialog, dialog.startsWith("{valrow=selected(table)?:return"))
     }
 
     @Test
-    fun `设置页改名按钮与双击入口都按能否改名放行`() {
-        val all = settings.compact(settings.normalized)
-        assertTrue(all.contains(".setEditActionUpdater{selected(table)?.let{RobotManager.getInstance().canRename(it.id)}==true}"))
-        val rename = settings.compact(settings.bodyAfter("private fun rename(table: JBTable)", '{'))
-        assertTrue(rename, rename.startsWith("{valrow=selected(table)?.takeIf{RobotManager.getInstance().canRename(it.id)}?:return"))
+    fun `只有名称同步自平台的渠道记下扫码时的平台名称`() {
+        assertTrue(
+            code.compact(code.normalized)
+                .contains("platformName=suggestedName?.takeIf{ChannelFactories.forKind(kind)?.namedByPlatform==true}"),
+        )
+    }
+
+    @Test
+    fun `平台名称与上次同步的相同时不覆盖本地名称`() {
+        val write = code.compact(code.bodyAfter("private fun writePlatformName(", '{'))
+        assertTrue(write, write.contains("valbefore=robot(id)?:returnfalse"))
+        assertTrue(write, write.contains("store.update{it.syncPlatformName(id,name)}.robot(id)!=before"))
     }
 }

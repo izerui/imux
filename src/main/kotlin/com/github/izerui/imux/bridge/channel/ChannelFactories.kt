@@ -10,7 +10,4 @@ object ChannelFactories {
     fun all(): List<ChannelFactory> = listOf(WecomChannelFactory, FeishuChannelFactory, DingtalkChannelFactory, WeixinChannelFactory)
 
     fun forKind(kind: ChannelKind): ChannelFactory? = all().firstOrNull { it.kind == kind }
-
-    /** 名称以平台为准的渠道（见 [ChannelFactory.namedByPlatform]）不能在本地改名。 */
-    fun canRename(kind: ChannelKind): Boolean = forKind(kind)?.namedByPlatform != true
 }

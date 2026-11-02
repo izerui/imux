@@ -26,10 +26,9 @@ internal sealed interface ClarificationState {
         val canSend: Boolean get() = requirement.isNotBlank() && (origin == ContentOrigin.AGENT || edited)
     }
 
-    /** 正在发送：[waitingForTurn] 为 true 时在等主会话这一轮结束，否则在等终端可以接收。 */
+    /** 正在向终端发送。 */
     data class Sending(
         val requirement: String,
-        val waitingForTurn: Boolean,
         val origin: ContentOrigin = ContentOrigin.AGENT,
         val originalText: String = requirement,
     ) : ClarificationState
@@ -354,26 +353,19 @@ internal class ClarificationFlow(
         synchronized(lock) { (state as? ClarificationState.Result)?.let { state = it.copy(requirement = text, comparisonFailed = false) } }
     }
 
-    /** 从结果页进入发送，或在发送中切换"等这一轮结束 / 等终端接收"。状态不变时不通知。 */
-    fun sending(waitingForTurn: Boolean): Boolean {
-        val changedNow =
-            synchronized(lock) {
-                val next =
-                    when (val s = state) {
-                        is ClarificationState.Result -> {
-                            if (!s.canSend) return false
-                            ClarificationState.Sending(s.requirement, waitingForTurn, s.origin, s.originalText)
-                        }
-                        is ClarificationState.Sending -> {
-                            if (s.waitingForTurn == waitingForTurn) return true
-                            s.copy(waitingForTurn = waitingForTurn)
-                        }
-                        else -> return false
-                    }
-                state = next
-                true
+    /** 从结果页进入发送。状态不变时不通知。 */
+    fun sending(): Boolean {
+        synchronized(lock) {
+            when (val s = state) {
+                is ClarificationState.Result -> {
+                    if (!s.canSend) return false
+                    state = ClarificationState.Sending(s.requirement, s.origin, s.originalText)
+                }
+                is ClarificationState.Sending -> return true
+                else -> return false
             }
-        if (changedNow) changed()
+        }
+        changed()
         return true
     }
 

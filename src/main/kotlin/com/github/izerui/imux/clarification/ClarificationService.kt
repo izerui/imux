@@ -7,7 +7,6 @@ import com.github.izerui.imux.agent.UnexitedProcesses
 import com.github.izerui.imux.agent.agentConversation
 import com.github.izerui.imux.agent.conversationInvocation
 import com.github.izerui.imux.model.AgentType
-import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.peer.trySendPeerFeedback
 import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.TerminalHost
@@ -181,16 +180,14 @@ class ClarificationService(
     }
 
     /**
-     * 与结对编程对齐的发送时机：主会话正在执行、或 Claude 停在确认框上时等这一轮结束，其余立即发。
-     * 判定读的是 [SessionMonitor] 已有的运行集合与运行态，与结对编程触发审查用的是同一组信号；
-     * 在循环里轮询而不是挂在「轮次完成」事件上，确认框被 Esc 取消、直接回到空闲时也能发出去。
+     * 用户点击后直接发送，排队或插入由 CLI 决定，不等待主会话空闲。
      * 括号粘贴未开启时持续重试（与 `PeerCoordinator.injectFeedback` 相同）；可随时取消；
      * 标签页已关闭则通知并提供复制。
      */
     internal fun send(sessionKey: String, text: String) {
         val flow = flows[sessionKey] ?: return
         val result = flow.state as? ClarificationState.Result ?: return
-        if (text != result.requirement || !flow.sending(waitingForTurn = isMainSessionBusy(sessionKey))) return
+        if (text != result.requirement || !flow.sending()) return
         register(sessionKey, flow) {
             scope.launch(Dispatchers.EDT) {
                 while (isActive) {
@@ -201,13 +198,11 @@ class ClarificationService(
                         notifyUndelivered(text)
                         return@launch
                     }
-                    val busy = isMainSessionBusy(key)
-                    flow.sending(waitingForTurn = busy)
-                    if (!busy && trySendPeerFeedback(view.createSendTextBuilder(), text)) {
+                    if (trySendPeerFeedback(view.createSendTextBuilder(), text)) {
                         discard(key)
                         return@launch
                     }
-                    delay(if (busy) BUSY_POLL_MILLIS else SEND_RETRY_MILLIS)
+                    delay(SEND_RETRY_MILLIS)
                 }
             }
         }
@@ -216,12 +211,6 @@ class ClarificationService(
     internal fun cancelSend(sessionKey: String) {
         jobs.remove(sessionKey)?.cancel()
         flows[sessionKey]?.sendCancelled()
-    }
-
-    private fun isMainSessionBusy(sessionKey: String): Boolean {
-        val monitor = SessionMonitor.getInstance(project)
-        val waiting = monitor.runtime.values.filter { it.isWaiting }.map { it.sessionId }.toSet()
-        return mainSessionBusy(monitor.runningIds, waiting, sessionKey)
     }
 
     private fun notifyUndelivered(text: String) {
@@ -293,7 +282,6 @@ class ClarificationService(
 
         internal const val AGENT_TIMEOUT_SECONDS = 600L
         private const val SEND_RETRY_MILLIS = 100L
-        private const val BUSY_POLL_MILLIS = 500L
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"
     }
 }
@@ -305,10 +293,6 @@ internal fun undeliveredRequirement(state: ClarificationState): String? =
         is ClarificationState.Sending -> state.requirement
         else -> null
     }
-
-/** 主会话正在执行或停在确认框上（只有 Claude 有这个信号）。纯函数，便于单测。 */
-internal fun mainSessionBusy(running: Set<String>, waiting: Set<String>, sessionKey: String): Boolean =
-    sessionKey in running || sessionKey in waiting
 
 fun interface ClarificationOpenListener : java.util.EventListener {
     fun openChanged(sessionKey: String)

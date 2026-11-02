@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge
 
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.BindingRegistry
 import com.github.izerui.imux.bridge.core.BridgeRouter
 import com.github.izerui.imux.bridge.core.ChannelAdapter
@@ -21,6 +22,7 @@ import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
@@ -48,6 +50,12 @@ class BridgeHub(parentScope: CoroutineScope) {
             onDelivery = ::logDelivery,
             attachmentStore = ProjectAttachmentStore(),
             onWarning = { LOG.warn(it) },
+            awaitOnline = { id ->
+                revision.first {
+                    RobotManager.getInstance().statusOf(id) == ConnectionStatus.Online &&
+                        channels.containsKey(id) && owners.containsKey(id)
+                }
+            },
         )
 
     private val _revision = MutableStateFlow(0L)
@@ -90,7 +98,7 @@ class BridgeHub(parentScope: CoroutineScope) {
         _revision.update { it + 1 }
     }
 
-    /** 由机器人管理在连接成功后调用；[owner] 为 null 表示尚未配对，消息一律忽略。 */
+    /** 由机器人管理在启动连接前登记；[owner] 为 null 表示尚未配对，消息一律忽略。 */
     fun registerRobot(
         adapter: ChannelAdapter,
         owner: RobotOwner?,

@@ -28,20 +28,11 @@ class ChannelFactoriesTest {
     }
 
     @Test
-    fun `飞书名称以平台为准，不能本地改名`() {
+    fun `只有飞书名称同步自平台`() {
         assertTrue(FeishuChannelFactory.namedByPlatform)
-        assertFalse(ChannelFactories.canRename(ChannelKind.FEISHU))
-    }
-
-    @Test
-    fun `其他渠道名称在本地，仍可改名`() {
         for (factory in ChannelFactories.all().filterNot { it.kind == ChannelKind.FEISHU }) {
             assertFalse(factory.kind.name, factory.namedByPlatform)
-            assertTrue(factory.kind.name, ChannelFactories.canRename(factory.kind))
         }
-        assertTrue(ChannelFactories.canRename(ChannelKind.WECOM))
-        assertTrue(ChannelFactories.canRename(ChannelKind.DINGTALK))
-        assertTrue(ChannelFactories.canRename(ChannelKind.WEIXIN))
     }
 
     @Test

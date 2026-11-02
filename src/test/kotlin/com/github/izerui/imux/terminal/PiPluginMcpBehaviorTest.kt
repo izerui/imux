@@ -77,7 +77,11 @@ class PiPluginMcpBehaviorTest {
             };
             $body
         """.trimIndent()
-        val process = ProcessBuilder("node", "--input-type=module", "-e", script).start()
+        val process = ProcessBuilder("node", "--input-type=module", "-e", script).apply {
+            // 测试场景自己注入配置，不继承启动终端里的真实 MCP 服务。
+            listOf("IMUX_MOBILE_URL", "IMUX_MOBILE_TOKEN", "IMUX_SESSION_URL", "IMUX_SESSION_TOKEN")
+                .forEach { environment().remove(it) }
+        }.start()
         assertTrue("Node extension harness timed out", process.waitFor(10, TimeUnit.SECONDS))
         val output = process.inputStream.bufferedReader().readText()
         val error = process.errorStream.bufferedReader().readText()

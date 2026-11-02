@@ -295,7 +295,7 @@ internal fun buttonBar(state: ClarificationState, page: AskingPage?): ButtonBar 
     }
 
 /**
- * 判断是否需要重建中间面板。以下情况就地更新而不重建：同一次调查只是进度变了；同一次发送只是等待原因变了；
+ * 判断是否需要重建中间面板。以下情况就地更新而不重建：同一次调查只是进度变了；同一次发送内容不变；
  * 同一批问题（回答在草稿里，换标签只重建题目区域）。
  */
 internal fun needsCenterRebuild(old: ClarificationState?, new: ClarificationState): Boolean {

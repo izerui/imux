@@ -168,7 +168,6 @@ internal class ClarificationView(
     private var elapsedComment: JEditorPane? = null
     private var investigationKind = InvestigationKind.ROUND
     private var investigationStartedAt = 0L
-    private var sendingLabel: JBLabel? = null
     private var resultArea: JBTextArea? = null
 
     // ---- 提问页 ----
@@ -284,7 +283,6 @@ internal class ClarificationView(
         inputArea = null
         progressLabel = null
         elapsedComment = null
-        sendingLabel = null
         resultArea = null
         drafts = null
         tabs = null
@@ -296,7 +294,6 @@ internal class ClarificationView(
     private fun updateInPlace(state: ClarificationState) {
         when (state) {
             is ClarificationState.Investigating -> progressLabel?.let { setProgress(it, state.progress) }
-            is ClarificationState.Sending -> sendingLabel?.text = sendingReason(state)
             else -> Unit
         }
     }
@@ -702,13 +699,10 @@ internal class ClarificationView(
         panel {
             row {
                 icon(AnimatedIcon.Default.INSTANCE).gap(RightGap.SMALL)
-                sendingLabel = JBLabel(sendingReason(state)).also { cell(it) }
+                label(messages.get("clarify.sending"))
             }
             row { multiline(state.requirement, 8).applyToComponent { isEditable = false } }.resizableRow()
         }
-
-    private fun sendingReason(state: ClarificationState.Sending): String =
-        messages.get(if (state.waitingForTurn) "clarify.sending.turn" else "clarify.sending")
 
     private fun failedPage(state: ClarificationState.Failed): DialogPanel {
         val message =

@@ -18,6 +18,22 @@ class RobotBookTest {
     }
 
     @Test
+    fun `平台名称变化才覆盖本地改名`() {
+        val id = RobotId("a")
+        val synced = RobotBook().add(robot("a")).syncPlatformName(id, "飞书助手")
+        assertEquals("飞书助手", synced.robot(id)!!.name)
+        assertEquals("飞书助手", synced.robot(id)!!.platformName)
+
+        val renamed = synced.rename(id, "本地名")
+        assertEquals("飞书助手", renamed.robot(id)!!.platformName)
+        assertEquals("本地名", renamed.syncPlatformName(id, "飞书助手").robot(id)!!.name)
+
+        val changed = renamed.syncPlatformName(id, "飞书新名").robot(id)!!
+        assertEquals("飞书新名", changed.name)
+        assertEquals("飞书新名", changed.platformName)
+    }
+
+    @Test
     fun `认主后清除配对码`() {
         val owned = RobotBook().add(robot("a")).withOwner(RobotId("a"), RobotOwner("u1", "u1")).robot(RobotId("a"))!!
         assertEquals(RobotOwner("u1", "u1"), owned.owner())

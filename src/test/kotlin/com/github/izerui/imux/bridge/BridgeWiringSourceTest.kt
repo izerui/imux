@@ -13,6 +13,15 @@ class BridgeWiringSourceTest {
     private val pluginXml = java.io.File("src/main/resources/META-INF/plugin.xml").readText()
 
     @Test
+    fun `恢复通知订阅连接状态并等待真正上线`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeHub.kt")
+        val wait = source.bodyAfter("awaitOnline = { id ->", '{')
+        assertTrue(wait.contains("revision.first {"))
+        assertTrue(wait.contains("RobotManager.getInstance().statusOf(id) == ConnectionStatus.Online"))
+        assertTrue(wait.contains("channels.containsKey(id) && owners.containsKey(id)"))
+    }
+
+    @Test
     fun `项目打开时自动连接机器人并启动终端观察`() {
         assertTrue(startup.contains("= BridgeLifecycle.onProjectOpened(project)"))
         val lifecycle = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeLifecycle.kt")

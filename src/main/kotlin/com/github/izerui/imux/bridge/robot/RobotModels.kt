@@ -9,6 +9,8 @@ import com.github.izerui.imux.bridge.core.RobotOwner
  *
  * 扫码拿不到本人身份的渠道（企业微信、钉钉）在认主前带一个 [pairCode]，
  * 等本人把它发给机器人；认主后只接受本人的消息。
+ *
+ * [platformName] 是上次从平台同步到的名称（只有名称以平台为准的渠道才有）；[name] 可在本地另改。
  */
 data class RobotRecord(
     val id: RobotId,
@@ -19,6 +21,7 @@ data class RobotRecord(
     val pairCode: String? = null,
     val pairCodeExpiresAtMillis: Long = 0,
     val createdAtMillis: Long = 0,
+    val platformName: String? = null,
 ) {
     fun owner(): RobotOwner? {
         val sender = ownerSenderId ?: return null
@@ -48,6 +51,12 @@ data class RobotBook(
         id: RobotId,
         name: String,
     ): RobotBook = update(id) { it.copy(name = name) }
+
+    /** 平台名称与上次同步的不同才覆盖本地名称，否则保留本地改过的名字。 */
+    fun syncPlatformName(
+        id: RobotId,
+        name: String,
+    ): RobotBook = update(id) { if (it.platformName == name) it else it.copy(name = name, platformName = name) }
 
     fun remove(id: RobotId): RobotBook =
         copy(robots = robots.filterNot { it.id == id }, bindings = bindings.filterNot { it.robotId == id.value })

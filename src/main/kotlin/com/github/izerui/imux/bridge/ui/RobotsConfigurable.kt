@@ -58,8 +58,6 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 }
                 .setRemoveAction { remove(table) }
                 .setEditAction { rename(table) }
-                // 飞书等名称以平台为准，改名要去平台后台，这里不让改
-                .setEditActionUpdater { selected(table)?.let { RobotManager.getInstance().canRename(it.id) } == true }
                 .addExtraAction(
                     object : com.intellij.openapi.project.DumbAwareAction(
                         ImuxBundle.message("bridge.settings.unbind"),
@@ -173,8 +171,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
     }
 
     private fun rename(table: JBTable) {
-        // 双击行也会走到这里，不能只靠按钮置灰
-        val row = selected(table)?.takeIf { RobotManager.getInstance().canRename(it.id) } ?: return
+        val row = selected(table) ?: return
         val name = Messages.showInputDialog(
             ImuxBundle.message("bridge.settings.rename"),
             ImuxBundle.message("bridge.settings.displayName"),

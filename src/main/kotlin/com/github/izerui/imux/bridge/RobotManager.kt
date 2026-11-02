@@ -49,7 +49,7 @@ class RobotManager(parentScope: CoroutineScope) {
     /** 登记/摘除连接与写入状态共用一把锁：start()/stop() 都不阻塞，持锁时间很短。 */
     private val lifecycleLock = Any()
 
-    /** 名称以平台为准的渠道，每次上线同步平台名称；写入与连接登记共用 [lifecycleLock]。 */
+    /** 名称同步自平台的渠道，每次上线同步平台名称；写入与连接登记共用 [lifecycleLock]。 */
     private val nameSync = PlatformNameSync(scope + Dispatchers.IO, lifecycleLock, ::writePlatformName) { bump() }
 
     /** 由界面层设置：机器人被别处接管时的提示。 */
@@ -82,11 +82,13 @@ class RobotManager(parentScope: CoroutineScope) {
         }
     }
 
+    /** [suggestedName] 是扫码时平台给的名称；名称同步自平台的渠道记为 [RobotRecord.platformName]。 */
     suspend fun add(
         kind: ChannelKind,
         credentials: Map<String, String>,
         ownerId: String?,
         name: String,
+        suggestedName: String? = null,
     ): RobotRecord {
         val now = System.currentTimeMillis()
         val id = RobotId(UUID.randomUUID().toString())
@@ -101,6 +103,7 @@ class RobotManager(parentScope: CoroutineScope) {
                 pairCode = if (ownerId == null) Pairing.newCode() else null,
                 pairCodeExpiresAtMillis = if (ownerId == null) now + Pairing.TTL_MILLIS else 0,
                 createdAtMillis = now,
+                platformName = suggestedName?.takeIf { ChannelFactories.forKind(kind)?.namedByPlatform == true },
             )
         store.update { it.add(record) }
         bump()
@@ -123,17 +126,14 @@ class RobotManager(parentScope: CoroutineScope) {
         return book.robot(id)
     }
 
-    /** 名称以平台为准的渠道不能改名，见 [canRename]。 */
+    /** 名称同步自平台的渠道也可本地改名，平台名称再变化时才会被覆盖，见 [RobotBook.syncPlatformName]。 */
     fun rename(
         id: RobotId,
         name: String,
     ) {
-        if (!canRename(id)) return
         store.update { it.rename(id, name) }
         bump()
     }
-
-    fun canRename(id: RobotId): Boolean = robot(id)?.kind?.let(ChannelFactories::canRename) != false
 
     suspend fun remove(id: RobotId) {
         disconnect(id)
@@ -179,14 +179,16 @@ class RobotManager(parentScope: CoroutineScope) {
         }
     }
 
-    /** 由 [nameSync] 在 [lifecycleLock] 内调用；机器人已删除或名称没变时不写。 */
+    /**
+     * 由 [nameSync] 在 [lifecycleLock] 内调用；是否覆盖由 [RobotBook.syncPlatformName] 决定，记录有变化时返回 true。
+     * 旧数据和扫码没取到名称的机器人 platformName 为 null，第一次同步总会采用平台名称。
+     */
     private fun writePlatformName(
         id: RobotId,
         name: String,
     ): Boolean {
-        if (robot(id)?.let { it.name != name } != true) return false
-        store.update { it.rename(id, name) }
-        return true
+        val before = robot(id) ?: return false
+        return store.update { it.syncPlatformName(id, name) }.robot(id) != before
     }
 
     /** 先摘下再停止：连接自己报的 Stopped 会被当成旧连接的回调丢掉，所以这里直接记下。 */

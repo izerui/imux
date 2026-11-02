@@ -313,15 +313,15 @@ class ClarificationFlowTest {
         val f = started(IllegalStateException("offline"))
         f.fallbackResult()
         val original = f.state as ClarificationState.Result
-        assertFalse("材料不能直接发", f.sending(false))
+        assertFalse("材料不能直接发", f.sending())
         assertEquals("拒绝发送不改变状态", original, f.state)
         f.editResult("为管理员增加来源查询，保留现有日志统计口径。")
         val edited = f.state as ClarificationState.Result
-        assertTrue("用户编辑后可发", f.sending(false))
+        assertTrue("用户编辑后可发", f.sending())
         f.sendCancelled()
         assertEquals("取消发送保留编辑及原始来源", edited, f.state)
         f.editResult(original.requirement)
-        assertFalse("恢复原文后不能误认为仍已编辑", f.sending(false))
+        assertFalse("恢复原文后不能误认为仍已编辑", f.sending())
         assertEquals(original, f.state)
     }
 
@@ -541,7 +541,7 @@ class ClarificationFlowTest {
         f.run(f.continueClarifying()!!)
         f.editResult("第二版修订")
         assertEquals("结果页复制最新编辑", "第二版修订", f.undeliveredPlan())
-        f.sending(waitingForTurn = true)
+        f.sending()
         assertEquals("发送中复制最新编辑", "第二版修订", f.undeliveredPlan())
         f.sendCancelled()
         assertEquals("取消发送后仍是最新编辑", "第二版修订", f.undeliveredPlan())
@@ -662,12 +662,10 @@ class ClarificationFlowTest {
     }
 
     @Test
-    fun `发送中切换等待原因且取消后回到结果页文本保留`() {
+    fun `进入发送后取消回到结果页且文本保留`() {
         val f = started(done())
-        f.sending(waitingForTurn = true)
-        assertEquals(ClarificationState.Sending("ADJUSTED", waitingForTurn = true), f.state)
-        f.sending(waitingForTurn = false)
-        assertEquals(ClarificationState.Sending("ADJUSTED", waitingForTurn = false), f.state)
+        assertTrue(f.sending())
+        assertEquals(ClarificationState.Sending("ADJUSTED"), f.state)
         f.sendCancelled()
         assertEquals(ClarificationState.Result("ADJUSTED"), f.state)
     }

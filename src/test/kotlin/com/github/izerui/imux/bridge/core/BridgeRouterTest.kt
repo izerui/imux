@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.core
 
+import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.model.AgentType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -7,6 +8,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -368,18 +371,56 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `自动接回后等机器人上线再告诉手机已重新连接`() =
+    fun `机器人已登记但仍在连接时等待上线再发送恢复通知`() =
         runBlocking {
             registry.bind(robot, target)
-            var online = false
+            val status = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Connecting)
             val waiting =
-                BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot && online) channel else null }, Texts, reconnectWaitMs = 5_000)
+                BridgeRouter(
+                    registry, { if (it == robot) owner else null }, port, { if (it == robot) channel else null }, Texts,
+                    reconnectWaitMs = 5_000,
+                    awaitOnline = { id ->
+                        assertEquals(robot, id)
+                        status.first { it == ConnectionStatus.Online }
+                    },
+                )
             val job = launch { waiting.onReattached(registry.bindingOf(robot)!!, "imux", "Claude", "修复登录") }
-            delay(100)
+            yield()
             assertTrue("机器人还没上线，不发", sentTexts().isEmpty())
-            online = true
+            assertTrue("等待真实连接状态", job.isActive)
+            status.value = ConnectionStatus.Online
             job.join()
             assertEquals(listOf("RECONNECTED(imux/Claude/修复登录)"), sentTexts())
+        }
+
+    @Test
+    fun `恢复等待超时不尝试向离线渠道发送`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val waiting =
+                BridgeRouter(
+                    registry, { owner }, port, { channel }, Texts,
+                    reconnectWaitMs = 20,
+                    awaitOnline = { CompletableDeferred<Unit>().await() },
+                )
+            waiting.onReattached(registry.bindingOf(robot)!!, "imux", "Claude", "修复登录")
+            assertTrue(sentTexts().isEmpty())
+        }
+
+    @Test
+    fun `恢复等待期间解绑后上线不发送旧绑定通知`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val online = CompletableDeferred<Unit>()
+            val waiting =
+                BridgeRouter(registry, { owner }, port, { channel }, Texts, awaitOnline = { online.await() })
+            val binding = registry.bindingOf(robot)!!
+            val job = launch { waiting.onReattached(binding, "imux", "Claude", "修复登录") }
+            yield()
+            registry.unbind(robot)
+            online.complete(Unit)
+            job.join()
+            assertTrue(sentTexts().isEmpty())
         }
 
     @Test

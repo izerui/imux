@@ -31,6 +31,7 @@ class RobotStore : SerializablePersistentStateComponent<RobotStore.State>(State(
         @JvmField var pairCode: String? = null,
         @JvmField var pairCodeExpiresAtMillis: Long = 0,
         @JvmField var createdAtMillis: Long = 0,
+        @JvmField var platformName: String? = null,
     )
 
     data class BindingXml(
@@ -70,6 +71,7 @@ internal fun toBook(state: RobotStore.State): RobotBook {
                 pairCode = xml.pairCode,
                 pairCodeExpiresAtMillis = xml.pairCodeExpiresAtMillis,
                 createdAtMillis = xml.createdAtMillis,
+                platformName = xml.platformName,
             )
         }
     val bindings =
@@ -92,6 +94,7 @@ internal fun fromBook(book: RobotBook): RobotStore.State =
                     pairCode = it.pairCode,
                     pairCodeExpiresAtMillis = it.pairCodeExpiresAtMillis,
                     createdAtMillis = it.createdAtMillis,
+                    platformName = it.platformName,
                 )
             },
         bindings = book.bindings.map { RobotStore.BindingXml(it.robotId, it.projectPath, it.agentCli, it.sessionId) },

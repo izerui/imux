@@ -48,10 +48,10 @@ class ClarificationDialogHelpersTest {
     }
 
     @Test
-    fun `同一次发送只是等待原因变化不重建`() {
-        val old = ClarificationState.Sending("需求", waitingForTurn = true)
-        assertFalse("等待原因变了 → 不重建", needsCenterRebuild(old, ClarificationState.Sending("需求", waitingForTurn = false)))
-        assertTrue("需求文字变了 → 重建", needsCenterRebuild(old, ClarificationState.Sending("另一段", waitingForTurn = true)))
+    fun `发送内容不变时不重建而内容变化时重建`() {
+        val old = ClarificationState.Sending("需求")
+        assertFalse("需求文字不变 → 不重建", needsCenterRebuild(old, ClarificationState.Sending("需求")))
+        assertTrue("需求文字变了 → 重建", needsCenterRebuild(old, ClarificationState.Sending("另一段")))
     }
 
     @Test
@@ -113,7 +113,7 @@ class ClarificationDialogHelpersTest {
         assertEquals(listOf(BarButton.SEND), result.right)
         assertEquals(BarButton.SEND, result.default)
 
-        val sending = buttonBar(ClarificationState.Sending("x", true), null)
+        val sending = buttonBar(ClarificationState.Sending("x"), null)
         assertEquals(emptyList<BarButton>(), sending.left)
         assertEquals(listOf(BarButton.CANCEL_SEND), sending.right)
 
@@ -155,7 +155,7 @@ class ClarificationDialogHelpersTest {
         val investigating = buttonBar(ClarificationState.Investigating(null, 0), null)
         assertNull("调查中：提交后多按一次回车不能取消刚开始的调查", investigating.default)
         assertTrue("调查中仍可点取消", BarButton.CANCEL_INVESTIGATION in investigating.right)
-        val sending = buttonBar(ClarificationState.Sending("x", false), null)
+        val sending = buttonBar(ClarificationState.Sending("x"), null)
         assertNull("发送中：回车不能取消发送", sending.default)
         assertTrue("发送中仍可点取消发送", BarButton.CANCEL_SEND in sending.right)
     }
@@ -167,7 +167,7 @@ class ClarificationDialogHelpersTest {
         assertTrue("提交过回答", closeNeedsConfirmation(ClarificationState.Investigating(null, 0), laterRecord, hasFilledAnswers = false))
         assertTrue("这一批填写了回答", closeNeedsConfirmation(ClarificationState.Asking(listOf(q("d1"))), firstRecord, hasFilledAnswers = true))
         assertTrue("结果页", closeNeedsConfirmation(ClarificationState.Result("x"), firstRecord, hasFilledAnswers = false))
-        assertTrue("发送中", closeNeedsConfirmation(ClarificationState.Sending("x", true), firstRecord, hasFilledAnswers = false))
+        assertTrue("发送中", closeNeedsConfirmation(ClarificationState.Sending("x"), firstRecord, hasFilledAnswers = false))
         assertFalse("输入页", closeNeedsConfirmation(ClarificationState.Input, firstRecord, hasFilledAnswers = false))
         assertFalse("第一轮调查中", closeNeedsConfirmation(ClarificationState.Investigating(null, 0), firstRecord, hasFilledAnswers = false))
         assertFalse("还没填写的第一批", closeNeedsConfirmation(ClarificationState.Asking(listOf(q("d1"))), firstRecord, hasFilledAnswers = false))

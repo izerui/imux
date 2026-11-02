@@ -385,7 +385,7 @@ class AddRobotDialog(
         job =
             manager.launch {
                 try {
-                    val record = manager.add(scanKind, result.credentials, result.ownerId, name)
+                    val record = manager.add(scanKind, result.credentials, result.ownerId, name, result.suggestedName)
                     robotId = record.id
                     ui { pairTitle.text = ImuxBundle.message("bridge.add.pair.created", record.name) }
                     if (record.owner() == null) ui { showPair(record.pairCode.orEmpty()) }

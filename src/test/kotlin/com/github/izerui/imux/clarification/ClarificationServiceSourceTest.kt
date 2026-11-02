@@ -64,10 +64,11 @@ class ClarificationServiceSourceTest {
         assertTrue("校验在登记投递任务之前", guard < send.indexOf("register("))
     }
     @Test
-    fun `发送时机读取运行集合与 Claude 等待确认状态`() {
-        val busy = source.bodyAfter("private fun isMainSessionBusy(", '{')
-        assertTrue(busy.contains("runningIds"))
-        assertTrue(busy.contains("isWaiting"))
+    fun `点击发送直接投递终端而不读取主会话运行状态`() {
+        val send = source.bodyAfter("internal fun send(", '{')
+        assertTrue(send.contains("if (trySendPeerFeedback(view.createSendTextBuilder(), text))"))
+        assertFalse(source.normalized.contains("SessionMonitor"))
+        assertFalse(send.contains("isMainSessionBusy"))
     }
 
     @Test
@@ -161,7 +162,7 @@ class ClarificationServiceSourceTest {
 
     @Test
     fun `发送中的需求尚未送达`() {
-        assertEquals("REQ", undeliveredRequirement(ClarificationState.Sending("REQ", waitingForTurn = true)))
+        assertEquals("REQ", undeliveredRequirement(ClarificationState.Sending("REQ")))
     }
 
     @Test

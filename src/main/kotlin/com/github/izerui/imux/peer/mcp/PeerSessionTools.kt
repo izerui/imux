@@ -51,13 +51,16 @@ internal class PeerSessionTools(
             add("available", JsonArray().apply { enabled.forEach { add(it.cli) } })
         }, failed = true)
         val previous = peer.boundTarget(key)
+        val keptPairing = previous == target && peer.keepPairing(key)
         val outcome = when (previous) {
-            target -> "already_enabled"
+            target -> if (keptPairing) "enabled" else "already_enabled"
             null -> "enabled"
             else -> "switched"
         }
         if (previous != target) {
             peer.bind(key, target)
+        }
+        if (previous != target || keptPairing) {
             onSwitched(target)
         }
         return PeerToolResult(JsonObject().apply { addProperty("outcome", outcome); addProperty("partner", target.cli) })

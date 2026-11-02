@@ -307,6 +307,14 @@ class PeerCoordinator internal constructor(
 
     fun boundTarget(sessionKey: String): AgentType? = bindings[sessionKey]?.targetAgentType
 
+    /** 将单次审查转为持续结对，保留正在进行的审查及其绑定。 */
+    internal fun keepPairing(sessionKey: String): Boolean {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        if (disposed || oneShotSessions.remove(sessionKey) == null) return false
+        notifyStateChanged(sessionKey)
+        return true
+    }
+
     fun onTurnCompleted(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return

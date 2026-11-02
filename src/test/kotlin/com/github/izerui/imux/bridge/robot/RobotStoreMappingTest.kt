@@ -13,7 +13,7 @@ class RobotStoreMappingTest {
                 robots =
                     listOf(
                         RobotRecord(RobotId("a"), "开发助手 1", ChannelKind.WECOM, pairCode = "123456", pairCodeExpiresAtMillis = 10, createdAtMillis = 5),
-                        RobotRecord(RobotId("b"), "审查", ChannelKind.FEISHU, ownerSenderId = "o", ownerChatId = "o", createdAtMillis = 6),
+                        RobotRecord(RobotId("b"), "审查", ChannelKind.FEISHU, ownerSenderId = "o", ownerChatId = "o", createdAtMillis = 6, platformName = "审查"),
                     ),
                 bindings = listOf(SavedBinding("b", "/p", "codex", "s1")),
             )

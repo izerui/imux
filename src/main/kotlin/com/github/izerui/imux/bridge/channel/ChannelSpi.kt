@@ -97,7 +97,7 @@ interface ChannelFactory {
     val scanStepsKey: String
         get() = "bridge.add.scan.steps"
 
-    /** 名称以平台为准：连上后同步成平台上的名称，本地不能改名（平台没有改名接口）。 */
+    /** 名称同步自平台：添加时与每次上线取平台名称；本地可另改，平台名称变化时才覆盖。 */
     val namedByPlatform: Boolean
         get() = false
 

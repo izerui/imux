@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge.core
 
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.cancellation.CancellationException
@@ -33,10 +34,12 @@ class BridgeRouter(
     /** IDE 完成信号到了却还没读到回复时，最多等多久再判定这一轮没有文字回复。 */
     private val noReplyGraceMs: Long = 3_000,
     private val now: () -> Long = System::currentTimeMillis,
-    /** 自动接回后等机器人上线的最长时间；测试传 0。 */
+    /** 自动接回后等机器人上线的最长时间。 */
     private val reconnectWaitMs: Long = 30_000,
     /** 警告日志出口（core 不依赖 IDE 日志）；只传原因，不含路径、对端 id、正文与密钥。 */
     private val onWarning: (String) -> Unit = {},
+    /** 等渠道报告真正上线；由接线层订阅连接状态，默认用于已就绪的独立端口。 */
+    private val awaitOnline: suspend (RobotId) -> Unit = {},
 ) {
     /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
     private val submitLocks = HashMap<RobotId, Mutex>()
@@ -431,11 +434,7 @@ class BridgeRouter(
         agent: String,
         sessionTitle: String,
     ) {
-        var waited = 0L
-        while ((ownerOf(binding.robotId) == null || channelOf(binding.robotId) == null) && waited < reconnectWaitMs) {
-            delay(RECONNECT_POLL_MS)
-            waited += RECONNECT_POLL_MS
-        }
+        withTimeoutOrNull(reconnectWaitMs) { awaitOnline(binding.robotId) } ?: return
         send(binding, texts.reconnected(project, agent, sessionTitle))
     }
 
@@ -528,7 +527,6 @@ class BridgeRouter(
     }
 
     private companion object {
-        const val RECONNECT_POLL_MS = 500L
         const val RATE_LIMIT_RETRIES = 6
         const val SEEN_CAPACITY = 1000
         const val NOT_READY_ATTEMPTS = 3
