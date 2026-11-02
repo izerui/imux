@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>imux · 新版本提醒气泡模拟</title>
+<style>
+  :root { --page:#eceef2; --paper:#fff; --ink:#1f2329; --ink2:#5b616e; --rule:#d9dce3; --mark:#3574f0; }
+  .dark { --page:#16171a; --paper:#202226; --ink:#e3e5e9; --ink2:#9a9fa9; --rule:#33363c; --mark:#548af7; }
+  .ide { --bg:#ffffff; --panel:#f7f8fa; --border:#ebecf0; --text:#1e1f22; --dim:#6c707e; --link:#3574f0; --icon:#6c707e;
+         --hover:#dfe1e5; --pressed:#d3d5db; --green:#369650; --sel:#d4e2ff; --selDim:#e9eaee;
+         --pop:#ffffff; --popLine:#dfe1e5; --shadow:rgba(0,0,0,.16); --btn:#3574f0; --btnText:#fff;
+         --kw:#0033b3; --str:#067d17; --fn:#00627a; --cm:#8c8c8c; --num:#1750eb; --ann:#9e880d; --code:#080808; }
+  .dark .ide { --bg:#1e1f22; --panel:#2b2d30; --border:#393b40; --text:#dfe1e5; --dim:#8c8f96; --link:#548af7; --icon:#ced0d6;
+         --hover:#393b40; --pressed:#43454a; --green:#5fb865; --sel:#2e436e; --selDim:#393b40;
+         --pop:#2b2d30; --popLine:#43454a; --shadow:rgba(0,0,0,.45); --btn:#3574f0; --btnText:#fff;
+         --kw:#cf8e6d; --str:#6aab73; --fn:#56a8f5; --cm:#7a7e85; --num:#2aacb8; --ann:#b3ae60; --code:#bcbec4; }
+
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--page); color:var(--ink); font: 14px/1.6 Inter, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 36px 32px 96px; }
+  h1 { font-size: 25px; line-height: 1.3; margin: 0 0 8px; font-weight: 650; letter-spacing: -.01em; }
+  h2 { font-size: 18px; margin: 44px 0 10px; font-weight: 650; }
+  .lead { color: var(--ink2); max-width: 900px; margin: 0 0 18px; }
+
+  .controls { display:flex; flex-wrap:wrap; gap: 10px 22px; align-items:center; background: var(--paper); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  .grp { display:flex; flex-wrap: wrap; align-items:center; gap: 6px; }
+  .grp .lab { color: var(--ink2); font-size: 13px; margin-right: 2px; }
+  .cbtn { font: inherit; font-size: 13px; border:1px solid var(--rule); background: transparent; color: var(--ink); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .cbtn:hover { border-color: var(--ink2); }
+  .cbtn.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .cbtn.play { background: var(--mark); border-color: var(--mark); color: #fff; }
+  .narr { min-height: 26px; margin: 12px 2px 0; color: var(--ink2); font-size: 13.5px; }
+  .narr b { color: var(--mark); font-weight: 600; margin-right: 6px; }
+
+  .spec { width:100%; border-collapse: collapse; background: var(--paper); border-radius: 8px; overflow:hidden; font-size: 13.5px; }
+  .spec th, .spec td { text-align:left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .spec th { color: var(--ink2); font-weight: 500; white-space: nowrap; }
+  .spec tr:last-child td { border-bottom: 0; }
+  .spec code { font: 12px "JetBrains Mono", Menlo, monospace; }
+
+  /* ---------- IDE 外壳 ---------- */
+  .ide { font: 13px/1.4 Inter, -apple-system, "PingFang SC", sans-serif; color: var(--text); background: var(--bg);
+    border-radius: 10px; position: relative; overflow: hidden; height: 640px; display:flex; flex-direction: column;
+    box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgba(0,0,0,.10); user-select: none; }
+  .ico { display:inline-flex; width:16px; height:16px; flex:none; position: relative; color: var(--icon); }
+  .ico svg { width:16px; height:16px; }
+  .badge { position:absolute; right:-2px; top:-2px; width:7px; height:7px; border-radius:50%; background: var(--link); box-shadow: 0 0 0 1.5px var(--panel); }
+
+  .toolbar { height: 40px; flex:none; display:flex; align-items:center; gap: 4px; padding: 0 10px 0 78px; background: var(--panel); border-bottom: 1px solid var(--border); position: relative; }
+  .lights { position:absolute; left: 14px; top: 14px; display:flex; gap: 8px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; display:block; }
+  .tbw { display:inline-flex; align-items:center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 6px; font-weight: 600; }
+  .tbw:hover { background: var(--hover); }
+  .tbw.thin { font-weight: 400; color: var(--text); }
+  .pj { width: 20px; height: 20px; border-radius: 4px; background: linear-gradient(135deg,#7f52ff,#3574f0); color:#fff; font-size: 10px; font-weight: 700; display:inline-flex; align-items:center; justify-content:center; }
+  .caret { display:inline-block; width:0; height:0; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; opacity:.7; }
+  .tbsp { flex: 1; }
+  .tbi { width: 28px; height: 28px; display:inline-flex; align-items:center; justify-content:center; border-radius: 6px; }
+  .tbi:hover { background: var(--hover); }
+
+  .main { flex: 1; display:flex; min-height: 0; }
+  .stripe { width: 40px; flex:none; background: var(--panel); display:flex; flex-direction: column; align-items:center; gap: 4px; padding-top: 6px; }
+  .stripe.left { border-right: 1px solid var(--border); }
+  .stripe.right { border-left: 1px solid var(--border); }
+  .sb { width: 30px; height: 30px; display:inline-flex; align-items:center; justify-content:center; border-radius: 6px; cursor: default; position: relative; }
+  .sb:hover { background: var(--hover); }
+  .sb.on { background: var(--pressed); }
+  .sb.click { cursor: pointer; }
+
+  .tree { width: 250px; flex:none; background: var(--panel); border-right: 1px solid var(--border); padding: 8px 0; overflow: hidden; }
+  .tree .hd { font-weight: 600; padding: 2px 12px 8px; display:flex; align-items:center; gap: 6px; }
+  .node { height: 24px; overflow: hidden; text-overflow: ellipsis; display:flex; align-items:center; gap: 6px; white-space: nowrap; color: var(--text); }
+  .node.sel { background: var(--sel); }
+  .tw { width: 10px; flex: none; color: var(--dim); font-size: 9px; text-align:center; }
+  .ficon { width: 14px; height: 14px; border-radius: 3px; flex:none; display:inline-flex; align-items:center; justify-content:center; font-size: 8px; font-weight: 700; color:#fff; }
+  .ficon.dir { background: transparent; color: var(--icon); }
+  .ficon.kt { background: linear-gradient(135deg,#7f52ff 50%,#e44857 50%); }
+
+  .editor { flex: 1; min-width: 0; display:flex; flex-direction: column; }
+  .etabs { height: 36px; flex:none; display:flex; align-items:center; padding: 0 6px; border-bottom: 1px solid var(--border); }
+  .etab { height: 100%; display:flex; align-items:center; gap: 6px; padding: 0 10px; color: var(--dim); }
+  .etab.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--link); }
+  .code { flex: 1; overflow: hidden; display:flex; font: 12.5px/20px "JetBrains Mono", Menlo, monospace; padding-top: 6px; }
+  .gutter { width: 46px; flex:none; text-align: right; padding-right: 14px; color: var(--dim); opacity: .7; }
+  .src { color: var(--code); white-space: pre; }
+  .k { color: var(--kw); } .s { color: var(--str); } .f { color: var(--fn); } .c { color: var(--cm); font-style: italic; } .n { color: var(--num); } .a { color: var(--ann); }
+
+  .statusbar { height: 26px; flex:none; display:flex; align-items:center; gap: 16px; padding: 0 12px; background: var(--panel); border-top: 1px solid var(--border); color: var(--dim); font-size: 12px; }
+  .statusbar .sp { flex: 1; }
+
+  /* ---------- 通知气泡（新 UI balloon） ---------- */
+  .balloon { position:absolute; right: 52px; bottom: 36px; width: 348px; z-index: 20; background: var(--pop);
+    border: 1px solid var(--popLine); border-radius: 10px; box-shadow: 0 6px 22px var(--shadow);
+    padding: 12px 16px 13px 12px; display:flex; gap: 10px; transform-origin: 100% 100%; }
+  .balloon.in { animation: bin .26s cubic-bezier(.2,.8,.2,1); }
+  .balloon.out { animation: bout .2s ease-in forwards; }
+  @keyframes bin { from { opacity: 0; transform: translateY(14px); } }
+  @keyframes bout { to { opacity: 0; transform: translateY(10px); } }
+  .balloon .bico { margin-top: 1px; }
+  .balloon .bbody { flex: 1; min-width: 0; }
+  .balloon .btitle { font-weight: 600; line-height: 18px; padding-right: 34px; }
+  .balloon .btext { margin-top: 3px; line-height: 18px; }
+  .balloon .bacts { display:flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 9px; }
+  .link { color: var(--link); cursor: pointer; white-space: nowrap; }
+  .link:hover { text-decoration: underline; }
+  .bctl { position:absolute; right: 8px; top: 8px; display:flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+  .balloon:hover .bctl { opacity: 1; }
+  .bx { width: 22px; height: 22px; display:inline-flex; align-items:center; justify-content:center; border-radius: 5px; color: var(--dim); cursor: pointer; }
+  .bx:hover { background: var(--hover); color: var(--text); }
+  .bx svg { width: 14px; height: 14px; }
+
+  /* ---------- 通知中心 ---------- */
+  .npanel { position:absolute; right: 41px; top: 41px; bottom: 27px; width: 360px; z-index: 15; background: var(--panel);
+    border-left: 1px solid var(--border); display:flex; flex-direction: column; animation: pin .2s cubic-bezier(.2,.8,.2,1); }
+  @keyframes pin { from { transform: translateX(24px); opacity: 0; } }
+  .npanel .nh { height: 36px; flex:none; display:flex; align-items:center; padding: 0 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
+  .npanel .nh .sp { flex: 1; }
+  .npanel .grp2 { color: var(--dim); font-size: 12px; padding: 10px 14px 4px; }
+  .nitem { margin: 0 8px; padding: 10px 10px 12px; border-radius: 8px; display:flex; gap: 10px; }
+  .nitem:hover { background: var(--hover); }
+  .nitem .time { color: var(--dim); font-size: 12px; margin-left: auto; padding-left: 8px; }
+  .nempty { color: var(--dim); text-align:center; padding: 40px 0; }
+
+  /* ---------- 设置窗口（去升级） ---------- */
+  .dimmer { position:absolute; inset: 0; z-index: 30; background: rgba(0,0,0,.18); display:flex; align-items:center; justify-content:center; }
+  .dlg { width: 860px; height: 540px; background: var(--bg); border: 1px solid var(--popLine); border-radius: 10px; box-shadow: 0 16px 50px var(--shadow);
+    display:flex; flex-direction: column; overflow: hidden; animation: din .2s cubic-bezier(.2,.8,.2,1); }
+  @keyframes din { from { transform: scale(.97); opacity: 0; } }
+  .dlg .dh { height: 38px; flex:none; display:flex; align-items:center; justify-content:center; font-weight: 600; position: relative; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .dlg .dh .lights { top: 13px; }
+  .dlg .db { flex: 1; display:flex; min-height: 0; }
+  .dnav { width: 220px; flex:none; background: var(--panel); border-right: 1px solid var(--border); padding: 8px 6px; }
+  .dsearch { height: 28px; border: 1px solid var(--border); border-radius: 6px; margin: 0 4px 8px; display:flex; align-items:center; gap: 6px; padding: 0 8px; color: var(--dim); background: var(--bg); }
+  .dnav .it { height: 26px; display:flex; align-items:center; padding: 0 10px; border-radius: 5px; }
+  .dnav .it.on { background: var(--sel); }
+  .dmain { flex: 1; display:flex; flex-direction: column; min-width: 0; }
+  .ptabs { height: 40px; flex:none; display:flex; align-items:center; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+  .ptab { height: 100%; display:flex; align-items:center; padding: 0 10px; color: var(--dim); }
+  .ptab.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--link); }
+  .pcount { font-size: 11px; background: var(--link); color: #fff; border-radius: 8px; padding: 0 6px; margin-left: 5px; line-height: 16px; }
+  .plist { flex: 1; padding: 8px 0; overflow: hidden; }
+  .pgh { color: var(--dim); font-size: 12px; padding: 6px 18px; }
+  .prow { display:flex; align-items:center; gap: 12px; padding: 9px 18px; }
+  .prow.sel { background: var(--selDim); }
+  .plogo { width: 36px; height: 36px; border-radius: 8px; flex:none; display:inline-flex; align-items:center; justify-content:center; font-weight: 700; color:#fff; font-size: 13px; }
+  .pinfo { flex: 1; min-width: 0; }
+  .pname { font-weight: 600; }
+  .pver { color: var(--dim); font-size: 12px; margin-top: 1px; }
+  .pver b { color: var(--text); font-weight: 500; }
+  .pbtn { font: inherit; font-size: 12.5px; height: 26px; padding: 0 12px; border-radius: 5px; border: 1px solid var(--btn); background: var(--btn); color: var(--btnText); cursor: pointer; white-space: nowrap; }
+  .pbtn.ghost { background: transparent; color: var(--text); border-color: var(--popLine); }
+  .pbtn:disabled { opacity: .6; cursor: default; }
+  .pchk { width: 14px; height: 14px; border-radius: 3px; background: var(--btn); display:inline-flex; align-items:center; justify-content:center; flex:none; }
+  .prog { width: 120px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .prog i { display:block; height: 100%; width: 0; background: var(--link); transition: width 1.4s linear; }
+  .dfoot { height: 52px; flex:none; display:flex; align-items:center; justify-content:flex-end; gap: 8px; padding: 0 16px; border-top: 1px solid var(--border); }
+
+  /* ---------- 浏览器提示 ---------- */
+  .toast { position:absolute; left: 50%; top: 56px; transform: translateX(-50%); z-index: 40; background: var(--pop); border: 1px solid var(--popLine);
+    border-radius: 8px; box-shadow: 0 6px 22px var(--shadow); padding: 8px 14px; display:flex; align-items:center; gap: 8px; animation: tin .2s ease-out; white-space: nowrap; }
+  .toast .url { font: 12px "JetBrains Mono", Menlo, monospace; color: var(--link); }
+  @keyframes tin { from { opacity: 0; transform: translate(-50%, -8px); } }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>新版本提醒 · 气泡模拟</h1>
+  <p class="lead">IDE 启动约 30 秒后检查 Marketplace，有兼容的新版本时在右下角弹出标准信息气泡。演示里等待缩短为 1 秒。三个按钮都可以点；把鼠标移到气泡上会出现关闭按钮；不操作的话，气泡约 10 秒后自动收起，收进右侧的通知中心。</p>
+
+  <div class="controls">
+    <div class="grp"><button class="cbtn play" id="replay">重新播放</button></div>
+    <div class="grp"><span class="lab">imux 界面语言</span><button class="cbtn on" data-l="zh">中文</button><button class="cbtn" data-l="en">English</button><button class="cbtn" data-l="ja">日本語</button></div>
+    <div class="grp"><span class="lab">主题</span><button class="cbtn on" data-t="light">亮</button><button class="cbtn" data-t="dark">暗</button></div>
+  </div>
+
+  <div class="ide" id="ide">
+    <div class="toolbar">
+      <div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <span class="tbw"><span class="pj">IM</span>imux<span class="caret"></span></span>
+      <span class="tbw thin"><span id="i-branch"></span>main<span class="caret"></span></span>
+      <span class="tbsp"></span>
+      <span class="tbw thin">runIde<span class="caret"></span></span>
+      <span class="tbi" id="i-run"></span><span class="tbi" id="i-debug"></span>
+      <span class="tbi" id="i-search"></span><span class="tbi" id="i-gear"></span>
+    </div>
+    <div class="main">
+      <div class="stripe left"><span class="sb on" id="i-folder"></span><span class="sb" id="i-commit"></span><span class="sb" id="i-struct"></span><span class="sb" id="i-term"></span></div>
+      <div class="tree">
+        <div class="hd">Project<span class="caret"></span></div>
+        <div id="tree"></div>
+      </div>
+      <div class="editor">
+        <div class="etabs"><div class="etab on"><span class="ficon kt"></span>UpdateReminderService.kt</div><div class="etab"><span class="ficon kt"></span>UpdateReminderPolicy.kt</div></div>
+        <div class="code"><div class="gutter" id="gutter"></div><div class="src" id="src"></div></div>
+      </div>
+      <div class="stripe right"><span class="sb click" id="bell" title="Notifications"></span><span class="sb" id="i-db"></span><span class="sb" id="i-ai"></span></div>
+    </div>
+    <div class="statusbar"><span>imux › src › main › kotlin › update › UpdateReminderService.kt</span><span class="sp"></span><span>54:9</span><span>LF</span><span>UTF-8</span><span>4 spaces</span></div>
+    <div id="layer"></div>
+  </div>
+  <div class="narr" id="narr"></div>
+
+  <h2>三个按钮</h2>
+  <table class="spec">
+    <tr><th>按钮</th><th>点了之后</th><th>气泡</th><th>实现</th></tr>
+    <tr><td>去升级</td><td>在点击所在的窗口打开 Settings → Plugins，由 IDE 下载更新并提示重启；找不到插件页时改用浏览器打开版本页</td><td>关闭</td><td><code>NotificationAction.createExpiring</code> + <code>showSettingsDialog(e.project, id == "preferences.pluginManager")</code></td></tr>
+    <tr><td>查看更新内容</td><td>浏览器打开 <code>plugins.jetbrains.com/plugin/33412-imux/versions</code></td><td>保留</td><td><code>createSimple</code> + <code>BrowserUtil.browse</code></td></tr>
+    <tr><td>忽略此版本</td><td>记住这个版本号，这个版本不再提醒；发布更新的版本时照常提醒</td><td>关闭</td><td><code>PropertiesComponent</code> 键 <code>imux.update.ignoredVersion</code></td></tr>
+  </table>
+  <p class="lead" style="margin-top:12px">气泡的外观（圆角、阴影、图标、链接样式、自动收起、通知中心）都由 IDE 平台决定，插件只提供标题、内容和三个按钮的文案。用户可以在 Settings → Appearance &amp; Behavior → Notifications 里把 <code>imux.update</code> 组关掉或改成别的展示方式。</p>
+</div>
+
+<script>
+const P = 'fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"';
+const SVG = {
+  info: '<circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--link)"/><path d="M8 7v4" stroke="var(--link)" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".75" fill="var(--link)"/>',
+  bell: `<path ${P} d="M4 11.5V7a4 4 0 0 1 8 0v4.5l1 1.5H3z"/><path ${P} d="M6.5 14.5h3"/>`,
+  close: `<path ${P} d="M4 4l8 8M12 4l-8 8"/>`,
+  more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+  branch: `<circle ${P} cx="4.5" cy="3.5" r="1.5"/><circle ${P} cx="4.5" cy="12.5" r="1.5"/><circle ${P} cx="11.5" cy="5.5" r="1.5"/><path ${P} d="M4.5 5v6M11.5 7c0 2.5-7 1.5-7 4"/>`,
+  run: '<path d="M5 3.5v9l7-4.5z" fill="none" stroke="var(--green)" stroke-linejoin="round"/>',
+  debug: `<path ${P} d="M5 6.5a3 3 0 0 1 6 0v3a3 3 0 0 1-6 0zM8 6.5v6M2.5 8h2.5M11 8h2.5M3.5 4.5l2 1.5M12.5 4.5l-2 1.5"/>`,
+  search: `<circle ${P} cx="7" cy="7" r="4.5"/><path ${P} d="M10.5 10.5l3.5 3.5"/>`,
+  gear: `<circle ${P} cx="8" cy="8" r="2"/><path ${P} d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>`,
+  folder: `<path ${P} d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H8L6.5 3.5h-4a1 1 0 0 0-1 1z"/>`,
+  commit: `<circle ${P} cx="8" cy="8" r="2.5"/><path ${P} d="M1.5 8h4M10.5 8h4"/>`,
+  struct: `<path ${P} d="M2.5 3.5h11M5.5 8h8M5.5 12.5h8M2.5 3.5v9"/>`,
+  term: `<rect ${P} x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path ${P} d="M4.5 6.5l2 1.5-2 1.5M8 10h3"/>`,
+  db: `<ellipse ${P} cx="8" cy="4" rx="5" ry="2"/><path ${P} d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>`,
+  ai: `<path ${P} d="M8 1.5l1.5 4 4 1.5-4 1.5L8 12.5l-1.5-4-4-1.5 4-1.5z"/>`,
+  ext: `<path ${P} d="M9 2.5h4.5V7M13.5 2.5L7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>`,
+  check: '<path d="M3.5 7.2l2.2 2.2 4.8-4.8" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+};
+const ic = (n, badge) => `<span class="ico"><svg viewBox="0 0 16 16">${SVG[n]}</svg>${badge ? '<span class="badge"></span>' : ''}</span>`;
+const $ = id => document.getElementById(id);
+
+/* 文案与 messages/ImuxBundle*.properties 的 update.* 键一致 */
+const LATEST = '1.3.4', CURRENT = '1.3.3';
+const T = {
+  zh: { title: 'imux 有新版本', content: `${LATEST} 已可用（当前 ${CURRENT}）`, upgrade: '去升级', notes: '查看更新内容', ignore: '忽略此版本' },
+  en: { title: 'New imux version available', content: `imux ${LATEST} is available (current: ${CURRENT})`, upgrade: 'Update', notes: 'Release Notes', ignore: 'Ignore This Version' },
+  ja: { title: 'imux の新しいバージョンがあります', content: `${LATEST} が利用可能です（現在 ${CURRENT}）`, upgrade: '更新する', notes: '更新内容を見る', ignore: 'このバージョンを無視' },
+};
+
+/* ---------- 静态内容 ---------- */
+['branch','run','debug','search','gear','folder','commit','struct','term','db','ai'].forEach(n => { const el = $('i-' + n); if (el) el.innerHTML = ic(n); });
+$('tree').innerHTML = [
+  [0, '▾', 'dir', 'imux', 0], [1, '▾', 'dir', 'src/main/kotlin', 0], [2, '▸', 'dir', 'bridge', 0], [2, '▸', 'dir', 'settings', 0], [2, '▸', 'dir', 'terminal', 0],
+  [2, '▾', 'dir', 'update', 0], [3, '', 'kt', 'MarketplaceVersionParser.kt', 0], [3, '', 'kt', 'UpdateReminderActivity.kt', 0], [3, '', 'kt', 'UpdateReminderPolicy.kt', 0],
+  [3, '', 'kt', 'UpdateReminderService.kt', 1], [1, '▸', 'dir', 'src/main/resources', 0], [1, '▸', 'dir', 'src/test/kotlin', 0], [1, '', 'dir', 'build.gradle.kts', 0],
+].map(([d, tw, k, name, sel]) => `<div class="node${sel ? ' sel' : ''}" style="padding-left:${10 + d * 16}px"><span class="tw">${tw}</span>${k === 'dir' ? `<span class="ficon dir">${name.includes('.') ? '' : ic('folder')}</span>` : '<span class="ficon kt"></span>'}${name}</div>`).join('');
+
+const CODE = [
+  `<span class="a">@Service</span>(Service.Level.<span class="f">APP</span>)`,
+  `<span class="k">class</span> UpdateReminderService(<span class="k">private val</span> scope: CoroutineScope) {`,
+  `    <span class="k">private val</span> started = AtomicBoolean(<span class="k">false</span>)`,
+  ``,
+  `    <span class="c">/** 每个项目打开时都会调到这里，只有第一次真正开始调度。 */</span>`,
+  `    <span class="k">fun</span> <span class="f">start</span>() {`,
+  `        <span class="k">if</span> (!started.compareAndSet(<span class="k">false</span>, <span class="k">true</span>)) <span class="k">return</span>`,
+  `        scope.<span class="f">launch</span> {`,
+  `            <span class="f">delay</span>(INITIAL_DELAY)`,
+  `            <span class="k">while</span> (<span class="k">true</span>) {`,
+  `                <span class="k">try</span> {`,
+  `                    checkOnce()`,
+  `                } <span class="k">catch</span> (e: CancellationException) {`,
+  `                    <span class="k">throw</span> e`,
+  `                } <span class="k">catch</span> (e: Exception) {`,
+  `                    LOG.debug(<span class="s">"新版本检查失败"</span>, e)`,
+  `                }`,
+  `                <span class="f">delay</span>(CHECK_INTERVAL)`,
+  `            }`,
+  `        }`,
+  `    }`,
+  ``,
+  `    <span class="k">private suspend fun</span> <span class="f">checkOnce</span>() {`,
+  `        <span class="k">val</span> current = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))?.version ?: <span class="k">return</span>`,
+  `        <span class="k">val</span> latest = <span class="f">withContext</span>(Dispatchers.IO) { fetchLatest() } ?: <span class="k">return</span>`,
+];
+$('src').innerHTML = CODE.join('\n');
+$('gutter').innerHTML = CODE.map((_, i) => 40 + i).join('<br>');
+
+/* ---------- 状态 ---------- */
+let lang = 'zh', st, timers = [];
+function fresh() { return { balloon: false, unread: false, inCenter: false, panel: false, dialog: null, toast: false, ignored: false }; }
+st = fresh();
+const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+const clear = () => { timers.forEach(clearTimeout); timers = []; clearTimeout(autoHide); };
+const say = (h) => { $('narr').innerHTML = h; };
+
+let autoHide = null, hovering = false;
+function armAutoHide() { clearTimeout(autoHide); autoHide = setTimeout(() => { if (hovering) return armAutoHide(); closeBalloon('auto'); }, 10000); }
+
+function render() {
+  const t = T[lang];
+  $('bell').innerHTML = ic('bell', st.unread);
+  $('bell').classList.toggle('on', st.panel);
+  let h = '';
+  if (st.balloon) h += `
+    <div class="balloon ${st.balloon === 'out' ? 'out' : st.balloon === true ? 'in' : ''}" id="balloon">
+      <span class="bico">${ic('info')}</span>
+      <div class="bbody">
+        <div class="btitle">${t.title}</div>
+        <div class="btext">${t.content}</div>
+        <div class="bacts"><span class="link" data-a="upgrade">${t.upgrade}</span><span class="link" data-a="notes">${t.notes}</span><span class="link" data-a="ignore">${t.ignore}</span></div>
+      </div>
+      <div class="bctl"><span class="bx" title="More">${ic('more')}</span><span class="bx" data-a="close" title="Close">${ic('close')}</span></div>
+    </div>`;
+  if (st.panel) h += `
+    <div class="npanel">
+      <div class="nh">Notifications<span class="sp"></span><span class="bx" data-a="panel">${ic('close')}</span></div>
+      ${st.inCenter ? `<div class="grp2">Today</div>
+      <div class="nitem"><span class="bico">${ic('info')}</span><div class="bbody" style="flex:1;min-width:0">
+        <div style="display:flex"><b style="font-weight:600">${t.title}</b><span class="time">${new Date().toTimeString().slice(0,5)}</span></div>
+        <div style="margin-top:3px">${t.content}</div>
+        <div class="bacts" style="display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:8px"><span class="link" data-a="upgrade">${t.upgrade}</span><span class="link" data-a="notes">${t.notes}</span><span class="link" data-a="ignore">${t.ignore}</span></div>
+      </div></div>` : '<div class="nempty">No notifications</div>'}
+    </div>`;
+  if (st.dialog) h += dialog();
+  if (st.toast) h += `<div class="toast">${ic('ext')}<span>${lang === 'en' ? 'Opened in browser:' : lang === 'ja' ? 'ブラウザで開きました：' : '已在浏览器打开：'}</span><span class="url">plugins.jetbrains.com/plugin/33412-imux/versions</span></div>`;
+  $('layer').innerHTML = h;
+  if (st.balloon === true) st.balloon = 'still';
+  const b = $('balloon');
+  if (b) { b.onmouseenter = () => hovering = true; b.onmouseleave = () => hovering = false; }
+}
+
+function dialog() {
+  const d = st.dialog;
+  const btn = d === 'idle' ? `<button class="pbtn" data-a="doUpdate">Update</button>`
+    : d === 'loading' ? `<div class="prog"><i id="prog"></i></div>`
+    : `<button class="pbtn" data-a="restart">Restart IDE</button>`;
+  const row = (logo, bg, name, ver, right, sel) => `<div class="prow${sel ? ' sel' : ''}"><span class="plogo" style="background:${bg}">${logo}</span><div class="pinfo"><div class="pname">${name}</div><div class="pver">${ver}</div></div>${right}</div>`;
+  return `<div class="dimmer"><div class="dlg">
+    <div class="dh"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>Settings</div>
+    <div class="db">
+      <div class="dnav"><div class="dsearch">${ic('search')}<span>Search</span></div>
+        ${['Appearance & Behavior', 'Keymap', 'Editor', 'Plugins', 'Version Control', 'Build, Execution, Deployment', 'Languages & Frameworks', 'Tools', 'imux'].map(n => `<div class="it${n === 'Plugins' ? ' on' : ''}">${n.replace('&', '&amp;')}</div>`).join('')}
+      </div>
+      <div class="dmain">
+        <div class="ptabs"><span class="ptab">Marketplace</span><span class="ptab on">Installed${d === 'done' ? '' : '<span class="pcount">1</span>'}</span><span class="tbsp"></span>${ic('gear')}</div>
+        <div class="plist">
+          <div class="pgh">${d === 'done' ? 'Downloaded' : 'Updates available'}</div>
+          ${row('IM', 'linear-gradient(135deg,#7f52ff,#3574f0)', 'imux', d === 'done' ? `<b>${LATEST}</b> · 重启 IDE 后生效` : `${CURRENT} → <b>${LATEST}</b>`, btn, true)}
+          <div class="pgh" style="margin-top:6px">Enabled</div>
+          ${row('MCP', '#e44857', 'MCP Server', 'bundled', '<span class="pchk"><svg viewBox="0 0 14 14" width="14" height="14">' + SVG.check + '</svg></span>', false)}
+          ${row('K', 'linear-gradient(135deg,#7f52ff 50%,#e44857 50%)', 'Kotlin', 'bundled', '<span class="pchk"><svg viewBox="0 0 14 14" width="14" height="14">' + SVG.check + '</svg></span>', false)}
+          ${row('T', '#3a3d41', 'Terminal', 'bundled', '<span class="pchk"><svg viewBox="0 0 14 14" width="14" height="14">' + SVG.check + '</svg></span>', false)}
+        </div>
+        <div class="dfoot"><button class="pbtn ghost" data-a="dlgClose">Cancel</button><button class="pbtn" data-a="dlgClose">OK</button></div>
+      </div>
+    </div></div></div>`;
+}
+
+function closeBalloon(why) {
+  if (!st.balloon) return;
+  clearTimeout(autoHide);
+  st.balloon = 'out'; render();
+  later(() => {
+    st.balloon = false;
+    if (why === 'auto' || why === 'close') { st.inCenter = true; st.unread = true; }
+    render();
+  }, 200);
+  if (why === 'auto') say('<b>自动收起</b>约 10 秒没操作，气泡收起，通知留在右侧通知中心，铃铛出现蓝点。点铃铛还能看到这条通知和三个按钮。');
+  if (why === 'close') say('<b>关闭</b>和自动收起一样，只是把气泡收起；通知仍在通知中心，没有记为「忽略」，IDE 下次启动或 24 小时后检查时还会再提醒。');
+}
+
+function act(a) {
+  if (a === 'upgrade') {
+    closeBalloon('expire'); st.panel = false; st.inCenter = false; st.unread = false;
+    later(() => { st.dialog = 'idle'; render(); }, 220);
+    say('<b>去升级</b>气泡关闭，在当前窗口打开 Settings → Plugins。imux 出现在「Updates available」里，点 Update 由 IDE 下载安装。');
+  } else if (a === 'notes') {
+    st.toast = true; render();
+    later(() => { st.toast = false; render(); }, 2600);
+    say('<b>查看更新内容</b>用浏览器打开 Marketplace 版本页，气泡保留，看完还能回来点「去升级」。');
+  } else if (a === 'ignore') {
+    closeBalloon('expire'); st.panel = false; st.inCenter = false; st.unread = false; st.ignored = true;
+    say(`<b>忽略此版本</b>记住 ${LATEST}，以后不再提醒这个版本；发布 1.3.5 时照常提醒。`);
+  } else if (a === 'close') {
+    closeBalloon('close');
+  } else if (a === 'panel') {
+    st.panel = !st.panel; if (st.panel) st.unread = false; render();
+  } else if (a === 'doUpdate') {
+    st.dialog = 'loading'; render();
+    requestAnimationFrame(() => requestAnimationFrame(() => { const p = $('prog'); if (p) p.style.width = '100%'; }));
+    later(() => { st.dialog = 'done'; render(); say('<b>下载完成</b>IDE 提示重启，重启后就是新版本。这一步是 IDE 自己的插件更新流程，imux 不参与。'); }, 1500);
+  } else if (a === 'restart' || a === 'dlgClose') {
+    st.dialog = null; render();
+    if (a === 'restart') say('<b>重启</b>演示到此结束，点「重新播放」再看一遍。');
+  }
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-a]'); if (el) return act(el.dataset.a);
+  if (e.target.closest('#bell')) return act('panel');
+});
+
+function play() {
+  clear(); st = fresh(); render();
+  say('<b>启动</b>IDE 打开项目后等待约 30 秒（演示缩短为 1 秒），在后台查询 Marketplace……');
+  later(() => {
+    st.balloon = true; render(); armAutoHide();
+    say(`<b>发现新版本</b>Marketplace 上对当前 IDE 兼容的最新版本是 ${LATEST}，比已安装的 ${CURRENT} 新，右下角弹出气泡。多个项目窗口也只弹这一次。`);
+  }, 1000);
+}
+
+$('replay').onclick = play;
+document.querySelectorAll('[data-l]').forEach(b => b.onclick = () => {
+  lang = b.dataset.l; document.querySelectorAll('[data-l]').forEach(x => x.classList.toggle('on', x === b));
+  render();
+});
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+  document.body.classList.toggle('dark', b.dataset.t === 'dark');
+  document.querySelectorAll('[data-t]').forEach(x => x.classList.toggle('on', x === b));
+  render();
+});
+play();
+</script>
+</body>
+</html>
