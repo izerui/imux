@@ -458,7 +458,8 @@ class PeerCoordinator internal constructor(
     override fun dispose() {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         disposed = true
-        val guardsToCancel = guards.values.toList()
+        // toList() 在元素恰好被并发移除时会抛 NoSuchElementException；ArrayList 走 toArray，按弱一致快照复制
+        val guardsToCancel = ArrayList(guards.values)
         guards.clear()
         bindings.clear()
         roundCounts.clear()
