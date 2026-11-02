@@ -255,6 +255,18 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
+    fun `注册了新版本提醒的通知组和启动活动`() {
+        assertTrue(
+            "缺少 imux.update 通知组，发通知时 getNotificationGroup 会拿到 null",
+            pluginXml.contains("<notificationGroup id=\"imux.update\" displayType=\"BALLOON\"/>"),
+        )
+        assertTrue(
+            "未注册 UpdateReminderActivity，新版本检查永远不会启动",
+            pluginXml.contains("com.github.izerui.imux.update.UpdateReminderActivity"),
+        )
+    }
+
+    @Test
     fun `插件描述符合官方结构校验规则`() {
         val description =
             Regex(
