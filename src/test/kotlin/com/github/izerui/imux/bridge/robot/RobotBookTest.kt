@@ -34,6 +34,20 @@ class RobotBookTest {
     }
 
     @Test
+    fun `界面顺序按渠道分组，同渠道内按添加先后`() {
+        fun record(id: String, kind: ChannelKind, createdAt: Long) = RobotRecord(RobotId(id), id, kind, createdAtMillis = createdAt)
+        val robots =
+            listOf(
+                record("w1", ChannelKind.WECOM, 1),
+                record("d1", ChannelKind.DINGTALK, 2),
+                record("f1", ChannelKind.FEISHU, 3),
+                record("w2", ChannelKind.WECOM, 4),
+                record("f2", ChannelKind.FEISHU, 5),
+            )
+        assertEquals(listOf("w1", "w2", "f1", "f2", "d1"), robots.inDisplayOrder().map { it.id.value })
+    }
+
+    @Test
     fun `认主后清除配对码`() {
         val owned = RobotBook().add(robot("a")).withOwner(RobotId("a"), RobotOwner("u1", "u1")).robot(RobotId("a"))!!
         assertEquals(RobotOwner("u1", "u1"), owned.owner())

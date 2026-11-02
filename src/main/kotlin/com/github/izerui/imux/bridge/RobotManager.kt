@@ -13,6 +13,7 @@ import com.github.izerui.imux.bridge.robot.Pairing
 import com.github.izerui.imux.bridge.robot.PasswordSafeVault
 import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.bridge.robot.RobotStore
+import com.github.izerui.imux.bridge.robot.inDisplayOrder
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.logger
@@ -56,7 +57,8 @@ class RobotManager(parentScope: CoroutineScope) {
     @Volatile
     var notifyKicked: (RobotRecord) -> Unit = {}
 
-    fun robots(): List<RobotRecord> = store.book().robots
+    /** 按渠道分组的界面顺序，见 [inDisplayOrder]。 */
+    fun robots(): List<RobotRecord> = store.book().robots.inDisplayOrder()
 
     fun robot(id: RobotId): RobotRecord? = store.book().robot(id)
 

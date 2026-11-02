@@ -30,6 +30,9 @@ data class RobotRecord(
     }
 }
 
+/** 界面上的顺序：按渠道（[ChannelKind] 的声明顺序）分组，同一渠道内按添加先后；排序稳定，没有添加时间的旧记录保持原顺序。 */
+fun List<RobotRecord>.inDisplayOrder(): List<RobotRecord> = sortedWith(compareBy({ it.kind.ordinal }, { it.createdAtMillis }))
+
 /** 持久化的绑定：IDE 重启后按原生会话 id 重新挂接到恢复的标签。字段都是持久化用的字符串。 */
 data class SavedBinding(
     val robotId: String,

@@ -25,6 +25,7 @@ import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.table.JBTable
+import com.intellij.util.ui.JBUI
 import javax.swing.JTable
 import javax.swing.table.AbstractTableModel
 
@@ -37,13 +38,26 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
     override fun createPanel(): DialogPanel {
         val table =
             object : JBTable(model) {
+                // 前三列按内容定宽（各列最多占三成），余下都给会话列；用户拖动列宽时不干预
                 override fun doLayout() {
                     if (tableHeader?.resizingColumn == null && columnModel.columnCount == 4) {
-                        val shortWidth = width * 13 / 100
-                        for (index in 0..2) columnModel.getColumn(index).preferredWidth = shortWidth
-                        columnModel.getColumn(3).preferredWidth = width - shortWidth * 3
+                        val widths = (0..2).map { minOf(contentWidth(it), width * 3 / 10) }
+                        widths.forEachIndexed { index, w -> columnModel.getColumn(index).preferredWidth = w }
+                        columnModel.getColumn(3).preferredWidth = maxOf(width - widths.sum(), 0)
                     }
                     super.doLayout()
+                }
+
+                /** 表头与各行渲染后的最大宽度，加左右留白。 */
+                private fun contentWidth(column: Int): Int {
+                    val header = tableHeader?.let { h ->
+                        h.defaultRenderer.getTableCellRendererComponent(this, columnModel.getColumn(column).headerValue, false, false, -1, column)
+                            .preferredSize.width
+                    } ?: 0
+                    val cells = (0 until rowCount).maxOfOrNull { row ->
+                        prepareRenderer(getCellRenderer(row, column), row, column).preferredSize.width
+                    } ?: 0
+                    return maxOf(header, cells) + JBUI.scale(16)
                 }
             }.apply {
                 setShowGrid(false)
