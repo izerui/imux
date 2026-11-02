@@ -1,9 +1,9 @@
 package com.github.izerui.imux.bridge.core
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -434,7 +434,10 @@ class BridgeRouter(
         agent: String,
         sessionTitle: String,
     ) {
-        withTimeoutOrNull(reconnectWaitMs) { awaitOnline(binding.robotId) } ?: return
+        if (withTimeoutOrNull(reconnectWaitMs) { awaitOnline(binding.robotId) } == null) {
+            onWarning("机器人 ${binding.robotId.value} ${reconnectWaitMs / 1000} 秒内未上线，不发重连通知")
+            return
+        }
         send(binding, texts.reconnected(project, agent, sessionTitle))
     }
 

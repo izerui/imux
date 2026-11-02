@@ -397,14 +397,18 @@ class BridgeRouterTest {
     fun `恢复等待超时不尝试向离线渠道发送`() =
         runBlocking {
             registry.bind(robot, target)
+            val warnings = mutableListOf<String>()
             val waiting =
                 BridgeRouter(
                     registry, { owner }, port, { channel }, Texts,
                     reconnectWaitMs = 20,
+                    onWarning = { warnings += it },
                     awaitOnline = { CompletableDeferred<Unit>().await() },
                 )
             waiting.onReattached(registry.bindingOf(robot)!!, "imux", "Claude", "修复登录")
             assertTrue(sentTexts().isEmpty())
+            assertEquals(1, warnings.size)
+            assertTrue(warnings.single(), warnings.single().contains("未上线"))
         }
 
     @Test
