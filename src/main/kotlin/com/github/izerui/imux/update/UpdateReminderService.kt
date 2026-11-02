@@ -2,7 +2,6 @@ package com.github.izerui.imux.update
 
 import com.github.izerui.imux.ImuxBundle
 import com.intellij.ide.BrowserUtil
-import com.intellij.ide.plugins.PluginManagerConfigurable
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.notification.NotificationAction
@@ -13,9 +12,12 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.extensions.PluginId
+import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.util.io.HttpRequests
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -24,6 +26,8 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.function.Consumer
+import java.util.function.Predicate
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
@@ -54,14 +58,20 @@ class UpdateReminderService(private val scope: CoroutineScope) {
         scope.launch {
             delay(INITIAL_DELAY)
             while (true) {
-                checkOnce()
+                try {
+                    checkOnce()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    LOG.debug("新版本检查失败", e)
+                }
                 delay(CHECK_INTERVAL)
             }
         }
     }
 
     private suspend fun checkOnce() {
-        // 沙箱里开发调试时也有版本号；真取不到说明插件描述符异常，直接不查。
+        // Internal API，同 IdeaMcpPort；无公开替代，失败由外层 catch 兜底。
         val current = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))?.version ?: return
         val latest = withContext(Dispatchers.IO) { fetchLatest() } ?: return
         val ignored = PropertiesComponent.getInstance().getValue(IGNORED_KEY)
@@ -98,9 +108,11 @@ class UpdateReminderService(private val scope: CoroutineScope) {
                 NotificationType.INFORMATION,
             ).addAction(
                 NotificationAction.createSimpleExpiring(ImuxBundle.message("update.action.upgrade")) {
+                    val project = ProjectManager.getInstance().openProjects.firstOrNull()
                     ShowSettingsUtil.getInstance().showSettingsDialog(
-                        ProjectManager.getInstance().openProjects.firstOrNull(),
-                        PluginManagerConfigurable::class.java,
+                        project,
+                        Predicate { (it as? SearchableConfigurable)?.id == "preferences.pluginManager" },
+                        null as Consumer<Configurable>?,
                     )
                 },
             ).addAction(
