@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>飞书流式卡片 · 三种卡片结构</title>
+<style>
+  :root {
+    --ink: #1F2329; --ink2: #646A73; --ink3: #8F959E; --line: #DEE0E3;
+    --blue: #3370FF; --blue-bg: #E1EAFF; --green: #2EA121; --green-bg: #D9F5D6;
+    --orange: #DE7802; --orange-bg: #FEEAD2; --chat: #F2F3F5;
+    --mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #E6E9EE; color: var(--ink); min-width: 1360px;
+  }
+  .page { max-width: 1360px; margin: 0 auto; padding: 36px 40px 56px; }
+
+  /* ---------- 页头与控制 ---------- */
+  .top { display: flex; flex-direction: column; gap: 18px; }
+  .top h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+  .top p { font-size: 15px; color: var(--ink2); margin-top: 8px; max-width: 1000px; line-height: 1.6; }
+  .ctrl { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .ctrl button {
+    font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #C9CDD4; background: #fff; color: var(--ink);
+  }
+  .ctrl button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .ctrl .clock { font-family: var(--mono); font-size: 14px; color: var(--ink2); width: 64px; text-align: right; }
+
+  /* ---------- 三台手机 ---------- */
+  .stage { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 32px; }
+  .dir h2 { font-size: 18px; font-weight: 700; display: flex; align-items: baseline; gap: 10px; }
+  .dir h2 b { font-family: var(--mono); font-size: 15px; color: #fff; background: var(--ink); border-radius: 6px; padding: 1px 8px; }
+  .dir .why { font-size: 14px; color: var(--ink2); line-height: 1.6; margin: 6px 0 16px; min-height: 45px; }
+
+  .phone {
+    width: 376px; height: 760px; margin: 0 auto; border-radius: 52px; padding: 12px;
+    background: #16171A; box-shadow: 0 30px 60px -30px rgba(20,30,50,.45);
+  }
+  .screen { width: 100%; height: 100%; border-radius: 41px; overflow: hidden; background: var(--chat); display: flex; flex-direction: column; }
+  .status { height: 44px; display: flex; justify-content: space-between; align-items: center; padding: 6px 30px 0; font-size: 15px; font-weight: 600; background: #fff; }
+  .status i { font-style: normal; font-size: 12px; letter-spacing: 1px; }
+  .nav { height: 48px; background: #fff; display: flex; align-items: center; padding: 0 14px; border-bottom: 1px solid #EBECEE; gap: 8px; }
+  .nav .back { font-size: 22px; color: var(--ink); width: 20px; }
+  .nav .name { font-size: 17px; font-weight: 600; }
+  .nav .bot { font-size: 12px; color: var(--blue); background: var(--blue-bg); border-radius: 4px; padding: 1px 5px; }
+  .nav .more { margin-left: auto; font-size: 20px; color: var(--ink2); letter-spacing: 2px; }
+  .chat { flex: 1; overflow-y: auto; padding: 14px 12px 18px; scroll-behavior: smooth; }
+  .chat::-webkit-scrollbar { display: none; }
+  .day { text-align: center; font-size: 12px; color: var(--ink3); margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; margin-bottom: 14px; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; background: linear-gradient(135deg, #4E83FD, #3370FF); color: #fff; font-size: 15px; font-weight: 600; display: grid; place-items: center; }
+  .msg { flex: 1; min-width: 0; }
+  .who { font-size: 12px; color: var(--ink3); margin-bottom: 4px; }
+  .bubble { background: #fff; border-radius: 8px; padding: 9px 12px; font-size: 15px; line-height: 1.55; display: inline-block; }
+  .input { height: 64px; background: #fff; border-top: 1px solid #EBECEE; display: flex; align-items: center; gap: 10px; padding: 0 14px 10px; }
+  .input span { flex: 1; height: 38px; border-radius: 8px; background: var(--chat); color: var(--ink3); font-size: 15px; display: flex; align-items: center; padding: 0 12px; }
+  .input em { font-style: normal; font-size: 22px; color: var(--ink2); }
+
+  /* ---------- 飞书卡片（按 CardKit 组件仿制） ---------- */
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; transition: border-color .3s; }
+  .card.run { border-color: #BACEFD; }
+  .card.ok { border-color: #B7E3B2; }
+  .card.int { border-color: #F8CB96; }
+  .chead { padding: 10px 12px; display: flex; align-items: center; gap: 8px; transition: background .3s; }
+  .run .chead { background: var(--blue-bg); }
+  .ok .chead { background: var(--green-bg); }
+  .int .chead { background: var(--orange-bg); }
+  .chead .t { font-size: 15px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chead .t small { display: block; font-size: 12px; font-weight: 400; color: var(--ink2); margin-top: 1px; }
+  .tag { font-size: 12px; border-radius: 4px; padding: 1px 6px; flex-shrink: 0; }
+  .run .tag { color: var(--blue); background: #fff; }
+  .ok .tag { color: var(--green); background: #fff; }
+  .int .tag { color: var(--orange); background: #fff; }
+  .cbody { padding: 10px 12px 12px; font-size: 14px; line-height: 1.6; }
+  .quote { color: var(--ink2); font-size: 13px; border-left: 3px solid var(--line); padding-left: 8px; margin-bottom: 10px; }
+  .hr { height: 1px; background: #EBECEE; margin: 10px 0; }
+  .note { font-size: 12px; color: var(--ink3); margin-top: 10px; display: flex; gap: 10px; }
+  .answer { white-space: pre-wrap; }
+  .answer code, .narr code, .step code { font-family: var(--mono); font-size: 12px; background: #F2F3F5; border-radius: 3px; padding: 0 3px; }
+  .caret { display: inline-block; width: 2px; height: 15px; background: var(--blue); vertical-align: -2px; margin-left: 1px; animation: blink .8s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .thinking { color: var(--ink3); }
+  .thinking::after { content: "…"; animation: dots 1.2s steps(3) infinite; }
+
+  .step { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; font-size: 13px; }
+  .fresh { animation: in .35s ease-out both; }
+  .step .ic { width: 16px; flex-shrink: 0; text-align: center; }
+  .step .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step .nm b { font-weight: 600; margin-right: 4px; }
+  .step .rs { color: var(--ink3); font-size: 12px; flex-shrink: 0; }
+  .step.run .rs { color: var(--blue); }
+  .step.stop .rs { color: var(--orange); }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } }
+  .fresh.chip { animation-name: inChip; }
+  @keyframes inChip { from { opacity: 0; } }
+  .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid #BACEFD; border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .panel { border: 1px solid #EBECEE; border-radius: 6px; margin-bottom: 10px; }
+  .panel .ph { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 13px; color: var(--ink2); cursor: pointer; user-select: none; }
+  .panel .ph .chev { transition: transform .2s; font-size: 10px; }
+  .panel.open .ph .chev { transform: rotate(90deg); }
+  .panel .pb { display: none; padding: 2px 10px 8px; border-top: 1px solid #EBECEE; }
+  .panel.open .pb { display: block; }
+
+  .now { display: flex; align-items: center; gap: 8px; background: #F5F8FF; border-radius: 6px; padding: 8px 10px; font-size: 13px; margin-bottom: 8px; }
+  .now b { font-weight: 600; }
+  .now .arg { color: var(--ink2); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .counts { font-size: 12px; color: var(--ink3); margin-bottom: 10px; }
+
+  .narr { color: var(--ink2); font-size: 13px; margin: 6px 0 2px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #EBECEE; border-radius: 12px; padding: 1px 9px 1px 7px; font-size: 12px; margin: 3px 4px 3px 0; max-width: 100%; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip.run { border-color: #BACEFD; background: #F5F8FF; }
+  .chip.stop { border-color: #F8CB96; background: #FFF7EE; }
+
+  .btn { display: inline-block; margin-top: 10px; font-size: 13px; border: 1px solid #C9CDD4; border-radius: 6px; padding: 4px 12px; color: var(--ink); }
+
+  /* ---------- 事件轨道 ---------- */
+  .track { margin-top: 40px; background: #fff; border-radius: 14px; padding: 22px 24px 18px; }
+  .track h3 { font-size: 17px; font-weight: 700; }
+  .track > p { font-size: 14px; color: var(--ink2); margin: 4px 0 16px; }
+  .evs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .ev { border: 1px solid var(--line); border-radius: 10px; padding: 12px; transition: border-color .2s, box-shadow .2s, background .2s; }
+  .ev.hit { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(51,112,255,.15); background: #F7FAFF; }
+  .ev .n { font-family: var(--mono); font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; }
+  .ev .n i { font-style: normal; color: var(--ink3); font-weight: 400; }
+  .ev .a { font-size: 14px; margin: 6px 0 8px; line-height: 1.45; }
+  .ev .api { font-family: var(--mono); font-size: 12px; color: var(--ink2); line-height: 1.45; word-break: break-all; }
+  .ev .src { font-family: var(--mono); font-size: 12px; color: var(--ink3); margin-top: 6px; word-break: break-all; }
+  .badge { display: inline-block; font-size: 12px; border-radius: 4px; padding: 0 6px; margin-top: 8px; }
+  .b-has { color: var(--green); background: var(--green-bg); }
+  .b-ext { color: var(--orange); background: var(--orange-bg); }
+  .b-new { color: #D83931; background: #FDE2E2; }
+  .foot { font-size: 13px; color: var(--ink2); margin-top: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <div>
+      <h1>飞书流式卡片：一轮对话，一张卡片原地更新</h1>
+      <p>示例任务从电脑上下达，三种卡片结构同步播放同一段会话记录（时间加速约 5 倍）。正文按 imux 实际拿到的样子出现：会话记录里一段文字写完才落盘，imux 每秒读一次，所以是整段出现，不是逐字。卡片只用 CardKit 已有的组件，折叠面板可以点开。</p>
+    </div>
+    <div class="ctrl">
+      <span class="clock" id="clock">0:00</span>
+      <button id="replay">重新播放</button>
+      <button id="mWhole" class="on">正文：整段出现</button>
+      <button id="mType">正文：飞书打字机动画</button>
+      <button id="endOk" class="on">结局：完成</button>
+      <button id="endInt">结局：中途中断</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <section class="dir">
+      <h2><b>A</b>步骤清单</h2>
+      <p class="why">每次工具调用加一行，正在跑的转圈。最新的一段文字显示在清单下方，被下一段替换。完成后清单收进折叠面板，只留结论。</p>
+      <div class="phone"><div class="screen" data-dir="A"></div></div>
+    </section>
+    <section class="dir">
+      <h2><b>B</b>只看当前一步</h2>
+      <p class="why">只显示正在做的那一步和最新的一段文字，都原地替换，卡片高度基本不变。完整过程一直收在面板里，需要时再点开。</p>
+      <div class="phone"><div class="screen" data-dir="B"></div></div>
+    </section>
+    <section class="dir">
+      <h2><b>C</b>过程说明穿插</h2>
+      <p class="why">保留工具前的那句过程说明（现在会被丢掉），说明和工具交替出现，读起来像看它边想边做。</p>
+      <div class="phone"><div class="screen" data-dir="C"></div></div>
+    </section>
+  </div>
+
+  <div class="track">
+    <h3>卡片的每一次更新从哪来</h3>
+    <p>imux 读会话记录得到的事件，对应一次 CardKit 调用。播放时亮起的是刚发生的事件。</p>
+    <div class="evs" id="evs"></div>
+    <p class="foot">现有事件可以直接用；「需扩展」指事件已存在但缺字段；「新增」需要解码器多认一种记录。imux 每秒读一次会话记录，同一秒里写下的几件事会一起到达，卡片最多比电脑上晚 1 秒左右。Claude 的结论和 end_turn 在同一条记录里，结论出现的同时这一轮就结束了。「飞书打字机动画」是飞书客户端把整段文字逐字播出来的效果，只是观感，不代表数据是逐字来的。同一张卡片每秒最多更新 10 次，按步骤更新远低于这个上限。</p>
+  </div>
+</div>
+
+<script>
+const ANSWER = "原因找到了：IDE 的完成信号和记录里的结束标记落在同一次读取时，`completeByIde` 没有检查这一轮是否已经结算，同一条回复被取了两次。\n\n已在 `TabState.completeByIde` 开头加上已结算判断，并补了一个用例覆盖这种先后顺序。`BridgeRouterTest` 47 个用例全部通过。";
+const USER = "钉钉那边偶尔会收到两条一样的回复，帮我查一下原因并修好";
+
+const EVENTS = [
+  { id: "UserText", act: "新建卡片并发出，打开流式模式", api: "POST cardkit/v1/cards\nPOST im/v1/messages", src: "BridgeRouter.kt:216", badge: "has" },
+  { id: "AssistantText", act: "整段到达，此刻分不清是过程说明还是结论：下一件事是 ToolStarted 就是说明，是 TurnEnded 就是结论", api: "PUT …/elements/{eid}/content", src: "TranscriptDecoders.kt:130；说明现在被 TabState.toolStarted 作废", badge: "has" },
+  { id: "ToolStarted", act: "追加一步：工具名＋简要参数", api: "POST …/cards/{id}/elements", src: "TranscriptDecoders.kt:131/163/265", badge: "ext", badgeText: "需扩展：带名称与参数" },
+  { id: "ToolFinished", act: "这一步打勾，写结果摘要", api: "PATCH …/elements/{eid}", src: "tool_result / function_call_output", badge: "new", badgeText: "新增事件" },
+  { id: "TurnEnded", act: "关闭流式，折叠过程，标题变绿", api: "PATCH …/cards/{id}/settings", src: "BridgeRouter.kt:231", badge: "has" },
+  { id: "TurnInterrupted", act: "标题变橙，运行中的一步标为中断", api: "PATCH …/cards/{id}/settings", src: "BridgeRouter.kt:236", badge: "has" },
+];
+
+// 一轮的会话记录：t 为毫秒，ev 对应上面的事件下标
+const SCRIPT = [
+  { t: 0, ev: 0, f: s => { s.started = true; } },
+  { t: 1300, ev: 1, f: s => push(s, { k: "narr", text: "我先找一下回复是从哪里发出去的。" }) },
+  { t: 1800, ev: 2, f: s => tool(s, 1, "Grep", "sendReply") },
+  { t: 3000, ev: 3, f: s => fin(s, 1, "3 处") },
+  { t: 3500, ev: 2, f: s => tool(s, 2, "Read", "bridge/core/BridgeRouter.kt") },
+  { t: 4700, ev: 3, f: s => fin(s, 2, "412 行") },
+  { t: 5300, ev: 1, f: s => push(s, { k: "narr", text: "完成信号和结束标记可能落在同一次读取里，看一下 TabState 怎么结算。" }) },
+  { t: 5900, ev: 2, f: s => tool(s, 3, "Read", "bridge/core/TabState.kt") },
+  { t: 6900, ev: 3, f: s => fin(s, 3, "228 行") },
+  { t: 7500, ev: 2, f: s => tool(s, 4, "Edit", "TabState.kt") },
+  { t: 8500, ev: 3, f: s => fin(s, 4, "+6 −1") },
+  { t: 9100, ev: 1, f: s => push(s, { k: "narr", text: "改好了，跑一下相关测试。" }) },
+  { t: 9600, ev: 2, f: s => tool(s, 5, "Bash", "./gradlew test --tests '*BridgeRouterTest'") },
+  { t: 12800, ev: 5, only: "int", f: s => { s.status = "int"; s.items.forEach(i => { if (i.state === "run") { i.state = "stop"; i.res = "已中断"; } }); s.done = true; } },
+  { t: 15400, ev: 3, only: "ok", f: s => fin(s, 5, "47 个通过") },
+  { t: 16000, ev: 1, only: "ok", f: s => { s.answerAt = 16000; } },
+  // Claude 的结论与 end_turn 同在一条记录，同一次读取里先后到达
+  { t: 16000, ev: 4, only: "ok", f: s => { s.status = "ok"; s.done = true; } },
+];
+function push(s, item) { item.born = s.now; s.items.push(item); }
+function tool(s, id, name, arg) { push(s, { k: "tool", id, name, arg, state: "run", res: "" }); }
+// 每帧整体重绘，淡入只给刚出现的条目，否则动画会被反复重启
+const fresh = i => (s.now - i.born < 350 ? " fresh" : "");
+function fin(s, id, res) { const i = s.items.find(x => x.id === id); i.state = "ok"; i.res = res; }
+
+let end = "ok", mode = "whole", s, t0, cursor, timer, hit = -1;
+const open = { A: false, B: false, C: false };
+const TIME_SCALE = 5.2; // 演示加速：卡片上显示的耗时按这个比例换算成真实时长
+
+function reset() {
+  s = { started: false, items: [], status: "run", answerAt: null, now: 0, done: false };
+  cursor = 0; hit = -1; t0 = performance.now();
+  open.A = open.B = open.C = false;
+  clearInterval(timer);
+  timer = setInterval(tick, 32);
+  tick();
+}
+
+function tick() {
+  s.now = performance.now() - t0;
+  while (cursor < SCRIPT.length && SCRIPT[cursor].t <= s.now) {
+    const step = SCRIPT[cursor++];
+    if (step.only && step.only !== end) continue;
+    if (s.done) continue;
+    step.f(s); hit = step.ev; s.endAt = s.done ? s.now : null;
+  }
+  const typed = s.answerAt == null ? 0 : mode === "whole" ? ANSWER.length : Math.min(ANSWER.length, Math.floor((s.now - s.answerAt) / 32));
+  render(typed);
+  if (s.done && s.now - s.endAt > 400 && (s.answerAt == null || typed === ANSWER.length)) clearInterval(timer);
+}
+
+function fmt(ms) { const sec = Math.floor(ms * TIME_SCALE / 1000); return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
+function md(t) { return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/`([^`]+)`/g, "<code>$1</code>"); }
+const tools = () => s.items.filter(i => i.k === "tool");
+const narrs = () => s.items.filter(i => i.k === "narr");
+
+function icon(i) { return i.state === "run" ? '<span class="spin"></span>' : i.state === "stop" ? "⏹" : "✅"; }
+function stepRow(i) {
+  return `<div class="step ${i.state}${fresh(i)}"><span class="ic">${icon(i)}</span><span class="nm"><b>${i.name}</b>${md(i.arg)}</span><span class="rs">${i.state === "run" ? "进行中" : i.res}</span></div>`;
+}
+function chip(i) { return `<span class="chip ${i.state}${fresh(i)}">${icon(i)}<span><b>${i.name}</b> ${md(i.arg)}</span></span>`; }
+function panel(dir, title, inner) {
+  return `<div class="panel ${open[dir] ? "open" : ""}" data-panel="${dir}"><div class="ph"><span class="chev">▶</span>${title}</div><div class="pb">${inner}</div></div>`;
+}
+function head() {
+  const tag = { run: "处理中", ok: "已完成", int: "已中断" }[s.status];
+  return `<div class="chead"><div class="t">修复重复推送<small>Claude Code · imux</small></div><span class="tag">${tag}</span></div>`;
+}
+function answer(typed) {
+  if (s.answerAt == null) return "";
+  const caret = typed < ANSWER.length ? '<span class="caret"></span>' : "";
+  return `<div class="answer">${md(ANSWER.slice(0, typed))}${caret}</div>`;
+}
+function note() {
+  const ms = s.done ? s.endAt : s.now;
+  return `<div class="note"><span>⏱ ${fmt(ms)}</span><span>🛠 ${tools().length} 个工具</span></div>`;
+}
+// A、B 只留最新的一段文字：到达时还不知道是不是结论，被下一段替换
+function latest() {
+  const n = narrs().at(-1);
+  return n && s.answerAt == null ? `<div class="narr">💬 ${md(n.text)}</div>` : "";
+}
+const summary = () => `🛠 ${tools().length} 个工具 · ⏱ ${fmt(s.done ? s.endAt : s.now)}`;
+
+const BODY = {
+  A(typed) {
+    let h = `<div class="quote">💬 电脑端输入：${USER}</div>`;
+    const list = tools().map(stepRow).join("");
+    if (!tools().length) h += '<div class="thinking">思考中</div>';
+    else if (s.status === "ok") h += panel("A", summary(), list);
+    else h += list;
+    h += latest();
+    if (s.answerAt != null) h += (s.status === "ok" ? "" : '<div class="hr"></div>') + answer(typed);
+    if (!s.done) h += '<span class="btn">⏹ 停止</span>';
+    return h + (s.status === "ok" ? "" : note());
+  },
+  B(typed) {
+    let h = `<div class="quote">💬 电脑端输入：${USER}</div>`;
+    const ts = tools(), cur = ts.find(i => i.state === "run");
+    if (!ts.length) h += '<div class="thinking">思考中</div>';
+    if (cur && !s.done) h += `<div class="now"><span class="spin"></span><b>${cur.name}</b><span class="arg">${md(cur.arg)}</span></div>`;
+    if (ts.length) {
+      const okN = ts.filter(i => i.state === "ok").length;
+      if (!s.done) h += `<div class="counts">已完成 ${okN} 步${cur ? " · 正在第 " + ts.length + " 步" : ""}</div>`;
+      const cut = ts.find(i => i.state === "stop");
+      if (cut) h += `<div class="now" style="background:#FFF7EE">⏹<b>中断于</b><span class="arg">${cut.name} ${md(cut.arg)}</span></div>`;
+      h += panel("B", s.done ? summary() : "查看全部步骤", ts.map(stepRow).join(""));
+    }
+    h += latest() + answer(typed);
+    return h + (s.status === "ok" ? "" : note());
+  },
+  C(typed) {
+    let h = `<div class="quote">💬 电脑端输入：${USER}</div>`;
+    let flow = "";
+    for (const i of s.items) flow += i.k === "narr" ? `<div class="narr${fresh(i)}">${md(i.text)}</div>` : chip(i);
+    if (!s.items.length) h += '<div class="thinking">思考中</div>';
+    else if (s.status === "ok") h += panel("C", `过程 · ${narrs().length} 段说明 · ${tools().length} 个工具 · ⏱ ${fmt(s.endAt)}`, flow);
+    else h += flow;
+    if (s.answerAt != null) h += (s.status === "ok" ? "" : '<div class="hr"></div>') + answer(typed);
+    return h + (s.status === "ok" ? "" : note());
+  },
+};
+
+function screen(dir, typed) {
+  const card = s.started ? `
+    <div class="row"><div class="avatar">赵</div><div class="msg"><div class="who">赵云</div>
+      <div class="card ${s.status}">${head()}<div class="cbody">${BODY[dir](typed)}</div></div>
+    </div></div>` : "";
+  return `
+    <div class="status"><span>14:32</span><i>●●● 5G ▮</i></div>
+    <div class="nav"><span class="back">‹</span><span class="name">赵云</span><span class="bot">机器人</span><span class="more">···</span></div>
+    <div class="chat">
+      <div class="day">今天 14:30</div>
+      <div class="row"><div class="avatar">赵</div><div class="msg"><div class="who">赵云</div>
+        <div class="bubble">✅ 上一轮已完成：机器人列表已按渠道和添加时间排序。</div></div></div>
+      ${card}
+    </div>
+    <div class="input"><em>🎙</em><span>发送给 赵云</span><em>⊕</em></div>`;
+}
+
+function render(typed) {
+  document.querySelectorAll(".screen").forEach(el => {
+    const chat = el.querySelector(".chat");
+    const atBottom = !chat || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+    const keep = chat ? chat.scrollTop : 0;
+    el.innerHTML = screen(el.dataset.dir, typed);
+    const c = el.querySelector(".chat");
+    c.style.scrollBehavior = "auto";
+    c.scrollTop = atBottom ? c.scrollHeight : keep;
+  });
+  document.getElementById("clock").textContent = fmt(s.done ? s.endAt : s.now);
+  document.querySelectorAll(".ev").forEach((el, i) => el.classList.toggle("hit", i === hit));
+}
+
+document.getElementById("evs").innerHTML = EVENTS.map(e => `
+  <div class="ev"><div class="n">${e.id}${e.sub ? `<i>${e.sub}</i>` : ""}</div>
+  <div class="a">${e.act}</div><div class="api">${e.api.replace(/\n/g, "<br>")}</div>
+  <div class="src">${e.src}</div>
+  <span class="badge b-${e.badge}">${e.badgeText || "现有事件"}</span></div>`).join("");
+
+document.addEventListener("click", e => {
+  const p = e.target.closest("[data-panel]");
+  if (p) { open[p.dataset.panel] = !open[p.dataset.panel]; tick(); }
+});
+document.getElementById("replay").onclick = reset;
+document.getElementById("mWhole").onclick = () => { mode = "whole"; syncMode(); reset(); };
+document.getElementById("mType").onclick = () => { mode = "type"; syncMode(); reset(); };
+function syncMode() {
+  document.getElementById("mWhole").classList.toggle("on", mode === "whole");
+  document.getElementById("mType").classList.toggle("on", mode === "type");
+}
+document.getElementById("endOk").onclick = () => { end = "ok"; sync(); reset(); };
+document.getElementById("endInt").onclick = () => { end = "int"; sync(); reset(); };
+function sync() {
+  document.getElementById("endOk").classList.toggle("on", end === "ok");
+  document.getElementById("endInt").classList.toggle("on", end === "int");
+}
+// 截图用：?at=毫秒 直接定格到某一时刻；&end=int 看中断
+const q = new URLSearchParams(location.search);
+if (q.get("end") === "int") { end = "int"; sync(); }
+reset();
+if (q.get("at")) { t0 -= +q.get("at"); tick(); }
+</script>
+</body>
+</html>
