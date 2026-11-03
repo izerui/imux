@@ -2,6 +2,7 @@ package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.peer.mcp.PeerSessionTools
 import com.github.izerui.imux.session.SessionListModel
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -272,6 +273,40 @@ class PeerFeedbackLifecycleTest {
                 release.countDown()
                 assertEquals(PeerScheduleResult.CLOSED, withTimeout(5.seconds) { oldRequest.await() })
                 assertEquals("恢复后的预约不受旧请求影响", AgentType.CLAUDE, f.coordinator.scheduledReview("s1"))
+            } finally {
+                release.countDown()
+            }
+        }
+    }
+
+    @Test
+    fun `读取提交记录期间关闭结对使尚未落地的预约失效`() = runBlocking {
+        Fixture().use { f ->
+            f.review()
+            val tools = PeerSessionTools(
+                AgentType.CLAUDE,
+                sessionKey = { "s1" },
+                coordinator = { f.coordinator },
+                enabledAgents = { listOf(AgentType.CLAUDE, AgentType.CODEX, AgentType.PI) },
+                configuredPartner = { null },
+            )
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            f.beforeRead = {
+                entered.countDown()
+                check(release.await(5, TimeUnit.SECONDS))
+            }
+            try {
+                val oldRequest = async(Dispatchers.Default) { tools.reviewOnce("pi", null) }
+                assertTrue("旧请求正在读取提交记录", entered.await(5, TimeUnit.SECONDS))
+                assertEquals("already_disabled", tools.disable().value["outcome"].asString)
+                release.countDown()
+                val result = withTimeout(5.seconds) { oldRequest.await() }
+                assertEquals("取消后旧请求不能重新预约", "skipped_state_changed", result.value["outcome"].asString)
+                assertNull(f.coordinator.scheduledReview("s1"))
+                f.beforeRead = null
+                f.input(f.feedback)
+                assertEquals("取消预约不能解除反馈保护", PeerScheduleResult.FEEDBACK_TURN, f.schedule())
             } finally {
                 release.countDown()
             }

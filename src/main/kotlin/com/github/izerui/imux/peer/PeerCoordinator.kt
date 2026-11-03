@@ -306,10 +306,12 @@ class PeerCoordinator internal constructor(
         val lifecycle = reviewLifecycles.computeIfAbsent(sessionKey) { PeerReviewLifecycle() }
         val staged = lifecycle.feedback as? PeerReviewLifecycle.Feedback.Staged
         if (staged != null) {
+            val cancellationVersion = lifecycle.scheduleCancellationVersion
             val session = model.sessionOf(sessionKey)
             val latest = withContext(Dispatchers.IO) { session?.let(readUserInput) }
             if (disposed || reviewLifecycles[sessionKey] !== lifecycle) return PeerScheduleResult.CLOSED
             if (bindings.containsKey(sessionKey)) return PeerScheduleResult.ALREADY_PAIRED
+            if (lifecycle.scheduleCancellationVersion != cancellationVersion) return PeerScheduleResult.STATE_CHANGED
             if (!lifecycle.observeSubmission(staged, latest)) return PeerScheduleResult.STATE_CHANGED
         }
         if (lifecycle.isHandlingFeedback) return PeerScheduleResult.FEEDBACK_TURN
@@ -323,10 +325,10 @@ class PeerCoordinator internal constructor(
 
     fun isHandlingOneShotFeedback(sessionKey: String): Boolean = reviewLifecycles[sessionKey]?.isHandlingFeedback == true
 
-    /** 撤销还没开始的预约；有预约时返回 true。 */
+    /** 撤销预约并使仍在校验的请求失效；已有可见预约被撤销时返回 true。 */
     fun cancelScheduledReview(sessionKey: String): Boolean {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
-        if (reviewLifecycles[sessionKey]?.takeScheduled() == null) return false
+        if (reviewLifecycles[sessionKey]?.cancelScheduled() != true) return false
         LOG.info("结对编程：撤销预约的审查 sessionKey=$sessionKey")
         notifyStateChanged(sessionKey)
         return true

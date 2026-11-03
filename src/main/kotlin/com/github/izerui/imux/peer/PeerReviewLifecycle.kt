@@ -46,6 +46,9 @@ internal class PeerReviewLifecycle {
         private set
     @Volatile var outcome: PeerOutcome? = null
         private set
+    /** 预约还在读提交记录时也能被取消；不清反馈状态，以免取消操作绕过反馈轮保护。 */
+    @Volatile var scheduleCancellationVersion: Long = 0
+        private set
 
     val scheduled: ScheduledPeerReview? get() = (review as? Review.Scheduled)?.request
     val isOneShot: Boolean get() = review is Review.OneShot
@@ -61,6 +64,11 @@ internal class PeerReviewLifecycle {
     }
 
     fun takeScheduled(): ScheduledPeerReview? = scheduled?.also { review = Review.Idle }
+
+    fun cancelScheduled(): Boolean {
+        scheduleCancellationVersion++
+        return takeScheduled() != null
+    }
 
     fun bind() {
         review = Review.Idle
