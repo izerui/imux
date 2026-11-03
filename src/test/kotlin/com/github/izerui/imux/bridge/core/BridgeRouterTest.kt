@@ -568,17 +568,17 @@ class BridgeRouterTest {
 
     private fun titledRouter(
         ch: FakeChannel,
-        title: String? = "代理商改造",
-    ) = BridgeRouter(registry, { owner }, port, { ch }, Texts, sessionTitleOf = { if (it.target == target) title else null })
+        title: String? = "imux · Claude Code · 代理商改造",
+    ) = BridgeRouter(registry, { owner }, port, { ch }, Texts, sessionLabelOf = { if (it.target == target) title else null })
 
     @Test
-    fun `回复末尾署名会话标题：分割线下一行引用块`() =
+    fun `回复末尾署名：分割线下一行引用块`() =
         runBlocking {
             val r = titledRouter(channel)
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案\n")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
-            assertEquals(listOf("答案\n\n---\n> 代理商改造"), sentTexts())
+            assertEquals(listOf("答案\n\n---\n> imux · Claude Code · 代理商改造"), sentTexts())
         }
 
     @Test
@@ -589,7 +589,7 @@ class BridgeRouterTest {
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
-            assertEquals(listOf("答案\n\n──────────\n代理商改造"), plain.sent.map { it.text })
+            assertEquals(listOf("答案\n\n──────────\nimux · Claude Code · 代理商改造"), plain.sent.map { it.text })
         }
 
     @Test
@@ -602,7 +602,7 @@ class BridgeRouterTest {
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
             val texts = small.sent.map { it.text }
             assertTrue("应当分成多段", texts.size > 1)
-            assertTrue(texts.last().endsWith("\n\n---\n> 代理商改造"))
+            assertTrue(texts.last().endsWith("\n\n---\n> imux · Claude Code · 代理商改造"))
             assertTrue("前面各段不署名", texts.dropLast(1).none { "代理商改造" in it })
             assertTrue(texts.all { it.toByteArray(Charsets.UTF_8).size <= 120 })
         }
@@ -610,14 +610,37 @@ class BridgeRouterTest {
     @Test
     fun `标题里的换行压成空格，过长的标题截短`() =
         runBlocking {
-            val r = titledRouter(channel, "第一行\n第二行" + "长".repeat(80))
+            val r = titledRouter(channel, "第一行\n第二行" + "长".repeat(150))
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
             val footer = sentTexts().single().substringAfter("\n> ")
             assertTrue(footer.startsWith("第一行 第二行"))
-            assertEquals(60, footer.length)
+            assertEquals(100, footer.length)
             assertTrue(footer.endsWith("…"))
+        }
+
+    @Test
+    fun `电脑端输入转发到手机时同样署名`() =
+        runBlocking {
+            val r = titledRouter(channel)
+            registry.bind(robot, target)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.UserText("改一下登录页")))
+            assertEquals(listOf("LOCAL:\n改一下登录页\n\n---\n> imux · Claude Code · 代理商改造"), sentTexts())
+        }
+
+    @Test
+    fun `真实署名经过路由后，长工程名不会挤掉智能体名和会话标题`() =
+        runBlocking {
+            val label = com.github.izerui.imux.bridge.sessionLabel("工".repeat(200), "Claude Code", "会".repeat(200))
+            val r = titledRouter(channel, label)
+            registry.bind(robot, target)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
+            r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
+            val footer = sentTexts().single().substringAfter("\n> ")
+            assertEquals("路由没有再截断", label, footer)
+            assertTrue("智能体名还在", footer.contains(" · Claude Code · "))
+            assertTrue("会话标题还在", footer.endsWith("会".repeat(39) + "…"))
         }
 
     @Test
@@ -640,16 +663,48 @@ class BridgeRouterTest {
             assertEquals("# 修复登录", footerOf("# 修复登录", FakeChannel(robot, rendersMarkdown = false)))
         }
 
+    private val label = "\n\n---\n> imux · Claude Code · 代理商改造"
+
     @Test
-    fun `状态提示与没有文字回复的提示不署名，没有标题时回复也不署名`() =
+    fun `等待确认、没有文字回复与结对状态这类提示都署名`() =
         runBlocking {
             val r = titledRouter(channel)
             registry.bind(robot, target)
             r.onWaiting("tab-1", "input needed")
             r.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
-            assertEquals(listOf("WAIT(input needed)", "NO_REPLY"), sentTexts())
-            channel.sent.clear()
+            r.onStatus("tab-1", "PEER")
+            assertEquals(listOf("WAIT(input needed)$label", "NO_REPLY$label", "PEER$label"), sentTexts())
+        }
+
+    @Test
+    fun `连接与恢复连接的提示正文已写明会话，不再署名；断开提示署名`() =
+        runBlocking {
+            val r = titledRouter(channel)
+            val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+            r.onBound(binding, "imux", "Claude Code", "代理商改造")
+            assertEquals("CONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
+            r.onReattached(binding, "imux", "Claude Code", "代理商改造")
+            assertEquals("RECONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
+            r.onReleased(binding, "代理商改造")
+            assertEquals("RELEASED(代理商改造)$label", sentTexts().last())
+        }
+
+    @Test
+    fun `回应手机消息时连着会话就署名，没连会话不署名`() =
+        runBlocking {
+            val r = titledRouter(channel)
+            r.onInbound(inboundWith("m1", "你好"))
+            assertEquals("没连会话", "UNBOUND", sentTexts().last())
+            registry.bind(robot, target)
+            r.onInbound(inboundWith("m2", "   "))
+            assertEquals("连着会话", "EMPTY$label", sentTexts().last())
+        }
+
+    @Test
+    fun `取不到署名时回复不署名`() =
+        runBlocking {
             val untitled = titledRouter(channel, title = null)
+            registry.bind(robot, target)
             untitled.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             untitled.onTurnCompleted("tab-1", untitled.currentTurn("tab-1"))
             assertEquals(listOf("答案"), sentTexts())

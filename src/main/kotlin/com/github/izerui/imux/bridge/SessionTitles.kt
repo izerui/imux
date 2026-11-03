@@ -14,6 +14,24 @@ import java.util.concurrent.ConcurrentHashMap
  * 会话标题 → 标签标题 → 会话 id 前 8 位 →“未命名会话”。刚打开、还没有会话记录的 CLI 只有标签标题，
  * 不能把内部的 tabId 露给用户。
  */
+/**
+ * 署名的三段，各自限长后再拼：工程名、智能体名、会话标题都至少留下一部分，
+ * 拼出来的整行也在路由的署名上限（100 字）之内，不会被整行截断挤掉后面的段。
+ */
+internal fun sessionLabel(
+    project: String,
+    agent: String,
+    title: String,
+): String =
+    listOf(project to MAX_LABEL_PROJECT_CHARS, agent to MAX_LABEL_AGENT_CHARS, title to MAX_LABEL_TITLE_CHARS)
+        .map { (text, max) -> text.trim().let { if (it.length > max) it.take(max - 1) + "…" else it } }
+        .filter(String::isNotEmpty)
+        .joinToString(" · ")
+
+private const val MAX_LABEL_PROJECT_CHARS = 30
+private const val MAX_LABEL_AGENT_CHARS = 20
+private const val MAX_LABEL_TITLE_CHARS = 40
+
 object SessionTitles {
     /** 绑定标签最近一次的名字：标签关闭后取不到标签标题，发断开提示时用它。 */
     private val remembered = ConcurrentHashMap<String, String>()
@@ -27,6 +45,16 @@ object SessionTitles {
                     ?: TerminalHost.getInstance(it).tabTitleOf(binding.target.tabId)
             }
         return live ?: remembered[binding.target.tabId] ?: sessionId?.take(8) ?: ImuxBundle.message("bridge.session.untitled")
+    }
+
+    /**
+     * 手机回复末尾的署名：工程 · 智能体 · 会话标题，与连接提示的写法一致，同时连着几个会话时据此分辨。
+     * 工程已关闭时取项目路径的最后一段。
+     */
+    fun label(binding: Binding): String {
+        val project = ProjectManager.getInstance().openProjects.firstOrNull { it.basePath == binding.target.projectPath && !it.isDisposed }
+        val projectName = project?.name ?: binding.target.projectPath.substringAfterLast('/').substringAfterLast('\\')
+        return sessionLabel(projectName, binding.target.agentType.displayName, of(binding))
     }
 
     /** 正在显示的终端标签。 */

@@ -40,8 +40,11 @@ class BridgeRouter(
     private val onWarning: (String) -> Unit = {},
     /** 等渠道报告真正上线；由接线层订阅连接状态，默认用于已就绪的独立端口。 */
     private val awaitOnline: suspend (RobotId) -> Unit = {},
-    /** 每轮回复末尾署名的会话标题，手机上同时连着多个会话时据此分辨；返回 null 不署名。 */
-    private val sessionTitleOf: (Binding) -> String? = { null },
+    /**
+     * 发到手机的消息末尾的署名（工程 · 智能体 · 会话标题），手机上同时连着多个会话时据此分辨；返回 null 不署名。
+     * 凡能确定所属会话的消息都署名；连接、恢复连接的提示正文已写明这三项，不重复。
+     */
+    private val sessionLabelOf: (Binding) -> String? = { null },
 ) {
     /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
     private val submitLocks = HashMap<RobotId, Mutex>()
@@ -367,7 +370,7 @@ class BridgeRouter(
         reply ?: return
         val binding = bindings.bindingForTab(tabId) ?: return
         if (binding.epoch != reply.epoch) return
-        send(binding, reply.text.toString(), sessionTitleOf(binding))
+        send(binding, reply.text.toString())
     }
 
     private fun submitLock(robotId: RobotId): Mutex = synchronized(lock) { submitLocks.getOrPut(robotId) { Mutex() } }
@@ -423,7 +426,7 @@ class BridgeRouter(
         agent: String,
         sessionTitle: String,
     ) {
-        send(binding, texts.connected(project, agent, sessionTitle))
+        send(binding, texts.connected(project, agent, sessionTitle), label = null)
     }
 
     /**
@@ -440,7 +443,7 @@ class BridgeRouter(
             onWarning("机器人 ${binding.robotId.value} ${reconnectWaitMs / 1000} 秒内未上线，不发重连通知")
             return
         }
-        send(binding, texts.reconnected(project, agent, sessionTitle))
+        send(binding, texts.reconnected(project, agent, sessionTitle), label = null)
     }
 
     /**
@@ -458,21 +461,21 @@ class BridgeRouter(
         }
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
-        deliver(channel, OutboundMessage(binding.robotId, owner.chatId, texts.released(sessionTitle)))
+        deliver(channel, OutboundMessage(binding.robotId, owner.chatId, labeled(texts.released(sessionTitle), sessionLabelOf(binding), channel)))
     }
 
     /**
      * 每段发送前都核对：分段途中换绑，剩余内容不落到新目标的聊天里。
-     * 有 [title] 时在最后一段末尾署名：切段时预留署名的长度，署名不会被单独切到下一条。
+     * 有 [label] 时在最后一段末尾署名：切段时预留署名的长度，署名不会被单独切到下一条。
      */
     private suspend fun send(
         binding: Binding,
         text: String,
-        title: String? = null,
+        label: String? = sessionLabelOf(binding),
     ) {
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
-        val footer = footer(title, channel.rendersMarkdown)
+        val footer = footer(label, channel.rendersMarkdown)
         val budget = (channel.maxTextBytes - footer.toByteArray(Charsets.UTF_8).size).coerceAtLeast(TextSegmenter.MIN_SEGMENT_BYTES)
         val segments = TextSegmenter.split(if (footer.isEmpty()) text else text.trimEnd(), budget)
         for ((index, part) in segments.withIndex()) {
@@ -483,13 +486,25 @@ class BridgeRouter(
         }
     }
 
+    /** 回应手机发来的消息；此刻连着会话时同样署名，没连会话就不署名。 */
     private suspend fun reply(
         robotId: RobotId,
         owner: RobotOwner,
         text: String,
     ) {
         val channel = channelOf(robotId) ?: return
-        deliver(channel, OutboundMessage(robotId, owner.chatId, text))
+        val label = bindings.bindingOf(robotId)?.let(sessionLabelOf)
+        deliver(channel, OutboundMessage(robotId, owner.chatId, labeled(text, label, channel)))
+    }
+
+    /** 不分段的短消息加上署名。 */
+    private fun labeled(
+        text: String,
+        label: String?,
+        channel: ChannelAdapter,
+    ): String {
+        val footer = footer(label, channel.rendersMarkdown)
+        return if (footer.isEmpty()) text else text.trimEnd() + footer
     }
 
     /**
@@ -539,13 +554,13 @@ class BridgeRouter(
         seen[robotId]?.remove(externalMessageId)
     }
 
-    /** 分割线下一行引用块写会话标题，渲染成灰字竖条；不渲染 Markdown 的渠道用字符横线代替。 */
+    /** 分割线下一行引用块写署名，渲染成灰字竖条；不渲染 Markdown 的渠道用字符横线代替。 */
     private fun footer(
-        title: String?,
+        label: String?,
         markdown: Boolean,
     ): String {
-        val line = title?.replace(WHITESPACE, " ")?.trim()?.takeIf(String::isNotEmpty) ?: return ""
-        val shown = if (line.length > MAX_TITLE_CHARS) line.take(MAX_TITLE_CHARS - 1) + "…" else line
+        val line = label?.replace(WHITESPACE, " ")?.trim()?.takeIf(String::isNotEmpty) ?: return ""
+        val shown = if (line.length > MAX_LABEL_CHARS) line.take(MAX_LABEL_CHARS - 1) + "…" else line
         return if (markdown) "\n\n---\n> ${escapeBlockMarker(shown)}" else "\n\n$PLAIN_RULE\n$shown"
     }
 
@@ -561,8 +576,8 @@ class BridgeRouter(
         const val BLOCK_MARKERS = "#>+-*"
         const val PLAIN_RULE = "──────────"
 
-        /** 署名只为分辨会话，过长的标题截短，不挤占正文的分段额度。 */
-        const val MAX_TITLE_CHARS = 60
+        /** 署名只为分辨会话，过长时截短，不挤占正文的分段额度。 */
+        const val MAX_LABEL_CHARS = 100
         const val RATE_LIMIT_RETRIES = 6
         const val SEEN_CAPACITY = 1000
         const val NOT_READY_ATTEMPTS = 3
