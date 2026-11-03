@@ -21,7 +21,7 @@
 `enable_pair_programming`：
 
 - `agent` 取值为已启用智能体的 cli 名（`claude` / `codex` / `pi`，以 `ImuxSettings.enabledAgentTypes` 为准）。未知或未启用的值返回工具错误（`isError: true`，`reason: "agent_not_enabled"`），列出可用值。
-- 不传 `agent` 时取默认伙伴：设置项“默认结对伙伴”（新增，未配置为 null）若已配置且已启用则用它；否则取已启用列表中第一个与当前会话类型不同的智能体；都没有（只启用了当前类型）时用当前类型。
+- 不传 `agent` 时取默认伙伴：设置项“默认结对伙伴”（新增，未配置为 null）若已配置且已启用则用它；否则在已启用列表里从当前会话类型往后顺延一个（到末尾回到开头）；只启用了当前类型时用当前类型。
 - 已与同一伙伴结对：不调 `bind`，返回 `outcome: "already_enabled"`。与其他伙伴结对：调 `bind` 换伙伴（沿用现有换绑语义：进行中的审查作废），返回 `outcome: "switched"`。未结对：`bind`，返回 `outcome: "enabled"`。
 
 `disable_pair_programming`：已结对则 `unbind`，返回 `outcome: "disabled"`；未结对返回 `outcome: "already_disabled"`。工具描述写明：仅在用户明确要求时调用，不得为跳过或回避审查而关闭。
@@ -67,3 +67,22 @@
 - 抽取公共代码后 `bridge/mcp` 现有测试全部通过。
 - Pi 脚本：仅设 session 环境变量时只注册 `imux_session`；两者都设时注册两个。
 - 启动注入：Claude / Codex 命令行配置中出现 `imux_session`。
+
+## 追加：`review_once`（审查一次）
+
+用户在任务里写“做完让副驾驶审查一次”，会话调用 `review_once`，效果与右键菜单“审查一次”（不勾“同时开启结对编程”）一致：审一次、审完自动解除，不开启持续结对。
+
+| 参数 | 说明 |
+|---|---|
+| `agent`（可选） | 审查者 cli 名；不传时与 `enable_pair_programming` 同一套默认伙伴规则 |
+| `instruction`（可选） | 这一次给审查者的额外要求，等同弹窗里的“审查要求” |
+
+- **预约而非立即开审**：工具在一轮中途被调用，那时立即开审只能看到半截工作。`PeerCoordinator.scheduleReviewOnce` 只记下预约（不绑定、不显示为结对中），`onTurnCompleted` 时取出预约走 `reviewOnce`。
+- 防循环：单次审查的意见发回后，处理意见的那一轮里不接受预约（返回 `skipped_feedback_turn`），这一轮结束后恢复。否则原任务里“让副驾驶审查”的要求仍在上下文，智能体会反复预约，形成审查—修改死循环；持续结对有轮数上限，单次审查没有。
+- 结果：`scheduled`；已结对时不预约，返回 `already_paired`（这一轮本来就会审）；未启用的审查者返回 `agent_not_enabled`。再次预约覆盖前一次。
+- 预约的清理：绑定（开启结对、换伙伴）与解绑都会清掉；`disable_pair_programming` 一并撤销预约；pending key 迁到正式 key 时预约跟过去（新会话首轮里才迁移）；dispose 清空。
+- `get_pair_status` 增加 `scheduled_reviewer`（cli 名或 null）。
+- 留痕：预约成功弹 IDE 通知 `action.peer.mcp.scheduled`（10 个语言文件）。
+- 终端横幅：预约期间结对段为 `SCHEDULED`，按钮显示「已预约」（蓝），常驻提示「已预约审查（X）：本轮结束后开始」带「取消预约」，结对菜单里同样可取消。预约、撤销都会通知界面刷新。
+- Esc 中断同样算本轮结束，预约照常开审（已确认接受）。
+- 默认审查者（MCP 与“审查一次”弹窗共用 `defaultPeerPartner`）：设置里的“默认结对伙伴”优先；否则在已启用列表里从当前会话类型往后顺延一个，到末尾回到开头；当前类型不在列表里取第一个。

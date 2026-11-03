@@ -21,6 +21,14 @@ class PeerSegmentTest {
     }
 
     @Test
+    fun `未绑定但预约了审查时是已预约，带审查者名`() {
+        assertEquals(
+            PeerSegmentModel(PeerSegmentKind.SCHEDULED, AgentType.CODEX.displayName),
+            peerSegmentModel(null, nowMillis = 0, scheduled = AgentType.CODEX),
+        )
+    }
+
+    @Test
     fun `已绑定且未在审查时是结对中`() {
         val model = peerSegmentModel(status(), nowMillis = 0)
         assertEquals(PeerSegmentKind.READY, model.kind)

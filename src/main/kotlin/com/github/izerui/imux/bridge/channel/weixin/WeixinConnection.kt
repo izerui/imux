@@ -55,6 +55,9 @@ class WeixinConnection(
 ) : ChannelConnection, MediaSender {
     /** 官方按 4000 字符分段；路由器按 UTF-8 字节切，4000 字节保证每段不超过 4000 字符。 */
     override val maxTextBytes: Int = 4_000
+
+    /** 个人微信只显示纯文本。 */
+    override val rendersMarkdown: Boolean = false
     override val mediaCapabilities get() = weixinMediaCapabilities
 
     override suspend fun uploadMedia(chatId: String, file: PreparedMedia, kind: MediaKind): UploadedMedia =

@@ -1,9 +1,10 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.peer.PeerStatus
 
 /** 横幅上结对编程段的状态。 */
-enum class PeerSegmentKind { IDLE, READY, RUNNING, PASSED }
+enum class PeerSegmentKind { IDLE, SCHEDULED, READY, RUNNING, PASSED }
 
 data class PeerSegmentModel(
     val kind: PeerSegmentKind,
@@ -12,12 +13,18 @@ data class PeerSegmentModel(
     val elapsedSeconds: Long = 0,
 )
 
-/** 未绑定时是空闲；已绑定时审查中优先，其次是上一轮通过，否则是结对中。 */
+/**
+ * 未绑定时是空闲，预约了本轮结束后审查一次（[scheduled] 为审查者）时是已预约；
+ * 已绑定时审查中优先，其次是上一轮通过，否则是结对中。
+ */
 fun peerSegmentModel(
     status: PeerStatus?,
     nowMillis: Long,
+    scheduled: AgentType? = null,
 ): PeerSegmentModel {
-    if (status == null) return PeerSegmentModel(PeerSegmentKind.IDLE)
+    if (status == null) {
+        return scheduled?.let { PeerSegmentModel(PeerSegmentKind.SCHEDULED, it.displayName) } ?: PeerSegmentModel(PeerSegmentKind.IDLE)
+    }
     val name = status.targetAgentType.displayName
     val progress = status.progress
     return when {

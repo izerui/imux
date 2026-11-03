@@ -38,7 +38,7 @@ internal fun lastResultLine(
 }
 
 /**
- * 结对按钮此刻的样子。开着显示伙伴名（绿），审查中显示秒数（蓝），失败显示黄色短字；
+ * 结对按钮此刻的样子。开着显示伙伴名（绿），审查中显示秒数（蓝），已预约显示「已预约」（蓝），失败显示黄色短字；
  * 未开启（包括单次审查跑完自动解绑之后）只是图标，但悬停说明照样附上保留的上一轮结果。
  */
 internal fun pairToolState(
@@ -64,6 +64,13 @@ internal fun pairToolState(
             ToolState(AgentIcons.pair, title, failedText, message("action.peer.tool.failed", emptyList()), NoticeTone.WARNING)
         model.kind == PeerSegmentKind.IDLE ->
             ToolState(AgentIcons.pair, title, withResult(message("action.peer.segment.hint", emptyList())))
+        model.kind == PeerSegmentKind.SCHEDULED ->
+            ToolState(
+                AgentIcons.pair, title,
+                withResult(message("action.peer.scheduled.notice", listOf(name))),
+                label = message("action.peer.tool.scheduled", emptyList()),
+                tone = NoticeTone.INFO,
+            )
         else ->
             ToolState(
                 AgentIcons.pair, title,

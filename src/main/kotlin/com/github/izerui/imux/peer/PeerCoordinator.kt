@@ -53,9 +53,8 @@ enum class PeerOutcomeKind { PASSED, FEEDBACK, FAILED }
 /**
  * 最近一轮审查的结果，终端顶部的结果 chip 靠它显示。
  *
- * 只在下一轮审查真正开始时被替换：主会话开始新一轮工作（[PeerCoordinator.onTurnStarted]）不清，
- * 单次审查结束自动解绑也不清——那时 [PeerCoordinator.status] 已经是 null，结果仍要看得到。
- * 用户主动停止结对、会话迁移时才丢弃。
+ * 通常在下一轮审查真正开始时替换；新预约或换伙伴会先丢弃过期的失败与重试。
+ * 主会话开始工作和单次审查自动解绑时保留结果，用户主动解绑、关闭或换会话时丢弃。
  */
 data class PeerOutcome(
     val kind: PeerOutcomeKind,
@@ -175,6 +174,7 @@ class PeerCoordinator internal constructor(
     private val onFeedbackUndelivered: ((sessionKey: String, feedback: String) -> Unit)? = null,
     /** 单次审查返回 PASS 时的通知。为 null 时用 [notifyOneShotPassed]：弹 IDE 通知。 */
     private val onOneShotPassed: (() -> Unit)? = null,
+    private val readUserInput: (AgentSession) -> PeerUserInput? = ::latestPeerUserInput,
 ) : Disposable {
     private val edt: kotlin.coroutines.CoroutineContext by lazy { edtDispatcher ?: Dispatchers.EDT }
     @Volatile private var disposed = false
@@ -190,9 +190,7 @@ class PeerCoordinator internal constructor(
      */
     private val sentFeedback = ConcurrentHashMap<String, ConcurrentLinkedDeque<String>>()
     private val passedSessions = ConcurrentHashMap.newKeySet<String>()
-    private data class OneShotInfo(val generation: Long)
-    private val oneShotSessions = ConcurrentHashMap<String, OneShotInfo>()
-    private val outcomes = ConcurrentHashMap<String, PeerOutcome>()
+    private val reviewLifecycles = ConcurrentHashMap<String, PeerReviewLifecycle>()
     private val stateDispatcher = EventDispatcher.create(PeerStateListener::class.java)
     private val reviewDispatcher = EventDispatcher.create(PeerReviewListener::class.java)
 
@@ -221,7 +219,7 @@ class PeerCoordinator internal constructor(
             )
         }
 
-    fun lastOutcome(sessionKey: String): PeerOutcome? = outcomes[sessionKey]
+    fun lastOutcome(sessionKey: String): PeerOutcome? = reviewLifecycles[sessionKey]?.outcome
 
     internal fun feedbackHints(sessionKey: String, outputModel: TerminalOutputModel): List<PeerFeedbackHint> {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
@@ -239,7 +237,7 @@ class PeerCoordinator internal constructor(
         // 换伙伴时正在进行的那一轮审查作废
         announceStopped(sessionKey, previousTarget, cancelledRun, PeerStopReason.CANCELLED)
         // 失败结果的「重试」绑定在当时的伙伴与方式上；重新绑定后它已过时，否则提示写着旧伙伴、重试却由新伙伴来审
-        outcomes.computeIfPresent(sessionKey) { _, outcome -> outcome.takeIf { it.kind != PeerOutcomeKind.FAILED } }
+        reviewLifecycles.computeIfAbsent(sessionKey) { PeerReviewLifecycle() }.bind()
         bindings[sessionKey] = PeerBinding(targetAgentType)
         cancelledRun?.killProcess()
         LOG.info("结对编程：绑定 $sessionKey -> ${targetAgentType.displayName}")
@@ -251,7 +249,7 @@ class PeerCoordinator internal constructor(
         if (disposed) return
         val target = bindings[sessionKey]?.targetAgentType
         val cancelledRun = unbindInner(sessionKey)
-        outcomes.remove(sessionKey)
+        reviewLifecycles.remove(sessionKey)
         cancelledRun?.killProcess()
         announceStopped(sessionKey, target, cancelledRun, PeerStopReason.UNBOUND)
         LOG.info("结对编程：解绑 $sessionKey")
@@ -274,7 +272,7 @@ class PeerCoordinator internal constructor(
         if (bindings.containsKey(sessionKey)) return
         bind(sessionKey, targetAgentType)
         val generation = bindings[sessionKey]?.generation ?: return
-        if (!keepPairing) oneShotSessions[sessionKey] = OneShotInfo(generation)
+        if (!keepPairing) reviewLifecycles[sessionKey]?.startOneShot(generation)
         val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
         val result = guard.tryStart(generation, { bindings[sessionKey]?.generation }) ?: return
         result.cancelled?.killProcess()
@@ -291,13 +289,62 @@ class PeerCoordinator internal constructor(
         launchReview(sessionKey, result.run, guard)
     }
 
+    /**
+     * 预约在这一轮结束时审查一次，审完自动解除，与 [reviewOnce] 的单次审查相同。
+     * 供会话自己在一轮中途调用（MCP）：那时立即开审只能看到半截工作。
+     * 在这里统一判定结对、反馈轮与关闭状态；再次预约覆盖前一次。
+     * 仅待手动提交的反馈需要读取会话记录，IO 期间可关闭/换会话，回来后须重新验证对象身份。
+     */
+    internal suspend fun scheduleReviewOnce(
+        sessionKey: String,
+        targetAgentType: AgentType,
+        userInstruction: String?,
+    ): PeerScheduleResult {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        if (disposed) return PeerScheduleResult.CLOSED
+        if (bindings.containsKey(sessionKey)) return PeerScheduleResult.ALREADY_PAIRED
+        val lifecycle = reviewLifecycles.computeIfAbsent(sessionKey) { PeerReviewLifecycle() }
+        val staged = lifecycle.feedback as? PeerReviewLifecycle.Feedback.Staged
+        if (staged != null) {
+            val session = model.sessionOf(sessionKey)
+            val latest = withContext(Dispatchers.IO) { session?.let(readUserInput) }
+            if (disposed || reviewLifecycles[sessionKey] !== lifecycle) return PeerScheduleResult.CLOSED
+            if (bindings.containsKey(sessionKey)) return PeerScheduleResult.ALREADY_PAIRED
+            if (!lifecycle.observeSubmission(staged, latest)) return PeerScheduleResult.STATE_CHANGED
+        }
+        if (lifecycle.isHandlingFeedback) return PeerScheduleResult.FEEDBACK_TURN
+        lifecycle.schedule(targetAgentType, userInstruction)
+        notifyStateChanged(sessionKey)
+        LOG.info("结对编程：预约本轮结束后审查一次 sessionKey=$sessionKey agent=${targetAgentType.displayName}")
+        return PeerScheduleResult.SCHEDULED
+    }
+
+    fun scheduledReview(sessionKey: String): AgentType? = reviewLifecycles[sessionKey]?.scheduled?.target
+
+    fun isHandlingOneShotFeedback(sessionKey: String): Boolean = reviewLifecycles[sessionKey]?.isHandlingFeedback == true
+
+    /** 撤销还没开始的预约；有预约时返回 true。 */
+    fun cancelScheduledReview(sessionKey: String): Boolean {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        if (reviewLifecycles[sessionKey]?.takeScheduled() == null) return false
+        LOG.info("结对编程：撤销预约的审查 sessionKey=$sessionKey")
+        notifyStateChanged(sessionKey)
+        return true
+    }
+
     private fun unbindInner(sessionKey: String): PeerRun? {
+        reviewLifecycles[sessionKey]?.detachReview()
         bindings.remove(sessionKey)
         roundCounts.remove(sessionKey)
         peerInjectedSessions.remove(sessionKey)
         passedSessions.remove(sessionKey)
-        oneShotSessions.remove(sessionKey)
         return guards.remove(sessionKey)?.cancelAndDetach()
+    }
+
+    /** 关闭标签会终止反馈轮；自动审查收尾只调用 unbindInner，不能走这里。 */
+    fun sessionClosed(sessionKey: String) {
+        unbind(sessionKey)
+        forgetFeedbackHints(sessionKey)
     }
 
     fun forgetFeedbackHints(sessionKey: String) {
@@ -310,7 +357,7 @@ class PeerCoordinator internal constructor(
     /** 将单次审查转为持续结对，保留正在进行的审查及其绑定。 */
     internal fun keepPairing(sessionKey: String): Boolean {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
-        if (disposed || oneShotSessions.remove(sessionKey) == null) return false
+        if (disposed || reviewLifecycles[sessionKey]?.keepPairing() != true) return false
         notifyStateChanged(sessionKey)
         return true
     }
@@ -318,7 +365,17 @@ class PeerCoordinator internal constructor(
     fun onTurnCompleted(sessionKey: String) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
-        if (oneShotSessions.containsKey(sessionKey)) return
+        // 处理单次审查意见的那一轮到此结束
+        reviewLifecycles[sessionKey]?.turnCompleted()
+        // 预约期间已开启结对（绑定会清掉预约）或已开始单次审查时，这一轮按已有方式审
+        val scheduled = reviewLifecycles[sessionKey]?.takeScheduled()
+        if (scheduled != null && !bindings.containsKey(sessionKey)) {
+            reviewOnce(sessionKey, scheduled.target, scheduled.instruction)
+            // 审查没能开始（已关闭）时，界面也要退出「已预约」
+            if (!bindings.containsKey(sessionKey)) notifyStateChanged(sessionKey)
+            return
+        }
+        if (reviewLifecycles[sessionKey]?.isOneShot == true) return
         val generation = bindings[sessionKey]?.generation ?: return
         val guard = guards.computeIfAbsent(sessionKey) { PeerSessionGuard() }
         if (!bindings.containsKey(sessionKey)) {
@@ -359,7 +416,7 @@ class PeerCoordinator internal constructor(
                         }
                         // 没被取消、自己跑完却没有交出结论（意见没送到、提前退出）：也要告诉远程用户审查已经停了
                         if (runToKill != null) announceStopped(sessionKey, bindings[sessionKey]?.targetAgentType, run, PeerStopReason.INTERRUPTED)
-                        if (runToKill != null && oneShotSessions.remove(sessionKey) != null) {
+                        if (runToKill != null && reviewLifecycles[sessionKey]?.isOneShot(run.bindingGeneration) == true) {
                             if (run.passed) {
                                 try { (onOneShotPassed ?: ::notifyOneShotPassed).invoke() }
                                 catch (e: Exception) { LOG.warn("结对编程：单次 PASS 通知失败", e) }
@@ -380,7 +437,7 @@ class PeerCoordinator internal constructor(
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
         val target = bindings[sessionKey]?.targetAgentType
-        val wasOneShot = oneShotSessions.remove(sessionKey) != null
+        val wasOneShot = reviewLifecycles[sessionKey]?.isOneShot == true
         roundCounts[sessionKey]?.set(0)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()
@@ -396,7 +453,7 @@ class PeerCoordinator internal constructor(
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed || !bindings.containsKey(sessionKey)) return
         val target = bindings[sessionKey]?.targetAgentType
-        if (oneShotSessions.remove(sessionKey) != null) {
+        if (reviewLifecycles[sessionKey]?.isOneShot == true) {
             val cancelledRun = unbindInner(sessionKey)
             cancelledRun?.killProcess()
             announceStopped(sessionKey, target, cancelledRun, PeerStopReason.TURN_STARTED)
@@ -423,7 +480,13 @@ class PeerCoordinator internal constructor(
         if (from == to) return
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (disposed) return
-        val wasOneShot = oneShotSessions.remove(from) != null
+        val previousLifecycle = reviewLifecycles.remove(from)
+        val wasOneShot = previousLifecycle?.isOneShot == true
+        // 新会话的首轮里 pending key 才换成正式 key，预约要跟过去，否则这一轮结束时找不到
+        reviewLifecycles.remove(to)
+        previousLifecycle?.scheduled?.let {
+            reviewLifecycles[to] = PeerReviewLifecycle().apply { schedule(it.target, it.instruction) }
+        }
         val binding = bindings.remove(from)
         val fromTarget = binding?.targetAgentType
         val toTarget = bindings[to]?.targetAgentType
@@ -432,7 +495,6 @@ class PeerCoordinator internal constructor(
         feedbackHints.remove(from)
         sentFeedback.remove(from)
         passedSessions.remove(from)
-        outcomes.remove(from)
         val r1 = guards.remove(from)?.cancelAndDetach()
         bindings.remove(to)
         roundCounts.remove(to)
@@ -440,11 +502,10 @@ class PeerCoordinator internal constructor(
         feedbackHints.remove(to)
         sentFeedback.remove(to)
         passedSessions.remove(to)
-        outcomes.remove(to)
-        oneShotSessions.remove(to)
         val r2 = guards.remove(to)?.cancelAndDetach()
         if (binding != null && !wasOneShot) {
             bindings[to] = binding.copy(task = "")
+            reviewLifecycles[to] = PeerReviewLifecycle()
         }
         listOfNotNull(r1, r2).forEach { it.killProcess() }
         // 标签此刻已对应新会话，按新 key 报告，手机桥接才找得到这个标签
@@ -467,8 +528,7 @@ class PeerCoordinator internal constructor(
         feedbackHints.clear()
         sentFeedback.clear()
         passedSessions.clear()
-        outcomes.clear()
-        oneShotSessions.clear()
+        reviewLifecycles.clear()
         guardsToCancel.forEach { it.cancel() }
     }
 
@@ -484,7 +544,7 @@ class PeerCoordinator internal constructor(
         withContext(edt) {
             if (runIsCurrent(mainSessionKey, run, guard)) {
                 // 新一轮真正开始才换掉上一轮结果；主会话开始工作（onTurnStarted）时旧结果仍然有效
-                outcomes.remove(mainSessionKey)
+                reviewLifecycles[mainSessionKey]?.reviewStarted()
                 notifyStateChanged(mainSessionKey)
             }
         }
@@ -599,6 +659,10 @@ class PeerCoordinator internal constructor(
             return
         }
 
+        // 暂存前记住最后一条用户记录；之后仅新提交且内容相符的记录算反馈轮。
+        val previousInput =
+            if (reviewLifecycles[mainSessionKey]?.isOneShot == true) model.sessionOf(mainSessionKey)?.let(readUserInput)
+            else null
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
             val autoInject = peerAutoInject()
@@ -606,9 +670,11 @@ class PeerCoordinator internal constructor(
                 if (autoInject) {
                     injectFeedback(mainSessionKey, feedback, run, guard)
                 } else {
-                    stageFeedback(mainSessionKey, feedback)
+                    stageFeedback(mainSessionKey, feedback, run, previousInput)
                 }
-            if (delivered) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)
+            if (delivered) {
+                recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)
+            }
         }
     }
 
@@ -628,7 +694,7 @@ class PeerCoordinator internal constructor(
         feedback: String? = null,
         autoInjected: Boolean = false,
     ) {
-        outcomes[sessionKey] = outcome
+        reviewLifecycles[sessionKey]?.recordOutcome(outcome)
         run.concluded = true
         announce(PeerReviewEvent.Finished(sessionKey, outcome, feedback, autoInjected))
         notifyStateChanged(sessionKey)
@@ -782,6 +848,7 @@ class PeerCoordinator internal constructor(
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符，outputModel=${hint?.let { System.identityHashCode(it.outputModel).toString(16) } ?: "none"}，offset=${hint?.absoluteOffset ?: -1}）")
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
+        reviewLifecycles[mainSessionKey]?.feedbackDelivered(run.bindingGeneration, prompt, true, null)
         rememberSentFeedback(mainSessionKey, prompt)
         hint?.let {
             val history = feedbackHints.getOrPut(mainSessionKey) { ArrayDeque() }
@@ -795,6 +862,8 @@ class PeerCoordinator internal constructor(
     private fun stageFeedback(
         mainSessionKey: String,
         prompt: String,
+        run: PeerRun,
+        previousInput: PeerUserInput?,
     ): Boolean {
         val view = viewOf(mainSessionKey)
         if (view == null) {
@@ -804,6 +873,7 @@ class PeerCoordinator internal constructor(
         }
         val sent = tryStagePeerFeedback(view.createSendTextBuilder(), prompt)
         if (sent) {
+            reviewLifecycles[mainSessionKey]?.feedbackDelivered(run.bindingGeneration, prompt, false, previousInput)
             LOG.info("结对编程：暂存反馈到主会话输入框 $mainSessionKey（${prompt.length} 字符）")
             rememberSentFeedback(mainSessionKey, prompt)
         } else {

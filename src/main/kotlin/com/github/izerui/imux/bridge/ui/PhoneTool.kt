@@ -143,8 +143,10 @@ class PhoneTool(
 
     override fun state(): ToolState {
         val title = ImuxBundle.message("bridge.tool.title")
+        // 没连上和已连上时都附上一句：会话能把图片、视频、文件发到手机，用户多半不知道
+        val mediaHint = ImuxBundle.message("bridge.tool.media.hint")
         return when (val notice = phoneNoticeState(segment())) {
-            PhoneNoticeState.None -> ToolState(AgentIcons.phone, title, ImuxBundle.message("bridge.tool.unbound"))
+            PhoneNoticeState.None -> ToolState(AgentIcons.phone, title, ImuxBundle.message("bridge.tool.unbound") + " · " + mediaHint)
             is PhoneNoticeState.Connecting ->
                 ToolState(
                     AnimatedIcon.Default.INSTANCE, title,
@@ -164,7 +166,7 @@ class PhoneTool(
             is PhoneNoticeState.Online ->
                 ToolState(
                     AgentIcons.phone, title,
-                    ImuxBundle.message("bridge.banner.connected", notice.model.channel, notice.model.robotName),
+                    ImuxBundle.message("bridge.banner.connected", notice.model.channel, notice.model.robotName) + " · " + mediaHint,
                     label = "${notice.model.channel} · ${notice.model.robotName}",
                     tone = NoticeTone.SUCCESS,
                 )

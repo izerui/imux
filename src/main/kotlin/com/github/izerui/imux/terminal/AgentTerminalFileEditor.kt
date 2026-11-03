@@ -12,6 +12,7 @@ import com.github.izerui.imux.peer.PeerOutcome
 import com.github.izerui.imux.peer.PeerOutcomeKind
 import com.github.izerui.imux.peer.PeerProgressEvent
 import com.github.izerui.imux.peer.collapseWhitespace
+import com.github.izerui.imux.peer.mcp.defaultPeerPartner
 import com.github.izerui.imux.peer.PeerProgressKind
 import com.github.izerui.imux.peer.PeerProgressSnapshot
 import com.github.izerui.imux.settings.ImuxSettings
@@ -460,7 +461,7 @@ class AgentTerminalFileEditor(
         val key = virtualFile.sessionKey
         val status = coordinator.status(key)
         val outcome = coordinator.lastOutcome(key)
-        val model = peerSegmentModel(status, System.currentTimeMillis())
+        val model = peerSegmentModel(status, System.currentTimeMillis(), coordinator.scheduledReview(key))
         val previousKind = peerSegment.kind
         peerSegment = model
         val name = model.agentName.orEmpty()
@@ -481,6 +482,13 @@ class AgentTerminalFileEditor(
                         actions = listOf(NoticeAction(ImuxBundle.message("action.peer.segment.cancelRun")) { coordinator.cancelCurrentRun(key) }),
                     )
                 failed != null -> failedNotice(failed)
+                model.kind == PeerSegmentKind.SCHEDULED ->
+                    Notice(
+                        key = "pair:scheduled",
+                        tone = NoticeTone.INFO,
+                        text = ImuxBundle.message("action.peer.scheduled.notice", name),
+                        actions = listOf(NoticeAction(ImuxBundle.message("action.peer.scheduled.cancel")) { coordinator.cancelScheduledReview(key) }),
+                    )
                 else -> null
             },
         )
@@ -488,7 +496,7 @@ class AgentTerminalFileEditor(
             val fresh = outcome?.takeIf { it.kind != PeerOutcomeKind.FAILED && it.finishedAtMillis != announcedOutcomeAt }
             when {
                 fresh != null -> pairNotices.flash(resultNotice(fresh))
-                previousKind == PeerSegmentKind.IDLE && model.kind == PeerSegmentKind.READY ->
+                (previousKind == PeerSegmentKind.IDLE || previousKind == PeerSegmentKind.SCHEDULED) && model.kind == PeerSegmentKind.READY ->
                     pairNotices.flash(Notice("pair:ready", NoticeTone.SUCCESS, ImuxBundle.message("action.peer.notice.ready", name)))
             }
         }
@@ -621,6 +629,10 @@ class AgentTerminalFileEditor(
                         showReviewOnceDialog(project, virtualFile)
                     },
                 )
+            }
+            PeerSegmentKind.SCHEDULED -> {
+                group.add(Separator.create(ImuxBundle.message("action.peer.scheduled.notice", peerSegment.agentName.orEmpty())))
+                group.add(bannerAction(ImuxBundle.message("action.peer.scheduled.cancel")) { coordinator.cancelScheduledReview(key) })
             }
             PeerSegmentKind.RUNNING -> {
                 group.add(bannerAction(ImuxBundle.message("action.peer.segment.cancelRun")) { coordinator.cancelCurrentRun(key) })
@@ -875,7 +887,7 @@ private class ReviewOnceDialog(
                 base.getListCellRendererComponent(list, (value as? AgentType)?.displayName ?: value, index, isSelected, cellHasFocus)
             }
         }
-        val preferred = preferredReviewAgent(targets, currentAgentType)
+        val preferred = defaultPeerPartner(currentAgentType, targets, ImuxSettings.getInstance().state.peerDefaultPartner) ?: targets.first()
         selectedItem = preferred
     }
 
@@ -916,13 +928,4 @@ private class ReviewOnceDialog(
     }
 
     override fun getPreferredFocusedComponent(): JComponent = instructionField
-}
-
-internal fun preferredReviewAgent(targets: List<AgentType>, current: AgentType): AgentType {
-    val currentIndex = targets.indexOf(current)
-    return if (currentIndex >= 0 && targets.size > 1) {
-        targets[(currentIndex + 1) % targets.size]
-    } else {
-        targets.first()
-    }
 }

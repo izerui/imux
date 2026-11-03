@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>手机回复 · 会话标题页脚 · 三方向</title>
+<style>
+  :root { --bg:#1b1b1b; --bubble:#2b2b2b; --line:#3d3d3d; --text:#e8e8e8; --muted:#9a9a9a; --code:#3a3a3a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#111; color:var(--text); font:15px/1.7 -apple-system,"PingFang SC","Helvetica Neue",sans-serif; }
+  header { padding:28px 40px 8px; }
+  header h1 { margin:0 0 4px; font-size:20px; font-weight:600; }
+  header p { margin:0; color:var(--muted); font-size:14px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; padding:24px 40px 40px; }
+  .col h2 { margin:0 0 4px; font-size:16px; font-weight:600; }
+  .col .why { margin:0 0 14px; color:var(--muted); font-size:13px; min-height:44px; }
+  .chat { background:var(--bg); border-radius:10px; padding:16px; }
+  .bot { font-size:14px; font-weight:600; margin-bottom:8px; }
+  .bot span { font-size:11px; color:var(--muted); background:#333; border-radius:3px; padding:1px 5px; margin-left:6px; font-weight:400; }
+  .bubble { background:var(--bubble); border-radius:8px; padding:14px 16px 10px; font-size:14px; }
+  .bubble h3 { font-size:16px; margin:0 0 6px; }
+  .bubble ul { margin:6px 0; padding-left:20px; }
+  .bubble p { margin:6px 0; }
+  hr { border:0; border-top:1px solid var(--line); margin:14px 0 10px; }
+  code { background:var(--code); border-radius:4px; padding:1px 6px; font:13px/1.6 "JetBrains Mono",Menlo,monospace; }
+  blockquote { margin:0; padding:2px 0 2px 10px; border-left:3px solid #555; color:var(--muted); }
+  .ai { color:#777; font-size:12px; margin-top:10px; }
+  .src { margin-top:14px; font-size:13px; }
+  .src b { display:block; color:var(--muted); font-weight:400; margin:8px 0 4px; }
+  pre { margin:0; background:#1a1a1a; border:1px solid #2a2a2a; border-radius:6px; padding:8px 10px; font:13px/1.55 Menlo,monospace; white-space:pre-wrap; color:#cfcfcf; }
+</style>
+</head>
+<body>
+<header>
+  <h1>手机回复末尾的会话标题</h1>
+  <p>模拟飞书深色主题（截图同款）。只能用四个渠道都能渲染的 Markdown，所以颜色、字号都不能自定，差别只在用哪种 Markdown 元素来承载标题。示例标题：「代理商角色改造评估」。</p>
+</header>
+<div class="grid">
+
+  <section class="col">
+    <h2>A · 签名档</h2>
+    <p class="why">分割线下面一行普通文字，加「会话：」前缀。最朴素，没有渲染风险；但和正文字号、颜色一样，扫一眼时不够跳。</p>
+    <div class="chat"><div class="bot">西门吹雪<span>BOT</span></div><div class="bubble">
+      <h3>结论</h3>
+      <p>真正改到现有代码的只有 5 处，都是加判断或加字段。其中要重点测的是：</p>
+      <ul><li>现有角色的登录不受影响；</li><li>代理商之间不越权。</li></ul>
+      <hr>
+      <p>会话：代理商角色改造评估</p>
+      <div class="ai">内容由 AI 生成</div>
+    </div></div>
+    <div class="src"><b>发出的 Markdown</b><pre>…正文
+
+---
+会话：代理商角色改造评估</pre>
+    <b>个人微信（纯文本）</b><pre>…正文
+
+──────────
+会话：代理商角色改造评估</pre></div>
+  </section>
+
+  <section class="col">
+    <h2>B · 引用灰条（推荐）</h2>
+    <p class="why">用引用块承载标题：飞书、钉钉、企业微信都会把引用画成灰字＋左竖条，天然是「次要信息」的样子，和正文分得开，又不抢结论。</p>
+    <div class="chat"><div class="bot">西门吹雪<span>BOT</span></div><div class="bubble">
+      <h3>结论</h3>
+      <p>真正改到现有代码的只有 5 处，都是加判断或加字段。其中要重点测的是：</p>
+      <ul><li>现有角色的登录不受影响；</li><li>代理商之间不越权。</li></ul>
+      <hr>
+      <blockquote>📌 代理商角色改造评估</blockquote>
+      <div class="ai">内容由 AI 生成</div>
+    </div></div>
+    <div class="src"><b>发出的 Markdown</b><pre>…正文
+
+---
+> 📌 代理商角色改造评估</pre>
+    <b>个人微信（纯文本）</b><pre>…正文
+
+──────────
+📌 代理商角色改造评估</pre></div>
+  </section>
+
+  <section class="col">
+    <h2>C · 标签块</h2>
+    <p class="why">标题放进行内代码块，像一个会话名牌，和截图里 <code>IsValidateRole</code> 的样式一致，最醒目；代价是看起来像代码，标题里有反引号时要转义。</p>
+    <div class="chat"><div class="bot">西门吹雪<span>BOT</span></div><div class="bubble">
+      <h3>结论</h3>
+      <p>真正改到现有代码的只有 5 处，都是加判断或加字段。其中要重点测的是：</p>
+      <ul><li>现有角色的登录不受影响；</li><li>代理商之间不越权。</li></ul>
+      <hr>
+      <p>会话 <code>代理商角色改造评估</code></p>
+      <div class="ai">内容由 AI 生成</div>
+    </div></div>
+    <div class="src"><b>发出的 Markdown</b><pre>…正文
+
+---
+会话 `代理商角色改造评估`</pre>
+    <b>个人微信（纯文本）</b><pre>…正文
+
+──────────
+会话「代理商角色改造评估」</pre></div>
+  </section>
+
+</div>
+</body>
+</html>

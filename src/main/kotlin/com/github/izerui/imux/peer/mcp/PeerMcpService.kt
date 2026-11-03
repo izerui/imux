@@ -30,11 +30,13 @@ class PeerMcpService(val scope: CoroutineScope) : Disposable {
             sessionKey = { if (project.isDisposed) null else TerminalHost.getInstance(project).openTabsByTabId()[tabId] },
             coordinator = { if (project.isDisposed) null else SessionMonitor.getInstance(project).peerCoordinator },
             onSwitched = { partner -> notifySwitched(project, tabId, partner) },
+            onScheduled = { reviewer -> notify(project, ImuxBundle.message("action.peer.mcp.scheduled", titleOf(project, tabId), reviewer.displayName)) },
         )
         protocols[token] = PeerMcpProtocol(object : PeerToolsBackend {
             override suspend fun status() = withContext(Dispatchers.EDT) { tools.status() }
             override suspend fun enable(agent: String?) = withContext(Dispatchers.EDT) { tools.enable(agent) }
             override suspend fun disable() = withContext(Dispatchers.EDT) { tools.disable() }
+            override suspend fun reviewOnce(agent: String?, instruction: String?) = withContext(Dispatchers.EDT) { tools.reviewOnce(agent, instruction) }
         }, scope)
         return token
     }
@@ -44,9 +46,17 @@ class PeerMcpService(val scope: CoroutineScope) : Disposable {
 
     /** 智能体自己开关了结对，留一条用户看得见的记录。 */
     private fun notifySwitched(project: Project, tabId: String, partner: AgentType?) {
-        val title = TerminalHost.getInstance(project).tabTitleOf(tabId) ?: tabId
-        val content = if (partner == null) ImuxBundle.message("action.peer.mcp.disabled", title)
-        else ImuxBundle.message("action.peer.mcp.enabled", title, partner.displayName)
+        val title = titleOf(project, tabId)
+        notify(
+            project,
+            if (partner == null) ImuxBundle.message("action.peer.mcp.disabled", title)
+            else ImuxBundle.message("action.peer.mcp.enabled", title, partner.displayName),
+        )
+    }
+
+    private fun titleOf(project: Project, tabId: String) = TerminalHost.getInstance(project).tabTitleOf(tabId) ?: tabId
+
+    private fun notify(project: Project, content: String) {
         NotificationGroupManager.getInstance()
             .getNotificationGroup(NOTIFICATION_GROUP)
             .createNotification(ImuxBundle.message("action.peer.group.text"), content, NotificationType.INFORMATION)

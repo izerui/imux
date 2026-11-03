@@ -2489,29 +2489,6 @@ class PeerCoordinatorDispatchTest {
         }
     }
 
-    @Test
-    fun `preferredReviewAgent 从当前项顺排选下一个`() {
-        val all = listOf(AgentType.CLAUDE, AgentType.CODEX, AgentType.PI)
-        assertEquals("Claude 会话应默认 Codex", AgentType.CODEX,
-            com.github.izerui.imux.terminal.preferredReviewAgent(all, AgentType.CLAUDE))
-        assertEquals("Codex 会话应默认 Pi", AgentType.PI,
-            com.github.izerui.imux.terminal.preferredReviewAgent(all, AgentType.CODEX))
-        assertEquals("Pi 会话应回绕到 Claude", AgentType.CLAUDE,
-            com.github.izerui.imux.terminal.preferredReviewAgent(all, AgentType.PI))
-    }
-
-    @Test
-    fun `preferredReviewAgent 仅一个可选项时选自己`() {
-        assertEquals("仅 Claude 时选 Claude", AgentType.CLAUDE,
-            com.github.izerui.imux.terminal.preferredReviewAgent(listOf(AgentType.CLAUDE), AgentType.CLAUDE))
-    }
-
-    @Test
-    fun `preferredReviewAgent 当前不在列表中时选第一个`() {
-        assertEquals("当前 Pi 不在列表中，选第一个 Claude", AgentType.CLAUDE,
-            com.github.izerui.imux.terminal.preferredReviewAgent(listOf(AgentType.CLAUDE, AgentType.CODEX), AgentType.PI))
-    }
-
     private fun testProject(): Project =
         Proxy.newProxyInstance(
             Project::class.java.classLoader,

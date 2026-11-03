@@ -40,6 +40,8 @@ class BridgeRouter(
     private val onWarning: (String) -> Unit = {},
     /** 等渠道报告真正上线；由接线层订阅连接状态，默认用于已就绪的独立端口。 */
     private val awaitOnline: suspend (RobotId) -> Unit = {},
+    /** 每轮回复末尾署名的会话标题，手机上同时连着多个会话时据此分辨；返回 null 不署名。 */
+    private val sessionTitleOf: (Binding) -> String? = { null },
 ) {
     /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
     private val submitLocks = HashMap<RobotId, Mutex>()
@@ -365,7 +367,7 @@ class BridgeRouter(
         reply ?: return
         val binding = bindings.bindingForTab(tabId) ?: return
         if (binding.epoch != reply.epoch) return
-        send(binding, reply.text.toString())
+        send(binding, reply.text.toString(), sessionTitleOf(binding))
     }
 
     private fun submitLock(robotId: RobotId): Mutex = synchronized(lock) { submitLocks.getOrPut(robotId) { Mutex() } }
@@ -459,14 +461,22 @@ class BridgeRouter(
         deliver(channel, OutboundMessage(binding.robotId, owner.chatId, texts.released(sessionTitle)))
     }
 
-    /** 每段发送前都核对：分段途中换绑，剩余内容不落到新目标的聊天里。 */
+    /**
+     * 每段发送前都核对：分段途中换绑，剩余内容不落到新目标的聊天里。
+     * 有 [title] 时在最后一段末尾署名：切段时预留署名的长度，署名不会被单独切到下一条。
+     */
     private suspend fun send(
         binding: Binding,
         text: String,
+        title: String? = null,
     ) {
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
-        for (segment in TextSegmenter.split(text, channel.maxTextBytes)) {
+        val footer = footer(title, channel.rendersMarkdown)
+        val budget = (channel.maxTextBytes - footer.toByteArray(Charsets.UTF_8).size).coerceAtLeast(TextSegmenter.MIN_SEGMENT_BYTES)
+        val segments = TextSegmenter.split(if (footer.isEmpty()) text else text.trimEnd(), budget)
+        for ((index, part) in segments.withIndex()) {
+            val segment = if (index == segments.lastIndex) part + footer else part
             // 每段发送前都核对：分段途中被换绑，剩余内容不能落到新目标的聊天里
             if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
             deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment)) { bindings.isCurrent(binding.robotId, binding.epoch) }
@@ -529,7 +539,30 @@ class BridgeRouter(
         seen[robotId]?.remove(externalMessageId)
     }
 
+    /** 分割线下一行引用块写会话标题，渲染成灰字竖条；不渲染 Markdown 的渠道用字符横线代替。 */
+    private fun footer(
+        title: String?,
+        markdown: Boolean,
+    ): String {
+        val line = title?.replace(WHITESPACE, " ")?.trim()?.takeIf(String::isNotEmpty) ?: return ""
+        val shown = if (line.length > MAX_TITLE_CHARS) line.take(MAX_TITLE_CHARS - 1) + "…" else line
+        return if (markdown) "\n\n---\n> ${escapeBlockMarker(shown)}" else "\n\n$PLAIN_RULE\n$shown"
+    }
+
+    /** 标题开头像标题号、列表号（例如「1. 修复登录」）时转义，否则在引用块里会渲染成标题或列表。 */
+    private fun escapeBlockMarker(line: String): String {
+        ORDERED_MARKER.find(line)?.let { return it.groupValues[1] + "\\" + line.substring(it.groupValues[1].length) }
+        return if (line.first() in BLOCK_MARKERS) "\\$line" else line
+    }
+
     private companion object {
+        val WHITESPACE = Regex("\\s+")
+        val ORDERED_MARKER = Regex("^(\\d+)[.)]")
+        const val BLOCK_MARKERS = "#>+-*"
+        const val PLAIN_RULE = "──────────"
+
+        /** 署名只为分辨会话，过长的标题截短，不挤占正文的分段额度。 */
+        const val MAX_TITLE_CHARS = 60
         const val RATE_LIMIT_RETRIES = 6
         const val SEEN_CAPACITY = 1000
         const val NOT_READY_ATTEMPTS = 3

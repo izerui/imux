@@ -223,7 +223,7 @@ class PeerCoordinatorSourceTest {
             coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
         val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
 
-        assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, feedback)"))
+        assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, feedback, run, previousInput)"))
         assertTrue("暂存反馈应使用 require 括号粘贴模式", stageFun.contains("tryStagePeerFeedback("))
         assertTrue("终端消失时应走通用兜底", stageFun.contains("notifyFeedbackUndelivered"))
         assertTrue("终端未就绪时应走带复制的通知", stageFun.contains("notifyFeedbackNotReady"))

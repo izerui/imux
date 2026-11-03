@@ -176,6 +176,15 @@ class OneShotResultTraceTest {
     }
 
     @Test
+    fun `已预约时按钮显示已预约，悬停说明审查者与开始时机`() {
+        val scheduled = PeerSegmentModel(PeerSegmentKind.SCHEDULED, "Codex")
+        val state = pairToolState(scheduled, null, null, "", null, AnimatedIcon.Default.INSTANCE, zh)
+        assertEquals("已预约", state.label)
+        assertEquals(NoticeTone.INFO, state.tone)
+        assertEquals("已预约审查（Codex）：本轮结束后开始", state.description)
+    }
+
+    @Test
     fun `结对中悬停也附上上一轮结果，没有结果或上一轮失败时不附`() {
         val ready = PeerSegmentModel(PeerSegmentKind.READY, "Codex")
         val withResult = pairToolState(ready, null, "上一轮 14:32 · Codex：没有新的反馈", "", null, AnimatedIcon.Default.INSTANCE, zh)

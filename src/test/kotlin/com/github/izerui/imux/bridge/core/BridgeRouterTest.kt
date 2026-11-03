@@ -36,6 +36,7 @@ class BridgeRouterTest {
     private class FakeChannel(
         override val robotId: RobotId,
         override val maxTextBytes: Int = 1000,
+        override val rendersMarkdown: Boolean = true,
     ) : ChannelAdapter {
         val sent = mutableListOf<OutboundMessage>()
         var afterSend: () -> Unit = {}
@@ -563,6 +564,95 @@ class BridgeRouterTest {
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("行内容\n".repeat(40))))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
             assertEquals(1, small.sent.size)
+        }
+
+    private fun titledRouter(
+        ch: FakeChannel,
+        title: String? = "代理商改造",
+    ) = BridgeRouter(registry, { owner }, port, { ch }, Texts, sessionTitleOf = { if (it.target == target) title else null })
+
+    @Test
+    fun `回复末尾署名会话标题：分割线下一行引用块`() =
+        runBlocking {
+            val r = titledRouter(channel)
+            registry.bind(robot, target)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案\n")))
+            r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
+            assertEquals(listOf("答案\n\n---\n> 代理商改造"), sentTexts())
+        }
+
+    @Test
+    fun `不渲染 Markdown 的渠道用字符横线署名`() =
+        runBlocking {
+            val plain = FakeChannel(robot, rendersMarkdown = false)
+            val r = titledRouter(plain)
+            registry.bind(robot, target)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
+            r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
+            assertEquals(listOf("答案\n\n──────────\n代理商改造"), plain.sent.map { it.text })
+        }
+
+    @Test
+    fun `分段发送时只有最后一段署名，每段都不超过渠道上限`() =
+        runBlocking {
+            val small = FakeChannel(robot, maxTextBytes = 120)
+            val r = titledRouter(small)
+            registry.bind(robot, target)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("行内容\n".repeat(40).trimEnd())))
+            r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
+            val texts = small.sent.map { it.text }
+            assertTrue("应当分成多段", texts.size > 1)
+            assertTrue(texts.last().endsWith("\n\n---\n> 代理商改造"))
+            assertTrue("前面各段不署名", texts.dropLast(1).none { "代理商改造" in it })
+            assertTrue(texts.all { it.toByteArray(Charsets.UTF_8).size <= 120 })
+        }
+
+    @Test
+    fun `标题里的换行压成空格，过长的标题截短`() =
+        runBlocking {
+            val r = titledRouter(channel, "第一行\n第二行" + "长".repeat(80))
+            registry.bind(robot, target)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
+            r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
+            val footer = sentTexts().single().substringAfter("\n> ")
+            assertTrue(footer.startsWith("第一行 第二行"))
+            assertEquals(60, footer.length)
+            assertTrue(footer.endsWith("…"))
+        }
+
+    @Test
+    fun `标题开头像标题号或列表号时转义，纯文本渠道不转义`() =
+        runBlocking {
+            registry.bind(robot, target)
+            suspend fun footerOf(
+                title: String,
+                ch: FakeChannel = FakeChannel(robot),
+            ): String {
+                val r = titledRouter(ch, title)
+                r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
+                r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
+                return ch.sent.single().text.substringAfterLast("\n")
+            }
+            assertEquals("> \\# 修复登录", footerOf("# 修复登录"))
+            assertEquals("> \\- 修复登录", footerOf("- 修复登录"))
+            assertEquals("> 12\\. 修复登录", footerOf("12. 修复登录"))
+            assertEquals("> 修复 #12", footerOf("修复 #12"))
+            assertEquals("# 修复登录", footerOf("# 修复登录", FakeChannel(robot, rendersMarkdown = false)))
+        }
+
+    @Test
+    fun `状态提示与没有文字回复的提示不署名，没有标题时回复也不署名`() =
+        runBlocking {
+            val r = titledRouter(channel)
+            registry.bind(robot, target)
+            r.onWaiting("tab-1", "input needed")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            assertEquals(listOf("WAIT(input needed)", "NO_REPLY"), sentTexts())
+            channel.sent.clear()
+            val untitled = titledRouter(channel, title = null)
+            untitled.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
+            untitled.onTurnCompleted("tab-1", untitled.currentTurn("tab-1"))
+            assertEquals(listOf("答案"), sentTexts())
         }
 
     @Test

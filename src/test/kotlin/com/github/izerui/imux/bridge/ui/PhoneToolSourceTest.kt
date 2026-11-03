@@ -34,4 +34,11 @@ class PhoneToolSourceTest {
             refreshBody.contains("bridge.settings.reconnect") && !refreshBody.contains("SendFailing"),
         )
     }
+
+    @Test
+    fun `未连接与已连接时悬停说明都附上能把媒体发到手机的提示`() {
+        val stateBody = phoneTool.compact(phoneTool.bodyAfter("override fun state(): ToolState", '{'))
+        assertTrue("未连接时附上提示", stateBody.contains(phoneTool.compact("""ImuxBundle.message("bridge.tool.unbound") + " · " + mediaHint""")))
+        assertTrue("已连接时附上提示", stateBody.contains(phoneTool.compact("""notice.model.robotName) + " · " + mediaHint""")))
+    }
 }

@@ -13,6 +13,9 @@ interface ChannelAdapter {
     /** 单条文本允许的最大 UTF-8 字节数，取自对应平台限制，不得小于 [TextSegmenter.MIN_SEGMENT_BYTES]。 */
     val maxTextBytes: Int
 
+    /** 平台按 Markdown 渲染文本；为 false 时原样显示，不该发 Markdown 标记。 */
+    val rendersMarkdown: Boolean get() = true
+
     suspend fun send(message: OutboundMessage): DeliveryResult
 }
 

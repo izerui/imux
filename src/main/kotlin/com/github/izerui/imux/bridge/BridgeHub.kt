@@ -56,6 +56,7 @@ class BridgeHub(parentScope: CoroutineScope) {
                         channels.containsKey(id) && owners.containsKey(id)
                 }
             },
+            sessionTitleOf = SessionTitles::of,
         )
 
     private val _revision = MutableStateFlow(0L)

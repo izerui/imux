@@ -35,7 +35,9 @@ class SessionMessageNavigatorSourceTest {
         val closed = monitor.bodyAfter("fun sessionClosed(key: String)", '{')
 
         assertFalse("解绑不应删除历史气泡", unbind.contains("feedbackHints.remove(sessionKey)"))
-        assertTrue("关终端必须清理定位信息", closed.contains("peerCoordinator.forgetFeedbackHints(key)"))
+        assertTrue("关终端统一结束审查生命周期", closed.contains("peerCoordinator.sessionClosed(key)"))
+        val peerClosed = peer.bodyAfter("fun sessionClosed(sessionKey: String)", '{')
+        assertTrue("关终端必须清理定位信息", peerClosed.contains("forgetFeedbackHints(sessionKey)"))
         assertTrue("会话身份切换必须清理旧定位信息", peer.normalized.contains("feedbackHints.remove(from)"))
         assertTrue("会话身份切换必须清理目标残留定位信息", peer.normalized.contains("feedbackHints.remove(to)"))
     }

@@ -480,8 +480,7 @@ class SessionMonitor(
 
     /** 标签关闭后立即撤销运行态，不能让窗口标题再等下一轮文件轮询。 */
     fun sessionClosed(key: String) {
-        peerCoordinator.unbind(key)
-        peerCoordinator.forgetFeedbackHints(key)
+        peerCoordinator.sessionClosed(key)
         model.cancelPending(key)
         transcriptGenerations.remove(key)
         workingIds = workingIds - key

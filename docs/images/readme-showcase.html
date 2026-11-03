@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>imux · README 配图</title>
+<!--
+  README 配图的来源页。样式沿用已定稿的原型：提示条取 docs/prototypes/terminal-banner-c.html（方向 C 叠放定稿），
+  浮动图标组取 docs/prototypes/terminal-tools-size.html 的方案 A（已上线：开着的显示短字），
+  手机端回复页脚取 reply-session-footer 的 B 方向（用户选定不带图标）。
+  每个场景是一个带 id 的元素，按 id 截图后放进 docs/images/；README 用深色（body.dark），去掉该类即为浅色。界面细节以插件实际表现为准。
+-->
+<style>
+  :root { --page:#eceef2; }
+  .dark { --page:#16171a; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--page); font: 14px/1.6 Inter, -apple-system, "PingFang SC", sans-serif; }
+  .page { width: 1100px; margin: 0 auto; padding: 32px 24px 80px; display:flex; flex-direction:column; gap: 40px; }
+  .shot { padding: 18px; background: var(--page); }
+
+  .ide { --bg:#ffffff; --panel:#f7f8fa; --border:#ebecf0; --text:#1e1f22; --dim:#6c707e; --link:#3574f0; --icon:#6c707e;
+         --green:#369650; --yellow:#c27d04; --term:#2b2d30; --termdim:#8c8f96;
+         --info:#f5f8fe; --infoLine:#c2d6fc; --ok:#e9f7ec; --okLine:#afdbb8; --infoPill:#edf3ff;
+         --float:#f7f8fa; --floatLine:#d1d5db; --promptLine:#c9ccd6;
+    width: 1000px; font: 13px/1.4 Inter, -apple-system, "PingFang SC", sans-serif; color: var(--text); background: var(--bg);
+    border-radius: 9px; position: relative; box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgba(0,0,0,.08); overflow: hidden; }
+  .tabs { height: 36px; display:flex; align-items:center; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .tab { height:100%; display:flex; align-items:center; gap:6px; padding: 0 10px; color: var(--dim); }
+  .tab.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--link); }
+  .body { position: relative; height: 430px; }
+  .term { position:absolute; inset: 0; padding: 10px 16px 0; font: 12.5px/1.75 "JetBrains Mono", Menlo, monospace; color: var(--term); display:flex; flex-direction: column; }
+  .hist { flex: 1 1 auto; overflow: hidden; display:flex; flex-direction: column; justify-content: flex-end; }
+  .l { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .d { color: var(--termdim); } .g { color: var(--green); } .p { color: var(--link); } .y { color: var(--yellow); }
+  .prompt { border: 1px solid var(--promptLine); border-radius: 6px; padding: 6px 10px; margin: 8px 0 4px; }
+  .status { color: var(--termdim); font-size: 11.5px; padding: 0 2px 8px; display:flex; justify-content: space-between; }
+
+  .ico { display:inline-flex; width:16px; height:16px; flex:none; color: var(--icon); }
+  .ico svg { width:16px; height:16px; }
+  .spin { width:12px; height:12px; border:2px solid color-mix(in srgb, var(--icon) 30%, transparent); border-top-color: var(--icon); border-radius:50%; flex:none; margin: 2px; transform: rotate(40deg); }
+
+  /* 深色主题：色值取自 terminal-banner-c.html 与 terminal-tools-size.html 已校过的新 UI 深色 */
+  .dark .ide { --bg:#1e1f22; --panel:#2b2d30; --border:#393b40; --text:#dfe1e5; --dim:#8c8f96; --link:#548af7; --icon:#ced0d6;
+         --green:#5fb865; --yellow:#e0b153; --term:#bcbec4; --termdim:#7a7e85;
+         --info:#25324d; --infoLine:#35538f; --ok:#253627; --okLine:#3f5f42; --infoPill:#25324d;
+         --float:#2b2d30; --floatLine:#43454a; --promptLine:#4e5157;
+         box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgba(0,0,0,.4); }
+  .dark .event { box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+  .dark .float { box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+  .dark .phone { box-shadow: 0 0 0 1px #33363c, 0 16px 48px rgba(0,0,0,.45); }
+
+  /* 提示条：盖在终端最上面 */
+  .event { position:absolute; left:0; right:0; top:0; z-index: 3; display:flex; align-items:center; gap: 8px; height: 33px; padding: 0 10px 0 14px;
+    border-bottom: 1px solid; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+  .event.info { background: var(--info); border-color: var(--infoLine); }
+  .event .link { color: var(--link); margin-left: 8px; white-space: nowrap; }
+  .event .glue { flex: 1; }
+  .event .x { color: var(--dim); font-size: 14px; width: 22px; text-align: center; }
+
+  /* 浮动图标组（方案 A：开着的显示短字） */
+  .float { position:absolute; right: 30px; top: 42px; z-index: 4; display:flex; align-items:center; gap: 4px; padding: 4px;
+    background: var(--float); border: 1px solid var(--floatLine); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+  .b { height: 28px; min-width: 28px; display:inline-flex; align-items:center; justify-content:center; gap: 6px; border-radius: 6px; font-size: 13px; }
+  .b.icononly { width: 28px; }
+  .b.on { padding: 0 10px 0 8px; background: var(--ok); box-shadow: inset 0 0 0 1px var(--okLine); }
+  .b.run { padding: 0 10px 0 8px; background: var(--infoPill); box-shadow: inset 0 0 0 1px var(--infoLine); }
+
+  /* 手机端（飞书深色） */
+  .phone { width: 420px; background: #1b1b1b; border-radius: 28px; padding: 14px 14px 18px; box-shadow: 0 0 0 1px #2c2c2c, 0 16px 48px rgba(0,0,0,.25);
+    color: #e8e8e8; font: 14px/1.65 -apple-system, "PingFang SC", sans-serif; }
+  .phone .top { display:flex; align-items:center; gap: 8px; padding: 6px 6px 12px; border-bottom: 1px solid #2a2a2a; font-weight: 600; font-size: 15px; }
+  .phone .top span { font-size: 11px; color: #9a9a9a; background: #333; border-radius: 3px; padding: 0 5px; font-weight: 400; }
+  .msgs { display:flex; flex-direction: column; gap: 14px; padding: 14px 4px 0; }
+  .me { align-self: flex-end; background: #2f5bd3; color: #fff; border-radius: 10px; padding: 8px 12px; max-width: 78%; }
+  .bot { align-self: flex-start; max-width: 92%; }
+  .bot .who { font-size: 12px; color: #8a8a8a; margin: 0 0 4px 2px; }
+  .bubble { background: #2b2b2b; border-radius: 10px; padding: 12px 14px 10px; }
+  .bubble p { margin: 4px 0; }
+  .bubble ul { margin: 4px 0; padding-left: 20px; }
+  .bubble hr { border: 0; border-top: 1px solid #444; margin: 12px 0 8px; }
+  .bubble blockquote { margin: 0; padding: 1px 0 1px 10px; border-left: 3px solid #555; color: #9a9a9a; }
+  .bubble code { background: #3a3a3a; border-radius: 4px; padding: 1px 5px; font: 12.5px Menlo, monospace; }
+  .bubble .ai { color: #6f6f6f; font-size: 12px; margin-top: 8px; }
+  .img { width: 260px; border-radius: 10px; overflow: hidden; background: #f4f5f7; box-shadow: 0 0 0 1px #333; }
+  .img .bar { height: 18px; background: #e3e5ea; display:flex; gap: 4px; align-items:center; padding: 0 7px; }
+  .img .bar i { width: 6px; height: 6px; border-radius: 50%; background: #c4c7cf; }
+  .img .hero { margin: 12px 14px 8px; height: 58px; border-radius: 6px; background: linear-gradient(120deg, #3574f0, #6aa0ff); position: relative; }
+  .img .hero::after { content: ""; position:absolute; left: 12px; top: 14px; width: 90px; height: 9px; border-radius: 3px; background: rgba(255,255,255,.85); box-shadow: 0 16px 0 -1px rgba(255,255,255,.55); }
+  .img .row { display:flex; gap: 8px; margin: 0 14px 14px; }
+  .img .row div { flex: 1; height: 40px; border-radius: 5px; background: #fff; box-shadow: 0 0 0 1px #e3e5ea; }
+  .file { display:flex; align-items:center; gap: 10px; background: #2b2b2b; border-radius: 10px; padding: 10px 14px; width: 260px; }
+  .file .fi { width: 34px; height: 40px; border-radius: 4px; background: #c0392b; color: #fff; font-size: 10px; font-weight: 700; display:flex; align-items:flex-end; justify-content:center; padding-bottom: 5px; }
+  .file .fn { font-size: 13.5px; } .file .fs { font-size: 12px; color: #8a8a8a; }
+
+  /* 4. 工具窗口：AI 智能体会话列表 */
+  .tw { width: 380px; height: 470px; background: #2b2d30; border-radius: 9px; box-shadow: 0 0 0 1px #393b40, 0 10px 40px rgba(0,0,0,.4);
+    color: #dfe1e5; font: 13px/1.4 Inter, -apple-system, "PingFang SC", sans-serif; overflow: hidden; }
+  .tw .hd { height: 38px; display:flex; align-items:center; padding: 0 8px 0 14px; border-bottom: 1px solid #393b40; font-weight: 600; }
+  .tw .hd .sp { flex: 1; }
+  .tw .hd .tbi { width: 26px; height: 24px; display:inline-flex; align-items:center; justify-content:center; color: #ced0d6; font-size: 15px; font-weight: 400; }
+  .tw .tree { padding: 6px 0; }
+  .tw .r { height: 24px; display:flex; align-items:center; gap: 6px; padding-left: 10px; white-space: nowrap; }
+  .tw .r.sel { background: #2e436e; }
+  .tw .r .tg { width: 12px; color: #8c8f96; font-size: 10px; text-align: center; }
+  .tw .r img { width: 16px; height: 16px; }
+  .tw .r.s { padding-left: 38px; }
+  .tw .st { width: 16px; height: 16px; display:inline-flex; align-items:center; justify-content:center; flex: none; }
+  .tw .dot { width: 6px; height: 6px; border-radius: 50%; background: #6f737a; }
+  .tw .dot.mod { width: 7px; height: 7px; background: #548af7; }
+  .tw .t { color: #8c8f96; margin-left: 4px; }
+  .tw b { font-weight: 650; }
+  .tw .more { color: #8c8f96; }
+  .tw .spin { width: 12px; height: 12px; border: 2px solid rgba(206,208,214,.3); border-top-color: #ced0d6; }
+
+  /* 5. 会话轨迹卡片 */
+  .card { position:absolute; right: 30px; top: 82px; width: 380px; z-index: 5; background: #2b2d30; border: 1px solid #393b40; border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45); font: 12px/1.5 Inter, -apple-system, "PingFang SC", sans-serif; color: #dfe1e5; }
+  .card .ch { display:flex; align-items:center; padding: 8px 10px 8px 12px; font-weight: 650; font-size: 13px; }
+  .card .ch .sp { flex: 1; } .card .ch .hide { color: #ced0d6; font-weight: 400; }
+  .card .stale { display:flex; align-items:center; gap: 6px; padding: 6px 12px; background: #3b3820; font-size: 12px; }
+  .card .stale .link { color: #548af7; margin-left: auto; }
+  .card .tl { padding: 10px 12px 6px; display:grid; grid-template-columns: auto 16px 1fr; column-gap: 8px; }
+  .card .tm { color: #999; font-size: 11px; text-align: right; padding-top: 1px; }
+  .card .gl { text-align: center; position: relative; }
+  .card .gl.c::after { content: ""; position: absolute; left: 50%; top: 17px; bottom: -2px; width: 1px; background: #555; }
+  .card .tx { padding-bottom: 9px; display:flex; gap: 6px; align-items:flex-start; }
+  .card .tag { font-size: 10.5px; color: #e06c6c; border: 1px solid #7a3a3a; border-radius: 3px; padding: 0 4px; margin-left: auto; flex: none; line-height: 1.5; }
+  .card .main { color: #bbbbbb; } .card .side { color: #787878; } .card .chg { color: #d4a843; } .card .err { color: #c75450; }
+  .card .prog { color: #6897bb; } .card .rb { color: #8b4513; } .card .gray { color: #666; }
+  .card .ft { border-top: 1px solid #3c3f41; color: #686868; text-align: center; padding: 6px 0 8px; font-size: 11px; }
+  .b.pressed { background: #43454a; }
+
+  /* 6. 先聊再做对话框 */
+  .dlg { width: 680px; background: #2b2d30; border: 1px solid #44474d; border-radius: 10px; overflow: hidden; color: #dfe1e5;
+    font: 13px/1.5 Inter, -apple-system, "PingFang SC", sans-serif; box-shadow: 0 16px 48px rgba(0,0,0,.45); }
+  .dlg .tb { height: 30px; display:flex; align-items:center; justify-content:center; position:relative; color:#b4b8bf; }
+  .dlg .tb i { position:absolute; top:10px; width:12px; height:12px; border-radius:50%; }
+  .dlg .tb i:nth-child(1){left:12px;background:#ff5f57}.dlg .tb i:nth-child(2){left:32px;background:#5a5d63}.dlg .tb i:nth-child(3){left:52px;background:#28c840}
+  .dlg .goal { padding: 10px 16px 9px; border-bottom: 1px solid #393b40; }
+  .dlg .tabs2 { display:flex; gap: 2px; padding: 8px 16px 0; border-bottom: 1px solid #393b40; }
+  .dlg .tabs2 span { padding: 5px 12px 7px; color: #8c8f96; display:inline-flex; gap: 5px; align-items:center; }
+  .dlg .tabs2 span.on { color: #dfe1e5; box-shadow: inset 0 -2px 0 #3574f0; }
+  .dlg .tabs2 .ok { color: #5fb865; font-size: 12px; }
+  .dlg .q { padding: 12px 16px 6px; }
+  .dlg .ctx { color: #c9ccd2; margin: 0 0 8px; }
+  .dlg .qt { font-weight: 650; margin: 0 0 10px; }
+  .dlg .opt { display:flex; gap: 8px; margin: 0 0 8px; }
+  .dlg .radio { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #6f737a; flex: none; margin-top: 3px; }
+  .dlg .radio.on { border: 4px solid #3574f0; background: #fff; }
+  .dlg .desc { color: #8c8f96; font-size: 12px; }
+  .dlg .field { flex: 1; height: 24px; border: 1px solid #4e5157; border-radius: 4px; background: #1e1f22; margin-left: 4px; }
+  .dlg .fb { color: #8c8f96; font-size: 12px; margin: 4px 0 0; }
+  .dlg .ft { display:flex; justify-content:flex-end; padding: 14px 14px 14px; }
+  .dlg .btn { height: 28px; padding: 0 18px; border-radius: 6px; display:inline-flex; align-items:center; background: #3574f0; color: #fff; }
+</style>
+</head>
+<body class="dark">
+<div class="page">
+
+  <!-- 1. 结对审查进行中 -->
+  <div class="shot" id="pair-review">
+    <div class="ide">
+      <div class="tabs"><div class="tab on"><span class="ico"><svg viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M5.5 9.5h-3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3"/><rect fill="none" stroke="currentColor" x="5.5" y="5.5" width="9" height="9" rx="1"/></svg></span>登录接口限流</div><div class="tab">首页改版</div></div>
+      <div class="body">
+        <div class="event info"><span class="spin"></span><span>Codex 正在审查第 1 轮 · 已完成 2 项 · 读取 RateLimiter.kt · 18 秒</span><span class="link">取消本轮审查</span><span class="glue"></span><span class="x">✕</span></div>
+        <div class="float">
+          <span class="b run"><span class="spin"></span><span>审查中 18s</span></span>
+          <span class="b icononly" data-icon="talk"></span>
+          <span class="b icononly" data-icon="trail"></span>
+          <span class="b on" data-icon="phone" data-label="飞书 · 西门吹雪"></span>
+        </div>
+        <div class="term">
+          <div class="hist">
+            <div class="l"><span class="p">❯ 给登录接口加上按 IP 的限流，每分钟 10 次</span></div>
+            <div class="l">● 我先看一下登录接口和现有的过滤器。</div>
+            <div class="l"><span class="d">● Read(src/main/kotlin/auth/LoginController.kt)</span></div>
+            <div class="l"><span class="d">  ⎿  Read 186 lines</span></div>
+            <div class="l"><span class="d">● Write(src/main/kotlin/auth/RateLimiter.kt)</span></div>
+            <div class="l"><span class="d">  ⎿  Wrote 64 lines</span></div>
+            <div class="l"><span class="d">● Update(src/main/kotlin/auth/LoginController.kt)</span></div>
+            <div class="l"><span class="d">  ⎿  Updated with </span><span class="g">9 additions</span><span class="d"> and </span><span class="y">2 removals</span></div>
+            <div class="l"><span class="d">● Bash(./gradlew test --tests "*Login*")</span></div>
+            <div class="l"><span class="d">  ⎿  </span><span class="g">BUILD SUCCESSFUL in 12s · 14 tests passed</span></div>
+            <div class="l">● 已完成：登录接口按 IP 限流，每分钟 10 次，超出返回 429。</div>
+          </div>
+          <div class="prompt"><span class="p">❯</span></div>
+          <div class="status"><span>⏵⏵ accept edits on · shift+tab to cycle</span><span>Opus · imux</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 一句话预约审查一次 -->
+  <div class="shot" id="review-once-mcp">
+    <div class="ide">
+      <div class="tabs"><div class="tab on"><span class="ico"><svg viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M5.5 9.5h-3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3"/><rect fill="none" stroke="currentColor" x="5.5" y="5.5" width="9" height="9" rx="1"/></svg></span>登录接口限流</div><div class="tab">首页改版</div></div>
+      <div class="body">
+        <div class="event info"><span class="ico" data-icon="info"></span><span>已预约审查（Codex）：本轮结束后开始</span><span class="link">取消预约</span><span class="glue"></span><span class="x">✕</span></div>
+        <div class="float">
+          <span class="b run" data-icon="pair" data-label="已预约"></span>
+          <span class="b icononly" data-icon="talk"></span>
+          <span class="b icononly" data-icon="trail"></span>
+          <span class="b icononly" data-icon="phone"></span>
+        </div>
+        <div class="term">
+          <div class="hist">
+            <div class="l"><span class="p">❯ 给登录接口加上按 IP 的限流，每分钟 10 次。做完让副驾驶审查一次，重点看并发</span></div>
+            <div class="l">● 好的，先预约一次副驾驶审查，这一轮做完后自动开始。</div>
+            <div class="l"><span class="d">● imux_session - review_once (MCP)(instruction: "重点看并发")</span></div>
+            <div class="l"><span class="d">  ⎿  {"outcome": "scheduled", "partner": "codex"}</span></div>
+            <div class="l">● 已预约。接下来改代码。</div>
+            <div class="l"><span class="d">● Read(src/main/kotlin/auth/LoginController.kt)</span></div>
+            <div class="l"><span class="d">  ⎿  Read 186 lines</span></div>
+            <div class="l"><span class="d">● Write(src/main/kotlin/auth/RateLimiter.kt)</span></div>
+            <div class="l"><span class="d">  ⎿  Wrote 64 lines</span></div>
+            <div class="l"><span class="d">● Bash(./gradlew test --tests "*Login*")</span></div>
+            <div class="l"><span class="d">  ⎿  Running…</span></div>
+          </div>
+          <div class="prompt"><span class="p">❯</span></div>
+          <div class="status"><span>⏵⏵ accept edits on · shift+tab to cycle</span><span>Opus · imux</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 手机端：会话发来截图、文件，回复末尾带会话标题 -->
+  <div class="shot" id="phone-chat" style="width:fit-content">
+    <div class="phone">
+      <div class="top">西门吹雪<span>BOT</span></div>
+      <div class="msgs">
+        <div class="me">首页改完了吗？截个图发我看看，顺便把性能报告也发过来</div>
+        <div class="bot"><div class="who">西门吹雪</div><div class="img"><div class="bar"><i></i><i></i><i></i></div><div class="hero"></div><div class="row"><div></div><div></div><div></div></div></div></div>
+        <div class="bot"><div class="file"><div class="fi">PDF</div><div><div class="fn">lighthouse-report.pdf</div><div class="fs">1.2 MB</div></div></div></div>
+        <div class="bot"><div class="bubble">
+          <p>首页改版已完成，截图和性能报告都发你了：</p>
+          <ul><li>首屏改成大图 + 三栏卡片；</li><li>LCP 从 3.1s 降到 1.4s；</li><li>移动端布局已核对。</li></ul>
+          <hr>
+          <blockquote>首页改版</blockquote>
+          <div class="ai">内容由 AI 生成</div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. 侧栏：AI 智能体会话列表 -->
+  <div class="shot" id="tool-window" style="width:fit-content">
+    <div class="tw">
+      <div class="hd">AI 智能体<span class="sp"></span><span class="tbi">＋</span><span class="tbi">↻</span><span class="tbi">✕</span><span class="tbi">⋮</span></div>
+      <div class="tree">
+        <div class="r"><span class="tg">▾</span><img src="../../src/main/resources/icons/claude@2x.png">Claude Code</div>
+        <div class="r s"><span class="st"><span class="spin"></span></span><img src="../../src/main/resources/icons/phone_dark.svg">登录接口限流<span class="t">2 分钟前</span></div>
+        <div class="r s"><span class="st"><span class="dot mod"></span></span><b>首页改版</b><span class="t">18 分钟前</span></div>
+        <div class="r s sel"><span class="st"><span class="dot"></span></span>重构 SessionRepository 的扫描逻辑<span class="t">1 小时前</span></div>
+        <div class="r s"><span class="st"></span>修复 Windows 下路径大小写问题<span class="t">3 小时前</span></div>
+        <div class="r s"><span class="st"></span>升级 Gradle 插件到 2.x<span class="t">1 天前</span></div>
+        <div class="r s"><span class="st"></span><span class="more">显示更多…</span></div>
+        <div class="r"><span class="tg">▾</span><img src="../../src/main/resources/icons/codex@2x_dark.png">Codex</div>
+        <div class="r s"><span class="st"><span class="spin"></span></span>审查限流实现的并发问题<span class="t">40 秒前</span></div>
+        <div class="r s"><span class="st"><span class="dot"></span></span>补充 BridgeRouter 的分段测试<span class="t">2 天前</span></div>
+        <div class="r s"><span class="st"></span>整理发布脚本<span class="t">5 天前</span></div>
+        <div class="r"><span class="tg">▸</span><img src="../../src/main/resources/icons/pi@2x_dark.png">Pi</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. 会话轨迹 -->
+  <div class="shot" id="session-trail">
+    <div class="ide">
+      <div class="tabs"><div class="tab on">登录接口限流</div><div class="tab">首页改版</div></div>
+      <div class="body" style="height:520px">
+        <div class="float">
+          <span class="b icononly" data-icon="pair"></span>
+          <span class="b icononly" data-icon="talk"></span>
+          <span class="b icononly pressed" data-icon="trail"></span>
+          <span class="b icononly" data-icon="phone"></span>
+        </div>
+        <div class="card">
+          <div class="ch">会话轨迹<span class="sp"></span><span class="hide">⇥</span></div>
+          <div class="stale"><span style="color:#e0b153">⚠</span>会话有新进展，摘要已过期<span class="link">更新轨迹</span></div>
+          <div class="tl">
+            <span class="tm">10:12</span><span class="gl c main">●</span><span class="tx main">明确目标：登录接口按 IP 限流，每分钟 10 次</span>
+            <span class="tm">10:18</span><span class="gl c main">●</span><span class="tx main">新增 RateLimiter，接入登录过滤器</span>
+            <span class="tm">10:25</span><span class="gl c chg">↻</span><span class="tx chg">需求变更：改为按账号 + IP 双维度限流</span>
+            <span class="tm">10:31</span><span class="gl c rb">┌</span><span class="tx main">尝试用 Redis 共享计数<span class="tag">已回滚</span></span>
+            <span class="tm">10:36</span><span class="gl c rb">×</span><span class="tx gray">引入 Redis 依赖与配置</span>
+            <span class="tm">10:40</span><span class="gl c rb">└</span><span class="tx gray">本地没有 Redis，放弃该方案</span>
+            <span class="tm">10:44</span><span class="gl c err">⚠</span><span class="tx err">并发测试发现计数竞态</span>
+            <span class="tm">10:52</span><span class="gl c main">●</span><span class="tx main">改用原子计数，并发测试通过</span>
+            <span class="tm">11:03</span><span class="gl c side">○</span><span class="tx side">顺带讨论 429 响应的提示文案</span>
+            <span class="tm">11:10</span><span class="gl prog">◐</span><span class="tx">正在补充多实例部署的说明</span>
+          </div>
+          <div class="ft">共 10 个节点 · 主线 9 · 旁支 1 · 已过期</div>
+        </div>
+        <div class="term">
+          <div class="hist">
+            <div class="l"><span class="p">❯ 多实例部署时阈值会被放大吗？在文档里写清楚</span></div>
+            <div class="l">● 会。每个实例各自计数，总阈值约等于实例数 × 10。</div>
+            <div class="l"><span class="d">● Update(docs/deploy.md)</span></div>
+            <div class="l"><span class="d">  ⎿  Updated with </span><span class="g">12 additions</span></div>
+            <div class="l">● 正在补充多实例部署的说明……</div>
+          </div>
+          <div class="prompt"><span class="p">❯</span></div>
+          <div class="status"><span>⏵⏵ accept edits on · shift+tab to cycle</span><span>Opus · imux</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. 先聊再做 -->
+  <div class="shot" id="clarify" style="width:fit-content">
+    <div class="dlg">
+      <div class="tb"><i></i><i></i><i></i>先聊再做 · 给登录接口加限流，防止撞库</div>
+      <div class="goal">目标：给登录接口加限流，防止撞库</div>
+      <div class="tabs2"><span><span class="ok">✓</span>限流维度</span><span class="on">计数存储</span><span>我的回答</span></div>
+      <div class="q">
+        <p class="ctx">项目里登录服务部署了 3 个实例，目前没有引入 Redis。</p>
+        <p class="qt">限流的计数放在哪里？</p>
+        <div class="opt"><span class="radio on"></span><div>1. 进程内存（推荐）<div class="desc">实现最简单；多实例时各算各的，总阈值会放大</div></div></div>
+        <div class="opt"><span class="radio"></span><div>2. Redis<div class="desc">多实例共享计数；需要新增依赖和部署</div></div></div>
+        <div class="opt"><span class="radio"></span><div>3. 数据库<div class="desc">不用新组件；每次登录多一次写入</div></div></div>
+        <div class="opt" style="align-items:center"><span class="radio" style="margin-top:0"></span>4. 其他：<span class="field"></span></div>
+        <p class="fb">不回答则按默认处理：进程内存</p>
+      </div>
+      <div class="ft"><span class="btn">看一眼</span></div>
+    </div>
+  </div>
+
+</div>
+<script>
+const SVG = {
+  pair: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M5.5 9.5h-3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v3"/><rect fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" x="5.5" y="5.5" width="9" height="9" rx="1"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M8 8.5l1.5 1.5L8 11.5M11 11.5h1.5"/>',
+  talk: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M2.5 2.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H7.5l-3 2.5v-2.5h-2a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M6.6 5.6a1.5 1.5 0 1 1 2.1 1.4c-.45.2-.7.5-.7.95v.3"/><circle fill="currentColor" cx="8" cy="9.75" r=".6"/>',
+  trail: '<rect fill="none" stroke="currentColor" x="1.5" y="2.5" width="13" height="11" rx="1"/><circle fill="none" stroke="currentColor" cx="5" cy="6" r="1.2"/><circle fill="none" stroke="currentColor" cx="5" cy="10" r="1.2"/><path fill="none" stroke="currentColor" stroke-linecap="round" d="M5 7.2v1.6M8 6h4M8 10h3"/>',
+  phone: '<rect x="4.5" y="1.5" width="7" height="13" rx="1.5" fill="none" stroke="currentColor"/><path d="M7 12H9" stroke="currentColor" stroke-linecap="round"/>',
+  info: '<circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--link)"/><path d="M8 7v4" stroke="var(--link)" stroke-linecap="round"/><circle cx="8" cy="4.9" r=".75" fill="var(--link)"/>',
+};
+for (const el of document.querySelectorAll('[data-icon]')) {
+  const icon = `<span class="ico"><svg viewBox="0 0 16 16">${SVG[el.dataset.icon]}</svg></span>`;
+  el.innerHTML = el.classList.contains('ico') ? `<svg viewBox="0 0 16 16">${SVG[el.dataset.icon]}</svg>` : icon + (el.dataset.label ? `<span>${el.dataset.label}</span>` : '');
+}
+</script>
+</body>
+</html>
