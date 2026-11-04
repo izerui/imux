@@ -247,11 +247,18 @@ class PluginXmlRegistrationTest {
     }
 
     @Test
-    fun `注册了先聊再做的终端右键菜单入口`() {
-        assertTrue(
-            "plugin.xml 未注册 ClarifyRequirementAction，终端右键菜单里不会出现「先聊再做」",
-            pluginXml.contains("com.github.izerui.imux.terminal.ClarifyRequirementAction"),
-        )
+    fun `右上角图标组已有的功能不再重复注册到右键菜单`() {
+        listOf(
+            "imux.PeerProgramming" to "PeerProgrammingActionGroup",
+            "imux.ReviewOnce" to "ReviewOnceAction",
+            "imux.ClarifyRequirement" to "ClarifyRequirementAction",
+            "imux.bridge.ConnectToPhone" to "ConnectToPhoneGroup",
+        ).forEach { (id, clazz) ->
+            assertFalse(
+                "结对编程、审查一次、先聊再做、连接手机统一从会话标签页右上角图标组进入，右键不应再有 $id",
+                pluginXml.contains("""id="$id"""") || pluginXml.contains(clazz),
+            )
+        }
     }
 
     @Test

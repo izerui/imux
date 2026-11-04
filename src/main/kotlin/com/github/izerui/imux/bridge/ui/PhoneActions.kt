@@ -9,7 +9,6 @@ import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
-import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
@@ -20,7 +19,6 @@ import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.terminal.frontend.view.TerminalView
 
 object BridgeNotifications {
     fun info(
@@ -32,12 +30,6 @@ object BridgeNotifications {
             .createNotification(text, NotificationType.INFORMATION)
             .notify(project)
     }
-}
-
-internal fun terminalFile(event: AnActionEvent): AgentTerminalVirtualFile? {
-    val project = event.project ?: return null
-    val view = event.getData(TerminalView.DATA_KEY) ?: return null
-    return TerminalHost.getInstance(project).fileFor(view)
 }
 
 /** 界面层的连接、断开：确认对话框与 IDE 提示在这里，绑定本身交给 [BindingService]。 */

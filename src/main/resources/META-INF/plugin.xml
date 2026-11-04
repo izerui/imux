@@ -211,29 +211,6 @@
                 popup="true">
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
         </group>
-        <group
-                id="imux.PeerProgramming"
-                class="com.github.izerui.imux.terminal.PeerProgrammingActionGroup"
-                popup="true">
-            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
-        </group>
-        <action
-                id="imux.ReviewOnce"
-                class="com.github.izerui.imux.terminal.ReviewOnceAction"
-                text="Review Once"
-                description="Choose an agent to review this session once"
-                icon="/icons/review.svg">
-            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="after"
-                          relative-to-action="imux.PeerProgramming"/>
-        </action>
-        <action
-                id="imux.ClarifyRequirement"
-                class="com.github.izerui.imux.terminal.ClarifyRequirementAction"
-                text="Talk First"
-                description="Before starting, talk it through with the agent: it combines the project's code and web knowledge to ask you step by step, fills in directions you haven't considered, and delivers an execution plan"
-                icon="/icons/talk.svg">
-            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
-        </action>
         <action
                 id="imux.ToggleSessionTrail"
                 class="com.github.izerui.imux.terminal.ToggleSessionTrailAction"
@@ -248,11 +225,5 @@
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="before"
                           relative-to-action="imux.CopySessionIdentity"/>
         </action>
-        <group
-                id="imux.bridge.ConnectToPhone"
-                class="com.github.izerui.imux.bridge.ui.ConnectToPhoneGroup"
-                popup="true">
-            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
-        </group>
     </actions>
 </idea-plugin>

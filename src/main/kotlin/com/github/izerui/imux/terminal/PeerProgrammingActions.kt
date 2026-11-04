@@ -6,15 +6,12 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.Separator
-import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
-import com.intellij.terminal.frontend.view.TerminalView
 
 /**
  * 结对编程的子菜单 actions。sessionId 可以是 pending key 或真实 id，
@@ -74,38 +71,5 @@ private class PeerUnbindAction(
 
     override fun actionPerformed(event: AnActionEvent) {
         SessionMonitor.getInstance(project).peerCoordinator.unbind(sessionId)
-    }
-}
-
-/**
- * Terminal context menu group — registered in plugin.xml.
- *
- * 只在当前会话终端正文的右键菜单中出现。
- */
-class PeerProgrammingActionGroup :
-    ActionGroup(ImuxBundle.message("action.peer.group.text"), true),
-    DumbAware {
-    init {
-        templatePresentation.icon = AgentIcons.pair
-    }
-
-    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
-
-    override fun update(event: AnActionEvent) {
-        event.presentation.text = ImuxBundle.message("action.peer.group.text")
-        event.presentation.icon = AgentIcons.pair
-        event.presentation.isEnabledAndVisible = sessionKey(event) != null
-    }
-
-    override fun getChildren(event: AnActionEvent?): Array<AnAction> {
-        val sessionKey = event?.let(::sessionKey) ?: return emptyArray()
-        val project = event.project ?: return emptyArray()
-        return peerProgrammingActions(project, sessionKey)
-    }
-
-    private fun sessionKey(event: AnActionEvent): String? {
-        val project = event.project ?: return null
-        val terminalView = event.getData(TerminalView.DATA_KEY) ?: return null
-        return TerminalHost.getInstance(project).sessionKeyFor(terminalView)
     }
 }

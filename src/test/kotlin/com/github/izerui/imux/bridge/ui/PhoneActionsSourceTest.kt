@@ -34,8 +34,7 @@ class PhoneActionsSourceTest {
     }
 
     @Test
-    fun `注册了右键菜单组与通知分组`() {
-        assertTrue(pluginXml.contains("com.github.izerui.imux.bridge.ui.ConnectToPhoneGroup"))
+    fun `注册了通知分组`() {
         assertTrue(pluginXml.contains("imux.phoneBridge"))
     }
 }
