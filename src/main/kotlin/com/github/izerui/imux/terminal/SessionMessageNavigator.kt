@@ -205,6 +205,16 @@ internal fun locateUserMessageAnchorsIndexed(
             }
         if (found < 0) return@forEach
         if (exchangeIndex != null && exchange != null) {
+            // 起点只靠前缀定位；结束位置沿完整输入继续比对，落点高亮才能盖住整段长提问。
+            // 上界是这一轮回复的起点（searchBefore + 1），不会延伸进回复里。
+            val matched =
+                matchedLength(
+                    document.text,
+                    key,
+                    start = found,
+                    prefix = needle.length,
+                    limit = maxOf(searchBefore + 1, found + needle.length),
+                )
             anchors +=
                 IndexedUserMessageAnchor(
                     exchangeIndex,
@@ -213,13 +223,26 @@ internal fun locateUserMessageAnchorsIndexed(
                         userPreview = truncated(normalizeWhitespace(text), USER_PREVIEW_CHARS),
                         replyPreview = truncated(normalizeWhitespace(exchange.assistantReply), REPLY_PREVIEW_CHARS),
                         absoluteOffset = documentStartOffset + document.offsets[found],
-                        endAbsoluteOffset = documentStartOffset + document.offsets[found + needle.length - 1] + 1,
+                        endAbsoluteOffset = documentStartOffset + document.offsets[found + matched - 1] + 1,
                     ),
                 )
         }
         searchBefore = found - 1
     }
     return anchors.asReversed()
+}
+
+/** 从 [start] 起已知前 [prefix] 个字符相同，继续向后比对 [key]，到对不上或碰到 [limit] 为止。 */
+private fun matchedLength(
+    documentKey: String,
+    key: String,
+    start: Int,
+    prefix: Int,
+    limit: Int,
+): Int {
+    var length = prefix
+    while (length < key.length && start + length < limit && documentKey[start + length] == key[length]) length++
+    return length
 }
 
 private fun lastIndexOfPreferredOccurrence(

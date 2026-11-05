@@ -89,7 +89,7 @@ transcript 中的 `assistantReply` 是原始 markdown（`**继续**`），终端
 ### 点击
 
 - 滚动到该输入并居中（`ScrollType.CENTER`），卡片保持显示；
-- 在终端中给该输入加约 1.5 秒的高亮底色后移除（`RangeHighlighter`），让落点一眼可见；范围从锚点起到提问匹配末尾，为此 `UserMessageAnchor` 增加 `endAbsoluteOffset`（匹配末字符之后的绝对位置，副驾驶反馈锚点取提示文本长度）；
+- 在终端中给该输入加约 1.5 秒的高亮底色后移除（`RangeHighlighter`），让落点一眼可见；范围覆盖整段输入：起点用前 120 个有效字符定位后，沿该轮完整输入继续逐字比对，直到对不上或碰到本轮回复起点为止。为此 `UserMessageAnchor` 增加 `endAbsoluteOffset`（最后一个对上的字符之后的绝对位置，副驾驶反馈锚点取提示文本长度）；
 - 等间距后不存在同位置多条锚点，删除 `nextCollocatedAnchor` 及其循环点击逻辑与测试。
 
 ### 布局联动

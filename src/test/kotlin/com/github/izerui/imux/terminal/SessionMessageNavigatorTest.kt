@@ -170,6 +170,32 @@ class SessionMessageNavigatorTest {
         assertEquals("预览仍展示 transcript 原文", user, anchors.single().userPreview)
     }
 
+    /** 起点只用前 120 个有效字符定位，落点高亮要覆盖整段输入，而不是只到匹配前缀为止。 */
+    @Test
+    fun `超长提问的结束位置覆盖整段输入而不止匹配前缀`() {
+        val user = (1..30).joinToString("") { "第${it}条背景说明，" } + "最后一句收尾"
+        val wrapped = user.chunked(30).joinToString("\n  ")
+        val document = "> $wrapped\n\n⏺ 收到，开始处理\n"
+
+        val anchor =
+            locateUserMessageAnchors(document, listOf(SessionExchange(user, "收到，开始处理"))).single()
+
+        assertTrue("测试前提：有效字符超过匹配前缀", user.count(Char::isLetterOrDigit) > 120)
+        assertEquals(document.indexOf("第1条"), anchor.offset)
+        assertEquals(document.indexOf("收尾") + 2L, anchor.endAbsoluteOffset)
+    }
+
+    /** 往后延伸只沿着这一轮的输入走，碰到回复就停，不会把回复也高亮进去。 */
+    @Test
+    fun `结束位置不越过本轮回复`() {
+        val document = "> 继续\n\n⏺ 继续处理中\n"
+
+        val anchor =
+            locateUserMessageAnchors(document, listOf(SessionExchange("继续", "继续处理中"))).single()
+
+        assertEquals(document.indexOf("继续") + 2L, anchor.endAbsoluteOffset)
+    }
+
     /** transcript 里的回复是原始 markdown，终端里是渲染后的文字；回复对不上，提问就会被后面的复述抢走。 */
     @Test
     fun `回复含 markdown 时提问不被回复里的复述抢走`() {
