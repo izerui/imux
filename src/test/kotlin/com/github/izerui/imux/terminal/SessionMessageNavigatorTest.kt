@@ -147,6 +147,82 @@ class SessionMessageNavigatorTest {
         assertEquals("这是 一条很长的 用户消息", anchors.single().userPreview)
     }
 
+    /**
+     * TUI 在行尾硬换行并缩进续行：中文行内没有空格，空白折叠成一个空格就和原文对不上了。
+     * 匹配只比对字母与数字，换行、缩进、标点都不参与。
+     */
+    @Test
+    fun `中文长提问被硬换行并缩进续行后仍定位到首字`() {
+        val user = "两性氧化物的较为准确的说法是它能与酸与碱反应只生成盐和水那个特例的名字是七氧化二锰"
+        val document =
+            "> 两性氧化物的较为准确的说法是它能与酸与碱反应只生\n" +
+                "  成盐和水那个特例的名字是七氧化二锰\n\n" +
+                "⏺ 这三点都答对了：两性氧化物要既能和酸又能和碱反应\n"
+
+        val anchors =
+            locateUserMessageAnchors(
+                document,
+                listOf(SessionExchange(user, "这三点都答对了：两性氧化物要**既能和酸**又能和碱反应")),
+            )
+
+        assertEquals(document.indexOf("两性"), anchors.single().offset)
+        assertEquals(document.indexOf("锰") + 1L, anchors.single().endAbsoluteOffset)
+        assertEquals("预览仍展示 transcript 原文", user, anchors.single().userPreview)
+    }
+
+    /** transcript 里的回复是原始 markdown，终端里是渲染后的文字；回复对不上，提问就会被后面的复述抢走。 */
+    @Test
+    fun `回复含 markdown 时提问不被回复里的复述抢走`() {
+        val document = "> 继续\n\n⏺ 好的，我继续处理。\n  · Read 3 files\n  继续 执行测试\n"
+
+        val anchors =
+            locateUserMessageAnchors(
+                document,
+                listOf(SessionExchange("继续", "好的，我**继续**处理。")),
+            )
+
+        assertEquals(document.indexOf("继续"), anchors.single().offset)
+    }
+
+    /** 色块只覆盖提问首行；只要匹配起点落在色块里就算命中，多行提问不再退回纯文本。 */
+    @Test
+    fun `多行提问起点落在色块内时优先命中色块位置`() {
+        val document = "> 请检查日志\n  并修复\n  工具输出：请检查日志并修复\n好的"
+        val start = document.indexOf("请检查日志")
+        val firstLineEnd = document.indexOf('\n', start)
+
+        val anchors =
+            locateUserMessageAnchors(
+                document,
+                listOf(SessionExchange("请检查日志并修复", "好的")),
+                preferredRanges = listOf(PreferredTextRange(start.toLong(), firstLineEnd.toLong())),
+            )
+
+        assertEquals(start, anchors.single().offset)
+    }
+
+    @Test
+    fun `高亮区间只保留有背景色的部分并换算到扫描范围内的绝对位置`() {
+        val spans =
+            listOf(
+                HighlightSpan(0, 5, hasBackground = true),
+                HighlightSpan(10, 20, hasBackground = false),
+                HighlightSpan(30, 50, hasBackground = true),
+                HighlightSpan(90, 120, hasBackground = true),
+            )
+
+        val ranges = backgroundRanges(spans, documentStartAbsolute = 1_000L, scanStart = 1_003L, scanEnd = 1_100L)
+
+        assertEquals(
+            listOf(
+                PreferredTextRange(1_003L, 1_005L),
+                PreferredTextRange(1_030L, 1_050L),
+                PreferredTextRange(1_090L, 1_100L),
+            ),
+            ranges,
+        )
+    }
+
     @Test
     fun `重复消息按对话顺序定位到不同位置`() {
         val document = "继续\n回答一\n继续\n回答二"
@@ -298,17 +374,6 @@ class SessionMessageNavigatorTest {
                 refreshedScreenPoint = Point(100, 220),
             ),
         )
-    }
-
-    @Test
-    fun `同坐标锚点按点击顺序循环选择`() {
-        val first = UserMessageAnchor(10, "第一轮", "回复一")
-        val second = UserMessageAnchor(20, "第二轮", "回复二")
-        val group = listOf(first, second)
-
-        assertEquals(first, nextCollocatedAnchor(group, null))
-        assertEquals(second, nextCollocatedAnchor(group, first))
-        assertEquals(first, nextCollocatedAnchor(group, second))
     }
 
     @Test
@@ -547,13 +612,6 @@ class SessionMessageNavigatorTest {
         assertEquals("上一轮圆点应保留", 1, stable.size)
 
         assertFalse("末轮未定位，应继续等待刷新", latestExchangeResolved(exchanges, indexed))
-    }
-
-    @Test
-    fun `轨道标记按可视行数等比例分布`() {
-        assertEquals(10, markerY(line = 0, lineCount = 101, height = 220, padding = 10))
-        assertEquals(110, markerY(line = 50, lineCount = 101, height = 220, padding = 10))
-        assertEquals(210, markerY(line = 100, lineCount = 101, height = 220, padding = 10))
     }
 
     /**

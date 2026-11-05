@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
@@ -11,15 +12,16 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.RangeHighlighter
+import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
-import com.intellij.openapi.ui.popup.Balloon
-import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.JBColor
-import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.util.Alarm
@@ -34,7 +36,6 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.plugins.terminal.view.TerminalContentChangeEvent
 import org.jetbrains.plugins.terminal.view.TerminalOutputModelListener
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
-import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.Font
@@ -58,6 +59,8 @@ internal data class UserMessageAnchor(
     val replyPreview: String,
     /** Platform TerminalOutputModel 中不受 history trimming 平移影响的绝对位置。 */
     val absoluteOffset: Long = offset.toLong(),
+    /** 匹配到的提问正文末字符之后的绝对位置，点击跳转后据此高亮落点。 */
+    val endAbsoluteOffset: Long = absoluteOffset,
 )
 
 internal data class IndexedUserMessageAnchor(
@@ -119,15 +122,6 @@ internal fun refreshedAnchor(
         it.absoluteOffset == current.absoluteOffset && it.userPreview == current.userPreview
     }
 
-internal fun nextCollocatedAnchor(
-    anchors: List<UserMessageAnchor>,
-    previous: UserMessageAnchor?,
-): UserMessageAnchor? {
-    if (anchors.isEmpty()) return null
-    val previousIndex = anchors.indexOf(previous)
-    return anchors[(previousIndex + 1).mod(anchors.size)]
-}
-
 internal fun previewNeedsRebuild(
     current: UserMessageAnchor?,
     refreshed: UserMessageAnchor,
@@ -143,8 +137,9 @@ private data class NormalizedText(
 /**
  * 把 transcript 里的用户消息定位到 Terminal Editor 文档中。
  *
- * 终端会软换行、窗口缩放后也会重新排版，因此先把两边空白折叠，同时保留归一化字符
- * 到原文 offset 的映射。
+ * 两边都只保留字母与数字（中日韩文字计入）再比对，同时保留到原文 offset 的映射：
+ * TUI 在中文行内硬换行、续行缩进、渲染 markdown、加前缀与边框，丢掉的都是这些字符，
+ * 只折叠空白的话中文长提问会多出一个空格，回复里的 `**` 也对不上。
  *
  * 新消息优先在 Terminal 已标记的非默认背景区间内匹配，再按 transcript 顺序与终端文本
  * 配对。这样 AI 普通输出中复述同样文字不会抢走 anchor。只有没有可用标记的旧会话，
@@ -173,7 +168,7 @@ internal fun locateUserMessageAnchorsIndexed(
     documentStartOffset: Long = 0L,
     preferredRanges: List<PreferredTextRange> = emptyList(),
 ): List<IndexedUserMessageAnchor> {
-    val document = normalizedWithOffsets(documentText)
+    val document = matchKeyWithOffsets(documentText)
     if (document.text.isEmpty()) return emptyList()
 
     // 尾部连续无回复的轮次不参与匹配：没有右边界的用户文本会从文档尾部反向抢走
@@ -192,9 +187,10 @@ internal fun locateUserMessageAnchorsIndexed(
     var searchBefore = document.text.lastIndex
     val anchors = mutableListOf<IndexedUserMessageAnchor>()
     chain.asReversed().forEach { (text, exchangeIndex, exchange) ->
-        val normalized = normalizeWhitespace(text)
-        if (normalized.isEmpty()) return@forEach
-        val needle = normalized.take(MATCH_PREFIX_CHARS)
+        val key = matchKey(text)
+        if (key.isEmpty()) return@forEach
+        // 回复只取开头当挡板：越往后越可能遇到表格、链接、代码块这类渲染后面目全非的内容
+        val needle = key.take(if (exchangeIndex != null) MATCH_PREFIX_CHARS else REPLY_MATCH_CHARS)
         val found =
             if (exchangeIndex != null && preferredRanges.isNotEmpty()) {
                 lastIndexOfPreferredOccurrence(
@@ -214,9 +210,10 @@ internal fun locateUserMessageAnchorsIndexed(
                     exchangeIndex,
                     UserMessageAnchor(
                         offset = document.offsets[found],
-                        userPreview = truncated(normalized, USER_PREVIEW_CHARS),
+                        userPreview = truncated(normalizeWhitespace(text), USER_PREVIEW_CHARS),
                         replyPreview = truncated(normalizeWhitespace(exchange.assistantReply), REPLY_PREVIEW_CHARS),
                         absoluteOffset = documentStartOffset + document.offsets[found],
+                        endAbsoluteOffset = documentStartOffset + document.offsets[found + needle.length - 1] + 1,
                     ),
                 )
         }
@@ -236,11 +233,11 @@ private fun lastIndexOfPreferredOccurrence(
     while (cursor >= 0) {
         val found = document.text.lastIndexOf(needle, cursor)
         if (found < 0) return null
+        // 色块只到首行行尾，多行提问整段装不进去；起点落在色块里就够了
         val absoluteOffset = documentStartOffset + document.offsets[found]
         if (
             preferredRanges.any { range ->
-                absoluteOffset >= range.startAbsoluteOffset &&
-                        absoluteOffset + needle.length <= range.endAbsoluteOffset
+                absoluteOffset >= range.startAbsoluteOffset && absoluteOffset < range.endAbsoluteOffset
             }
         ) {
             return found
@@ -313,6 +310,7 @@ internal fun peerFeedbackAnchors(
             userPreview = preview,
             replyPreview = "",
             absoluteOffset = hint.absoluteOffset,
+            endAbsoluteOffset = hint.absoluteOffset + hint.text.length,
         )
     }
     return (native + added).sortedBy(UserMessageAnchor::absoluteOffset)
@@ -344,13 +342,25 @@ internal class SessionMessageNavigator(
 
     private val sessionChangeTracker = NavigationSessionChangeTracker()
     private var previewAnchor: UserMessageAnchor? = null
-    private var previewBalloon: Balloon? = null
-    private var previewScreenPoint: Point? = null
+
+    /** 卡片当前对准的横线位置（终端层坐标）；横线挪了才需要重新摆卡片。 */
+    private var previewPoint: Point? = null
     private val hideAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+    private var landingHighlighter: RangeHighlighter? = null
+    private val landingAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+    private val previewPositionLabel =
+        JBLabel().apply {
+            foreground = UIUtil.getContextHelpForeground()
+            font = JBUI.Fonts.smallFont()
+        }
     private val previewUserLabel = JBLabel()
     private val previewReplyLabel = JBLabel().apply { foreground = UIUtil.getContextHelpForeground() }
+    private val previewCard = PreviewCard()
     private val rail = NavigatorRail()
     val component: JComponent get() = rail
+
+    /** 悬停卡片；由编辑器放进终端层的 `POPUP_LAYER`，位置由导航器自己摆。 */
+    val previewComponent: JComponent get() = previewCard
     val preferredWidth: Int get() = JBUI.scale(RAIL_WIDTH)
     private val outputModelListener =
         object : TerminalOutputModelListener {
@@ -455,9 +465,11 @@ internal class SessionMessageNavigator(
         }
         if (!locateRequested.get()) return
 
-        val outputSnapshot =
-            ReadAction.computeBlocking<org.jetbrains.plugins.terminal.view.TerminalOutputModelSnapshot, RuntimeException> {
-                snapshot.outputModel.takeSnapshot()
+        // 快照与高亮必须在同一个读锁里取：分两次读的话中间终端又输出了，高亮偏移就对不上快照，
+        // 实测会抛 IndexOutOfBoundsException 并让整轮退回纯文本匹配。
+        val (outputSnapshot, highlightSpans) =
+            ReadAction.computeBlocking<Pair<org.jetbrains.plugins.terminal.view.TerminalOutputModelSnapshot, List<HighlightSpan>>, RuntimeException> {
+                snapshot.outputModel.takeSnapshot() to highlightSpansViaReflection(snapshot.outputModel)
             }
         // 用户输入总在终端 buffer 尾部。不要为一次回车读取数 MB 的完整历史：
         // 262 的 hyperlink 处理也会在同一份大文档上创建 range marker，全文读锁会把
@@ -469,13 +481,12 @@ internal class SessionMessageNavigator(
             )
         val documentText = outputSnapshot.getText(scanStart, outputSnapshot.endOffset).toString()
         val preferredRanges =
-            ReadAction.computeBlocking<List<PreferredTextRange>, RuntimeException> {
-                highlightingRangesViaReflection(
-                    snapshot.outputModel,
-                    scanStart.toAbsolute(),
-                    outputSnapshot.endOffset.toAbsolute(),
-                )
-            }
+            backgroundRanges(
+                highlightSpans,
+                documentStartAbsolute = outputSnapshot.startOffset.toAbsolute(),
+                scanStart = scanStart.toAbsolute(),
+                scanEnd = outputSnapshot.endOffset.toAbsolute(),
+            )
         val indexedAnchors =
             locateUserMessageAnchorsIndexed(
                 documentText,
@@ -574,18 +585,19 @@ internal class SessionMessageNavigator(
             hidePreview()
             return
         }
-        val screenPoint = previewScreenPointFor(refreshed)
-        if (screenPoint == null) {
+        val point = rail.previewPointFor(refreshed)
+        if (point == null) {
             hidePreview()
             return
         }
-        if (previewNeedsRebuild(current, refreshed, previewScreenPoint, screenPoint)) {
+        if (previewNeedsRebuild(current, refreshed, previewPoint, point)) {
             showPreview(refreshed)
         }
     }
 
     private fun unbind() {
         hidePreview()
+        clearLanding()
         awaitingTerminalContent.set(false)
         outputModelBinding.unbind()
         clearHighlighters()
@@ -600,54 +612,40 @@ internal class SessionMessageNavigator(
     }
 
     /**
-     * 把预览做成一张指向圆点的对话气泡。
+     * 在横线右侧摆出预览卡片。
      *
-     * 用平台 Balloon 而不是普通弹窗：尾巴、圆角、阴影和贴边翻转都是它自带的，
-     * 位置只要给出圆点的坐标，[Balloon.Position.atLeft] 会把气泡开在左边、尾巴指回来。
-     *
-     * 气泡挪不了位置，换一颗点只能重建，所以动画必须关掉——带上淡入淡出就是一次可见的闪。
+     * 卡片是终端层里的普通组件而不是 Balloon：换一根横线只挪位置、换文字，不重建弹窗，
+     * 不闪；也不存在 hide-on-click-outside 吞掉第一下点击的问题。
      */
     private fun showPreview(anchor: UserMessageAnchor) {
         cancelScheduledHide()
         val point = rail.previewPointFor(anchor) ?: return
-        val screenPoint = runCatching(point::getScreenPoint).getOrNull() ?: return
-        if (
-            !previewNeedsRebuild(previewAnchor, anchor, previewScreenPoint, screenPoint) &&
-            previewBalloon?.isDisposed == false
-        ) {
-            return
-        }
-        previewBalloon?.hide()
+        if (!previewNeedsRebuild(previewAnchor, anchor, previewPoint, point) && previewCard.isVisible) return
         previewAnchor = anchor
-        previewScreenPoint = screenPoint
+        previewPoint = point
         updatePreviewCard(anchor)
-        // 悬停的那颗点要放大，必须重绘
+        val parent = previewCard.parent
+        val size = previewCard.preferredSize
+        previewCard.bounds =
+            previewCardBounds(
+                tickY = point.y,
+                cardWidth = size.width,
+                cardHeight = size.height,
+                x = point.x,
+                containerHeight = parent?.height ?: (point.y + size.height),
+                margin = JBUI.scale(PREVIEW_MARGIN),
+            )
+        previewCard.isVisible = true
+        previewCard.revalidate()
+        previewCard.repaint()
+        // 悬停的那根横线要放大，必须重绘
         component.repaint()
-
-        previewBalloon =
-            JBPopupFactory
-                .getInstance()
-                .createBalloonBuilder(previewCard)
-                .setShowCallout(true)
-                .setAnimationCycle(0)
-                .setRequestFocus(false)
-                // 开着 hide-on-click-outside 时，点圆点的第一下会被气泡拿去关自己，
-                // 轨道收不到，于是要点两下才跳转。气泡的关闭交给 mouseExited 和跳转本身。
-                .setHideOnClickOutside(false)
-                .setHideOnKeyOutside(false)
-                .setHideOnAction(false)
-                .setShadow(true)
-                .setFillColor(PREVIEW_BACKGROUND)
-                .setBorderColor(PREVIEW_BORDER)
-                .setBorderInsets(JBUI.emptyInsets())
-                .createBalloon()
-                .also { it.show(point, Balloon.Position.atLeft) }
     }
 
     /**
      * 排一次延迟隐藏，而不是立刻关。
      *
-     * 命中区是硬边界，鼠标在圆点边沿抖动时 Swing 会反复发 exited/entered；立刻关的话
+     * 命中区是硬边界，鼠标在横线边沿抖动时 Swing 会反复发 exited/entered；立刻关的话
      * 那就是肉眼可见的来回闪。延迟这一小会儿，抖回来时 [showPreview] 会把它撤销，
      * 真正移开了才关。
      */
@@ -662,36 +660,63 @@ internal class SessionMessageNavigator(
 
     private fun hidePreview() {
         cancelScheduledHide()
-        previewBalloon?.hide()
-        previewBalloon = null
+        previewCard.isVisible = false
         previewAnchor = null
-        previewScreenPoint = null
+        previewPoint = null
         component.repaint()
     }
 
-    private fun previewScreenPointFor(anchor: UserMessageAnchor): Point? =
-        rail.previewPointFor(anchor)?.let { runCatching(it::getScreenPoint).getOrNull() }
-
-    private val previewCard: JComponent by lazy {
-        JBPanel<JBPanel<*>>(BorderLayout(0, JBUI.scale(6))).apply {
-            border = JBUI.Borders.empty(PREVIEW_PADDING)
-            add(previewUserLabel.apply { font = font.deriveFont(Font.BOLD) }, BorderLayout.NORTH)
-            add(previewReplyLabel, BorderLayout.CENTER)
-        }
-    }
-
     private fun updatePreviewCard(anchor: UserMessageAnchor) {
-        previewUserLabel.text = wrappedHtml(anchor.userPreview)
-        previewReplyLabel.text = wrappedHtml(anchor.replyPreview)
+        val position = anchors.indexOf(anchor) + 1
+        previewPositionLabel.text =
+            ImuxBundle.message("navigator.preview.position", position, anchors.size, virtualFile.tabTitle)
+        val width = JBUI.scale(PREVIEW_WIDTH)
+        previewUserLabel.text = clampedHtml(anchor.userPreview, previewUserLabel, width)
+        previewReplyLabel.text = clampedHtml(anchor.replyPreview, previewReplyLabel, width)
         // 末轮还在生成时没有回复，藏掉标签，免得卡片下方留一块空白
         previewReplyLabel.isVisible = anchor.replyPreview.isNotEmpty()
     }
 
-    /** 定宽 HTML 让 JBLabel 自己折行；转义是因为终端里的提问常带 `<` `>` 和 `&`。 */
-    private fun wrappedHtml(text: String): String =
-        "<html><body style='width:${JBUI.scale(PREVIEW_WIDTH)}px'>" +
-                StringUtil.escapeXmlEntities(text) +
-                "</body></html>"
+    /** 按实际字宽折成最多 [PREVIEW_MAX_LINES] 行；转义是因为终端里的提问常带 `<` `>` 和 `&`。 */
+    private fun clampedHtml(
+        text: String,
+        label: JBLabel,
+        width: Int,
+    ): String {
+        val metrics = label.getFontMetrics(label.font)
+        val lines = clampToLines(text, width, PREVIEW_MAX_LINES) { metrics.stringWidth(it) }
+        return "<html>" + lines.joinToString("<br>") { StringUtil.escapeXmlEntities(it) } + "</html>"
+    }
+
+    /**
+     * 点击后给落点那段提问铺一层底色，过一会儿撤掉：滚动居中之后一眼就能看到是哪一段。
+     */
+    private fun flashLanding(
+        currentEditor: Editor,
+        anchor: UserMessageAnchor,
+        start: Int,
+        outputStart: Long,
+    ) {
+        clearLanding()
+        val textLength = currentEditor.document.textLength
+        val end = (anchor.endAbsoluteOffset - outputStart).coerceIn(start.toLong(), textLength.toLong()).toInt()
+        if (end <= start) return
+        landingHighlighter =
+            currentEditor.markupModel.addRangeHighlighter(
+                start,
+                end,
+                HighlighterLayer.SELECTION - 1,
+                TextAttributes().apply { backgroundColor = LANDING_BACKGROUND },
+                HighlighterTargetArea.EXACT_RANGE,
+            )
+        landingAlarm.addRequest(::clearLanding, LANDING_HIGHLIGHT_MS)
+    }
+
+    private fun clearLanding() {
+        landingAlarm.cancelAllRequests()
+        landingHighlighter?.dispose()
+        landingHighlighter = null
+    }
 
     override fun dispose() {
         disposed = true
@@ -716,30 +741,47 @@ internal class SessionMessageNavigator(
         val anchor: UserMessageAnchor,
         val line: Int,
         val y: Int,
+        val emphasized: Boolean,
+        val length: Int,
     )
 
-    private inner class NavigatorRail : JComponent() {
-        private var clickGroup = emptyList<UserMessageAnchor>()
-        private var clickedAnchor: UserMessageAnchor? = null
+    /** 圆角、带一圈描边的卡片；不透明区域只有卡片本身。 */
+    private inner class PreviewCard : JBPanel<PreviewCard>(BorderLayout(0, JBUI.scale(4))) {
+        init {
+            isOpaque = false
+            isVisible = false
+            border = JBUI.Borders.empty(PREVIEW_PADDING)
+            add(previewPositionLabel, BorderLayout.NORTH)
+            add(previewUserLabel.apply { font = font.deriveFont(Font.BOLD) }, BorderLayout.CENTER)
+            add(previewReplyLabel, BorderLayout.SOUTH)
+        }
 
-        /**
-         * 只有圆点四周一圈算落在轨道上，横竖都收窄。
-         *
-         * 轨道是盖在终端上层的浮层，命中区放多大就从终端手里吃掉多少鼠标事件——在那片
-         * 区域里划选文本、点击定位光标都到不了终端，所以只在点周围留 [MARK_HIT_SLACK]
-         * 这么点余量。
-         *
-         * 边沿抖动带来的 exited/entered 反复触发不在这里解决：那是 [scheduleHide] 的活，
-         * 靠放大命中面积去躲边界，只是把边界挪个位置，代价却是整条终端右侧都不能用了。
-         */
+        override fun paintComponent(graphics: Graphics) {
+            val g = graphics.create() as Graphics2D
+            try {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val arc = JBUI.scale(PREVIEW_ARC)
+                g.color = PREVIEW_BACKGROUND
+                g.fillRoundRect(0, 0, width - 1, height - 1, arc, arc)
+                g.color = PREVIEW_BORDER
+                g.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+            } finally {
+                g.dispose()
+            }
+        }
+    }
+
+    /**
+     * 终端左侧的一列短横线，每条用户输入一根。
+     *
+     * 整列盖在终端上层，但 [contains] 只在横线本身上返回 true：Swing 按 contains 找最深的
+     * 组件，横线之外的点直接落到下层终端，点击、拖选、滚轮都不受影响，不需要转发事件。
+     */
+    private inner class NavigatorRail : JComponent() {
         override fun contains(
             x: Int,
             y: Int,
-        ): Boolean {
-            val hitRadius = JBUI.scale(ACTIVE_MARK_RADIUS + MARK_HIT_SLACK)
-            if (kotlin.math.abs(x - width / 2) > hitRadius) return false
-            return nearestAnchorDistance(mouseY = y)?.let { it <= hitRadius } == true
-        }
+        ): Boolean = hitPoint(x, y) != null
 
         init {
             isOpaque = false
@@ -759,25 +801,22 @@ internal class SessionMessageNavigator(
                 object : MouseAdapter() {
                     override fun mouseClicked(event: MouseEvent) {
                         val currentEditor = editor?.takeIf { !it.isDisposed } ?: return
-                        val group = nearestAnchorGroup(event.y).map(AnchorPoint::anchor)
-                        val previous = clickedAnchor.takeIf { clickGroup == group }
-                        val anchor = nextCollocatedAnchor(group, previous) ?: return
-                        clickGroup = group
-                        clickedAnchor = anchor
+                        val anchor = hitPoint(event.x, event.y)?.anchor ?: return
                         showPreview(anchor)
-                        val outputModel = virtualFile.terminalView.outputModels.active.value
+                        val outputStart = virtualFile.terminalView.outputModels.active.value.startOffset.toAbsolute()
                         val offset =
                             relativeOffset(
                                 anchor,
-                                outputModel.startOffset.toAbsolute(),
+                                outputStart,
                                 currentEditor.document.textLength,
                             ) ?: return
-                        // 不关气泡：鼠标还停在这颗点上，关掉就只能等鼠标微动再弹回来，
-                        // 那是一次可见的「消失再显示」。收起交给移开轨道时的延迟隐藏。
+                        // 不关卡片：鼠标还停在这根横线上，关掉就只能等鼠标微动再弹回来，
+                        // 那是一次可见的「消失再显示」。收起交给移开横线时的延迟隐藏。
                         currentEditor.scrollingModel.scrollTo(
                             currentEditor.offsetToLogicalPosition(offset),
                             ScrollType.CENTER,
                         )
+                        flashLanding(currentEditor, anchor, offset, outputStart)
                     }
 
                     override fun mouseExited(event: MouseEvent) = scheduleHide()
@@ -786,7 +825,7 @@ internal class SessionMessageNavigator(
             addMouseMotionListener(
                 object : MouseMotionAdapter() {
                     override fun mouseMoved(event: MouseEvent) {
-                        val anchor = nearestAnchor(event.y)
+                        val anchor = hitPoint(event.x, event.y)?.anchor
                         cursor =
                             if (anchor == null) {
                                 Cursor.getDefaultCursor()
@@ -803,90 +842,86 @@ internal class SessionMessageNavigator(
             )
         }
 
-        /**
-         * 气泡锚在圆点本身上，而不是鼠标位置——尾巴要对准的是那颗点。
-         *
-         * 鼠标可以落在点四周的余量里，跟着鼠标走的话尾巴就会偏出圆点。
-         */
-        fun previewPointFor(anchor: UserMessageAnchor): RelativePoint? {
+        /** 卡片左上角的参考点：横线列右侧留一点空隙，纵向就是横线中心，换算到终端层坐标。 */
+        fun previewPointFor(anchor: UserMessageAnchor): Point? {
             val anchorY = anchorPoints().firstOrNull { it.anchor == anchor }?.y ?: return null
-            // 锚点取圆点左边缘再往左挪一点：尾巴尖落在这里，才不会压在圆点上
-            val x = width / 2 - JBUI.scale(ACTIVE_MARK_RADIUS + PREVIEW_GAP)
-            return RelativePoint(this, Point(x, anchorY))
+            return Point(x + JBUI.scale(TICK_LEFT + ACTIVE_TICK_LENGTH + PREVIEW_GAP), y + anchorY)
         }
 
         override fun paintComponent(graphics: Graphics) {
-            val currentEditor = editor?.takeIf { !it.isDisposed } ?: return
             val points = anchorPoints()
             if (points.isEmpty()) return
 
             val g = graphics.create() as Graphics2D
             try {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val center = width / 2
-                val padding = JBUI.scale(RAIL_PADDING)
-                g.color = TRACK_COLOR
-                g.stroke = BasicStroke(JBUI.scale(1).toFloat())
-                g.drawLine(center, padding, center, (height - padding).coerceAtLeast(padding))
-
-                val visible = currentEditor.scrollingModel.visibleArea
-                val firstVisibleLine = currentEditor.xyToVisualPosition(Point(0, visible.y)).line
-                val lastVisibleLine =
-                    currentEditor
-                        .xyToVisualPosition(Point(0, visible.y + visible.height))
-                        .line
-                points.forEach { (anchor, line, y) ->
-                    // 鼠标划过的那颗和当前视口所在的那颗放大到同一尺寸：点击跳转后鼠标
-                    // 通常还停在点上，两个尺寸不一样的话，鼠标一移开点就会凭空缩一下。
-                    val emphasized =
-                        anchor == previewAnchor || line in firstVisibleLine..lastVisibleLine
-                    val radius = JBUI.scale(if (emphasized) ACTIVE_MARK_RADIUS else MARK_RADIUS)
-                    g.color = if (emphasized) ACTIVE_MARK_COLOR else MESSAGE_MARK_COLOR
-                    g.fillOval(center - radius, y - radius, radius * 2, radius * 2)
+                val left = JBUI.scale(TICK_LEFT)
+                points.forEach { point ->
+                    val thickness = JBUI.scale(if (point.emphasized) ACTIVE_TICK_THICKNESS else TICK_THICKNESS)
+                    g.color = if (point.emphasized) ACTIVE_MARK_COLOR else MESSAGE_MARK_COLOR
+                    g.fillRoundRect(left, point.y - thickness / 2, point.length, thickness, thickness, thickness)
                 }
             } finally {
                 g.dispose()
             }
         }
 
-        /** 纵向离 [mouseY] 最近的点；并列时保持当前预览项，点击则在整组中循环。 */
-        private fun nearestAnchor(mouseY: Int): UserMessageAnchor? {
-            val group = nearestAnchorGroup(mouseY)
-            return group.firstOrNull { it.anchor == previewAnchor }?.anchor
-                ?: group.firstOrNull()?.anchor
-        }
-
-        private fun nearestAnchorGroup(mouseY: Int): List<AnchorPoint> {
+        private fun hitPoint(
+            x: Int,
+            y: Int,
+        ): AnchorPoint? {
             val points = anchorPoints()
-            val distance = points.minOfOrNull { kotlin.math.abs(it.y - mouseY) } ?: return emptyList()
-            return points.filter { kotlin.math.abs(it.y - mouseY) == distance }
+            val index =
+                tickHitIndex(
+                    x,
+                    y,
+                    points.map(AnchorPoint::y),
+                    points.map(AnchorPoint::length),
+                    left = JBUI.scale(TICK_LEFT),
+                    slack = JBUI.scale(TICK_HIT_SLACK),
+                    maxBand = JBUI.scale(TICK_HIT_BAND),
+                ) ?: return null
+            return points[index]
         }
-
-        /** 到最近那颗点的纵向距离，供 [contains] 判命中；一颗有效的点都没有时返回 null。 */
-        private fun nearestAnchorDistance(mouseY: Int): Int? =
-            anchorPoints().minOfOrNull { kotlin.math.abs(it.y - mouseY) }
 
         /**
-         * 当前文档里仍然有效的锚点，连同它的行号和纵坐标。
+         * 当前文档里仍然有效的锚点，连同它的可视行、横线纵坐标、是否强调与横线长度。
          *
          * 绝对 offset 落在当前窗口之外时直接略过（见 [relativeOffset]），不能拿它访问
          * Editor；窗口内的剩余锚点不受 history trimming 的相对平移影响。
+         *
+         * 鼠标悬停那根和当前视口里的那几根强调成同一尺寸：点击跳转后鼠标通常还停在横线上，
+         * 两种强调尺寸不同的话，鼠标一移开横线就会凭空缩一下。
          */
         private fun anchorPoints(): List<AnchorPoint> {
             val currentEditor = editor?.takeIf { !it.isDisposed } ?: return emptyList()
-            val padding = JBUI.scale(RAIL_PADDING)
-            val document = currentEditor.document
             return try {
-                val textLength = document.textLength
+                val textLength = currentEditor.document.textLength
                 val outputStart =
                     virtualFile.terminalView.outputModels.active.value.startOffset
                         .toAbsolute()
-                val visualLineCount =
-                    currentEditor.offsetToVisualPosition(textLength).line + 1
-                anchors.mapNotNull { anchor ->
-                    val offset = relativeOffset(anchor, outputStart, textLength) ?: return@mapNotNull null
-                    val line = currentEditor.offsetToVisualPosition(offset).line
-                    AnchorPoint(anchor, line, markerY(line, visualLineCount, height, padding))
+                val visible = currentEditor.scrollingModel.visibleArea
+                val firstVisibleLine = currentEditor.xyToVisualPosition(Point(0, visible.y)).line
+                val lastVisibleLine =
+                    currentEditor
+                        .xyToVisualPosition(Point(0, visible.y + visible.height))
+                        .line
+                val located =
+                    anchors.mapNotNull { anchor ->
+                        val offset = relativeOffset(anchor, outputStart, textLength) ?: return@mapNotNull null
+                        anchor to currentEditor.offsetToVisualPosition(offset).line
+                    }
+                val centers =
+                    tickCenters(located.size, height, JBUI.scale(TICK_PADDING), JBUI.scale(TICK_GAP))
+                located.mapIndexed { index, (anchor, line) ->
+                    val emphasized = anchor == previewAnchor || line in firstVisibleLine..lastVisibleLine
+                    val length =
+                        if (emphasized) {
+                            JBUI.scale(ACTIVE_TICK_LENGTH)
+                        } else {
+                            JBUI.scale(tickLength(anchor.userPreview.length, SHORT_TICK_LENGTH, MEDIUM_TICK_LENGTH, LONG_TICK_LENGTH))
+                        }
+                    AnchorPoint(anchor, line, centers[index], emphasized, length)
                 }
             } catch (_: IndexOutOfBoundsException) {
                 // Terminal 正在替换 output 文档时，Document 长度与 Editor 视觉行缓存会短暂错位。
@@ -900,14 +935,34 @@ internal class SessionMessageNavigator(
         const val NAVIGATION_SCAN_MAX_CHARS = 256_000
         const val REFRESH_DEBOUNCE_MS = 250L
         const val CONTINUOUS_REFRESH_INTERVAL_MS = 1_000L
-        const val RAIL_WIDTH = 22
-        const val RAIL_PADDING = 10
+
+        const val TICK_LEFT = 6
+        const val TICK_PADDING = 12
+        const val TICK_GAP = 8
+        const val TICK_THICKNESS = 2
+        const val ACTIVE_TICK_THICKNESS = 3
+        const val SHORT_TICK_LENGTH = 8
+        const val MEDIUM_TICK_LENGTH = 11
+        const val LONG_TICK_LENGTH = 14
+
+        /** 强调态只有一档：悬停与视口内共用，见 [NavigatorRail.anchorPoints]。 */
+        const val ACTIVE_TICK_LENGTH = 20
+
+        /** 命中区只在横线外留这么点余量——多留一分就多吃一分终端的鼠标事件。 */
+        const val TICK_HIT_SLACK = 2
+        const val TICK_HIT_BAND = 4
+        /** 横线列宽度：左边距 + 最长（强调态）横线 + 命中余量。 */
+        const val RAIL_WIDTH = TICK_LEFT + ACTIVE_TICK_LENGTH + TICK_HIT_SLACK + 2
 
         const val HIDE_DELAY_MS = 180
+        const val LANDING_HIGHLIGHT_MS = 1_500
         const val PREVIEW_WIDTH = 340
         const val PREVIEW_PADDING = 12
+        const val PREVIEW_MAX_LINES = 2
+        const val PREVIEW_ARC = 12
+        const val PREVIEW_MARGIN = 8
 
-        /** 气泡尾巴尖与圆点之间留的空隙，别让箭头压在点上。 */
+        /** 卡片与横线之间留的空隙。 */
         const val PREVIEW_GAP = 6
         val PREVIEW_BACKGROUND =
             JBColor.namedColor(
@@ -919,20 +974,20 @@ internal class SessionMessageNavigator(
                 "Imux.SessionMessageNavigator.previewBorder",
                 JBColor(0xD1D5DB, 0x393B40),
             )
-        val TRACK_COLOR =
-            JBColor.namedColor(
-                "Imux.SessionMessageNavigator.track",
-                JBColor(0xD1D5DB, 0x4B5563),
-            )
         val MESSAGE_MARK_COLOR =
             JBColor.namedColor(
                 "Imux.SessionMessageNavigator.marker",
-                JBColor(0x6B7280, 0xA8B0BA),
+                JBColor(0xB4BAC4, 0x5F6670),
             )
         val ACTIVE_MARK_COLOR =
             JBColor.namedColor(
                 "Imux.SessionMessageNavigator.activeMarker",
-                JBColor(0x2563EB, 0x60A5FA),
+                JBColor(0x374151, 0xE5E7EB),
+            )
+        val LANDING_BACKGROUND =
+            JBColor.namedColor(
+                "Imux.SessionMessageNavigator.landingBackground",
+                JBColor(0xFFF1B8, 0x4A4320),
             )
     }
 }
@@ -984,65 +1039,31 @@ private fun normalizeWhitespace(value: String): String =
         .replace(Regex("\\s+"), " ")
         .trim()
 
+/** 匹配用的比对键：只留字母与数字，空白、标点、markdown 符号、TUI 前缀与边框一律丢弃。 */
+private fun matchKey(value: String): String = value.filter(Char::isLetterOrDigit)
+
 /**
- * 归一化整篇终端文档，并保留「归一化后第 i 个字符原本在第几位」。
+ * 把整篇终端文档转成 [matchKey]，并保留「比对键第 i 个字符原本在第几位」。
  *
  * 两处都必须是预分配的原始数组，不能图省事用 `ArrayList<Int>`：那样每个字符都要装一个
  * `Integer`，一份 4MB 的终端输出就是四百万个临时对象。这里仅在 transcript 语义变化、
  * 待定位消息确认、reflow 或 buffer 切换时运行，仍要避免一次恢复制造大量垃圾。
  */
-private fun normalizedWithOffsets(value: String): NormalizedText {
+private fun matchKeyWithOffsets(value: String): NormalizedText {
     val text = StringBuilder(value.length)
     val offsets = IntArray(value.length)
     var size = 0
-    var previousWasSpace = false
     for (index in value.indices) {
         val char = value[index]
-        if (char.isWhitespace()) {
-            if (!previousWasSpace && size > 0) {
-                text.append(' ')
-                offsets[size++] = index
-            }
-            previousWasSpace = true
-        } else {
-            text.append(char)
-            offsets[size++] = index
-            previousWasSpace = false
-        }
-    }
-    if (size > 0 && text.last() == ' ') {
-        text.setLength(text.length - 1)
-        size--
+        if (!char.isLetterOrDigit()) continue
+        text.append(char)
+        offsets[size++] = index
     }
     return NormalizedText(text.toString(), offsets.copyOf(size))
 }
 
-/**
- * 时间线上一颗点的两档半径：常态，以及被强调时（鼠标划过 **或** 当前视口所在）。
- *
- * 强调只有一档：点击跳转后鼠标通常还停在那颗点上，如果 hover 和「当前视口」尺寸不同，
- * 鼠标一移开点就会凭空缩一下。
- *
- * 放在文件级是为了让源码断言直接读到——两个值必须不同，相同的话「变大」就不存在了。
- */
-internal const val MARK_RADIUS = 3
-internal const val ACTIVE_MARK_RADIUS = 6
-
-/** 命中区在最大那颗点之外再留这么点余量，仅此而已——多留一分就多吃一分终端的鼠标事件。 */
-internal const val MARK_HIT_SLACK = 2
-
-internal fun markerY(
-    line: Int,
-    lineCount: Int,
-    height: Int,
-    padding: Int,
-): Int {
-    if (height <= padding * 2 || lineCount <= 1) return height / 2
-    val usable = height - padding * 2
-    return padding + (line.coerceIn(0, lineCount - 1).toLong() * usable / (lineCount - 1)).toInt()
-}
-
 private const val MATCH_PREFIX_CHARS = 120
+private const val REPLY_MATCH_CHARS = 40
 private const val USER_PREVIEW_CHARS = 60
 private const val REPLY_PREVIEW_CHARS = 160
 
@@ -1062,54 +1083,54 @@ internal fun relativeOffset(
     return relative.toInt()
 }
 
-/**
- * 通过反射读取 Terminal 内部高亮模型，收集扫描范围内有非默认背景色的区间。
- *
- * getHighlightingAt / HighlightingInfo / TextAttributesProvider 均为 Internal API，
- * 直接调用会被插件验证器标记。反射调用不产生字节码级引用，验证器不会报告。
- * 逻辑与直接调用完全一致；任何反射异常降级为空列表（回退纯文本匹配）。
- */
-private fun highlightingRangesViaReflection(
-    outputModel: TerminalOutputModel,
-    scanStartAbsolute: Long,
-    scanEndAbsolute: Long,
-): List<PreferredTextRange> = try {
-    val terminalOffsetClass = Class.forName("org.jetbrains.plugins.terminal.view.TerminalOffset")
-    val terminalLineIndexClass = Class.forName("org.jetbrains.plugins.terminal.view.TerminalLineIndex")
-    val ofMethod = terminalOffsetClass.getMethod("of", Long::class.javaPrimitiveType).apply { isAccessible = true }
-    val outputModelClass = TerminalOutputModel::class.java
-    val getHighlightingAt =
-        outputModelClass.getMethod("getHighlightingAt", terminalOffsetClass).apply { isAccessible = true }
-    val getLineByOffset =
-        outputModelClass.getMethod("getLineByOffset", terminalOffsetClass).apply { isAccessible = true }
-    val getEndOfLine = outputModelClass.getMethod(
-        "getEndOfLine", terminalLineIndexClass, Boolean::class.javaPrimitiveType,
-    ).apply { isAccessible = true }
-    val ranges = mutableListOf<PreferredTextRange>()
-    var offset = scanStartAbsolute
-    while (offset < scanEndAbsolute) {
-        val termOffset = ofMethod.invoke(null, offset)
-        val highlighting = getHighlightingAt.invoke(outputModel, termOffset)
-        if (highlighting == null) {
-            offset++
-            continue
-        }
-        val line = getLineByOffset.invoke(outputModel, termOffset)
-        val endTermOffset = getEndOfLine.invoke(outputModel, line, false)
-        val toAbsolute = endTermOffset.javaClass.getMethod("toAbsolute").apply { isAccessible = true }
-        val end = (toAbsolute.invoke(endTermOffset) as Long).coerceAtMost(scanEndAbsolute)
-        val component3 = highlighting.javaClass.getMethod("component3").apply { isAccessible = true }
-        val provider = component3.invoke(highlighting)
-        val getTextAttributes = provider.javaClass.getMethod("getTextAttributes").apply { isAccessible = true }
-        val attrs = getTextAttributes.invoke(provider) as com.intellij.openapi.editor.markup.TextAttributes
-        if (attrs.backgroundColor != null) {
-            ranges += PreferredTextRange(offset, end)
-        }
-        offset = maxOf(offset + 1, end)
+internal data class HighlightSpan(
+    /** 相对当前终端文档起点的位置，与 [org.jetbrains.plugins.terminal.view.TerminalOutputModelSnapshot.startOffset] 对齐。 */
+    val start: Int,
+    val end: Int,
+    val hasBackground: Boolean,
+)
+
+/** 有背景色的高亮换算成绝对位置，并裁到 `[scanStart, scanEnd)` 内；用户输入色块就在其中。 */
+internal fun backgroundRanges(
+    spans: List<HighlightSpan>,
+    documentStartAbsolute: Long,
+    scanStart: Long,
+    scanEnd: Long,
+): List<PreferredTextRange> =
+    spans.mapNotNull { span ->
+        if (!span.hasBackground) return@mapNotNull null
+        val start = maxOf(documentStartAbsolute + span.start, scanStart)
+        val end = minOf(documentStartAbsolute + span.end, scanEnd)
+        if (start < end) PreferredTextRange(start, end) else null
     }
-    ranges
+
+/**
+ * 通过反射一次取出 Terminal 内部高亮快照（`getHighlightings()`），转成 [HighlightSpan]。
+ *
+ * getHighlightings / HighlightingInfo / TextAttributesProvider 均为 Internal API，
+ * 直接调用会被插件验证器标记。反射调用不产生字节码级引用，验证器不会报告。
+ * 必须与终端快照在同一个读锁里调用；任何反射异常降级为空列表（回退纯文本匹配）。
+ */
+private fun highlightSpansViaReflection(outputModel: TerminalOutputModel): List<HighlightSpan> = try {
+    val highlightings =
+        TerminalOutputModel::class.java.getMethod("getHighlightings").invoke(outputModel)
+    val snapshotClass = highlightings.javaClass
+    val size = snapshotClass.getMethod("getSize").invoke(highlightings) as Int
+    val get = snapshotClass.getMethod("get", Int::class.javaPrimitiveType)
+    val spans = ArrayList<HighlightSpan>(size)
+    for (index in 0 until size) {
+        val info = get.invoke(highlightings, index)
+        val infoClass = info.javaClass
+        val start = infoClass.getMethod("getStartOffset").invoke(info) as Int
+        val end = infoClass.getMethod("getEndOffset").invoke(info) as Int
+        val provider = infoClass.getMethod("getTextAttributesProvider").invoke(info)
+        val attributes =
+            provider.javaClass.getMethod("getTextAttributes").apply { isAccessible = true }.invoke(provider)
+                as TextAttributes
+        spans += HighlightSpan(start, end, attributes.backgroundColor != null)
+    }
+    spans
 } catch (e: Exception) {
-    com.intellij.openapi.diagnostic.Logger.getInstance("imux.SessionMessageNavigator")
-        .warn("highlighting reflection failed", e)
+    NAVIGATOR_LOG.warn("highlighting reflection failed", e)
     emptyList()
 }

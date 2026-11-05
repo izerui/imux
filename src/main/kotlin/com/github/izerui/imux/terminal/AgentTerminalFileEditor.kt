@@ -343,6 +343,7 @@ class AgentTerminalFileEditor(
             }
         this.scrollButton = scrollButton
         val navigatorComponent = messageNavigator.component
+        val navigatorPreview = messageNavigator.previewComponent
         val toolButtons =
             listOf(ToolPill(pairTool, pinned = true), ToolPill(talkTool), ToolPill(trailOverlay.tool)) +
                 SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill)
@@ -353,6 +354,7 @@ class AgentTerminalFileEditor(
         // 标签页里固定不变、不属于轨迹卡片的组件；终端正文与滚动条随编辑器切换另行绑定。
         // 轨迹按钮自己负责展开收起，不挂“点外面收起”，否则按下时先收起、松开又展开。
         trailOutsideClicks.attach(navigatorComponent)
+        trailOutsideClicks.attach(navigatorPreview)
         trailOutsideClicks.attach(scrollButton)
         trailOutsideClicks.attach(notices)
         trailOutsideClicks.attach(resultChip)
@@ -370,11 +372,14 @@ class AgentTerminalFileEditor(
                     setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
                     add(navigatorComponent)
                     setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
+                    // 悬停卡片压在图标组与轨迹面板之上，位置由导航器自己摆
+                    add(navigatorPreview)
+                    setLayer(navigatorPreview, JLayeredPane.POPUP_LAYER)
                     add(trailOverlay.card)
                     setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
                     add(toolStrip.component)
                     setLayer(toolStrip.component, JLayeredPane.PALETTE_LAYER)
-                    // 提示条压在导航轨道之上
+                    // 提示条压在提问导航横线之上
                     add(notices)
                     setLayer(notices, JLayeredPane.PALETTE_LAYER + 1)
                 }
@@ -402,15 +407,13 @@ class AgentTerminalFileEditor(
                     val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
                     scrollButton.setBounds(x, y, toolbarWidth, toolbarHeight)
 
-                    val navigatorWidth = messageNavigator.preferredWidth
-                    val navigatorX =
-                        (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
-                    navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
+                    // 提问导航横线贴终端左边缘，盖在文字上层但只有横线本身接收鼠标
+                    navigatorComponent.setBounds(0, 0, messageNavigator.preferredWidth.coerceAtMost(width), height)
 
-                    // 提示条铺满顶部；图标组在它下面、导航轨道左侧；轨迹面板再往下，轨道始终完整可用
+                    // 提示条铺满顶部；图标组在它下面、贴右侧并让开滚动条；轨迹面板再往下
                     val noticeHeight = if (notices.isVisible) notices.preferredSize.height else 0
                     notices.setBounds(0, 0, width, noticeHeight)
-                    val rightReserve = navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET)
+                    val rightReserve = JBUI.scale(SCROLLBAR_RIGHT_INSET)
                     val margin = JBUI.scale(TOOL_STRIP_MARGIN)
                     // 窄分屏时先保住按钮，结果文字按剩余宽度缩短或只留图标
                     val stripRoom = (width - rightReserve - margin * 2).coerceAtLeast(0)
@@ -854,7 +857,7 @@ class AgentTerminalFileEditor(
         const val MAX_FAILURE_CHARS = 160
         const val TOOL_STRIP_MARGIN = 8
         const val TOOLS_GOT_IT_ID = "imux.terminal.tools"
-        const val NAVIGATOR_RIGHT_INSET = 14
+        const val SCROLLBAR_RIGHT_INSET = 14
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30
     }

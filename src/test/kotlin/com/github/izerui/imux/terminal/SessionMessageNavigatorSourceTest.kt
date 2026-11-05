@@ -233,24 +233,6 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(body.contains("hidePreview()"))
     }
 
-    /**
-     * 刻度是时间线上的点：常态一颗小点，鼠标划过的那颗和当前视口所在的那颗放大到**同一尺寸**。
-     *
-     * 两者必须一样大：点击跳转后鼠标通常还停在那颗点上，两个尺寸不同的话，鼠标一移开
-     * 点就会凭空缩一下。
-     */
-    @Test
-    fun `刻度画成圆点且悬停与当前视口放大到同一尺寸`() {
-        val body = navigator.bodyAfter("override fun paintComponent(graphics: Graphics)", '{')
-        assertTrue(body.contains("fillOval"))
-        assertTrue("悬停要参与强调判定", body.contains("previewAnchor"))
-        assertTrue("当前视口也要参与强调判定", body.contains("firstVisibleLine"))
-        assertTrue("视口判定必须使用可视行，覆盖软换行", body.contains("xyToVisualPosition"))
-        assertTrue("两种强调共用一个半径", body.contains("ACTIVE_MARK_RADIUS"))
-        assertFalse("不该再有第二档强调半径", navigator.normalized.contains("HOVER_MARK_RADIUS"))
-        assertTrue("常态与强调两档要不同，否则放大看不出来", MARK_RADIUS != ACTIVE_MARK_RADIUS)
-    }
-
     /** 划过要变大，就得在悬停目标变化时重绘；只更新弹窗不重绘，点还是原来那么大。 */
     @Test
     fun `悬停出现与消失都会重绘轨道`() {
@@ -262,49 +244,6 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(navigator.bodyAfter("private fun hidePreview()", '{').contains("repaint()"))
     }
 
-    @Test
-    fun `用户消息使用右侧浮层轨道并支持点击滚动`() {
-        assertTrue(navigator.normalized.contains("scrollingModel.scrollTo"))
-        assertTrue(editor.normalized.contains("setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)"))
-    }
-
-    @Test
-    fun `同坐标标记通过重复点击循环选择`() {
-        val body = navigator.bodyAfter("override fun mouseClicked(event: MouseEvent)", '{')
-        assertTrue(body.contains("nearestAnchorGroup"))
-        assertTrue(body.contains("nextCollocatedAnchor"))
-    }
-
-    /**
-     * 预览是一张对话气泡：平台 Balloon 自带指向锚点的尾巴，位置和形状都不用自己算。
-     * 尾巴必须开着，否则就退化成一个浮在旁边、看不出属于哪颗点的方框。
-     */
-    @Test
-    fun `悬停预览是带尾巴的气泡且不抢终端焦点`() {
-        val compact = navigator.compactArgs(navigator.normalized)
-        assertTrue(compact.contains("createBalloonBuilder"))
-        assertTrue("尾巴要指向圆点", compact.contains(navigator.compactArgs("setShowCallout(true)")))
-        assertTrue("气泡开在圆点左侧", compact.contains("Balloon.Position.atLeft"))
-        assertTrue(compact.contains(navigator.compactArgs("setRequestFocus(false)")))
-    }
-
-    /** 气泡挪不了位置，换点只能重建；带上淡入淡出就是一次可见的闪，动画必须关掉。 */
-    @Test
-    fun `切换刻度时不带动画重建气泡`() {
-        assertTrue(
-            navigator.compactArgs(navigator.normalized).contains(
-                navigator.compactArgs("setAnimationCycle(0)"),
-            ),
-        )
-    }
-
-    /** 尾巴要对准圆点，锚点就得是圆点的坐标，不能跟着鼠标走。 */
-    @Test
-    fun `气泡锚在圆点上而不是鼠标位置`() {
-        val body = navigator.bodyAfter("fun previewPointFor(anchor: UserMessageAnchor): RelativePoint?", '{')
-        assertTrue(body.contains("anchorY"))
-    }
-
     /**
      * 卡片带上助手回复是这次改动的全部意义：只列提问的话，用户得先回忆自己当时怎么问。
      * 断言卡片构建函数体里两段都用到了，而不是只渲染提问。
@@ -314,39 +253,6 @@ class SessionMessageNavigatorSourceTest {
         val body = navigator.bodyAfter("private fun updatePreviewCard(anchor: UserMessageAnchor)", '{')
         assertTrue(body.contains("anchor.userPreview"))
         assertTrue(body.contains("anchor.replyPreview"))
-    }
-
-    /** 鼠标在同一坐标的刻度上微动会连发 mouseMoved，锚点和屏幕坐标都没变时不能重建。 */
-    @Test
-    fun `停在同一条刻度上不重建弹窗`() {
-        val body = navigator.bodyAfter("private fun showPreview(anchor: UserMessageAnchor)", '{')
-        assertTrue(body.contains("!previewNeedsRebuild"))
-        assertTrue(body.contains("previewBalloon?.isDisposed == false"))
-    }
-
-    /**
-     * 命中区就贴着圆点四周留一点余量，横竖都收窄——轨道盖在终端上层，放大命中面积
-     * 就是在吃终端的鼠标事件。边沿抖动导致的闪烁不靠放大面积解决，交给延迟隐藏。
-     */
-    @Test
-    fun `命中区贴着圆点四周留出少量余量`() {
-        val body = navigator.compactArgs(navigator.bodyAfter("override fun contains(x: Int, y: Int): Boolean", '{'))
-        assertTrue("横向要判定", body.contains(navigator.compactArgs("x - width / 2")))
-        assertTrue("纵向也要判定，不能整条轨道都能触发", body.contains("nearestAnchorDistance"))
-        assertTrue(body.contains("MARK_HIT_SLACK"))
-    }
-
-    /**
-     * 气泡开着的时候点圆点，第一下会被 hide-on-click-outside 拿去关气泡，轨道根本收不到，
-     * 于是要点两下才跳转。关掉这个行为，点击直接落到轨道上，跳转后自己收起。
-     */
-    @Test
-    fun `气泡不吞掉轨道上的点击`() {
-        assertTrue(
-            navigator.compactArgs(navigator.normalized).contains(
-                navigator.compactArgs("setHideOnClickOutside(false)"),
-            ),
-        )
     }
 
     /**
@@ -394,19 +300,6 @@ class SessionMessageNavigatorSourceTest {
     }
 
     @Test
-    fun `圆点位置按编辑器可视行而不是逻辑行计算`() {
-        val body = navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{')
-
-        assertTrue("圆点应按 offset 映射到可视行", body.contains("offsetToVisualPosition(offset).line"))
-        assertTrue(
-            "总高度仍应按文档末尾映射到可视行",
-            body.contains("offsetToVisualPosition(textLength).line"),
-        )
-        assertTrue("视觉行缓存短暂不同步时应跳过本帧", body.contains("catch (_: IndexOutOfBoundsException)"))
-        assertFalse("不能再用逻辑行号决定圆点位置", body.contains("document.getLineNumber(offset)"))
-    }
-
-    @Test
     fun `定位读取平台终端快照并保存绝对起点`() {
         val body = navigator.bodyAfter("private suspend fun refreshAnchors()", '{')
 
@@ -414,7 +307,11 @@ class SessionMessageNavigatorSourceTest {
         assertTrue(body.contains("outputSnapshot.endOffset - NAVIGATION_SCAN_MAX_CHARS.toLong()"))
         assertTrue(body.contains("scanStart.toAbsolute()"))
         assertTrue(body.contains("preferredRanges = preferredRanges"))
-        assertTrue(body.contains("highlightingRangesViaReflection"))
+        assertTrue(
+            "终端快照与高亮必须在同一个读锁里取，否则偏移错位",
+            body.contains("snapshot.outputModel.takeSnapshot() to highlightSpansViaReflection(snapshot.outputModel)"),
+        )
+        assertTrue(body.contains("documentStartAbsolute = outputSnapshot.startOffset.toAbsolute()"))
         assertTrue(body.contains("outputModels.active.value !== snapshot.outputModel"))
         assertTrue(navigator.normalized.contains("NAVIGATION_SCAN_MAX_CHARS = 256_000"))
         assertTrue(body.contains("outputGeneration.get() != snapshot.outputGeneration"))
@@ -437,5 +334,79 @@ class SessionMessageNavigatorSourceTest {
     fun `解绑与释放都会关闭悬停弹窗`() {
         assertTrue(navigator.bodyAfter("private fun unbind()", '{').contains("hidePreview()"))
         assertTrue(navigator.bodyAfter("override fun dispose()", '{').contains("hidePreview()"))
+    }
+
+    /**
+     * 悬停那根和当前视口里的横线放大到**同一长度**：点击跳转后鼠标通常还停在横线上，
+     * 两种强调尺寸不同的话，鼠标一移开横线就会凭空缩一下。
+     */
+    @Test
+    fun `横线悬停与当前视口放大到同一长度`() {
+        val body = navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{')
+        assertTrue("悬停要参与强调判定", body.contains("anchor == previewAnchor"))
+        assertTrue("当前视口也要参与强调判定", body.contains("firstVisibleLine"))
+        assertTrue("视口判定必须使用可视行，覆盖软换行", body.contains("xyToVisualPosition"))
+        assertTrue("两种强调共用一个长度", body.contains("JBUI.scale(ACTIVE_TICK_LENGTH)"))
+        assertTrue("常态长度按字数分档", body.contains("tickLength("))
+        assertTrue(navigator.normalized.contains("ACTIVE_TICK_LENGTH = 20"))
+        assertTrue("强调要比最长的常态横线明显更长", navigator.normalized.contains("LONG_TICK_LENGTH = 14"))
+    }
+
+    @Test
+    fun `横线按条目序号等距排列而不是按文档位置`() {
+        val body = navigator.bodyAfter("private fun anchorPoints(): List<AnchorPoint>", '{')
+        assertTrue(body.contains("tickCenters("))
+        assertTrue("视口强调仍按 offset 映射到可视行", body.contains("offsetToVisualPosition(offset).line"))
+        assertTrue("视觉行缓存短暂不同步时应跳过本帧", body.contains("catch (_: IndexOutOfBoundsException)"))
+        assertFalse("不再按文档行数等比例分布", navigator.normalized.contains("markerY("))
+    }
+
+    @Test
+    fun `用户消息使用左侧浮层横线并支持点击滚动与落点高亮`() {
+        assertTrue(navigator.normalized.contains("scrollingModel.scrollTo"))
+        assertTrue(editor.normalized.contains("setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)"))
+        assertTrue(editor.normalized.contains("setLayer(navigatorPreview, JLayeredPane.POPUP_LAYER)"))
+        val click = navigator.bodyAfter("override fun mouseClicked(event: MouseEvent)", '{')
+        assertTrue("点击后高亮落点", click.contains("flashLanding(currentEditor, anchor, offset, outputStart)"))
+        assertFalse("等距排列后不再有同位置循环点击", navigator.normalized.contains("nextCollocatedAnchor"))
+    }
+
+    /**
+     * 卡片是终端层里的普通组件，换横线只挪位置、换文字：Balloon 换点只能重建，会闪，
+     * 而且 hide-on-click-outside 会吞掉第一下点击。
+     */
+    @Test
+    fun `悬停卡片是终端层组件而不是 Balloon`() {
+        assertFalse(navigator.normalized.contains("createBalloonBuilder"))
+        assertFalse(navigator.normalized.contains("import com.intellij.openapi.ui.popup.Balloon"))
+        val body = navigator.bodyAfter("private fun showPreview(anchor: UserMessageAnchor)", '{')
+        assertTrue("卡片纵向对齐横线并收进可视区", body.contains("previewCardBounds("))
+        assertTrue("停在同一根横线上不重摆卡片", body.contains("!previewNeedsRebuild"))
+        assertTrue(body.contains("previewCard.isVisible"))
+    }
+
+    /**
+     * 整列盖在终端上层，命中区放多大就吃掉终端多少鼠标事件。只认横线本身，
+     * 横线之间、右侧空白的点击、拖选、滚轮都要落到终端。
+     */
+    @Test
+    fun `命中区只认横线本身`() {
+        assertTrue(
+            navigator.compactArgs(navigator.normalized).contains(
+                navigator.compactArgs("override fun contains(x: Int, y: Int): Boolean = hitPoint(x, y) != null"),
+            ),
+        )
+        val body = navigator.bodyAfter("private fun hitPoint(x: Int, y: Int): AnchorPoint?", '{')
+        assertTrue(body.contains("tickHitIndex("))
+        assertTrue(body.contains("TICK_HIT_SLACK"))
+        assertTrue(body.contains("TICK_HIT_BAND"))
+    }
+
+    @Test
+    fun `落点高亮会自动撤掉并在解绑时清理`() {
+        val flash = navigator.bodyAfter("private fun flashLanding(currentEditor: Editor, anchor: UserMessageAnchor, start: Int, outputStart: Long)", '{')
+        assertTrue(flash.contains("clearLanding()"))
+        assertTrue(flash.contains("LANDING_HIGHLIGHT_MS"))
+        assertTrue(navigator.bodyAfter("private fun unbind()", '{').contains("clearLanding()"))
     }
 }
