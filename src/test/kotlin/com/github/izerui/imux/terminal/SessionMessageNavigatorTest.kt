@@ -185,6 +185,41 @@ class SessionMessageNavigatorTest {
         assertEquals(document.indexOf("收尾") + 2L, anchor.endAbsoluteOffset)
     }
 
+    /**
+     * 提问内部有循环重复的片段时，前 120 个有效字符会在同一条输入里出现多次，`lastIndexOf`
+     * 取到的是靠后那一处，点击就跳到提问中间。候选起点要先用完整输入验证，能整段对上的才是开头。
+     */
+    @Test
+    fun `提问内部有重复片段时起点仍落在整段输入开头`() {
+        val user = "第一段说明背景。".repeat(20) + "最后一句收尾"
+        val wrapped = user.chunked(30).joinToString("\n  ")
+        val document = "> $wrapped\n\n⏺ 收到，开始处理\n"
+
+        val anchor =
+            locateUserMessageAnchors(document, listOf(SessionExchange(user, "收到，开始处理"))).single()
+
+        assertEquals(document.indexOf("第一段"), anchor.offset)
+        assertEquals(document.indexOf("收尾") + 2L, anchor.endAbsoluteOffset)
+    }
+
+    /** 重复片段落在用户输入色块里时同样如此：整段对上且在色块内的位置优先。 */
+    @Test
+    fun `重复片段都在色块内时仍取整段对上的开头`() {
+        val user = "第一段说明背景。".repeat(20) + "最后一句收尾"
+        val wrapped = user.chunked(30).joinToString("\n  ")
+        val document = "> $wrapped\n\n⏺ 收到，开始处理\n"
+        val inputEnd = document.indexOf("\n\n⏺")
+
+        val anchor =
+            locateUserMessageAnchors(
+                document,
+                listOf(SessionExchange(user, "收到，开始处理")),
+                preferredRanges = listOf(PreferredTextRange(0L, inputEnd.toLong())),
+            ).single()
+
+        assertEquals(document.indexOf("第一段"), anchor.offset)
+    }
+
     /** 往后延伸只沿着这一轮的输入走，碰到回复就停，不会把回复也高亮进去。 */
     @Test
     fun `结束位置不越过本轮回复`() {

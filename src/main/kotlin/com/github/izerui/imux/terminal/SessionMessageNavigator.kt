@@ -191,30 +191,18 @@ internal fun locateUserMessageAnchorsIndexed(
         if (key.isEmpty()) return@forEach
         // 回复只取开头当挡板：越往后越可能遇到表格、链接、代码块这类渲染后面目全非的内容
         val needle = key.take(if (exchangeIndex != null) MATCH_PREFIX_CHARS else REPLY_MATCH_CHARS)
+        // 用户输入的上界是本轮回复的起点（searchBefore + 1）：起点验证与结束位置延伸都不越过它
+        val limit = searchBefore + 1
         val found =
-            if (exchangeIndex != null && preferredRanges.isNotEmpty()) {
-                lastIndexOfPreferredOccurrence(
-                    document,
-                    needle,
-                    searchBefore,
-                    documentStartOffset,
-                    preferredRanges,
-                ) ?: document.text.lastIndexOf(needle, searchBefore)
+            if (exchangeIndex != null) {
+                userInputStart(document, key, needle, searchBefore, limit, documentStartOffset, preferredRanges)
             } else {
                 document.text.lastIndexOf(needle, searchBefore)
             }
         if (found < 0) return@forEach
         if (exchangeIndex != null && exchange != null) {
-            // 起点只靠前缀定位；结束位置沿完整输入继续比对，落点高亮才能盖住整段长提问。
-            // 上界是这一轮回复的起点（searchBefore + 1），不会延伸进回复里。
-            val matched =
-                matchedLength(
-                    document.text,
-                    key,
-                    start = found,
-                    prefix = needle.length,
-                    limit = maxOf(searchBefore + 1, found + needle.length),
-                )
+            // 结束位置沿完整输入继续比对，落点高亮才能盖住整段长提问
+            val matched = matchedLength(document.text, key, start = found, prefix = needle.length, limit = maxOf(limit, found + needle.length))
             anchors +=
                 IndexedUserMessageAnchor(
                     exchangeIndex,
@@ -245,29 +233,49 @@ private fun matchedLength(
     return length
 }
 
-private fun lastIndexOfPreferredOccurrence(
+/**
+ * 在 [searchBefore] 之前挑一处用户输入的起点。
+ *
+ * 前缀只是用来找候选的：提问内部有循环重复的片段时，同一个前缀会在这条输入里出现多次，
+ * 直接取最后一处就会跳到提问中间。所以每个候选都再用完整输入验证一遍，优先级依次为：
+ *
+ * 1. 整段对上，且起点落在用户输入色块里；
+ * 2. 整段对上（色块读取失败、或 CLI 不画色块时）；
+ * 3. 只有前缀对上，但起点在色块里（transcript 与渲染略有出入，比如图片占位符）；
+ * 4. 只有前缀对上的最后一处——与旧行为一致的兜底。
+ *
+ * 同一档里取最靠后的，保持「重复提问按轮次分开」与「裁剪后归给较新一轮」的既有规律。
+ */
+private fun userInputStart(
     document: NormalizedText,
+    key: String,
     needle: String,
     searchBefore: Int,
+    limit: Int,
     documentStartOffset: Long,
     preferredRanges: List<PreferredTextRange>,
-): Int? {
+): Int {
+    var complete = -1
+    var preferred = -1
+    var latest = -1
     var cursor = searchBefore
     while (cursor >= 0) {
         val found = document.text.lastIndexOf(needle, cursor)
-        if (found < 0) return null
-        // 色块只到首行行尾，多行提问整段装不进去；起点落在色块里就够了
+        if (found < 0) break
         val absoluteOffset = documentStartOffset + document.offsets[found]
-        if (
-            preferredRanges.any { range ->
-                absoluteOffset >= range.startAbsoluteOffset && absoluteOffset < range.endAbsoluteOffset
-            }
-        ) {
-            return found
-        }
+        // 色块只到首行行尾，多行提问整段装不进去；起点落在色块里就够了
+        val inPreferred =
+            preferredRanges.any { absoluteOffset >= it.startAbsoluteOffset && absoluteOffset < it.endAbsoluteOffset }
+        val whole =
+            matchedLength(document.text, key, found, needle.length, maxOf(limit, found + needle.length)) == key.length
+        // 没有色块可比时，最靠后的整段匹配就是最优解，不必再往前扫
+        if (whole && (inPreferred || preferredRanges.isEmpty())) return found
+        if (whole && complete < 0) complete = found
+        if (inPreferred && preferred < 0) preferred = found
+        if (latest < 0) latest = found
         cursor = found - 1
     }
-    return null
+    return listOf(complete, preferred, latest).firstOrNull { it >= 0 } ?: -1
 }
 
 internal fun changeCanMoveAnchors(
