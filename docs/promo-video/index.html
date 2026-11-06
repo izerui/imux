@@ -1,0 +1,1016 @@
+<!doctype html>
+<html lang="zh-CN" data-composition-variables='[
+  {"id":"hook1","type":"string","label":"开场·上句","default":"今天想通了一个道理：","group":"文案"},
+  {"id":"hook2","type":"string","label":"开场·下句","default":"有些活，不必一个人干","group":"文案"},
+  {"id":"capPanel","type":"string","label":"会话面板","default":"七个终端，\n收进一个面板","group":"文案"},
+  {"id":"capNotify","type":"string","label":"完成提醒","default":"跑完了，它会叫你","group":"文案"},
+  {"id":"capNav","type":"string","label":"消息导航","default":"几百轮对话，一点就到","group":"文案"},
+  {"id":"capClarify","type":"string","label":"先聊再做","default":"动手之前，先聊清楚","group":"文案"},
+  {"id":"capIde","type":"string","label":"重构调试","default":"让 AI 用上 IDE 的真本事","group":"文案"},
+  {"id":"capTools","type":"string","label":"IDE 工具","default":"IDE 有的，AI 都能用","group":"文案"},
+  {"id":"capMcp","type":"string","label":"IDEA MCP","default":"只给 imux 会话，不碰全局配置","group":"文案"},
+  {"id":"capTrail","type":"string","label":"会话轨迹","default":"几百轮对话，\n捋成一条线","group":"文案"},
+  {"id":"capHand","type":"string","label":"会话转移","default":"这个活，交给 Codex 接着干","group":"文案"},
+  {"id":"capRobot","type":"string","label":"添加机器人","default":"扫一下，手机就连上","group":"文案"},
+  {"id":"capPhone","type":"string","label":"手机桥接","default":"人走开了，\n会话还在跑","group":"文案"},
+  {"id":"capSet","type":"string","label":"设置","default":"想怎么用，都能调","group":"文案"},
+  {"id":"capTalk","type":"string","label":"直接说","default":"不用点菜单，直接说","group":"文案"},
+  {"id":"capPmenu","type":"string","label":"选副驾驶","default":"一个人写，\n不如两个人看","group":"文案"},
+  {"id":"capReview","type":"string","label":"审查一次","default":"说一句，就预约审查","group":"文案"},
+  {"id":"tagline","type":"string","label":"结尾定位语","default":"把 JetBrains IDE 变成 AI 编程驾驶舱","group":"文案"},
+  {"id":"install","type":"string","label":"结尾安装提示","default":"JetBrains Marketplace 搜索 imux","group":"文案"}
+]'>
+<head>
+<meta charset="utf-8">
+<title>imux · 有些活，不必一个人干</title>
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/om.js"></script>
+<link rel="stylesheet" href="assets/ui/ui.css">
+<script src="assets/ui/ui.js"></script>
+<script src="assets/ui/ui2.js"></script>
+<style id="om-fonts">
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-500.woff") format("woff"); font-weight: 500; font-style: normal; }
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-900.woff") format("woff"); font-weight: 900; font-style: normal; }
+@font-face { font-family: "LXGW WenKai"; src: url("assets/fonts/LXGWWenKai-500.woff") format("woff"); font-weight: 500; font-style: normal; }
+@font-face { font-family: "Inter"; src: url("assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; font-style: normal; }
+</style>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  #film { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #15343a; }
+  .scene { position: absolute; inset: 0; overflow: hidden; visibility: hidden; }
+  .cam { position: absolute; inset: 0; }
+  .hand { font-family: "LXGW WenKai", serif; font-weight: 500; }
+  .cap { position: absolute; font-family: "LXGW WenKai", serif; color: #2a1a10; font-size: 84px; line-height: 1.18; letter-spacing: 3px; white-space: pre; }
+  .cap.light { color: #fff6e6; text-shadow: 0 4px 28px #0007; }
+  .cap em { font-style: normal; color: #9a4a12; }
+  .cap.light em { color: #f2c27a; }
+  .ch { display: inline-block; }
+
+  /* 内景：暖灯照着的墙 */
+  .ground { position: absolute; inset: 0; background:
+      radial-gradient(1100px 760px at 58% 40%, #ffdca4 0%, #f0b571 42%, #d98d4c 75%, #a85a28 100%); }
+  .ground::after { content: ""; position: absolute; inset: 0; background: url("assets/grain.svg"); opacity: .55; mix-blend-mode: multiply; }
+  .ground::before { content: ""; position: absolute; left: 980px; top: -120px; width: 1100px; height: 1000px; background:
+      linear-gradient(90deg, transparent 47%, #5a2c1040 48.5%, #5a2c1040 51.5%, transparent 53%),
+      linear-gradient(180deg, transparent 44%, #5a2c1038 45.5%, #5a2c1038 48.5%, transparent 50%);
+      transform: skewX(-14deg) rotate(4deg); filter: blur(14px); }
+  .ground .sill2 { position: absolute; left: 0; right: 0; bottom: 0; height: 46px; background: linear-gradient(#5a3a26, #3d271a); box-shadow: 0 -6px 18px #3a1a0855; }
+  .ground.teal::before { display: none; }
+  .ground.teal { background: radial-gradient(1100px 760px at 50% 40%, #3f6763 0%, #24474a 55%, #15343a 100%); }
+
+  /* 终端纸片 */
+  .paper { position: absolute; left: 0; top: 0; width: 300px; height: 190px; box-sizing: border-box; background: #1e1f22; border: 3px solid #fff3df; border-radius: 12px; box-shadow: 0 18px 40px #3a1a0866; overflow: hidden; font-family: Menlo, monospace; color: #9a9da3; font-size: 15px; }
+  .paper .bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border-bottom: 2px solid #393b40; color: #dfe1e5; font-family: "Inter", "PingFang SC", sans-serif; font-size: 16px; white-space: nowrap; }
+  .paper .bar i { width: 9px; height: 9px; border-radius: 50%; background: #5c5e63; flex: none; }
+  .paper .bar b { font-weight: 500; margin-left: 6px; }
+  .paper .l { height: 6px; margin: 16px 14px 0; border-radius: 3px; background: #6f737a; }
+  .paper .l.b { background: #548af7; }
+
+  .streaks path { fill: none; stroke: #fff3df; stroke-linecap: round; }
+  .ui-win .ui-term { border: 0; border-radius: 0; box-shadow: none; }
+  .recap { position: absolute; left: 90px; bottom: 90px; font-size: 92px; transform: rotate(-3deg); color: #2a1a10; }
+  .sticker { position: absolute; background: #f6d3a0; padding: 18px 34px 22px; border-radius: 6px; box-shadow: 0 16px 40px #0006; }
+</style>
+</head>
+<body>
+<div id="film" data-composition-id="imux-promo" data-width="1920" data-height="1080">
+
+  <!-- 外景：小城（开场黄昏、中段傍晚、结尾夜） -->
+  <section class="scene" id="ext" data-om-id="ext">
+    <div class="cam" id="extCam">
+      <svg id="town" width="1920" height="1080" viewBox="0 0 1920 1080" style="position:absolute;inset:0;overflow:visible"></svg>
+      <div id="bigWin" data-om-id="window" style="position:absolute;left:1180px;top:240px;width:560px;height:400px;background:radial-gradient(420px 300px at 50% 45%,#ffdca4,#f0b571 60%,#d98d4c);border:22px solid #4a3020;box-sizing:border-box;border-radius:4px;box-shadow:0 0 140px 40px #f0a85a55">
+        <div style="position:absolute;left:50%;top:0;bottom:0;width:14px;margin-left:-7px;background:#4a3020"></div>
+        <div style="position:absolute;top:46%;left:0;right:0;height:14px;background:#4a3020"></div>
+      </div>
+      <div id="sill" style="position:absolute;left:1150px;top:640px;width:620px;height:30px;background:#3d271a;border-radius:3px"></div>
+      <div id="hookPapers"></div>
+      <svg id="plane" viewBox="0 0 120 80" width="120" height="80" style="position:absolute;left:0;top:0;overflow:visible;opacity:0">
+        <path d="M2 40 L118 4 L70 76 L54 50 Z" fill="#fff6e6" stroke="#2a1a10" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M54 50 L118 4" stroke="#2a1a10" stroke-width="3"/>
+      </svg>
+    </div>
+    <div class="cap light" id="hookCap" style="left:120px;top:120px;white-space:normal">
+      <div style="font-size:48px;opacity:.88" data-om-id="hook1" data-var-text="hook1"></div>
+      <div style="margin-top:14px" data-om-id="hook2" data-om-var="hook2" id="hook2"></div>
+    </div>
+    <div id="endCard" style="position:absolute;left:0;right:0;top:150px;text-align:center;color:#fff6e6;opacity:0" data-om-id="end">
+      <div style="display:inline-flex;align-items:center;gap:36px">
+        <svg width="150" height="150" viewBox="0 0 40 40" fill="none"><rect x="5" y="6" width="30" height="20" rx="5" stroke="#fff6e6" stroke-width="2.5"/><circle cx="14" cy="16" r="2.6" fill="#f2c27a"/><circle cx="26" cy="16" r="2.6" fill="#f2c27a"/><path d="M15.5 29.5L20 34L24.5 29.5" stroke="#fff6e6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span style="font:800 170px/1 Inter;letter-spacing:-4px">imux</span>
+      </div>
+      <div class="hand" style="font-size:64px;margin-top:30px;letter-spacing:3px" data-var-text="tagline"></div>
+      <div id="agents" style="display:inline-flex;gap:46px;margin-top:34px;font:500 40px Inter;align-items:center">
+        <span style="display:flex;gap:14px;align-items:center"><img src="materials/claude@2x.png" width="46">Claude Code</span>
+        <span style="display:flex;gap:14px;align-items:center"><img src="materials/codex@2x_dark.png" width="46">Codex</span>
+        <span style="display:flex;gap:14px;align-items:center"><img src="materials/pi@2x_dark.png" width="46">Pi</span>
+      </div>
+      <div class="hand" style="font-size:50px;margin-top:30px;letter-spacing:2px;color:#f2c27a" data-var-text="install" id="install"></div>
+    </div>
+  </section>
+
+  <!-- 会话面板 -->
+  <section class="scene" id="s1" data-om-id="s1">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="s1cam"><div id="s1panel" style="position:absolute;left:1080px;top:190px"></div><div id="s1papers"></div></div>
+    <div class="cap" style="left:120px;top:140px" data-om-id="capPanel" data-var-text="capPanel"></div>
+    <div class="cap hand" id="s1note" style="left:130px;top:430px;font-size:44px;color:#9a4a12">双击旧会话，接着聊 →</div>
+  </section>
+
+  <!-- 完成提醒 + 窗口标题 -->
+  <section class="scene" id="snt" data-om-id="snt">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="sntcam"><div id="sntwin" style="position:absolute;left:110px;top:250px;transform:scale(.95);transform-origin:0 0"></div>
+      <div id="sntb" style="position:absolute;left:1180px;top:700px"></div></div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capNotify" data-var-text="capNotify"></div>
+  </section>
+
+  <!-- 消息导航 -->
+  <section class="scene" id="snav" data-om-id="snav">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="snavcam"><div id="snavterm" style="position:absolute;left:110px;top:250px;transform:scale(.95);transform-origin:0 0"></div><style>#snavterm .body{overflow:hidden}</style></div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capNav" data-var-text="capNav"></div>
+  </section>
+
+  <!-- 先聊再做 -->
+  <section class="scene" id="s2" data-om-id="s2">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="s2cam"><div id="s2dlg" style="position:absolute;left:300px;top:270px;transform:rotate(-1.2deg)"></div></div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capClarify" data-var-text="capClarify"></div>
+  </section>
+
+  <!-- 重构与调试 -->
+  <section class="scene" id="s3" data-om-id="s3">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="s3cam"><div id="s3term" style="position:absolute;left:110px;top:270px;transform:scale(1.02) rotate(-1deg);transform-origin:0 0"></div></div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capIde" data-var-text="capIde"></div>
+  </section>
+
+  <!-- 数据库 / 检查 / 格式化 / 运行配置 -->
+  <section class="scene" id="stools" data-om-id="stools">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="stoolscam"><div id="stoolsterm" style="position:absolute;left:90px;top:230px;transform:rotate(-1deg);transform-origin:0 0"></div>
+      <div id="stoolstags" class="hand"></div></div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capTools" data-var-text="capTools"></div>
+  </section>
+
+  <!-- IDEA MCP 设置 -->
+  <section class="scene" id="smcp" data-om-id="smcp">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="smcpcam"><div id="smcpdlg" style="position:absolute;left:150px;top:180px;transform:scale(.88) rotate(-1deg);transform-origin:0 0"></div></div>
+    <div class="cap sticker" style="left:90px;top:930px;font-size:60px;transform:rotate(-2deg)" data-om-id="capMcp" data-var-text="capMcp"></div>
+    <div class="sticker hand" id="smcpides" style="left:560px;top:40px;font-size:36px;transform:rotate(-1.5deg);white-space:nowrap">IntelliJ IDEA · PyCharm · WebStorm · GoLand · Rider · CLion · 所有 JetBrains IDE</div>
+  </section>
+
+  <!-- 会话轨迹 -->
+  <section class="scene" id="s6" data-om-id="s6">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="s6cam">
+      <div id="s6card" style="position:absolute;left:1000px;top:130px;transform:scale(1.15);transform-origin:0 0"></div>
+      <svg width="1920" height="1080" style="position:absolute;inset:0"><path id="scribble" pathLength="1" fill="none" stroke="#2a1a10" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="cap" style="left:120px;top:140px" data-om-id="capTrail" data-var-text="capTrail"></div>
+  </section>
+
+  <!-- 会话转移 -->
+  <section class="scene" id="shand" data-om-id="shand">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="shandcam"><div id="shandterm" style="position:absolute;left:110px;top:230px;transform:scale(.95);transform-origin:0 0"></div>
+      <div id="shandmenu" style="position:absolute;left:820px;top:470px"></div><div id="shandsub" style="position:absolute;left:1218px;top:574px"></div></div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capHand" data-var-text="capHand"></div>
+  </section>
+
+  <!-- 添加机器人 -->
+  <section class="scene" id="srobot" data-om-id="srobot">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="srobotcam"><div id="srobotdlg" style="position:absolute;left:660px;top:150px;transform:scale(.95) rotate(1deg);transform-origin:0 0"></div></div>
+    <div class="cap" style="left:110px;top:120px;white-space:pre" data-om-id="capRobot">扫一下，
+手机就连上</div>
+  </section>
+
+  <!-- 海边 -->
+  <section class="scene" id="sea" data-om-id="sea">
+    <svg width="1920" height="1080" style="position:absolute;inset:0">
+      <defs><linearGradient id="seaSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#15343a"/><stop offset=".5" stop-color="#3f6763"/><stop offset=".78" stop-color="#d48a4c"/><stop offset="1" stop-color="#f2b56b"/></linearGradient>
+      <linearGradient id="seaW" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c8834a"/><stop offset=".25" stop-color="#3f6763"/><stop offset="1" stop-color="#15343a"/></linearGradient></defs>
+      <rect y="-600" width="1920" height="1360" fill="url(#seaSky)"/>
+      <circle cx="560" cy="752" r="120" fill="#ffd39a" opacity=".85"/>
+      <rect y="752" width="1920" height="330" fill="url(#seaW)"/>
+      <g id="waves" stroke="#ffd9a6" stroke-linecap="round"></g>
+      <g fill="#1a2829"><rect x="250" y="600" width="26" height="152"/><polygon points="242,600 284,600 263,570"/><rect x="0" y="735" width="420" height="20" rx="8"/></g>
+      <circle cx="263" cy="612" r="9" fill="#ffd39a"/>
+    </svg>
+    <div class="cam" id="seaCam"><div id="seaPhone" style="position:absolute;left:1050px;top:28px;transform:scale(.8);transform-origin:0 0"></div></div>
+    <div class="cap light" style="left:120px;top:150px" data-om-id="capPhone" data-var-text="capPhone"></div>
+    <div class="cap light" style="left:124px;top:390px;font-size:38px;opacity:.85">飞书 · 企业微信 · 钉钉 · 微信</div>
+  </section>
+
+  <!-- 设置巡礼 -->
+  <section class="scene" id="sset" data-om-id="sset">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="ssetcam"><div id="ssetdlg" style="position:absolute;left:140px;top:70px;transform:scale(.92) rotate(-.8deg);transform-origin:0 0"></div></div>
+    <div class="cap sticker" style="left:1250px;top:900px;transform:rotate(-2deg);font-size:70px" data-om-id="capSet" data-var-text="capSet"></div>
+  </section>
+
+  <!-- 直接对会话说 -->
+  <section class="scene" id="s8" data-om-id="s8">
+    <div class="ground" id="s8g"><div class="sill2"></div></div>
+    <div class="cap" id="s8cap" style="left:0;right:0;top:110px;text-align:center;font-size:48px;opacity:.8" data-om-id="capTalk" data-var-text="capTalk"></div>
+    <div id="s8beats"></div>
+  </section>
+
+  <!-- 选副驾驶 -->
+  <section class="scene" id="spm" data-om-id="spm">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="spmcam"><div id="spmterm" style="position:absolute;left:560px;top:120px;transform:scale(.72) rotate(-1.5deg);transform-origin:0 0"></div>
+      <div id="spmmenu" style="position:absolute;left:1380px;top:290px"></div></div>
+    <div class="cap" style="left:110px;top:640px" data-om-id="capPmenu" data-var-text="capPmenu"></div>
+    <div class="sticker hand" id="spmcombo" style="left:120px;top:900px;font-size:34px;transform:rotate(-2deg);white-space:nowrap;display:flex;gap:16px;align-items:center">
+      <img src="materials/claude@2x.png" width="34">×<img src="materials/codex@2x.png" width="34">　<img src="materials/codex@2x.png" width="34">×<img src="materials/pi@2x.png" width="34">　<img src="materials/pi@2x.png" width="34">×<img src="materials/claude@2x.png" width="34">　任意搭配</div>
+  </section>
+
+  <!-- 结对编程 -->
+  <section class="scene" id="s4" data-om-id="s4">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="s4cam"><div id="s4term" style="position:absolute;left:300px;top:40px;transform:scale(.86) rotate(-2deg);transform-origin:0 0"></div></div>
+    <div class="cap" id="s4cap" style="left:110px;top:868px;font-size:100px" data-om-id="capPair">一个写，<em>一个挑刺</em></div>
+    <div id="s4chips" class="hand" style="position:absolute;left:1080px;top:900px;display:flex;gap:22px;font-size:38px;color:#2a1a10">
+      <span class="sticker" style="position:relative;padding:12px 26px;display:flex;gap:14px;align-items:center"><img src="materials/claude@2x.png" width="40">Claude Code 写</span>
+      <span class="sticker" style="position:relative;padding:12px 26px;display:flex;gap:14px;align-items:center;background:#e8edf5"><img src="materials/codex@2x.png" width="40">Codex 审</span>
+    </div>
+    <div class="sticker hand" id="s4rounds" style="left:1380px;top:560px;font-size:40px;transform:rotate(3deg)">第 1 轮 · 最多 5 轮</div>
+  </section>
+
+  <!-- 审查一次 -->
+  <section class="scene" id="s5" data-om-id="s5">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="s5cam"><div id="s5term" style="position:absolute;left:60px;top:40px;transform:scale(1.3);transform-origin:0 0"></div></div>
+    <div class="cap sticker" style="left:1080px;top:860px;transform:rotate(-2deg);font-size:76px" data-om-id="capReview" data-var-text="capReview"></div>
+  </section>
+
+  <!-- 整条街的窗：每扇窗里一个功能 -->
+  <section class="scene" id="street" data-om-id="street">
+    <svg width="1920" height="1080" style="position:absolute;inset:0"><defs><linearGradient id="stSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0c1f22"/><stop offset=".6" stop-color="#1d3b3c"/><stop offset="1" stop-color="#4a5a4a"/></linearGradient></defs>
+      <rect width="1920" height="1080" fill="url(#stSky)"/><g id="stStars" fill="#fff6e6" opacity=".7"></g></svg>
+    <div class="cam" id="streetCam"><div id="streetStrip" style="position:absolute;left:0;top:0;width:8200px;height:1080px">
+      <svg id="stFacade" width="8200" height="1080" style="position:absolute;inset:0"></svg></div></div>
+    <div class="cap light" id="stCap1" style="left:120px;top:70px;font-size:72px">每一扇亮着的窗里，</div>
+    <div class="cap light" id="stCap2" style="left:120px;top:70px;font-size:72px">都有人不必一个人干活</div>
+  </section>
+
+  <!-- 三个智能体，一个驾驶舱 -->
+  <section class="scene" id="trio" data-om-id="trio">
+    <div class="ground"><div class="sill2"></div></div>
+    <div class="cam" id="triocam">
+      <div class="tw" id="tw0" style="position:absolute;left:40px;top:300px;transform-origin:0 0"></div>
+      <div class="tw" id="tw1" style="position:absolute;left:660px;top:340px;transform-origin:0 0"></div>
+      <div class="tw" id="tw2" style="position:absolute;left:1280px;top:300px;transform-origin:0 0"></div>
+    </div>
+    <div class="cap" style="left:120px;top:96px" data-om-id="capTrio">三个智能体，一个驾驶舱</div>
+  </section>
+
+  <!-- 闪回 -->
+  <div id="recap" class="sticker hand recap" style="visibility:hidden"></div>
+
+  <!-- 风：转场用的一阵纸片 -->
+  <div id="wipe" style="position:absolute;left:0;top:0;width:1920px;height:1080px;pointer-events:none;visibility:hidden">
+    <div style="position:absolute;left:300px;top:-100px;width:1300px;height:1280px;background:radial-gradient(closest-side,#fff3dfcc,#fff3df00);filter:blur(30px)"></div>
+  </div>
+</div>
+<script>
+const V = OM.vars();
+// 实测重拍（assets/bars-full.json，完整歌曲）：fb(n) 是第 n 小节起点；功能段用 bar(n)，等于 fb(n + 8)
+const FB = [3.344, 5.759, 8.15, 10.565, 12.934, 15.325, 17.74, 20.155, 22.547, 24.938, 27.353, 29.745, 32.136, 34.551, 36.943, 39.335, 41.749, 44.141, 46.533, 48.948, 51.339, 53.754, 56.146, 58.538, 60.952, 63.344, 65.736, 68.151, 70.542, 72.957, 75.349, 77.74, 80.132, 82.547, 84.939, 87.33, 89.745, 92.137, 94.552, 96.943, 99.335, 101.75, 104.141, 106.556, 108.948, 111.34, 113.731, 116.146, 118.538, 120.953, 123.344, 125.736, 128.151, 130.543, 132.957, 135.349, 137.741, 140.156, 142.547, 144.939, 147.331, 149.745, 152.137, 154.552, 156.944, 159.335, 161.75, 164.142, 166.534, 168.948, 171.34, 173.708, 176.123, 178.538, 180.953, 183.345, 185.736, 188.128, 190.543, 192.935, 195.349, 197.741, 200.141];
+const fb = (n) => FB[n];
+const bar = (n) => FB[n + 8];
+const BEAT = 0.6, B = 2.4;
+const END = 200.8;
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const rnd = OM.random(20261106);
+const NS = 'http://www.w3.org/2000/svg';
+const svgEl = (g, tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); g.appendChild(e); return e; };
+const chars = (el, s) => { el.innerHTML = [...s].map((c) => `<span class="ch">${c}</span>`).join(''); return $$('.ch', el); };
+function paper(title, lines = 3) {
+  const d = document.createElement('div');
+  d.className = 'paper';
+  d.innerHTML = `<div class="bar"><i></i><i></i><i></i><b>${title}</b></div>` +
+    Array.from({ length: lines }, (_, k) => `<div class="l ${k ? '' : 'b'}" style="width:${40 + rnd() * 50}%"></div>`).join('');
+  return d;
+}
+const titles = ['claude · 登录接口限流', 'claude · 首页改版', 'codex · 审查并发', 'claude · 重构扫描', 'pi · 发布脚本', 'codex · 分段测试', 'claude · 路径大小写', 'claude · Gradle'];
+
+// ───────── 小城 ─────────
+const town = $('#town');
+town.innerHTML = `<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#15343a"/><stop offset=".55" stop-color="#3f6763"/><stop offset=".82" stop-color="#d48a4c"/><stop offset="1" stop-color="#f2b56b"/></linearGradient>
+  <linearGradient id="night" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#081417"/><stop offset=".7" stop-color="#10272b"/><stop offset="1" stop-color="#2b3f3c"/></linearGradient>
+  <filter id="brush"><feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="3" seed="7"/><feDisplacementMap in="SourceGraphic" scale="9"/></filter>
+  <filter id="soft"><feGaussianBlur stdDeviation="3"/></filter></defs>
+  <rect x="-400" y="-300" width="3200" height="1700" fill="url(#sky)"/>
+  <rect id="nightSky" x="-400" y="-300" width="3200" height="1700" fill="url(#night)" opacity="0"/>
+  <circle id="sun" cx="520" cy="880" r="190" fill="#ffd39a" opacity=".6" filter="url(#soft)"/>
+  <g id="stars" fill="#fff6e6" opacity="0"></g>
+  <g class="streaks" id="extWind"></g>
+  <g id="far" filter="url(#brush)" fill="#4e6f69"></g>
+  <g id="mid" filter="url(#brush)" fill="#2c4645"></g>
+  <g id="near" filter="url(#brush)" fill="#1a2829"></g>`;
+for (let i = 0; i < 70; i++) svgEl($('#stars'), 'circle', { cx: -300 + rnd() * 2900, cy: -250 + rnd() * 700, r: .8 + rnd() * 1.8 });
+const offWins = [];
+function houses(id, y0, hMin, hMax, wMin, wMax, lit) {
+  const g = document.getElementById(id);
+  for (let x = -420; x < 2700;) {
+    const w = wMin + rnd() * (wMax - wMin), h = hMin + rnd() * (hMax - hMin), top = y0 - h;
+    svgEl(g, 'rect', { x, y: top, width: w, height: 1400 - top });
+    if (rnd() < .55) svgEl(g, 'polygon', { points: `${x - 6},${top} ${x + w / 2},${top - w * .45} ${x + w + 6},${top}` });
+    if (rnd() < .3) svgEl(g, 'rect', { x: x + w * .7, y: top - w * .5, width: w * .12, height: w * .4 });
+    for (let wy = top + 18; wy < 1100; wy += 30) for (let wx = x + 12; wx < x + w - 16; wx += 22) {
+      const on = rnd() < lit;
+      const r = svgEl(g, 'rect', { x: wx, y: wy, width: 8, height: 12, fill: rnd() < .7 ? '#e5c07b' : '#f0a060', opacity: on ? .55 + rnd() * .45 : 0 });
+      if (!on && rnd() < .55) offWins.push(r);
+    }
+    x += w + rnd() * 10;
+  }
+}
+houses('far', 880, 40, 170, 60, 130, .16);
+houses('mid', 975, 50, 190, 100, 180, .12);
+houses('near', 1075, 30, 110, 150, 280, .05);
+offWins.sort((a, b) => a.getAttribute('x') - b.getAttribute('x'));
+function windLines(g, n, y0, y1, seed) {
+  const r = OM.random(seed), out = [];
+  for (let i = 0; i < n; i++) {
+    const y = y0 + (y1 - y0) * i / n + r() * 40, x0 = -300 + r() * 200, amp = 40 + r() * 70;
+    out.push(svgEl(g, 'path', { d: `M${x0},${y} C${x0 + 500},${y - amp} ${x0 + 900},${y + amp} ${x0 + 1400},${y - 10} S${x0 + 1900},${y - amp} ${x0 + 2400},${y + 20}`,
+      'stroke-width': 2 + r() * 5, opacity: .16 + r() * .32, pathLength: 1, 'stroke-dasharray': `${.25 + r() * .2} 1`, 'stroke-dashoffset': r() }));
+  }
+  return out;
+}
+const extWind = windLines($('#extWind'), 10, 120, 700, 3);
+const hookPapers = [];
+for (let i = 0; i < 16; i++) {
+  const p = paper(titles[i % titles.length]);
+  $('#hookPapers').appendChild(p);
+  hookPapers.push({ el: p, x: 140 + rnd() * 860, y: 440 + rnd() * 300, r: -30 + rnd() * 60, s: .55 + rnd() * .3 });
+}
+
+// ───────── 各镜界面 ─────────
+$('#s1panel').innerHTML = UI.panel('', { tail: 40 });
+$('#sntwin').innerHTML = UI.win('', UI.term('', { w: 1700, banner: false, bar: false, top: 30, lines: [
+  ['q', '❯ 把 SessionRepository 的扫描逻辑重构一下，别每次全量扫'],
+  ['t', 'Read(src/main/kotlin/session/SessionRepository.kt)'],
+  ['s', '⎿ Read 312 lines'],
+  ['t', 'Update(src/main/kotlin/session/SessionRepository.kt)'],
+  ['s', '⎿ Updated with <span class="ok">48 additions</span> and <span class="warn">71 removals</span>'],
+  ['w', '已完成：改成按目录修改时间增量扫描，冷启动从 1.8s 降到 0.3s。'],
+] }));
+$('#sntb').innerHTML = UI.balloon('');
+$('#snavterm').innerHTML = UI.term('', { w: 1800, banner: false, bar: false, top: 30, lines: [
+  ['q', '❯ 给登录接口加上按 IP 的限流，每分钟 10 次'],
+  ['w', '已完成：登录接口按 IP 限流，每分钟 10 次，超出返回 429。'],
+  ['q', '❯ 改成按账号 + IP 双维度'],
+  ['w', '已改为双维度计数，补了 6 个测试。'],
+  ['q', '❯ 多实例部署时阈值会被放大吗？在文档里写清楚'],
+  ['w', '会。每个实例各自计数，总阈值约等于实例数 × 10。'],
+  ['q', '❯ 429 的提示文案改得友好一点'],
+  ['w', '已改为「操作太频繁，请 1 分钟后再试」。'],
+] });
+$('#s2dlg').innerHTML = UI.clarify();
+$('#s3term').innerHTML = UI.term('', { w: 1640, banner: false, bar: false, top: 36, lines: [
+  ['q', '❯ 把 getUser 改名为 fetchUser，再查查限流为什么没生效'],
+  ['w', '好的。改名用 IDE 的语义重命名，排查直接下断点。'],
+  ['t', '<span style="color:#e5c07b">idea · rename_refactoring</span> (MCP)(getUser → fetchUser)'],
+  ['s', '⎿ <span class="ok">已重命名 23 处引用 · 6 个文件</span> · 同名的 UserCache.getUser 未受影响'],
+  ['t', '<span style="color:#e5c07b">idea · xdebug_set_breakpoint</span> (MCP)(RateLimiter.kt:42)'],
+  ['s', '⎿ 命中断点 · count = 11 · limit = 10 · <span class="warn">时间窗过期后没有清零</span>'],
+  ['w', '找到了：时间窗过期后计数没重置，正在修。'],
+] });
+$('#stoolsterm').innerHTML = UI.term('', { w: 1300, banner: false, bar: false, top: 30, lines: [
+  ['q', '❯ 查查谁被限流最多，修掉检查出的问题，再跑一遍登录测试'],
+  ['t', '<span style="color:#e5c07b">idea · execute_sql_query</span> (MCP)(prod-readonly)'],
+  ['s', '⎿ 10.2.8.14 · 1,284 次　10.2.8.77 · 913 次　172.16.0.5 · 640 次'],
+  ['t', '<span style="color:#e5c07b">idea · lint_files</span> (MCP)(RateLimiter.kt)'],
+  ['s', '⎿ <span class="warn">@Transactional 用在 private 方法上不会生效</span>'],
+  ['t', '<span style="color:#e5c07b">idea · reformat_file</span> (MCP)(RateLimiter.kt)'],
+  ['s', '⎿ 已按项目 Code Style 格式化'],
+  ['t', '<span style="color:#e5c07b">idea · execute_run_configuration</span> (MCP)("LoginControllerTest")'],
+  ['s', '⎿ <span class="ok">14 tests passed</span>'],
+] });
+$('#smcpdlg').innerHTML = UI.settings('mcp');
+$('#s6card').innerHTML = UI.trail();
+$('#shandterm').innerHTML = UI.term('', { w: 1800, banner: false, bar: false, top: 30, lines: [
+  ['q', '❯ 多实例部署时阈值会被放大吗？在文档里写清楚'],
+  ['w', '会。每个实例各自计数，总阈值约等于实例数 × 10。'],
+  ['t', 'Update(docs/deploy.md)'],
+  ['s', '⎿ Updated with <span class="ok">12 additions</span>'],
+  ['w', '正在补充多实例部署的说明……'],
+] });
+$('#shandmenu').innerHTML = UI.menu([{ t: '重命名会话标题' }, { t: '复制会话信息' }, '-', { t: '会话转移', r: '▸', id: 'move' }, '-', { t: '关闭非会话标签页' }]);
+$('#shandsub').innerHTML = UI.menu([{ t: 'Codex', img: 'materials/codex@2x_dark.png', id: 'codex' }, { t: 'Pi', img: 'materials/pi@2x_dark.png', id: 'pi' }]);
+$('#srobotdlg').innerHTML = UI.robot('飞书'); UI.drawQR($('#srobotdlg canvas'), 7);
+$('#seaPhone').innerHTML = UI.phone();
+$('#ssetdlg').innerHTML = UI.settings('general') + UI.settings('lsp') + UI.settings('robots');
+$('#spmterm').innerHTML = UI.term('', { w: 1700, banner: false, barState: 'pair', top: 120, lines: [
+  ['q', '❯ 给登录接口加上按 IP 的限流，每分钟 10 次'],
+  ['w', '我先看一下登录接口和现有的过滤器。'],
+  ['t', 'Read(src/main/kotlin/auth/LoginController.kt)'],
+  ['s', '⎿ Read 186 lines'],
+  ['t', 'Write(src/main/kotlin/auth/RateLimiter.kt)'],
+  ['s', '⎿ Wrote 64 lines'],
+] });
+$('#spmmenu').innerHTML = UI.menu([{ hd: '开启结对编程' }, { t: 'Claude Code', img: 'materials/claude@2x.png', id: 'cc' }, { t: 'Codex', img: 'materials/codex@2x_dark.png', id: 'cx' }, { t: 'Pi', img: 'materials/pi@2x_dark.png', id: 'pi' }, '-', { t: '审查一次…', id: 'once' }]);
+$('#s4term').innerHTML = UI.term('', { w: 1800, top: 110, lines: [
+  ['q', '❯ 给登录接口加上按 IP 的限流，每分钟 10 次'],
+  ['w', '我先看一下登录接口和现有的过滤器。'],
+  ['t', 'Write(src/main/kotlin/auth/RateLimiter.kt)'],
+  ['s', '⎿ Wrote 64 lines'],
+  ['t', 'Bash(./gradlew test --tests "*Login*")'],
+  ['s', '⎿ <span class="ok">BUILD SUCCESSFUL in 12s · 14 tests passed</span>'],
+  ['w', '已完成：登录接口按 IP 限流，每分钟 10 次，超出返回 429。'],
+  ['q', '❯ <span style="color:#e5c07b">[Codex 审查]</span> 计数在并发下不是原子的，两个请求可能同时通过'],
+  ['w', '收到，改用 AtomicInteger，并补一个并发测试。'],
+] });
+$('#s5term').innerHTML = UI.term('', { banner: '<span style="font-size:26px;color:#548af7">ⓘ</span>已预约审查（Codex）：本轮结束后开始', barState: 'pair', top: 120, lines: [
+  ['t', 'Read(src/main/kotlin/auth/LoginController.kt)'],
+  ['s', '⎿ Read 186 lines'],
+  ['t', 'Write(src/main/kotlin/auth/RateLimiter.kt)'],
+  ['s', '⎿ Wrote 64 lines'],
+  ['w', '好的，先预约一次副驾驶审查，这一轮做完后自动开始。'],
+  ['t', 'imux_session - review_once (MCP)(instruction: "重点看并发")'],
+  ['s', '⎿ {"outcome": "scheduled", "partner": "codex"}'],
+] });
+
+// 细部修补
+{ const bn = $('#s5term .banner'); bn.querySelector('.spin')?.remove(); bn.querySelector('a').textContent = '取消预约';
+  const bar1 = $('#s5term .ui-iconbar'); bar1.style.top = '150px';
+  bar1.insertAdjacentHTML('afterend', UI.iconbar('', 'booked')); const bar2 = bar1.nextElementSibling; bar2.style.top = '150px'; bar2.id = 's5booked';
+  $('#s5term .input').innerHTML = '❯ <span id="s5typed" style="color:#dfe1e5"></span><span style="display:inline-block;width:3px;height:30px;background:#dfe1e5;margin-left:2px"></span>'; }
+{ const ib = $('#s4term .ib.review'); ib.innerHTML = '<span class="spin"></span>审查中 <span id="s4sec">3</span>s'; }
+{ const t = $('#s3term [data-ln="2"]'); t.style.position = 'relative'; $('#s3term [data-ln="3"]').style.whiteSpace = 'nowrap';
+  t.insertAdjacentHTML('beforeend', `<div id="ghost" style="position:absolute;left:0;top:0;height:42px;display:flex;align-items:center;gap:14px;background:#1e1f22;width:1500px">
+    <span class="b" style="width:13px;height:13px;border-radius:50%;background:#8d9096"></span><span class="tool mono" style="position:relative">Bash(sed -i 's/getUser/fetchUser/g' **/*.kt)<i id="strike" style="position:absolute;left:-6px;right:-6px;top:50%;height:4px;background:#e06c6c;transform-origin:0 50%"></i></span>
+    <span class="hand" id="ghostNote" style="color:#e5c07b;font-size:34px;margin-left:30px">全局替换？算了。</span></div>`); }
+// 设置：MCP 页的勾选、检测状态做成可切换的两态
+{ const inj = $('#smcpdlg [data-inject]'); inj.innerHTML = '<span class="cb off" id="injOff" style="position:absolute">✓</span><span class="cb" id="injOn">✓</span>'; inj.style.position = 'relative';
+  const conn = $('#smcpdlg [data-conn]'); conn.outerHTML = '<span style="position:relative;display:inline-block;width:200px"><span id="connWait" style="position:absolute;color:#9a9da3;white-space:nowrap">正在检测…</span><span id="connOk" class="ok" style="white-space:nowrap">● 已连接</span></span>'; }
+// 设置巡礼：三页叠放
+$$('#ssetdlg .ui-set').forEach((d, i) => { d.style.position = i ? 'absolute' : 'relative'; d.style.left = '0'; d.style.top = '0'; d.id = 'setp' + i; });
+// 会话转移：新标签
+{ const tabs = $('#shandterm .tabs'); tabs.querySelector('.tab.on').classList.remove('on');
+  tabs.insertAdjacentHTML('beforeend', '<div class="tab on" id="handTab" style="gap:10px"><img src="materials/codex@2x_dark.png" width="28">交给 Codex 继续工作</div>');
+  tabs.firstElementChild.classList.add('on'); tabs.firstElementChild.id = 'handOld';
+  const body = $('#shandterm .body'); body.style.position = 'relative';
+  body.insertAdjacentHTML('beforeend', `<div id="handNew" style="position:absolute;inset:0;background:#1e1f22;padding:30px 32px">
+    <div class="ln q" style="white-space:normal;line-height:1.5">❯ 接手以下会话中的任务。先使用工具完整读取源会话记录，再检查当前工作区并梳理当前进展。反馈已完成事项、剩余事项和相关本地改动，然后等待下一步指示。</div>
+    <div class="ln" style="margin-top:14px"><span class="b" style="width:13px;height:13px;border-radius:50%;background:#8d9096"></span><span class="tool mono">Read(~/.claude/projects/imux/2f6c….jsonl)</span></div>
+    <div class="ln w"><span class="b"></span>已读完原会话：限流已完成并有测试；剩下多实例部署的文档说明。等你下一步指示。</div></div>`); }
+// 消息导航：左边一列短横线 + 悬停卡片
+{ const body = $('#snavterm .body'); body.style.position = 'relative';
+  body.insertAdjacentHTML('beforeend', `<div id="navStrip" style="position:absolute;left:6px;top:24px;width:20px;height:380px">${Array.from({ length: 12 }, (_, i) =>
+    `<i class="nm" data-nm="${i}" style="position:absolute;left:0;top:${i * 31}px;width:14px;height:5px;border-radius:3px;background:#6f737a;transform-origin:0 50%"></i>`).join('')}</div>
+    <div id="navCard" style="position:absolute;left:70px;top:40px;width:760px;background:#2b2d30;border:2px solid #4a4d53;border-radius:14px;padding:18px 24px;box-shadow:0 20px 50px #000a;font-size:23px;line-height:1.5">
+      <div style="color:#9a9da3">第 3 条 / 共 12 条 · 登录接口限流</div><div style="color:#548af7">❯ 多实例部署时阈值会被放大吗？在文档里写清楚</div><div style="color:#c9cbd0">会。每个实例各自计数，总阈值约等于实例数 × 10。</div></div>
+    <div id="navHi" style="position:absolute;left:24px;right:20px;top:${30 + 4 * 42}px;height:42px;background:#548af733;border-radius:6px"></div>`); }
+
+// 光标
+function addCursor(sec) { const c = document.createElement('div'); c.innerHTML = UI.cursor(); const el = c.firstElementChild; $(sec).appendChild(el); gsap.set(el, { opacity: 0 }); return el; }
+
+// 轨迹乱线
+const scribble = $('#scribble');
+const trailAxis = { x: 1000 + 109 * 1.15, y0: 130 + 152 * 1.15, y1: 130 + 620 * 1.15 };
+function drawScribble(k) {
+  const N = 260, pts = [];
+  for (let i = 0; i <= N; i++) {
+    const s = i / N;
+    const tx = 560 + 230 * Math.sin(2 * Math.PI * 3.1 * s) + 95 * Math.sin(2 * Math.PI * 7.3 * s + 1) + 60 * Math.sin(2 * Math.PI * 1.3 * s);
+    const ty = 640 + 190 * Math.cos(2 * Math.PI * 2.3 * s) + 85 * Math.cos(2 * Math.PI * 5.7 * s + .4) + 50 * Math.sin(2 * Math.PI * .7 * s);
+    const sx = trailAxis.x, sy = trailAxis.y0 + s * (trailAxis.y1 - trailAxis.y0);
+    let q = Math.min(1, Math.max(0, k * 1.6 - (1 - s) * .6));
+    q = q * q * (3 - 2 * q);
+    pts.push(`${(tx + (sx - tx) * q).toFixed(1)},${(ty + (sy - ty) * q).toFixed(1)}`);
+  }
+  scribble.setAttribute('d', 'M' + pts.join(' L'));
+}
+drawScribble(0);
+
+for (let i = 0; i < 26; i++) { const y = 775 + i * 12 + i * i * .35, x = rnd() * 1900, w = 60 + rnd() * 240;
+  svgEl($('#waves'), 'path', { d: `M${x},${y} h${w}`, 'stroke-width': 2 + i * .12, opacity: .25 + rnd() * .3 }); }
+
+const talks = [
+  ['「开启结对编程」', '<img src="materials/pair.svg" width="34" style="filter:brightness(2.1)">已开启结对编程 · 副驾驶 Codex', 0],
+  ['「用 codex 结对」', '<img src="materials/codex@2x_dark.png" width="34">副驾驶已换成 Codex', 1],
+  ['「做完让副驾驶审查一次」', '<span style="color:#548af7">ⓘ</span>已预约审查（Codex）：本轮结束后开始', 0],
+  ['「把截图发我手机」', '<img src="materials/phone.svg" width="34" style="filter:brightness(2.1)">截图已发到手机 · 飞书 · 兰陵王', 1],
+];
+$('#s8beats').innerHTML = talks.map(([q, a, teal], i) => `<div class="tk" data-om-id="talk${i}" style="position:absolute;inset:0;visibility:hidden">
+  <div class="hand tq" style="position:absolute;left:0;right:0;top:330px;text-align:center;font-size:${q.length > 9 ? 112 : 136}px;color:${teal ? '#fff6e6' : '#2a1a10'}">${q}</div>
+  <div class="ui ta" style="position:absolute;left:50%;top:620px;transform:translateX(-50%);display:flex;align-items:center;gap:16px;white-space:nowrap;background:#25324d;border:2px solid #3a4f7a;border-radius:16px;padding:20px 34px;font-size:34px;box-shadow:0 20px 50px #0006">${a}</div></div>`).join('');
+
+const wipe = $('#wipe');
+for (let i = 0; i < 16; i++) { const p = paper(titles[i % 8]); wipe.appendChild(p);
+  gsap.set(p, { x: 120 + rnd() * 1600, y: -60 + rnd() * 1100, rotation: -40 + rnd() * 80, scale: .7 + rnd() * .7 }); }
+
+const s1rows = ['c1', 'c2', 'c3', 'c4', 'c5', 'x1', 'x2'].map((id) => $(`#s1panel [data-row="${id}"]`));
+const s1papers = s1rows.map((row, i) => {
+  const p = paper(row.querySelector('.n').textContent, 3);
+  $('#s1papers').appendChild(p);
+  return { el: p, x: [90, 420, 700, 230, 560, 60, 820][i] + rnd() * 50, y: [470, 400, 560, 690, 760, 840, 330][i] + rnd() * 40, r: -32 + rnd() * 64 };
+});
+const rowPos = (row) => { let y = 0, el = row; while (el && el.id !== 's1panel') { y += el.offsetTop; el = el.offsetParent; } return { x: 1080 + 40, y: 190 + y }; };
+
+// ───────── 时间线 ─────────
+const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+const scenes = ['#ext', '#street', '#trio', '#s1', '#snt', '#snav', '#s2', '#s3', '#stools', '#smcp', '#s6', '#shand', '#srobot', '#sea', '#sset', '#s8', '#spm', '#s4', '#s5'];
+gsap.set(scenes, { autoAlpha: 0 });
+gsap.set('#ext', { autoAlpha: 1 });
+const show = (id, at) => { scenes.forEach((s) => tl.set(s, { autoAlpha: s === id ? 1 : 0 }, at)); };
+const hide0 = (els) => { gsap.set(els, { opacity: 0 }); tl.set(els, { opacity: 0 }, 0); };
+const WIN = { x: 1460, y: 440 }, PUSH = 3.9;
+const capIn = (sel, at) => tl.fromTo(sel, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: .5, immediateRender: false }, at);
+const click = (el, at) => tl.fromTo(el, { scale: 1 }, { scale: .8, duration: .08, yoyo: true, repeat: 1, ease: 'power1.inOut', immediateRender: false }, at);
+const move = (el, from, to, at, d = .6) => tl.fromTo(el, { x: from[0], y: from[1], opacity: 1 }, { x: to[0], y: to[1], duration: d, ease: 'power2.inOut', immediateRender: false }, at);
+tl.set('.spin', { rotation: 0 }, 0).to('.spin', { rotation: 360 * 140, duration: END, ease: 'none' }, 0);
+extWind.forEach((p, i) => tl.fromTo(p, { attr: { 'stroke-dashoffset': 1.2 + i * .07 } }, { attr: { 'stroke-dashoffset': -28 - i * .4 }, duration: END, ease: 'none' }, 0));
+
+// 内景环境：风线一直在流，几张小纸片慢慢漂过
+const ambScenes = { '#s1': [3, 6], '#snt': [6, 8], '#snav': [8, 10], '#s2': [10, 12], '#s3': [12, 14], '#stools': [14, 17], '#smcp': [17, 19], '#s6': [19, 21], '#shand': [21, 23], '#srobot': [23, 25], '#sset': [28, 31], '#s8': [31, 33], '#spm': [33, 36], '#s4': [36, 40], '#s5': [40, 43] };
+Object.entries(ambScenes).forEach(([id, [na, nb]], k) => {
+  const a = bar(na), b = bar(nb), sec = $(id), g = document.createElementNS(NS, 'svg');
+  g.setAttribute('width', 1920); g.setAttribute('height', 1080); g.setAttribute('class', 'streaks');
+  g.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+  sec.insertBefore(g, sec.querySelector('.cam') || sec.children[1]);
+  windLines(g, 7, 80, 1000, 40 + k).forEach((p, i) => tl.fromTo(p, { attr: { 'stroke-dashoffset': 1 + i * .13 } }, { attr: { 'stroke-dashoffset': -(b - a) * .55 - i * .1 }, duration: b - a, ease: 'none', immediateRender: false }, a));
+  if (id === '#s8' || id === '#sset' || id === '#smcp') return;
+  const fl = document.createElement('div'); fl.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+  sec.insertBefore(fl, g.nextSibling);
+  for (let i = 0; i < 3; i++) { const p = paper(titles[(i + k) % 8], 2); fl.appendChild(p); gsap.set(p, { opacity: 0 });
+    tl.fromTo(p, { x: -380 + rnd() * 500, y: 440 + rnd() * 500, rotation: -30 + rnd() * 60, scale: .28 + rnd() * .2, opacity: .85 },
+      { x: 1500 + rnd() * 600, y: '-=120', rotation: '+=90', duration: b - a, ease: 'none', immediateRender: false }, a); }
+});
+
+function gust(at) {
+  tl.set(wipe, { visibility: 'visible' }, at - .45).fromTo(wipe, { x: -2300 }, { x: 2300, duration: .9, ease: 'power1.inOut', immediateRender: false }, at - .45)
+    .set(wipe, { visibility: 'hidden' }, at + .46);
+}
+
+// ── 开场（前奏 0～fb(11)）：窗户一扇扇亮起，每扇飞出一张终端纸片，最后被风卷进大窗 ──
+const hook2Ch = chars($('#hook2'), V.hook2);
+tl.addLabel('scene:hook', 0);
+show('#ext', 0);
+tl.set('#extCam', { scale: 1, x: 0, y: 0, transformOrigin: `${WIN.x}px ${WIN.y}px` }, 0);
+tl.fromTo('#far', { x: 0 }, { x: -60, duration: fb(11), ease: 'none' }, 0)
+  .fromTo('#mid', { x: 0 }, { x: -120, duration: fb(11), ease: 'none' }, 0)
+  .fromTo('#near', { x: 0 }, { x: -240, duration: fb(11), ease: 'none' }, 0);
+tl.fromTo('#extCam', { scale: 1.12, transformOrigin: '700px 760px' }, { scale: 1, duration: fb(8), ease: 'sine.inOut', immediateRender: false }, 0)
+  .set('#extCam', { transformOrigin: `${WIN.x}px ${WIN.y}px` }, fb(8));
+hookPapers.forEach((p, i) => {
+  const flyAt = fb(9) + i * .14;
+  if (i < 4) {
+    tl.fromTo(p.el, { x: p.x, y: p.y, rotation: p.r, scale: p.s, opacity: 1 }, { x: p.x + 220, y: p.y - 40, rotation: p.r + 50, duration: flyAt, ease: 'sine.inOut' }, 0);
+  } else {
+    const at = fb(0) + (i - 4) * 1.6, wx = 150 + rnd() * 1100, wy = 780 + rnd() * 110;
+    tl.fromTo(p.el, { x: wx - 150, y: wy - 95, rotation: 0, scale: .05, opacity: 0 }, { x: p.x, y: p.y, rotation: p.r, scale: p.s, opacity: 1, duration: 2.4, ease: 'power2.out', immediateRender: false }, at)
+      .to(p.el, { x: p.x + 200, y: p.y - 30, rotation: p.r + 40, duration: Math.max(.5, flyAt - at - 2.4), ease: 'sine.inOut' }, at + 2.4);
+    gsap.set(p.el, { opacity: 0 });
+  }
+  tl.to(p.el, { x: WIN.x - 150 + (rnd() - .5) * 200, y: WIN.y - 95 + (rnd() - .5) * 140, rotation: (rnd() - .5) * 40, scale: .2, opacity: 0, duration: 1.4, ease: 'power2.in' }, flyAt);
+});
+gsap.set(hook2Ch, { opacity: 0 });
+tl.fromTo(hook2Ch, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: .5, stagger: .07, immediateRender: false }, fb(4));
+tl.to('#hookCap', { opacity: 0, y: -30, duration: .4, ease: 'power2.in' }, fb(11) - .9);
+tl.to('#extCam', { scale: PUSH, duration: .62, ease: 'power3.in' }, fb(11) - .62);
+
+// ── 会话面板（1 2 4）──
+let T = bar(3);
+tl.addLabel('scene:panel', T);
+show('#s1', T);
+tl.fromTo('#s1', { scale: 1.18, opacity: 0 }, { scale: 1, opacity: 1, duration: .35, ease: 'power2.out', immediateRender: false }, T - .1);
+tl.set('#s1', { visibility: 'visible' }, T - .1);
+capIn('#s1 .cap[data-om-id="capPanel"]', T + .35);
+hide0(s1papers.map((p) => p.el));
+s1papers.forEach((p, i) => tl.fromTo(p.el, { x: p.x - 200, y: p.y - 260, rotation: p.r - 40, opacity: 1, scale: 1 },
+  { x: p.x, y: p.y, rotation: p.r, duration: 1.2 + i * .08, ease: 'power2.out', immediateRender: false }, T - .3));
+tl.fromTo('#s1panel', { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: .7, ease: OM.spring(.12) }, bar(4) - .25);
+hide0(s1rows);
+s1rows.forEach((row, i) => {
+  const at = bar(4) + .35 + i * BEAT / 2, p = s1papers[i], tgt = rowPos(row);
+  tl.to(p.el, { x: tgt.x + 160 - 150, y: tgt.y + 24 - 95, rotation: 0, scale: .16, opacity: 0, duration: .5, ease: 'power2.in' }, at)
+    .fromTo(row, { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: .35, immediateRender: false }, at + .42);
+});
+// 双击旧会话 → 转圈（接着聊）
+{ const c4 = $('#s1panel [data-row="c4"]'), st = c4.querySelector('.st'); st.insertAdjacentHTML('beforeend', '<span class="spin" id="c4spin" style="position:absolute"></span>'); st.style.position = 'relative';
+  hide0('#c4spin'); hide0('#s1note');
+  const cur = addCursor('#s1cam'), rp = rowPos(c4);
+  move(cur, [700, 980], [1420, rp.y + 10], bar(5) - .2, .7);
+  click(cur, bar(5) + .6); click(cur, bar(5) + .85);
+  tl.fromTo(c4, { backgroundColor: 'rgba(46,67,110,0)' }, { backgroundColor: 'rgba(46,67,110,1)', duration: .15, immediateRender: false }, bar(5) + .6)
+    .to('#c4spin', { opacity: 1, duration: .1 }, bar(5) + 1.0)
+    .fromTo('#s1note', { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: .4, immediateRender: false }, bar(5) + .3); }
+tl.fromTo('#s1cam', { scale: 1, transformOrigin: '1460px 600px' }, { scale: 1.18, duration: 1, ease: 'power2.inOut' }, bar(5) - .9);
+
+// ── 完成提醒 + 窗口标题（8 10）──
+T = bar(6); gust(T);
+tl.addLabel('scene:notify', T);
+show('#snt', T);
+capIn('#snt .cap', T + .3);
+{ const ttl = $('#sntwin [data-ttl-st]'); ttl.innerHTML = '<span style="position:relative;display:inline-block"><span id="tt1">（2 个运行中）</span><span id="tt2" style="position:absolute;left:0;top:0;white-space:nowrap;color:#e5c07b">（1 个未读 · 1 个运行中）</span></span>';
+  hide0('#tt2');
+  tl.to('#tt1', { opacity: 0, duration: .2 }, T + 1.5).to('#tt2', { opacity: 1, duration: .2 }, T + 1.5)
+    .fromTo('#sntwin .tb .ttl', { scale: 1 }, { scale: 1.12, duration: .25, yoyo: true, repeat: 1, immediateRender: false }, T + 1.5); }
+hide0($$('#sntwin [data-ln="5"]'));
+tl.to('#sntwin [data-ln="5"]', { opacity: 1, duration: .3 }, T + 1.3);
+tl.fromTo('#sntb', { x: 700, opacity: 0 }, { x: 0, opacity: 1, duration: .6, ease: OM.spring(.12) }, T + 1.5);
+{ const cur = addCursor('#sntcam'); move(cur, [900, 1000], [1300, 826], bar(7) - .1, .7); click(cur, bar(7) + .7);
+  tl.to('#sntb', { opacity: 0, y: 40, duration: .3 }, bar(7) + .95); }
+tl.fromTo('#sntcam', { scale: 1, transformOrigin: '1400px 250px' }, { scale: 1.25, duration: .9, ease: 'power2.inOut' }, T + 1.4)
+  .to('#sntcam', { scale: 1, duration: .8, ease: 'power2.inOut' }, bar(7) + 1.1);
+
+// ── 消息导航（11）──
+T = bar(8);
+tl.addLabel('scene:nav', T);
+show('#snav', T);
+capIn('#snav .cap', T + .2);
+hide0(['#navCard', '#navHi']);
+{ const marks = $$('#navStrip .nm'), cur = addCursor('#snavcam');
+  tl.fromTo('#navStrip', { opacity: 0 }, { opacity: 1, duration: .3, immediateRender: false }, T + .3);
+  move(cur, [900, 900], [124, 396], T + .7, .8);
+  tl.to(marks[2], { scaleX: 2.6, backgroundColor: '#dfe1e5', duration: .2 }, T + 1.45)
+    .fromTo('#navCard', { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: .3, immediateRender: false }, T + 1.5);
+  click(cur, bar(9) + .3);
+  tl.to('#navCard', { opacity: 0, duration: .2 }, bar(9) + .4)
+    .fromTo('#snavterm .body > .ln', { y: 0 }, { y: -90, duration: .6, ease: 'power2.inOut', immediateRender: false }, bar(9) + .45)
+    .fromTo('#navHi', { opacity: 0, y: -90 }, { keyframes: [{ opacity: 1, duration: .2 }, { opacity: 0, duration: 1.4, delay: .4 }], immediateRender: false }, bar(9) + .9); }
+tl.fromTo('#snavcam', { scale: 1, transformOrigin: '160px 420px' }, { scale: 1.3, duration: .9, ease: 'power2.inOut' }, T + .7)
+  .to('#snavcam', { scale: 1, duration: .8, ease: 'power2.inOut' }, bar(9) + 1.4);
+
+// ── 先聊再做（21）──
+T = bar(10); gust(T);
+tl.addLabel('scene:clarify', T);
+show('#s2', T);
+{ const qb = $$('#s2dlg .opt'), radio = $('#s2dlg .opt.on .r');
+  radio.parentElement.classList.remove('on');
+  hide0(qb);
+  qb.forEach((o, i) => tl.fromTo(o, { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: .4, immediateRender: false }, T + .5 + i * BEAT));
+  tl.fromTo(radio, { borderWidth: 2, borderColor: '#7a7d83', backgroundColor: 'rgba(255,255,255,0)' }, { borderWidth: 7, borderColor: '#3574f0', backgroundColor: '#ffffff', duration: .2, immediateRender: false }, T + .5 + 4 * BEAT); }
+tl.fromTo('#s2cam', { scale: 1, x: 50, transformOrigin: '900px 330px' }, { x: -10, duration: 2.6, ease: 'sine.inOut' }, T)
+  .to('#s2cam', { scale: 1.18, x: 0, duration: .9, ease: 'power2.inOut' }, T + .5 + 4 * BEAT - .2)
+  .to('#s2cam', { scale: 1, x: 0, duration: .7, ease: 'power2.inOut' }, bar(11) + 1.0);
+tl.fromTo('#s2 .cap', { opacity: 1 }, { opacity: 0, duration: .35, immediateRender: false }, T + .5 + 4 * BEAT - .2).set('#s2 .cap', { opacity: 1 }, 0);
+tl.fromTo('#s2dlg .btn', { scale: 1 }, { scale: .9, duration: .12, yoyo: true, repeat: 1, ease: 'power2.inOut', immediateRender: false }, bar(11) + 1.2);
+
+// ── 重构与调试（12）──
+T = bar(12);
+tl.addLabel('scene:ide', T);
+show('#s3', T);
+{ const lines = $$('#s3term [data-ln]'); hide0(lines);
+  tl.set('#ghost', { x: 0, y: 0, rotation: 0, opacity: 1 }, 0).set('#strike', { scaleX: 0 }, 0).set('#ghostNote', { opacity: 0 }, 0);
+  [0, .5, 1, 2.6, 3.1, 3.6, 4.1].forEach((b, i) => tl.to(lines[i], { opacity: 1, duration: .25 }, T + .15 + b * BEAT));
+  tl.set('#s3term [data-ln="2"] > span:not(#ghost)', { opacity: 0 }, 0).set('#s3term [data-ln="2"] > span:not(#ghost)', { opacity: 1 }, T + .15 + 2.6 * BEAT);
+  tl.to('#strike', { scaleX: 1, duration: .25, ease: 'power2.inOut' }, T + .15 + 1.5 * BEAT)
+    .to('#ghostNote', { opacity: 1, duration: .2 }, T + .15 + 1.5 * BEAT + .1)
+    .to('#ghost', { x: 1700, y: -120, rotation: 14, opacity: 0, duration: .5, ease: 'power2.in' }, T + .15 + 2.1 * BEAT); }
+tl.fromTo('#s3cam', { scale: 1, x: 30, y: 0, transformOrigin: '110px 440px' }, { x: 0, duration: .9, ease: 'sine.inOut' }, T)
+  .to('#s3cam', { scale: 1.3, duration: .8, ease: 'power2.inOut' }, T + .15 + 1.5 * BEAT - .2)
+  .to('#s3cam', { y: -90, duration: .9, ease: 'power2.inOut' }, T + .15 + 3.4 * BEAT)
+  .to('#s3cam', { scale: 1, y: 0, duration: .7, ease: 'power2.inOut' }, bar(14) - .8);
+tl.fromTo('#s3 .cap', { opacity: 1 }, { opacity: 0, duration: .35, immediateRender: false }, T + .15 + 1.5 * BEAT - .2).set('#s3 .cap', { opacity: 1 }, 0);
+
+// ── 数据库 / 检查 / 格式化 / 运行配置（13 14 15）──
+T = bar(14);
+tl.addLabel('scene:tools', T);
+show('#stools', T);
+{ const lines = $$('#stoolsterm [data-ln]'); hide0(lines);
+  const tags = ['数据库', '代码检查', '格式化', '运行配置'], tagEls = tags.map((t, i) => {
+    const d = document.createElement('div'); d.className = 'sticker'; d.textContent = t;
+    d.style.cssText = `left:1450px;top:${360 + i * 168}px;font-size:46px;transform:rotate(${i % 2 ? 3 : -3}deg);white-space:nowrap;background:${['#f6d3a0', '#e8edf5', '#f6d3a0', '#e8edf5'][i]};color:#2a1a10`;
+    $('#stoolstags').appendChild(d); return d; });
+  hide0(tagEls);
+  tl.to(lines[0], { opacity: 1, duration: .25 }, T + .1);
+  for (let k = 0; k < 4; k++) {
+    const at = T + .5 + k * 1.55;
+    tl.to(lines[1 + k * 2], { opacity: 1, duration: .2 }, at).to(lines[2 + k * 2], { opacity: 1, duration: .2 }, at + .45)
+      .fromTo(tagEls[k], { opacity: 0, x: 260, rotation: 20 }, { opacity: 1, x: 0, rotation: k % 2 ? 3 : -3, duration: .45, ease: 'back.out(1.6)', immediateRender: false }, at + .4);
+  } }
+tl.fromTo('#stoolscam', { scale: 1.12, y: 40, transformOrigin: '400px 260px' }, { scale: 1, y: 0, duration: 1.0, ease: 'power2.inOut' }, T + 2.6)
+  .to('#stoolscam', { scale: 1.08, duration: 1.4, ease: 'sine.inOut' }, bar(16));
+
+// ── IDEA MCP 设置（16 17）──
+T = bar(17); gust(T);
+tl.addLabel('scene:mcp', T);
+show('#smcp', T);
+capIn('#smcp .cap', T + .3);
+hide0(['#injOn', '#connWait', '#connOk']);
+{ const cur = addCursor('#smcpcam');
+  move(cur, [1200, 1000], [600, 400], T + .4, .7); click(cur, T + 1.15);
+  tl.to('#injOn', { opacity: 1, duration: .1 }, T + 1.2)
+    .fromTo('#injOn', { scale: .4 }, { scale: 1, duration: .3, ease: 'back.out(3)', immediateRender: false }, T + 1.2);
+  move(cur, [600, 400], [975, 482], T + 1.5, .5); click(cur, T + 2.05);
+  tl.to('#connWait', { opacity: 1, duration: .1 }, T + 2.1).to('#connWait', { opacity: 0, duration: .1 }, T + 2.9).to('#connOk', { opacity: 1, duration: .15 }, T + 2.9); }
+tl.fromTo('#smcpcam', { scale: 1, transformOrigin: '900px 420px' }, { scale: 1.22, duration: .9, ease: 'power2.inOut' }, T + .3)
+  .to('#smcpcam', { transformOrigin: '900px 420px', y: -260, duration: 1, ease: 'power2.inOut' }, bar(18) + .3)
+  .to('#smcpcam', { scale: 1, y: 0, duration: .8, ease: 'power2.inOut' }, bar(19) - .9);
+tl.fromTo('#smcpides', { opacity: 0, y: -40 }, { opacity: 1, y: 0, duration: .5 }, bar(19) - .8);
+
+// ── 会话轨迹（22）──
+T = bar(19);
+tl.addLabel('scene:trail', T);
+show('#s6', T);
+{ const scr = { k: 0 };
+  tl.fromTo('#scribble', { attr: { 'stroke-dasharray': '0 1' } }, { attr: { 'stroke-dasharray': '1 0' }, duration: .7, ease: 'power2.out' }, T);
+  tl.fromTo(scr, { k: 0 }, { k: 1, duration: 1.4, ease: 'power2.inOut', onUpdate: () => drawScribble(scr.k) }, T + .8);
+  const nodes = $$('#s6card .nd'), bits = $$('#s6card .hd, #s6card .stale, #s6card .ft');
+  const z = { backgroundColor: 'rgba(43,45,48,0)', borderColor: 'rgba(67,69,74,0)', boxShadow: '0 30px 80px rgba(0,0,0,0)' };
+  gsap.set('#s6card .ui-trail', z); tl.set('#s6card .ui-trail', z, 0);
+  hide0([...nodes, ...bits]);
+  tl.to('#s6card .ui-trail', { backgroundColor: 'rgba(43,45,48,1)', borderColor: 'rgba(67,69,74,1)', boxShadow: '0 30px 80px rgba(0,0,0,.66)', duration: .4 }, T + 2.1);
+  tl.to('#scribble', { opacity: 0, duration: .3 }, T + 2.3).set('#scribble', { opacity: 1 }, 0);
+  tl.to(bits, { opacity: 1, duration: .3 }, T + 2.2);
+  nodes.forEach((n, i) => tl.fromTo(n, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .25, immediateRender: false }, T + 2.3 + i * .15)); }
+tl.fromTo('#s6cam', { scale: 1, y: 0, transformOrigin: '1400px 300px' }, { scale: 1.16, duration: .9, ease: 'power2.inOut' }, T + 2.1)
+  .to('#s6cam', { y: -80, duration: .9, ease: 'power2.inOut' }, T + 3.1)
+  .to('#s6cam', { scale: 1, y: 0, duration: .6, ease: 'power2.inOut' }, T + 4.1);
+
+// ── 会话转移（23）──
+T = bar(21);
+tl.addLabel('scene:handoff', T);
+show('#shand', T);
+capIn('#shand .cap', T + .2);
+hide0(['#shandmenu', '#shandsub', '#handTab', '#handNew']);
+{ const cur = addCursor('#shandcam');
+  move(cur, [1600, 1000], [820, 470], T + .3, .6); click(cur, T + .95);
+  tl.fromTo('#shandmenu', { opacity: 0, scale: .9, transformOrigin: '0 0' }, { opacity: 1, scale: 1, duration: .2, immediateRender: false }, T + 1.0);
+  move(cur, [820, 470], [1000, 612], T + 1.4, .45);
+  tl.set('#shandmenu [data-it="move"]', { attr: { class: 'it on' } }, T + 1.8).set('#shandmenu [data-it="move"]', { attr: { class: 'it' } }, 0)
+    .fromTo('#shandsub', { opacity: 0, x: -10 }, { opacity: 1, x: 0, duration: .2, immediateRender: false }, T + 1.85);
+  move(cur, [1000, 612], [1320, 606], T + 2.15, .4);
+  tl.set('#shandsub [data-it="codex"]', { attr: { class: 'it on' } }, T + 2.5).set('#shandsub [data-it="codex"]', { attr: { class: 'it' } }, 0);
+  click(cur, T + 2.75);
+  tl.to(['#shandmenu', '#shandsub'], { opacity: 0, duration: .15 }, T + 2.9)
+    .to(cur, { opacity: 0, duration: .2 }, T + 3.0)
+    .fromTo('#handTab', { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: .3, immediateRender: false }, T + 3.0)
+    .set('#handOld', { attr: { class: 'tab' } }, T + 3.0).set('#handOld', { attr: { class: 'tab on' } }, 0)
+    .fromTo('#handNew', { opacity: 0, x: 120 }, { opacity: 1, x: 0, duration: .45, ease: 'power2.out', immediateRender: false }, T + 3.1); }
+tl.fromTo('#shandcam', { scale: 1, transformOrigin: '700px 300px' }, { scale: 1.15, duration: .8, ease: 'power2.inOut' }, T + 3.0);
+
+// ── 添加机器人（25）──
+T = bar(23); gust(T);
+tl.addLabel('scene:robot', T);
+show('#srobot', T);
+capIn('#srobot .cap', T + .3);
+{ const chs = $$('#srobotdlg .ch'), names = ['飞书', '企业微信', '钉钉', '微信'];
+  for (let k = 0; k < 5; k++) { const at = T + .4 + k * BEAT, c = k % 4;
+    chs.forEach((el, j) => tl.set(el, { attr: { class: j === c ? 'ch on' : 'ch' } }, at));
+  }
+  // 渠道名：四份文字叠放切换
+  const scan = $('#srobotdlg [data-scan]'), ch2 = $('#srobotdlg [data-ch2]');
+  scan.innerHTML = names.map((n, i) => `<span class="sv" style="white-space:nowrap;${i ? 'position:absolute;left:0;' : ''}">用${n}扫码</span>`).join(''); scan.style.position = 'relative'; scan.style.display = 'inline-block';
+  ch2.parentElement.firstChild.textContent = '1. 打开手机'; ch2.innerHTML = '<span class="cv"></span>';
+  const sv = $$('#srobotdlg .sv'), cv = [];
+  hide0([...sv.slice(1), ...cv.slice(1)]);
+  for (let k = 0; k < 5; k++) { const at = T + .4 + k * BEAT, c = k % 4; sv.forEach((e, j) => tl.set(e, { opacity: j === c ? 1 : 0 }, at)); cv.forEach((e, j) => tl.set(e, { opacity: j === c ? 1 : 0 }, at)); }
+  const w = $('#srobotdlg [data-wait]'); w.insertAdjacentHTML('afterend', '<div class="w" id="robOk" style="color:#5fb865"><i style="background:#5fb865"></i>已配对，可以连接会话了</div>');
+  hide0('#robOk');
+  tl.to(w, { opacity: 0, duration: .15 }, bar(24) + .9).fromTo('#robOk', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: .3, immediateRender: false }, bar(24) + .9)
+    .fromTo('#srobotdlg .qr', { opacity: 1 }, { opacity: .25, duration: .3, immediateRender: false }, bar(24) + .9); }
+tl.fromTo('#srobotcam', { scale: 1, transformOrigin: '700px 520px' }, { scale: 1.2, duration: .9, ease: 'power2.inOut' }, T + 3.0);
+
+// ── 手机桥接（26 27）：从窗里拉出来 → 纸飞机 → 海边 ──
+T = bar(25);
+tl.addLabel('scene:phone', T);
+tl.set('#srobot', { autoAlpha: 1 }, T).set('#ext', { autoAlpha: 1 }, T);
+scenes.filter((s) => s !== '#srobot' && s !== '#ext').forEach((s) => tl.set(s, { autoAlpha: 0 }, T));
+tl.set('#srobot', { zIndex: 3 }, T).set('#srobot', { zIndex: 0 }, 0);
+tl.fromTo('#srobot', { scale: 1, x: 0, y: 0 }, { scale: .3, x: WIN.x - 960, y: WIN.y - 540, duration: .8, ease: 'power3.inOut', immediateRender: false }, T)
+  .to('#srobot', { autoAlpha: 0, duration: .25 }, T + .6);
+tl.set('#srobot', { scale: 1, x: 0, y: 0 }, T + 1);
+tl.fromTo('#extCam', { scale: PUSH }, { scale: 1, duration: .8, ease: 'power3.inOut', immediateRender: false }, T);
+tl.set(['#far', '#mid', '#near'], { x: 0 }, T).set(hookPapers.map((p) => p.el), { opacity: 0 }, T).set('#hookCap', { opacity: 0 }, T);
+tl.fromTo('#nightSky', { opacity: 0 }, { opacity: .55, duration: .01, immediateRender: false }, T);
+tl.fromTo('#plane', { x: WIN.x - 60, y: WIN.y - 40, rotation: -10, scale: .4, opacity: 0 },
+  { keyframes: [{ opacity: 1, scale: .9, x: WIN.x + 120, y: WIN.y - 160, duration: .5 }, { x: WIN.x + 700, y: WIN.y - 420, rotation: -22, scale: 1.3, duration: 1.1, ease: 'sine.in' }], immediateRender: false }, T + .75);
+tl.fromTo('#extCam', { x: 0, y: 0 }, { x: -320, y: 160, duration: 1.6, ease: 'sine.inOut', immediateRender: false }, T + .8);
+const TS = bar(26);
+show('#sea', TS);
+{ const pl = $('#plane').cloneNode(true); pl.id = 'plane2'; $('#sea').appendChild(pl); hide0(pl);
+  tl.fromTo(pl, { x: -150, y: 260, rotation: -14, scale: 1.4, opacity: 1 }, { keyframes: [{ x: 700, y: 140, rotation: 4, scale: 1.1, duration: .7 }, { x: 1400, y: 260, rotation: 22, scale: .4, opacity: 0, duration: .6 }], ease: 'sine.inOut', immediateRender: false }, TS - .1); }
+tl.fromTo(['#sea > svg', '#sea > .cap'], { y: 520 }, { y: 0, duration: 1.1, ease: 'power2.inOut', immediateRender: false }, TS);
+tl.fromTo('#seaPhone', { y: 420, rotation: 6 }, { y: 0, rotation: 0, duration: .8, ease: OM.spring(.14) }, TS);
+{ const bits = $$('#seaPhone .me, #seaPhone .who, #seaPhone .card'); hide0(bits);
+  bits.forEach((b, i) => tl.fromTo(b, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: .35, immediateRender: false }, TS + .6 + i * BEAT * 1.4)); }
+$$('#waves path').forEach((w, i) => tl.fromTo(w, { x: 0 }, { x: (i % 2 ? 1 : -1) * (30 + i * 2), duration: B * 2, ease: 'sine.inOut', immediateRender: false }, TS));
+tl.fromTo('#sea .cap', { opacity: 0, y: 30 }, { opacity: (i) => i ? .85 : 1, y: 0, duration: .5, stagger: .3 }, TS + .3);
+tl.fromTo('#seaCam', { x: 0, scale: 1 }, { x: -60, scale: 1.08, transformOrigin: '1400px 700px', duration: B * 2, ease: 'sine.inOut' }, TS + .8);
+
+// ── 设置巡礼（29）──
+T = bar(28);
+tl.addLabel('scene:settings', T);
+show('#sset', T);
+capIn('#sset .cap', T + .4);
+['#setp0', '#setp1', '#setp2'].forEach((p, i) => { tl.set(p, { opacity: i ? 0 : 1, x: 0 }, 0);
+  [T, bar(29), bar(30)].forEach((at, j) => { if (i === j && j) tl.fromTo(p, { opacity: 1, x: 1500 }, { x: 0, duration: .55, ease: 'power3.out', immediateRender: false }, at - .15);
+    else if (i !== j && i === j - 1) tl.to(p, { x: -1500, duration: .55, ease: 'power3.out' }, at - .15).set(p, { opacity: 0 }, at + .4);
+    else if (i !== j) tl.set(p, { opacity: 0 }, at); else tl.set(p, { opacity: 1 }, at); }); });
+tl.fromTo('#ssetcam', { scale: 1.2, x: 0, y: 0, transformOrigin: '900px 700px' }, { scale: 1, duration: .9, ease: 'power2.inOut' }, T + .1)
+  .fromTo('#ssetcam', { scale: 1, transformOrigin: '900px 560px' }, { scale: 1.22, duration: .9, ease: 'power2.inOut', immediateRender: false }, bar(29) + .2)
+  .fromTo('#ssetcam', { scale: 1.22, transformOrigin: '900px 560px' }, { scale: 1, duration: .5, ease: 'power2.inOut', immediateRender: false }, bar(30) - .1)
+  .fromTo('#ssetcam', { scale: 1, transformOrigin: '1000px 300px' }, { scale: 1.25, duration: .9, ease: 'power2.inOut', immediateRender: false }, bar(30) + .5);
+
+// ── 直接对会话说（28）──
+T = bar(31);
+tl.addLabel('scene:talk', T);
+show('#s8', T);
+{ const tks = $$('#s8beats .tk'); tl.set(tks, { visibility: 'hidden' }, 0);
+  tks.forEach((tk, i) => {
+    const at = T + i * 2 * BEAT;
+    tl.set(tks, { visibility: 'hidden' }, at).set(tk, { visibility: 'visible' }, at);
+    tl.set('#s8g', { attr: { class: talks[i][2] ? 'ground teal' : 'ground' } }, at).set('#s8cap', { color: talks[i][2] ? '#fff6e6' : '#2a1a10' }, at);
+    if (i) tl.fromTo('#s8', { x: i % 2 ? 1200 : -1200 }, { x: 0, duration: .4, ease: 'expo.out', immediateRender: false }, at - .05);
+    tl.fromTo(tk.querySelector('.tq'), { x: i % 2 ? 700 : -700, rotation: i % 2 ? 6 : -6, opacity: 0 }, { x: 0, rotation: 0, opacity: 1, duration: .38, ease: 'expo.out', immediateRender: false }, at)
+      .fromTo(tk.querySelector('.ta'), { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .3, immediateRender: false }, at + BEAT * .9);
+  }); }
+
+// ── 选副驾驶（18 20）──
+T = bar(33);
+tl.addLabel('scene:pairmenu', T);
+show('#spm', T);
+capIn('#spm .cap', T + .3);
+hide0(['#spmmenu', '#spmcombo']);
+{ $('#spmterm .ui-iconbar').style.top = '150px'; const cur = addCursor('#spmcam');
+  $('#spmterm .body').insertAdjacentHTML('afterbegin', '<div id="spmReady" class="banner" style="position:absolute;left:0;right:0;top:68px;height:62px;background:#25324d;border-bottom:2px solid #3a4f7a;display:flex;align-items:center;gap:16px;padding:0 30px;font-size:25px">结对编程伙伴 Codex 已就绪，你每改完一轮它会自动审查</div>');
+  hide0('#spmReady');
+  move(cur, [900, 900], [1590, 236], T + .5, .7); click(cur, T + 1.25);
+  tl.fromTo('#spmmenu', { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: .2, immediateRender: false }, T + 1.3);
+  move(cur, [1590, 236], [1500, 358], bar(34) + .1, .4);
+  tl.set('#spmmenu [data-it="cc"]', { attr: { class: 'it on' } }, bar(34) + .5).set('#spmmenu [data-it="cc"]', { attr: { class: 'it' } }, bar(34) + 1.0);
+  move(cur, [1500, 358], [1500, 406], bar(34) + .95, .3);
+  tl.set('#spmmenu [data-it="cx"]', { attr: { class: 'it on' } }, bar(34) + 1.0).set(['#spmmenu [data-it="cc"]', '#spmmenu [data-it="cx"]'], { attr: { class: 'it' } }, 0);
+  click(cur, bar(34) + 1.6);
+  tl.to('#spmmenu', { opacity: 0, duration: .15 }, bar(34) + 1.75).to(cur, { opacity: 0, duration: .2 }, bar(34) + 1.9)
+    .fromTo('#spmReady', { opacity: 0, clipPath: 'inset(0 100% 0 0)' }, { opacity: 1, clipPath: 'inset(0 0% 0 0)', duration: .5, immediateRender: false }, bar(35) - .2)
+    .fromTo('#spmcombo', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: .5, ease: OM.spring(.1) }, bar(35) + .4); }
+tl.fromTo('#spmcam', { scale: 1, transformOrigin: '1560px 300px' }, { scale: 1.25, duration: .9, ease: 'power2.inOut' }, T + .4)
+  .to('#spmcam', { scale: 1, duration: .8, ease: 'power2.inOut' }, bar(35) - .6);
+
+// ── 结对审查（副歌）──
+T = bar(36);
+tl.addLabel('scene:pair', T);
+show('#s4', T);
+tl.fromTo('#s4cam', { scale: 1.55, x: -380, y: -60, transformOrigin: '760px 260px' }, { scale: 1, x: 0, y: 0, duration: .45, ease: 'expo.out' }, T);
+tl.fromTo('#s4term .banner', { clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0% 0 0)', duration: .5, ease: 'power2.out' }, T + BEAT);
+tl.fromTo('#s4term .ui-iconbar', { opacity: 0, y: -10 }, { opacity: 1, y: 0, duration: .3 }, T + 2 * BEAT);
+{ const sec = { v: 3 };
+  tl.fromTo(sec, { v: 3 }, { v: 18, duration: B * 2.6, ease: 'none', onUpdate: () => { $('#s4sec').textContent = Math.round(sec.v); } }, T + 2 * BEAT);
+  const fresh = $$('#s4term [data-ln="7"], #s4term [data-ln="8"]'); hide0(fresh);
+  const fp = paper('codex · 审查意见', 3); $('#s4').appendChild(fp); hide0(fp);
+  tl.fromTo(fp, { x: 2000, y: 300, rotation: 25, scale: 1.2, opacity: 1 }, { x: 760, y: 470, rotation: -4, scale: .3, duration: .65, ease: 'power2.in', immediateRender: false }, bar(38) - .65)
+    .set(fp, { opacity: 0 }, bar(38));
+  tl.to(fresh[0], { opacity: 1, duration: .3 }, bar(38)).to(fresh[1], { opacity: 1, duration: .3 }, bar(38) + 3 * BEAT); }
+tl.fromTo('#s4cap', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .5 }, T + .3);
+tl.fromTo('#s4chips > span', { opacity: 0, y: 30, rotation: -6 }, { opacity: 1, y: 0, rotation: (i) => i ? 3 : -3, duration: .5, stagger: BEAT, ease: OM.spring(.1) }, T + 4 * BEAT);
+tl.fromTo('#s4rounds', { opacity: 0, scale: 1.4 }, { opacity: 1, scale: 1, duration: .4, ease: 'back.out(2)' }, bar(39));
+tl.to('#s4cam', { scale: 1.2, x: 60, y: -20, duration: 1, ease: 'power2.inOut' }, bar(38) - .3)
+  .to('#s4cam', { scale: 1, x: 0, y: 0, duration: .8, ease: 'power2.inOut' }, bar(39) - .4);
+
+// ── 审查一次（19）──
+T = bar(40); gust(T);
+tl.addLabel('scene:review', T);
+show('#s5', T);
+{ const hid = $$('#s5term [data-ln="4"], #s5term [data-ln="5"], #s5term [data-ln="6"]'); hide0(hid);
+  tl.set('#s5term .banner', { clipPath: 'inset(0 100% 0 0)' }, 0); hide0('#s5booked');
+  const typed = '做完让副驾驶审查一次，重点看并发', ty = { n: 0 };
+  tl.fromTo(ty, { n: 0 }, { n: typed.length + 1, duration: 1.8, ease: 'none', onUpdate: () => { const k = Math.floor(ty.n); $('#s5typed').textContent = k > typed.length ? '' : typed.slice(0, k); } }, T + .3);
+  hid.forEach((l, i) => tl.to(l, { opacity: 1, duration: .25 }, T + 2.3 + i * BEAT));
+  tl.fromTo('#s5cam', { y: -260 }, { y: 0, duration: .8, ease: 'power2.inOut' }, T + 4.0);
+  tl.to('#s5term .banner', { clipPath: 'inset(0 0% 0 0)', duration: .5, ease: 'power2.out' }, T + 4.4).to('#s5booked', { opacity: 1, duration: .25 }, T + 4.6);
+  const cp = paper('codex · 副驾驶', 2); $('#s5').appendChild(cp); hide0(cp);
+  tl.fromTo(cp, { x: 2000, y: 700, rotation: 30, scale: 1.1, opacity: 1 }, { x: 1560, y: 90, rotation: -6, scale: .25, opacity: 0, duration: .6, ease: 'power2.in', immediateRender: false }, T + 4.0); }
+tl.set('#s5cam', { scale: 1 }, T).fromTo('#s5cam', { scale: 1, transformOrigin: '600px 150px' }, { scale: 1.22, duration: .8, ease: 'power2.inOut', immediateRender: false }, T + 4.9)
+  .to('#s5cam', { scale: 1, duration: .7, ease: 'power2.inOut', immediateRender: false }, bar(43) - .8);
+capIn('#s5 .cap', T + .5);
+
+
+// ── 整条街的窗（fb 51～61）：镜头沿街横移，每扇窗里一个正在运行的功能 ──
+{ const NW = 9, X0 = 300, GAP = 760, WW = 540, WH = 400;
+  for (let i = 0; i < 90; i++) svgEl($('#stStars'), 'circle', { cx: rnd() * 1920, cy: rnd() * 420, r: .8 + rnd() * 1.6 });
+  const fac = $('#stFacade');
+  fac.innerHTML = '<defs><filter id="stBrush"><feTurbulence type="fractalNoise" baseFrequency=".03" numOctaves="3" seed="11"/><feDisplacementMap in="SourceGraphic" scale="10"/></filter></defs>';
+  const g = svgEl(fac, 'g', { filter: 'url(#stBrush)' });
+  for (let x = -100, k = 0; x < 8300; k++) { const w = 520 + rnd() * 380, top = 120 + rnd() * 120;
+    svgEl(g, 'rect', { x, y: top, width: w, height: 1100 - top, fill: k % 2 ? '#24403f' : '#2c4a47' });
+    svgEl(g, 'polygon', { points: `${x - 10},${top} ${x + w / 2},${top - 90 - rnd() * 60} ${x + w + 10},${top}`, fill: '#1c3433' });
+    for (let wy = top + 40; wy < 960; wy += 90) for (let wx = x + 40; wx < x + w - 60; wx += 110) if (rnd() < .35) svgEl(g, 'rect', { x: wx, y: wy, width: 34, height: 46, fill: '#e5c07b', opacity: .35 + rnd() * .4 });
+    x += w; }
+  svgEl(g, 'rect', { x: -100, y: 1000, width: 8400, height: 80, fill: '#16292a' });
+  const minis = [
+    ['会话面板', () => UI.panel('', { tail: 20 }), .5],
+    ['完成提醒', () => UI.balloon(''), .78],
+    ['先聊再做', () => UI.clarify(), .36],
+    ['AI 用上 IDE', () => $('#s3term').innerHTML, .3],
+    ['会话轨迹', () => UI.trail(), .5],
+    ['扫码连手机', () => UI.robot('飞书'), .4],
+    ['手机接着聊', () => UI.phone(), .27],
+    ['IDEA MCP', () => UI.settings('mcp'), .31],
+    ['结对编程', () => $('#s4term').innerHTML, .27],
+  ];
+  const strip = $('#streetStrip'), wins = [];
+  minis.forEach(([label, make, sc], i) => {
+    const x = X0 + i * GAP, y = i % 2 ? 300 : 230;
+    strip.insertAdjacentHTML('beforeend', `<div class="stw" id="stw${i}" style="position:absolute;left:${x}px;top:${y}px;width:${WW}px;height:${WH}px;border:22px solid #4a3020;box-sizing:border-box;border-radius:4px;overflow:hidden;background:radial-gradient(400px 300px at 50% 45%,#ffdca4,#f0b571 60%,#d98d4c);box-shadow:0 0 120px 30px #f0a85a44">
+      <div class="stu" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(${sc});transform-origin:50% 50%">${make()}</div></div>
+      <div style="position:absolute;left:${x - 20}px;top:${y + WH}px;width:${WW + 40}px;height:24px;background:#3d271a;border-radius:3px"></div>
+      <div class="hand stl" style="position:absolute;left:${x}px;top:${y + WH + 40}px;width:${WW}px;text-align:center;font-size:44px;color:#f2c27a">${label}</div>`);
+    wins.push(x + WW / 2); });
+  $$('#streetStrip canvas.qr').forEach((c) => UI.drawQR(c, 9));
+  $$('#streetStrip [id]').forEach((e) => { if (!/^stw\d/.test(e.id)) e.removeAttribute('id'); });
+  T = fb(51);
+  tl.addLabel('scene:street', T);
+  // 从审查一次那间屋子拉出来：它缩进第一扇窗
+  tl.set('#s5', { autoAlpha: 1, zIndex: 3 }, T).set('#street', { autoAlpha: 1 }, T).set('#s5', { zIndex: 0 }, 0);
+  scenes.filter((x) => x !== '#s5' && x !== '#street').forEach((x) => tl.set(x, { autoAlpha: 0 }, T));
+  tl.fromTo('#s5', { scale: 1, x: 0, y: 0 }, { scale: WW / 1920, x: X0 + WW / 2 - 960, y: 230 + WH / 2 - 540, duration: .9, ease: 'power3.inOut', immediateRender: false }, T)
+    .to('#s5', { autoAlpha: 0, duration: .3 }, T + .7).set('#s5', { scale: 1, x: 0, y: 0 }, T + 1.1);
+  const span = fb(61) - T - 1.6, dx = wins[NW - 1] - 960;
+  tl.fromTo('#streetStrip', { x: 0 }, { x: -dx, duration: span, ease: 'sine.inOut', immediateRender: false }, T + .9);
+  const stws = $$('#streetStrip .stw .stu'), labs = $$('#streetStrip .stl');
+  hide0([...stws, ...labs]);
+  wins.forEach((cx, i) => {
+    // 窗口中心滑到画面右三分之二处时亮起
+    const e = Math.min(1, Math.max(0, (cx - 1350) / dx)), at = T + .9 + span * Math.acos(1 - 2 * e) / Math.PI;
+    tl.fromTo(stws[i], { opacity: 0, scale: .6 * minis[i][2] }, { opacity: 1, scale: minis[i][2], duration: .5, ease: 'back.out(1.6)', immediateRender: false }, at)
+      .fromTo(labs[i], { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: .4, immediateRender: false }, at + .2); });
+  tl.fromTo('#streetCam', { scale: 1.06 }, { scale: 1, transformOrigin: '960px 540px', duration: span, ease: 'sine.inOut', immediateRender: false }, T + .9);
+  hide0('#stCap2');
+  tl.fromTo('#stCap1', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: .6, immediateRender: false }, T + 1.2)
+    .to('#stCap1', { opacity: 0, duration: .4 }, T + span / 2 + .6)
+    .fromTo('#stCap2', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: .6, immediateRender: false }, T + span / 2 + 1); }
+
+// ── 三个智能体，一个驾驶舱（fb 65～70）──
+{ const agents = [['Claude Code', 'claude@2x.png', '首页改版', ['❯ 首页改成大图 + 三栏卡片', '已完成：首屏改版，LCP 从 3.1s 降到 1.4s。']],
+    ['Codex', 'codex@2x_dark.png', '审查并发', ['❯ 审查限流实现的并发问题', '计数不是原子的，建议改用 AtomicInteger。']],
+    ['Pi', 'pi@2x_dark.png', '发布脚本', ['❯ 整理发布脚本', '已合并成一个 release.sh，支持 --dry-run。']]];
+  agents.forEach(([name, icon, title, ls], i) => {
+    const w = $('#tw' + i);
+    w.innerHTML = UI.term('', { w: 820, banner: false, bar: false, top: 26, lines: [['q', ls[0]], ['t', 'Read(…)'], ['w', ls[1]]] });
+    w.querySelector('.tabs').innerHTML = `<div class="tab on" style="gap:12px;white-space:nowrap"><img src="materials/${icon}" width="30">${name} · ${title}</div>`;
+    gsap.set(w, { scale: .72, rotation: [-2, 1.5, -1][i] }); });
+  // 合并后的那一个窗口：三个标签
+  $('#tw0 .tabs').insertAdjacentHTML('beforeend', agents.slice(1).map(([name, icon, title], i) => `<div class="tab tm" style="gap:12px;white-space:nowrap"><img src="materials/${icon}" width="30">${name} · ${title}</div>`).join(''));
+  const tms = $$('#tw0 .tabs .tm'); hide0(tms);
+  T = fb(65);
+  tl.addLabel('scene:trio', T);
+  show('#trio', T);
+  capIn('#trio .cap', T + .3);
+  [0, 1, 2].forEach((i) => {
+    tl.fromTo('#tw' + i, { y: 700, opacity: 1 }, { y: 0, duration: .7, ease: OM.spring(.12), immediateRender: false }, T + i * BEAT);
+    const ln = $$(`#tw${i} [data-ln]`); hide0(ln);
+    ln.forEach((l, k) => tl.to(l, { opacity: 1, duration: .2 }, T + 1.4 + i * .3 + k * BEAT)); });
+  const M = fb(67) + .2;
+  tl.to('#tw1', { x: -620 + 300, y: -40, scale: .2, opacity: 0, rotation: 0, duration: .6, ease: 'power3.in' }, M)
+    .to('#tw2', { x: -1240 + 560, y: 0, scale: .2, opacity: 0, rotation: 0, duration: .6, ease: 'power3.in' }, M + BEAT)
+    .to(tms[0], { opacity: 1, duration: .2 }, M + .55).to(tms[1], { opacity: 1, duration: .2 }, M + BEAT + .55)
+    .to('#tw0', { x: 290, y: -60, scale: 1.5, rotation: 0, duration: 1, ease: 'power3.inOut' }, M + 2 * BEAT + .3);
+  tl.fromTo('#triocam', { scale: 1, transformOrigin: '960px 600px' }, { scale: 1.08, duration: fb(70) - M - 1.5, ease: 'sine.inOut', immediateRender: false }, M + 1.5); }
+
+// ── 闪回：一拍一个功能 ──
+T = fb(61);
+tl.addLabel('scene:recap', T);
+const recap = [['#s1', '会话面板'], ['#snt', '完成提醒'], ['#snav', '消息导航'], ['#s2', '先聊再做'], ['#s3', '语义重构 · 调试'], ['#stools', '数据库 · 运行配置'], ['#smcp', 'IDEA MCP'], ['#s6', '会话轨迹'],
+  ['#shand', '会话转移'], ['#srobot', '扫码连手机'], ['#sea', '手机接着聊'], ['#sset', '偏好设置'], ['#s8', '直接对它说'], ['#spm', '任意搭配'], ['#s4', '结对编程'], ['#s5', '审查一次']];
+// 闪回里不放 #street、#trio（它们在闪回前后）
+{ const rc = $('#recap'); rc.innerHTML = recap.map(([, w], i) => `<span class="rw" style="${i ? 'position:absolute;left:34px;top:18px;' : ''}white-space:nowrap">${w}</span>`).join('');
+  const rws = $$('#recap .rw'); hide0(rws.slice(1));
+  tl.set(rc, { visibility: 'visible' }, T).set(rc, { visibility: 'hidden' }, 0).set(rc, { visibility: 'hidden' }, fb(65));
+  recap.forEach(([id, w], i) => { const at = T + i * BEAT;
+    show(id, at);
+    rws.forEach((e, j) => tl.set(e, { opacity: j === i ? 1 : 0 }, at));
+    tl.fromTo(id, { scale: 1.12 }, { scale: 1, duration: .5, ease: 'power2.out', immediateRender: false }, at)
+      .fromTo(rc, { scale: 1.25, rotation: -6 }, { scale: 1, rotation: -3, duration: .25, ease: 'back.out(2)', immediateRender: false }, at); });
+  tl.set(recap.map(([id]) => id), { scale: 1 }, fb(65)); }
+
+// ── 夜城 → 品牌 ──
+T = fb(70);
+tl.addLabel('scene:night', T);
+show('#ext', T);
+tl.set(['#bigWin', '#sill'], { opacity: 0 }, T).set(['#bigWin', '#sill'], { opacity: 1 }, 0)
+  .set('#nightSky', { opacity: .92 }, T).set('#sun', { opacity: 0 }, T).set('#stars', { opacity: .8 }, T).set('#plane', { opacity: 0 }, T)
+  .set('#sun', { opacity: .6 }, 0).set('#stars', { opacity: 0 }, 0).set('#nightSky', { opacity: 0 }, 0);
+tl.fromTo('#extCam', { scale: 1.6, x: 0, y: 0, transformOrigin: '960px 760px' }, { scale: 1, duration: 5, ease: 'sine.inOut', immediateRender: false }, T);
+tl.fromTo(offWins, { attr: { opacity: 0 } }, { attr: { opacity: .95 }, duration: .25, stagger: { each: 7 / offWins.length }, ease: 'none', immediateRender: false }, T + .3);
+tl.fromTo('#hookCap', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 1.2, immediateRender: false }, T + 2.4)
+  .to('#hookCap', { opacity: 0, y: -20, duration: .5 }, fb(75) - .4);
+tl.set('#endCard', { opacity: 0 }, 0);
+tl.fromTo('#endCard', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: .9 }, fb(75));
+tl.fromTo('#agents > span', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: .4, stagger: BEAT }, fb(76));
+tl.fromTo('#install', { opacity: 0 }, { opacity: 1, duration: .6 }, fb(77));
+tl.fromTo('#plane', { x: -200, y: 700, rotation: -12, scale: .7, opacity: 1 }, { keyframes: [{ x: 700, y: 600, rotation: -6, duration: 2.6 }, { x: 1500, y: 680, rotation: 8, duration: 2.4 }, { x: 2200, y: 520, rotation: -18, duration: 2 }], ease: 'sine.inOut', immediateRender: false }, fb(75) + 1);
+// 品牌段跟着最后一段副歌：镜头缓推，窗户按拍明灭
+tl.fromTo('#extCam', { scale: 1, y: 0 }, { scale: 1.1, y: 30, transformOrigin: '960px 300px', duration: END - fb(75), ease: 'sine.inOut', immediateRender: false }, fb(75));
+{ const tw = offWins.filter((_, i) => i % 3 === 0);
+  for (let b = 0; fb(76) + b * BEAT < 199; b++) { const at = fb(76) + b * BEAT;
+    tw.forEach((w, j) => { if ((j * 7 + b) % 5 === 0) tl.to(w, { attr: { opacity: .15 }, duration: .12, yoyo: true, repeat: 1 }, at); }); } }
+tl.to('#film', { opacity: 0, duration: 1.4, ease: 'power1.in' }, 199.3).set('#film', { opacity: 1 }, 0);
+
+window.__timelines = window.__timelines || {};
+window.__timelines['imux-promo'] = tl;
+</script>
+</body>
+</html>

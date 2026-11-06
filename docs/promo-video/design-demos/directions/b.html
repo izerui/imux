@@ -1,0 +1,52 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../assets/ui/ui.css"><script src="../../assets/ui/ui.js"></script>
+<style>
+@font-face{font-family:Inter;src:url(../../assets/fonts/Inter-var.woff)}
+@font-face{font-family:"LXGW WenKai";src:url(../../assets/fonts/LXGWWenKai-500.woff)}
+body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#e4e8e1;position:relative;font-family:"LXGW WenKai"}
+svg{position:absolute;inset:0}
+.real{position:absolute;left:980px;top:150px;transform:rotate(-2deg);transform-origin:0 0}
+.real .clip{position:absolute;left:0;top:0;clip-path:var(--jag)}
+.real .sk{filter:invert(1) grayscale(1) contrast(1.6) brightness(1.05) url(#pencil);mix-blend-mode:multiply;opacity:.85}
+.cap{position:absolute;left:130px;top:120px;color:#22302e}
+.cap .s{font-size:44px;opacity:.75}.cap .b{font-size:84px;margin-top:8px;letter-spacing:4px}
+.note{position:absolute;font-size:34px;color:#2c5d9e}
+</style></head><body>
+<svg viewBox="0 0 1920 1080">
+ <defs>
+  <filter id="pencil"><feTurbulence type="fractalNoise" baseFrequency=".03" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="5"/></filter>
+  <filter id="paper"><feTurbulence type="fractalNoise" baseFrequency=".75" numOctaves="3" seed="9"/><feColorMatrix values="0 0 0 0 .3  0 0 0 0 .32  0 0 0 0 .3  0 0 0 .07 0"/></filter>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#b9c3bb" stroke-width="1"/></pattern>
+ </defs>
+ <rect width="1920" height="1080" fill="url(#grid)" opacity=".7"/>
+ <g id="ink" filter="url(#pencil)" fill="none" stroke="#22302e" stroke-linecap="round" stroke-linejoin="round"></g>
+ <rect width="1920" height="1080" filter="url(#paper)"/>
+</svg>
+<div class="real"><div class="sk" id="sk"></div><div class="clip" id="p"></div></div>
+<div class="cap"><div class="s">今天想通了一个道理：</div><div class="b">有些活，不必一个人干</div></div>
+<div class="note" style="left:620px;top:830px;transform:rotate(-4deg)">← 七个终端窗口，乱成一锅粥</div>
+<div class="note" style="left:1480px;top:960px;transform:rotate(2deg)">收进一个面板 ✓</div>
+<script>
+p.innerHTML = sk.innerHTML = UI.panel('../../', { tail: 40 });
+{let a=[],x0=430;for(let y=0;y<=900;y+=30)a.push(`${x0+((y*7919)%37)-18}px ${y}px`);document.querySelector('.clip').style.setProperty('--jag',`polygon(800px 0, ${a.join(',')}, 800px 900px)`);}
+let s = 5; const R = () => (s = (s * 16807) % 2147483647) / 2147483647;
+const NS='http://www.w3.org/2000/svg', g=document.getElementById('ink');
+const el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);g.appendChild(e);return e};
+// 左边：七个手绘的终端窗口，歪歪斜斜叠着
+for(let i=0;i<7;i++){const x=150+R()*620,y=360+R()*380,w=230+R()*120,h=w*.62,r=-14+R()*28;
+ const gg=document.createElementNS(NS,'g');gg.setAttribute('transform',`rotate(${r} ${x+w/2} ${y+h/2})`);g.appendChild(gg);
+ const e=(t,a)=>{const n=document.createElementNS(NS,t);for(const k in a)n.setAttribute(k,a[k]);gg.appendChild(n)};
+ e('rect',{x,y,width:w,height:h,rx:10,fill:'#f2f4ef','stroke-width':3});
+ e('path',{d:`M${x} ${y+30}H${x+w}`,'stroke-width':2});
+ for(let k=0;k<3;k++)e('circle',{cx:x+18+k*18,cy:y+15,r:4.5,'stroke-width':2});
+ for(let k=0;k<4;k++)e('path',{d:`M${x+20} ${y+56+k*24}h${(w-40)*(.3+R()*.7)}`,'stroke-width':2.4,stroke:k?'#22302e':'#2c5d9e'});
+}
+const rows=[0,1,2,3,4,5,6,7,8,9,10,11,12];
+rows.forEach(k=>{const y=py+130+k*48,ind=k===0||k===7||k===11?40:110;
+ el('path',{d:`M${px+ind} ${y}h${120+R()*200}`,'stroke-width':3,transform:`rotate(-2 ${px} ${py})`});});
+// 风的螺旋
+el('path',{d:'M760 300 C 860 240, 960 260, 930 320 C 900 380, 820 330, 870 290','stroke-width':3,stroke:'#2c5d9e'});
+el('path',{d:'M600 290 C 700 250, 820 230, 960 240','stroke-width':2.5,stroke:'#2c5d9e'});
+// 正在上色的笔尖
+
+</script></body></html>

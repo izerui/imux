@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../assets/ui/ui.css"><script src="../../assets/ui/ui.js"></script>
+<style>
+@font-face{font-family:Inter;src:url(../../assets/fonts/Inter-var.woff)}
+@font-face{font-family:"LXGW WenKai";src:url(../../assets/fonts/LXGWWenKai-500.woff)}
+body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#141518;position:relative}
+.t{position:absolute;left:-260px;top:150px;transform:scale(1.32) rotate(-4deg);transform-origin:0 0;filter:blur(.3px)}
+.shade{position:absolute;inset:0;background:linear-gradient(180deg,transparent 42%,#141518f5 66%)}
+.streak{position:absolute;height:3px;background:linear-gradient(90deg,transparent,#548af7);border-radius:2px}
+.big{position:absolute;left:110px;top:720px;font-family:"LXGW WenKai";color:#fff;font-size:150px;letter-spacing:6px;line-height:1.1}
+.big em{font-style:normal;color:#e5c07b}
+.small{position:absolute;left:118px;top:660px;font-family:"LXGW WenKai";color:#cfd1d6;font-size:44px}
+.tag{position:absolute;right:110px;bottom:96px;font-family:Inter;color:#9a9da3;font-size:30px;letter-spacing:3px}
+</style></head><body>
+<div class="t" id="t"></div>
+<div class="shade"></div>
+<div class="streak" style="left:900px;top:250px;width:600px;transform:rotate(-4deg)"></div>
+<div class="streak" style="left:1100px;top:300px;width:420px;transform:rotate(-4deg);opacity:.6"></div>
+<div class="small">今天想通了一个道理：</div>
+<div class="big">一个写，<em>一个挑刺</em></div>
+<div class="tag">结对编程 · 每一轮自动审查</div>
+<script>t.innerHTML = UI.term('../../');</script>
+</body></html>

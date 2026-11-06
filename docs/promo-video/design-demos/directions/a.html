@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../assets/ui/ui.css"><script src="../../assets/ui/ui.js"></script>
+<style>
+@font-face{font-family:Inter;src:url(../../assets/fonts/Inter-var.woff)}
+@font-face{font-family:"LXGW WenKai";src:url(../../assets/fonts/LXGWWenKai-500.woff)}
+body{margin:0;width:1920px;height:1080px;overflow:hidden;background:#17363a;position:relative}
+svg{position:absolute;inset:0}
+.win{position:absolute;left:1010px;top:150px;width:820px;height:860px;perspective:1800px}
+.frame{position:absolute;inset:0;background:#e9a861;border:26px solid #5a3a26;border-radius:6px;box-shadow:0 0 120px 30px #f0a85a55,inset 0 0 80px #b8662e;transform:rotateY(-9deg);transform-origin:right center;overflow:hidden}
+.frame .glow{position:absolute;inset:0;background:radial-gradient(600px 500px at 50% 35%,#ffd79a,transparent 70%)}
+.frame .p{position:absolute;left:38px;top:60px;transform:scale(.92);transform-origin:0 0}
+.sill{position:absolute;left:980px;top:1000px;width:880px;height:40px;background:#3d271a;border-radius:4px;transform:skewX(-6deg)}
+.cap{position:absolute;left:120px;top:110px;font-family:"LXGW WenKai";color:#fff6e6;text-shadow:0 4px 24px #0006}
+.cap .s{font-size:44px;opacity:.85}
+.cap .b{font-size:84px;margin-top:10px;letter-spacing:4px}
+</style></head><body>
+<svg viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#15343a"/><stop offset=".55" stop-color="#3f6763"/><stop offset=".82" stop-color="#d48a4c"/><stop offset="1" stop-color="#f2b56b"/></linearGradient>
+    <filter id="brush"><feTurbulence type="fractalNoise" baseFrequency=".035" numOctaves="3" seed="7"/><feDisplacementMap in="SourceGraphic" scale="9"/></filter>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="3"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 .95  0 0 0 0 .85  0 0 0 .09 0"/></filter>
+    <filter id="soft"><feGaussianBlur stdDeviation="2"/></filter>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <circle cx="520" cy="860" r="190" fill="#ffd39a" opacity=".6" filter="url(#soft)"/>
+  <g id="far" filter="url(#brush)" fill="#4e6f69"></g>
+  <g id="mid" filter="url(#brush)" fill="#2c4645"></g>
+  <g id="wind" fill="none" stroke="#fff3df" stroke-linecap="round"></g>
+  <g id="sheets"></g>
+  <g id="near" filter="url(#brush)" fill="#1a2829"></g>
+  <rect width="1920" height="1080" filter="url(#grain)"/>
+</svg>
+<div class="win"><div class="frame"><div class="glow"></div><div class="p" id="p"></div></div></div>
+<div class="sill"></div>
+<div class="cap"><div class="s">今天想通了一个道理：</div><div class="b">有些活，不必一个人干</div></div>
+<script>
+p.innerHTML = UI.panel('../../', { tail: 40 });
+// 确定性随机
+let s = 11; const R = () => (s = (s * 16807) % 2147483647) / 2147483647;
+const NS = 'http://www.w3.org/2000/svg';
+const el = (g, tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); g.appendChild(e); return e; };
+function town(id, y0, hMin, hMax, wMin, wMax, lit) {
+  const g = document.getElementById(id);
+  for (let x = -40; x < 1960;) {
+    const w = wMin + R() * (wMax - wMin), h = hMin + R() * (hMax - hMin), top = y0 - h;
+    el(g, 'rect', { x, y: top, width: w, height: 1080 - top });
+    if (R() < .55) el(g, 'polygon', { points: `${x - 6},${top} ${x + w / 2},${top - w * .45} ${x + w + 6},${top}` });
+    if (R() < .3) el(g, 'rect', { x: x + w * .7, y: top - w * .5, width: w * .12, height: w * .4 });
+    for (let wy = top + 18; wy < 1060; wy += 30) for (let wx = x + 12; wx < x + w - 16; wx += 22)
+      if (R() < lit) el(g, 'rect', { x: wx, y: wy, width: 8, height: 12, fill: R() < .7 ? '#e5c07b' : '#f0a060', opacity: .55 + R() * .45 });
+    x += w + R() * 10;
+  }
+}
+town('far', 880, 40, 170, 60, 130, .16);
+town('mid', 975, 50, 190, 100, 180, .12);
+town('near', 1075, 30, 110, 150, 280, .05);
+// 风：长而缓的弧线，粗细不一
+const wind = document.getElementById('wind');
+for (let i = 0; i < 9; i++) {
+  const y = 160 + i * 62 + R() * 40, x0 = -100 + R() * 200, amp = 40 + R() * 70;
+  el(wind, 'path', { d: `M${x0},${y} C${x0 + 400},${y - amp} ${x0 + 700},${y + amp} ${x0 + 1100},${y - 10} S${x0 + 1500},${y - amp} ${x0 + 1700},${y + 20}`, 'stroke-width': 2 + R() * 5, opacity: .18 + R() * .35 });
+}
+// 被风卷起的终端纸片
+const sh = document.getElementById('sheets');
+for (let i = 0; i < 16; i++) {
+  const x = 260 + R() * 760, y = 380 + R() * 360, w = 70 + R() * 70, r = -35 + R() * 70;
+  const g = el(sh, 'g', { transform: `translate(${x},${y}) rotate(${r})`, opacity: .9 });
+  el(g, 'rect', { width: w, height: w * .66, rx: 5, fill: '#1e1f22', stroke: '#fff3df', 'stroke-width': 1.5 });
+  for (let k = 0; k < 4; k++) el(g, 'rect', { x: 8, y: 9 + k * w * .13, width: (w - 16) * (.4 + R() * .6), height: 3.5, fill: k === 0 ? '#548af7' : '#9a9da3' });
+}
+</script></body></html>

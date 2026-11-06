@@ -1,0 +1,9 @@
+# 渲染产物与中间文件（./build.sh 可重新生成）
+out/
+.om/
+tools/stills/
+tools/*.png
+design-demos/directions/*.png
+# 第三方参考视频与配乐（版权属原作者，不入库）
+ref/
+output/
