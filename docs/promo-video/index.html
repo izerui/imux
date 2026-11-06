@@ -463,13 +463,13 @@ $$('#ssetdlg .ui-set').forEach((d, i) => { d.style.position = i ? 'absolute' : '
     <div class="ln q" style="white-space:normal;line-height:1.5">❯ 接手以下会话中的任务。先使用工具完整读取源会话记录，再检查当前工作区并梳理当前进展。反馈已完成事项、剩余事项和相关本地改动，然后等待下一步指示。</div>
     <div class="ln" style="margin-top:14px"><span class="b" style="width:13px;height:13px;border-radius:50%;background:#8d9096"></span><span class="tool mono">Read(~/.claude/projects/imux/2f6c….jsonl)</span></div>
     <div class="ln w"><span class="b"></span>已读完原会话：限流已完成并有测试；剩下多实例部署的文档说明。等你下一步指示。</div></div>`); }
-// 消息导航：左边一列短横线 + 悬停卡片
+// 消息导航（提交 0b4845b）：终端右侧一列短横线，右端对齐、向左伸长；悬停卡片在横线左侧弹出
 { const body = $('#snavterm .body'); body.style.position = 'relative';
-  body.insertAdjacentHTML('beforeend', `<div id="navStrip" style="position:absolute;left:6px;top:24px;width:20px;height:380px">${Array.from({ length: 12 }, (_, i) =>
-    `<i class="nm" data-nm="${i}" style="position:absolute;left:0;top:${i * 31}px;width:14px;height:5px;border-radius:3px;background:#6f737a;transform-origin:0 50%"></i>`).join('')}</div>
-    <div id="navCard" style="position:absolute;left:70px;top:40px;width:760px;background:#2b2d30;border:2px solid #4a4d53;border-radius:14px;padding:18px 24px;box-shadow:0 20px 50px #000a;font-size:23px;line-height:1.5">
+  body.insertAdjacentHTML('beforeend', `<div id="navStrip" style="position:absolute;right:20px;top:24px;width:44px;height:380px">${Array.from({ length: 12 }, (_, i) =>
+    `<i class="nm" data-nm="${i}" style="position:absolute;right:0;top:${i * 31}px;width:16px;height:5px;border-radius:3px;background:#6f737a;transform-origin:100% 50%"></i>`).join('')}</div>
+    <div id="navCard" style="position:absolute;right:76px;top:40px;width:760px;background:#2b2d30;border:2px solid #4a4d53;border-radius:14px;padding:18px 24px;box-shadow:0 20px 50px #000a;font-size:23px;line-height:1.5">
       <div style="color:#9a9da3">第 3 条 / 共 12 条 · 登录接口限流</div><div style="color:#548af7">❯ 多实例部署时阈值会被放大吗？在文档里写清楚</div><div style="color:#c9cbd0">会。每个实例各自计数，总阈值约等于实例数 × 10。</div></div>
-    <div id="navHi" style="position:absolute;left:24px;right:20px;top:${30 + 4 * 42}px;height:42px;background:#548af733;border-radius:6px"></div>`); }
+    <div id="navHi" style="position:absolute;left:24px;right:80px;top:${30 + 4 * 42}px;height:42px;background:#548af733;border-radius:6px"></div>`); }
 
 // 光标
 function addCursor(sec) { const c = document.createElement('div'); c.innerHTML = UI.cursor(); const el = c.firstElementChild; $(sec).appendChild(el); gsap.set(el, { opacity: 0 }); return el; }
@@ -632,14 +632,18 @@ capIn('#snav .cap', T + .2);
 hide0(['#navCard', '#navHi']);
 { const marks = $$('#navStrip .nm'), cur = addCursor('#snavcam');
   tl.fromTo('#navStrip', { opacity: 0 }, { opacity: 1, duration: .3, immediateRender: false }, T + .3);
-  move(cur, [900, 900], [124, 396], T + .7, .8);
-  tl.to(marks[2], { scaleX: 2.6, backgroundColor: '#dfe1e5', duration: .2 }, T + 1.45)
-    .fromTo('#navCard', { opacity: 0, x: -20 }, { opacity: 1, x: 0, duration: .3, immediateRender: false }, T + 1.5);
+  // 当前位置：屏幕上正显示的几轮（第 1～4 条）横线保持加长高亮
+  tl.fromTo(marks.slice(0, 4), { scaleX: 1, backgroundColor: '#6f737a' }, { scaleX: 1.75, backgroundColor: '#9a9da3', duration: .3, immediateRender: false }, T + .5);
+  move(cur, [900, 900], [1785, 396], T + .7, .8);
+  tl.to(marks[2], { scaleX: 2.5, backgroundColor: '#dfe1e5', duration: .2 }, T + 1.45)
+    .fromTo('#navCard', { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: .3, immediateRender: false }, T + 1.5);
   click(cur, bar(9) + .3);
   tl.to('#navCard', { opacity: 0, duration: .2 }, bar(9) + .4)
     .fromTo('#snavterm .body > .ln', { y: 0 }, { y: -90, duration: .6, ease: 'power2.inOut', immediateRender: false }, bar(9) + .45)
+    .to(marks[0], { scaleX: 1, backgroundColor: '#6f737a', duration: .3 }, bar(9) + .6)
+    .to(marks[4], { scaleX: 1.75, backgroundColor: '#9a9da3', duration: .3 }, bar(9) + .6)
     .fromTo('#navHi', { opacity: 0, y: -90 }, { keyframes: [{ opacity: 1, duration: .2 }, { opacity: 0, duration: 1.4, delay: .4 }], immediateRender: false }, bar(9) + .9); }
-tl.fromTo('#snavcam', { scale: 1, transformOrigin: '160px 420px' }, { scale: 1.3, duration: .9, ease: 'power2.inOut' }, T + .7)
+tl.fromTo('#snavcam', { scale: 1, transformOrigin: '1780px 420px' }, { scale: 1.3, duration: .9, ease: 'power2.inOut' }, T + .7)
   .to('#snavcam', { scale: 1, duration: .8, ease: 'power2.inOut' }, bar(9) + 1.4);
 
 // ── 先聊再做（21）──
