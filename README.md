@@ -1,5 +1,9 @@
 # imux
 
+<a href="https://question-bank-pub.oss-cn-beijing.aliyuncs.com/imux/promo/imux-promo-readme.mp4"><img src="docs/images/promo-banner.png" width="760" alt="imux：把 JetBrains IDE 变成 AI 编程驾驶舱，支持 Claude Code、Codex、Pi；点击观看宣传片"></a>
+
+▶ [观看宣传片（3 分 20 秒）](https://question-bank-pub.oss-cn-beijing.aliyuncs.com/imux/promo/imux-promo-readme.mp4)
+
 **把 JetBrains IDE 变成 AI 编程驾驶舱**：在编辑器标签页里运行 Claude Code、Codex 和 Pi 会话，让它们用上 IDE 的调试器、重构、检查和数据库连接，还能让另一个 AI 帮你审查，或者在手机上接着聊。
 
 - **AI 用上 IDE 的能力**：自动接入 JetBrains MCP，语义重命名、调试、inspections、运行配置都能用
