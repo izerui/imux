@@ -1,6 +1,6 @@
 # imux
 
-<a href="https://question-bank-pub.oss-cn-beijing.aliyuncs.com/imux/promo/imux-promo-readme.mp4"><img src="docs/images/promo-banner.png" width="760" alt="imux：把 JetBrains IDE 变成 AI 编程驾驶舱，支持 Claude Code、Codex、Pi；点击观看宣传片"></a>
+<img src="docs/images/promo-banner.png" width="760" alt="imux：把 JetBrains IDE 变成 AI 编程驾驶舱，支持 Claude Code、Codex、Pi；夜色小城的窗户一扇扇亮着">
 
 **把 JetBrains IDE 变成 AI 编程驾驶舱**：在编辑器标签页里运行 Claude Code、Codex 和 Pi 会话，让它们用上 IDE 的调试器、重构、检查和数据库连接，还能让另一个 AI 帮你审查，或者在手机上接着聊。
 
