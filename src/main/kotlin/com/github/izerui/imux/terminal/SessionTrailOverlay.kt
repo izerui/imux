@@ -175,7 +175,7 @@ internal class SessionTrailOverlay(
     }
 
     /**
-     * 由编辑器在 `doLayout` 中调用；[rightReserve] 是右侧为滚动条让出的留白宽度，
+     * 由编辑器在 `doLayout` 中调用；[rightReserve] 是提问导航横线列连同右侧留白的宽度，
      * [topOffset] 是顶部提示条与浮动图标组占去的高度。
      */
     fun layout(width: Int, height: Int, rightReserve: Int, topOffset: Int) {

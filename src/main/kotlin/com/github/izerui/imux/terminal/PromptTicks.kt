@@ -42,16 +42,17 @@ internal fun tickLength(
 /**
  * 鼠标落在哪根横线上；不在任何横线上返回 null。
  *
- * 横线列盖在终端上层，命中区放多大就从终端手里吃掉多少鼠标事件，所以只认横线本身：
- * 横向是这根横线的当前长度加 [slack]，纵向是最近那根上下各 `min(半个间距, maxBand)`。
- * 横线之间、横线右侧的空白都不算，点击、拖选、滚轮照常落到终端。
+ * 横线右端对齐在 [right]、向左伸长。横线列盖在终端上层，命中区放多大就从终端手里吃掉
+ * 多少鼠标事件，所以只认横线本身：横向是这根横线的当前长度加 [slack]，纵向是最近那根
+ * 上下各 `min(半个间距, maxBand)`。横线之间、横线左侧的空白都不算，点击、拖选、滚轮
+ * 照常落到终端。
  */
 internal fun tickHitIndex(
     x: Int,
     y: Int,
     centers: List<Int>,
     lengths: List<Int>,
-    left: Int,
+    right: Int,
     slack: Int,
     maxBand: Int,
 ): Int? {
@@ -60,7 +61,7 @@ internal fun tickHitIndex(
     val step = if (centers.size > 1) (centers.last() - centers.first()).toDouble() / (centers.size - 1) else Double.MAX_VALUE
     val band = minOf(maxBand, maxOf(1, (step / 2).toInt()))
     if (abs(centers[nearest] - y) > band) return null
-    if (x < left - slack || x > left + lengths[nearest] + slack) return null
+    if (x < right - lengths[nearest] - slack || x > right + slack) return null
     return nearest
 }
 

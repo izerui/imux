@@ -362,7 +362,7 @@ class SessionMessageNavigatorSourceTest {
     }
 
     @Test
-    fun `用户消息使用左侧浮层横线并支持点击滚动与落点高亮`() {
+    fun `用户消息使用右侧浮层横线并支持点击滚动与落点高亮`() {
         assertTrue(navigator.normalized.contains("scrollingModel.scrollTo"))
         assertTrue(editor.normalized.contains("setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)"))
         assertTrue(editor.normalized.contains("setLayer(navigatorPreview, JLayeredPane.POPUP_LAYER)"))
@@ -387,7 +387,7 @@ class SessionMessageNavigatorSourceTest {
 
     /**
      * 整列盖在终端上层，命中区放多大就吃掉终端多少鼠标事件。只认横线本身，
-     * 横线之间、右侧空白的点击、拖选、滚轮都要落到终端。
+     * 横线之间、左侧空白的点击、拖选、滚轮都要落到终端。
      */
     @Test
     fun `命中区只认横线本身`() {

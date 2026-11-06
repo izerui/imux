@@ -643,7 +643,7 @@ internal class SessionMessageNavigator(
     }
 
     /**
-     * 在横线右侧摆出预览卡片。
+     * 在横线左侧摆出预览卡片。
      *
      * 卡片是终端层里的普通组件而不是 Balloon：换一根横线只挪位置、换文字，不重建弹窗，
      * 不闪；也不存在 hide-on-click-outside 吞掉第一下点击的问题。
@@ -662,7 +662,7 @@ internal class SessionMessageNavigator(
                 tickY = point.y,
                 cardWidth = size.width,
                 cardHeight = size.height,
-                x = point.x,
+                x = (point.x - size.width).coerceAtLeast(JBUI.scale(PREVIEW_MARGIN)),
                 containerHeight = parent?.height ?: (point.y + size.height),
                 margin = JBUI.scale(PREVIEW_MARGIN),
             )
@@ -803,7 +803,7 @@ internal class SessionMessageNavigator(
     }
 
     /**
-     * 终端左侧的一列短横线，每条用户输入一根。
+     * 终端右侧（滚动条内侧）的一列短横线，每条用户输入一根，右端对齐、向左伸长。
      *
      * 整列盖在终端上层，但 [contains] 只在横线本身上返回 true：Swing 按 contains 找最深的
      * 组件，横线之外的点直接落到下层终端，点击、拖选、滚轮都不受影响，不需要转发事件。
@@ -873,11 +873,18 @@ internal class SessionMessageNavigator(
             )
         }
 
-        /** 卡片左上角的参考点：横线列右侧留一点空隙，纵向就是横线中心，换算到终端层坐标。 */
+        /**
+         * 卡片右边缘的参考点：最长横线的左端再往左留一点空隙，纵向就是横线中心，换算到终端层坐标。
+         *
+         * 按最长横线算而不是当前这根：悬停放大后横线变长，卡片不能跟着左右挪。
+         */
         fun previewPointFor(anchor: UserMessageAnchor): Point? {
             val anchorY = anchorPoints().firstOrNull { it.anchor == anchor }?.y ?: return null
-            return Point(x + JBUI.scale(TICK_LEFT + ACTIVE_TICK_LENGTH + PREVIEW_GAP), y + anchorY)
+            return Point(x + tickRight() - JBUI.scale(ACTIVE_TICK_LENGTH + PREVIEW_GAP), y + anchorY)
         }
+
+        /** 横线右端的横坐标（组件内坐标）。 */
+        private fun tickRight(): Int = width - JBUI.scale(TICK_RIGHT)
 
         override fun paintComponent(graphics: Graphics) {
             val points = anchorPoints()
@@ -886,11 +893,11 @@ internal class SessionMessageNavigator(
             val g = graphics.create() as Graphics2D
             try {
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                val left = JBUI.scale(TICK_LEFT)
+                val right = tickRight()
                 points.forEach { point ->
                     val thickness = JBUI.scale(if (point.emphasized) ACTIVE_TICK_THICKNESS else TICK_THICKNESS)
                     g.color = if (point.emphasized) ACTIVE_MARK_COLOR else MESSAGE_MARK_COLOR
-                    g.fillRoundRect(left, point.y - thickness / 2, point.length, thickness, thickness, thickness)
+                    g.fillRoundRect(right - point.length, point.y - thickness / 2, point.length, thickness, thickness, thickness)
                 }
             } finally {
                 g.dispose()
@@ -908,7 +915,7 @@ internal class SessionMessageNavigator(
                     y,
                     points.map(AnchorPoint::y),
                     points.map(AnchorPoint::length),
-                    left = JBUI.scale(TICK_LEFT),
+                    right = tickRight(),
                     slack = JBUI.scale(TICK_HIT_SLACK),
                     maxBand = JBUI.scale(TICK_HIT_BAND),
                 ) ?: return null
@@ -967,7 +974,7 @@ internal class SessionMessageNavigator(
         const val REFRESH_DEBOUNCE_MS = 250L
         const val CONTINUOUS_REFRESH_INTERVAL_MS = 1_000L
 
-        const val TICK_LEFT = 6
+        const val TICK_RIGHT = 6
         const val TICK_PADDING = 12
         const val TICK_GAP = 8
         const val TICK_THICKNESS = 2
@@ -982,8 +989,8 @@ internal class SessionMessageNavigator(
         /** 命中区只在横线外留这么点余量——多留一分就多吃一分终端的鼠标事件。 */
         const val TICK_HIT_SLACK = 2
         const val TICK_HIT_BAND = 4
-        /** 横线列宽度：左边距 + 最长（强调态）横线 + 命中余量。 */
-        const val RAIL_WIDTH = TICK_LEFT + ACTIVE_TICK_LENGTH + TICK_HIT_SLACK + 2
+        /** 横线列宽度：右边距 + 最长（强调态）横线 + 命中余量。 */
+        const val RAIL_WIDTH = TICK_RIGHT + ACTIVE_TICK_LENGTH + TICK_HIT_SLACK + 2
 
         const val HIDE_DELAY_MS = 180
         const val LANDING_HIGHLIGHT_MS = 1_500

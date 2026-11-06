@@ -407,13 +407,16 @@ class AgentTerminalFileEditor(
                     val y = (height - toolbarHeight - JBUI.scale(12)).coerceAtLeast(0)
                     scrollButton.setBounds(x, y, toolbarWidth, toolbarHeight)
 
-                    // 提问导航横线贴终端左边缘，盖在文字上层但只有横线本身接收鼠标
-                    navigatorComponent.setBounds(0, 0, messageNavigator.preferredWidth.coerceAtMost(width), height)
+                    // 提问导航横线在滚动条内侧，盖在终端上层但只有横线本身接收鼠标
+                    val navigatorWidth = messageNavigator.preferredWidth
+                    val navigatorX =
+                        (width - navigatorWidth - JBUI.scale(NAVIGATOR_RIGHT_INSET)).coerceAtLeast(0)
+                    navigatorComponent.setBounds(navigatorX, 0, navigatorWidth, height)
 
-                    // 提示条铺满顶部；图标组在它下面、贴右侧并让开滚动条；轨迹面板再往下
+                    // 提示条铺满顶部；图标组在它下面、横线列左侧；轨迹面板再往下，横线列始终完整可用
                     val noticeHeight = if (notices.isVisible) notices.preferredSize.height else 0
                     notices.setBounds(0, 0, width, noticeHeight)
-                    val rightReserve = JBUI.scale(SCROLLBAR_RIGHT_INSET)
+                    val rightReserve = navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET)
                     val margin = JBUI.scale(TOOL_STRIP_MARGIN)
                     // 窄分屏时先保住按钮，结果文字按剩余宽度缩短或只留图标
                     val stripRoom = (width - rightReserve - margin * 2).coerceAtLeast(0)
@@ -857,7 +860,7 @@ class AgentTerminalFileEditor(
         const val MAX_FAILURE_CHARS = 160
         const val TOOL_STRIP_MARGIN = 8
         const val TOOLS_GOT_IT_ID = "imux.terminal.tools"
-        const val SCROLLBAR_RIGHT_INSET = 14
+        const val NAVIGATOR_RIGHT_INSET = 14
         const val SCROLL_ACTION_PLACE = "imuxTerminalEditor"
         const val SCROLL_ROW_HORIZONTAL_INSET = 30
     }
