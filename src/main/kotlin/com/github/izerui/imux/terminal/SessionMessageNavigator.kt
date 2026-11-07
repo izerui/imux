@@ -7,6 +7,7 @@ import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.peer.PeerFeedbackHint
 import com.github.izerui.imux.session.NavigationTranscriptIndex
 import com.github.izerui.imux.session.SessionExchange
+import com.github.izerui.imux.session.stripMarkdownForMatching
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
@@ -328,7 +329,9 @@ internal fun peerFeedbackAnchors(
     val availableNative = native.toMutableList()
     val added = hints.asReversed().mapNotNull { hint ->
         if (hint.absoluteOffset !in scanStart..scanEnd) return@mapNotNull null
-        val preview = truncated(normalizeWhitespace(hint.text), USER_PREVIEW_CHARS)
+        // 原生预览来自 transcript，已去掉 markdown；hint 是注入原文，带反引号等标记。
+        // 不按同一套规则归一化就对不上，同一条反馈会多出一个无回复的重复圆点。
+        val preview = truncated(normalizeWhitespace(stripMarkdownForMatching(hint.text)), USER_PREVIEW_CHARS)
         val match = availableNative.indexOfLast {
             it.userPreview == preview && it.absoluteOffset >= hint.absoluteOffset
         }

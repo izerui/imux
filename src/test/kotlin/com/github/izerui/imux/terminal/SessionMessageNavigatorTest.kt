@@ -53,6 +53,27 @@ class SessionMessageNavigatorTest {
     }
 
     @Test
+    fun `副驾驶反馈含 markdown 时仍能认出原生锚点而不重复`() {
+        // 原生锚点来自 transcript，已经过 stripMarkdownForMatching；hint 保留注入时的原文
+        val native = UserMessageAnchor(30, "我读了 ScreenPrompts.keysOf 和 BridgeRouter", "你说得对", 1_030L)
+        val hint = PeerFeedbackHint("我读了 `ScreenPrompts.keysOf` 和 **BridgeRouter**", 1_020L, outputModel)
+
+        val anchors = peerFeedbackAnchors(listOf(native), listOf(hint), 1_000L, 1_050L)
+
+        assertEquals(listOf(native), anchors)
+    }
+
+    @Test
+    fun `仅符号不同的副驾驶反馈不会被后面的原生锚点吞掉`() {
+        val native = UserMessageAnchor(30, "检查 C# 接口", "处理完成", 1_030L)
+        val hint = PeerFeedbackHint("检查 C++ 接口", 1_020L, outputModel)
+
+        val anchors = peerFeedbackAnchors(listOf(native), listOf(hint), 1_000L, 1_050L)
+
+        assertEquals(listOf("检查 C++ 接口", "检查 C# 接口"), anchors.map(UserMessageAnchor::userPreview))
+    }
+
+    @Test
     fun `相同反馈只有新一轮出现原生锚点时保留旧轮气泡`() {
         val first = PeerFeedbackHint("检查并发边界", 1_010L, outputModel)
         val second = PeerFeedbackHint("检查并发边界", 1_030L, outputModel)
