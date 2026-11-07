@@ -31,10 +31,10 @@ object BindingService {
         val replaced = result?.replaced?.takeIf { it.target.tabId != target.tabId }
         val released = listOfNotNull(occupant, replaced).map { it to SessionTitles.of(it) }
         val binding = result?.binding
+        val bridge = TerminalBridgeService.getInstance(project)
+        bridge.start()
         // 断开与连接的提示在同一个协程里按顺序发；占用者已经断开，即使这次绑定没成功它的手机也要收到断开提示
-        hub.launch { hub.router.onRebound(released, binding, project.name, target.agentType.displayName, sessionTitle) }
-        binding ?: return null
-        TerminalBridgeService.getInstance(project).start()
+        bridge.notifyConnection { hub.router.onRebound(released, binding, project.name, target.agentType.displayName, sessionTitle) }
         return binding
     }
 

@@ -36,14 +36,14 @@ class TerminalBridgeServiceSourceTest {
     }
 
     @Test
-    fun `标签不见了先等一会儿再断开，退出与关项目期间不断开，自动接回时告诉手机`() {
+    fun `标签不见了延迟释放绑定且关闭期间保留绑定供恢复`() {
         val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/TerminalBridgeService.kt")
         val code = source.normalized
         assertTrue("释放走延迟复核", code.contains("TabChange.Release -> scheduleRelease(binding)"))
         val schedule = source.bodyAfter("private fun scheduleRelease(binding: Binding)", '{')
         assertTrue(schedule.contains("delay(RELEASE_GRACE_MS)"))
         assertTrue(
-            "等待后关闭中或已销毁就不断开",
+            "等待后关闭中或已销毁就不释放绑定",
             schedule.contains("if (projectClosing || project.isDisposed) return@withContext")
         )
         assertTrue("保存前就记下项目在关闭", code.contains("override fun projectClosingBeforeSave(project: Project)"))
@@ -58,5 +58,31 @@ class TerminalBridgeServiceSourceTest {
         assertTrue(
             source.bodyAfter("private fun reattached(binding: Binding)", '{').contains("hub.router.onReattached(")
         )
+    }
+
+    @Test
+    fun `确定关闭项目和退出应用分别调用同一个关闭通知入口`() {
+        val projectClose = code.compact(code.bodyAfter("override fun projectClosing(project: Project)", '{'))
+        assertTrue(projectClose.contains("if(project===this@TerminalBridgeService.project)notifyClosing()"))
+        val appClose = code.compact(code.bodyAfter("override fun appWillBeClosed(isRestart: Boolean)", '{'))
+        assertTrue(appClose.contains("notifyClosing()"))
+        val beforeSave = code.bodyAfter("override fun projectClosingBeforeSave(project: Project)", '{')
+        assertFalse("保存前只标记，不提前发出断开提示", beforeSave.contains("notifyClosing()"))
+    }
+
+    @Test
+    fun `关闭通知先取消项目任务并预取署名再同步等待发送`() {
+        val closing = code.compact(code.bodyAfter("private fun notifyClosing()", '{'))
+        assertTrue(closing.startsWith("{projectClosing=truescope.cancel()"))
+        assertTrue(closing.contains("closeNotifier.notifyOnce(bindingsInProject().map{ClosingBinding(it,SessionTitles.of(it),SessionTitles.label(it))})"))
+        assertTrue(code.normalized.contains("hub.router.onSuspended(notice.binding, notice.title, notice.label)"))
+        val reattach = code.compact(code.bodyAfter("private fun reattached(binding: Binding)", '{'))
+        assertTrue(reattach.startsWith("{if(projectClosing||project.isDisposed)return"))
+        assertTrue(reattach.contains("notifyConnection{hub.router.onReattached("))
+        val notify = code.compact(code.bodyAfter("internal fun notifyConnection(block: suspend () -> Unit)", '{'))
+        assertTrue(notify.startsWith("{if(projectClosing||project.isDisposed)return"))
+        assertTrue(notify.contains("scope.launch{block()}"))
+        val selected = code.compact(code.normalized)
+        assertTrue(selected.contains("hub.bindings.snapshot().filter{it.target.projectPath==projectPath}"))
     }
 }

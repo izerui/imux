@@ -21,6 +21,10 @@ internal object BundleBridgeTexts : BridgeTexts {
     // CLI 给的是 `input needed` 这类英文原因，译成与 IDE 提醒一致的说法
     override fun waiting(reason: String?) = ImuxBundle.message("bridge.status.waiting", waitingReason(reason))
 
+    override fun prompt(screen: String) = ImuxBundle.message("bridge.status.prompt", screen)
+
+    override fun promptRejected() = ImuxBundle.message("bridge.reply.promptRejected")
+
     override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", sessionTitle)
 
     override fun transcriptRestarted() = ImuxBundle.message("bridge.status.transcriptRestarted")
@@ -40,12 +44,6 @@ internal object BundleBridgeTexts : BridgeTexts {
         agent: String,
         sessionTitle: String,
     ) = ImuxBundle.message("bridge.status.connected", project, agent, sessionTitle)
-
-    override fun reconnected(
-        project: String,
-        agent: String,
-        sessionTitle: String,
-    ) = ImuxBundle.message("bridge.status.reconnected", project, agent, sessionTitle)
 
     // 配对回复由机器人管理直接发出，不经过路由器，所以不在 BridgeTexts 接口里
     fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")

@@ -30,6 +30,15 @@ fun interface TerminalSessionPort {
         target: SessionTarget,
         text: String,
     ): SubmitResult
+
+    /** 终端此刻屏幕上停着的选择框；没有或读不到时为 null。 */
+    suspend fun prompt(target: SessionTarget): ScreenPrompt? = null
+
+    /** 原样写入按键：不走括号粘贴、不补回车，与人在终端里按键一致。 */
+    suspend fun press(
+        target: SessionTarget,
+        keys: String,
+    ): SubmitResult = SubmitResult.OFFLINE
 }
 
 /** 发往手机的提示文案，由资源包实现，测试用假实现。 */
@@ -49,6 +58,12 @@ interface BridgeTexts {
 
     fun waiting(reason: String?): String
 
+    /** 终端停在选择框上：[screen] 是排成列表的框（已按渠道排好版），后面附上怎么在手机上作答。 */
+    fun prompt(screen: String): String
+
+    /** 回复对不上屏幕上的框（编号不存在、单选题回了多个编号、多选题回了一句话），什么也没按。 */
+    fun promptRejected(): String
+
     fun released(sessionTitle: String): String
 
     fun transcriptRestarted(): String
@@ -63,13 +78,6 @@ interface BridgeTexts {
     fun backgroundRunning(tasks: List<String?>): String
 
     fun connected(
-        project: String,
-        agent: String,
-        sessionTitle: String,
-    ): String
-
-    /** IDE 重启或项目重新打开后，绑定自动接回同一个会话。 */
-    fun reconnected(
         project: String,
         agent: String,
         sessionTitle: String,

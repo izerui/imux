@@ -15,6 +15,7 @@ import kotlin.coroutines.cancellation.CancellationException
  * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在本轮结算时作为一条发出，
  * 中间的过程说明不推，避免逐条推送触发平台限频。轮次的划分与结算规则在 [TabState]；
  * 电脑端输入带标签单独转发；远程输入在记录中再次出现时不回显；等待确认立即推送。
+ * 终端停在选择框上时，推送屏幕上的框，手机的回复按键作答（见 [ScreenPrompts]），不必回到电脑上操作。
  * 同一标签的 [onSessionEvents]、[onTurnCompleted] 由调用方串行调用。
  * 只做简单转接：换绑、断开的空档里漏掉的内容不补（见 AGENTS.md 手机桥接约定）。
  */
@@ -45,6 +46,10 @@ class BridgeRouter(
      * 凡能确定所属会话的消息都署名；连接、恢复连接的提示正文已写明这三项，不重复。
      */
     private val sessionLabelOf: (Binding) -> String? = { null },
+    /** 作答时相邻两次按键的间隔：一次写入多个键，CLI 会当成一段粘贴；测试传 0。 */
+    private val keyGapMs: Long = 150,
+    /** 等选择框画好、或作答后等屏幕刷新的时间；测试传 0。 */
+    private val promptSettleMs: Long = 500,
 ) {
     /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
     private val submitLocks = HashMap<RobotId, Mutex>()
@@ -59,6 +64,12 @@ class BridgeRouter(
         data class Done(val result: SubmitResult) : SubmitPhase
         data object BindingGone : SubmitPhase
         data object BindingChanged : SubmitPhase
+
+        /** 按键作答了屏幕上的框 [before]；之后屏幕变成下一题等新框时要推给手机。 */
+        data class Answered(val result: SubmitResult, val binding: Binding, val before: ScreenPrompt) : SubmitPhase
+
+        /** 回复对不上屏幕上的框，一个键也没按。 */
+        data object PromptRejected : SubmitPhase
     }
 
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
@@ -100,22 +111,50 @@ class BridgeRouter(
 
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
+                // 终端停在选择框上：这句是在回答它。此时照常粘贴提交，末尾的回车会确认光标所在的选项，
+                // 所以引用（多半是引用了那条选择框消息）只取正文作答，带附件的不提交
+                var submission = text
+                val prompt = readPrompt(current.target)
+                if (prompt != null) {
+                    if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
+                    // 交原文而不是 trim 过的：自定义答案的换行与空格要原样送到 CLI
+                    val answer = ScreenPrompts.answer(prompt, message.text)
+                    if (answer == PromptAnswer.Invalid) return@withLock SubmitPhase.PromptRejected
+                    try {
+                        if (answer is PromptAnswer.Keys) {
+                            return@withLock SubmitPhase.Answered(press(current.target, answer.keys), current, prompt)
+                        }
+                        // 框里没有能填写的项：按 Esc 拒绝它，等框关掉，再把这句话照常交给会话
+                        val declined = press(current.target, listOf(ScreenPrompts.ESC))
+                        if (declined != SubmitResult.SUBMITTED_TO_TERMINAL) return@withLock SubmitPhase.Done(declined)
+                        delay(promptSettleMs)
+                    } catch (e: CancellationException) {
+                        unmarkSeen(message.robotId, message.externalMessageId)
+                        throw e
+                    } catch (_: Exception) {
+                        return@withLock SubmitPhase.Done(SubmitResult.OFFLINE)
+                    }
+                    submission = typed
+                }
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
-                tab(tabId) { expectEcho(text) }
+                tab(tabId) { expectEcho(submission) }
                 try {
-                    val phase = submitWithRetry(message.robotId, current, text)
+                    val phase = submitWithRetry(message.robotId, current, submission)
                     // 未提交成功，清除回显登记
-                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) tab(tabId) { forgetEcho(text) }
+                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) tab(tabId) { forgetEcho(submission) }
                     phase
                 } catch (e: CancellationException) {
-                    tab(tabId) { forgetEcho(text) }
+                    tab(tabId) { forgetEcho(submission) }
                     unmarkSeen(message.robotId, message.externalMessageId)
                     throw e
                 } catch (_: Exception) {
-                    tab(tabId) { forgetEcho(text) }
+                    tab(tabId) { forgetEcho(submission) }
                     SubmitPhase.Done(SubmitResult.OFFLINE)
                 }
             }
+        if (phase is SubmitPhase.Answered && phase.result == SubmitResult.SUBMITTED_TO_TERMINAL) {
+            refreshPrompt(phase.binding, phase.before)
+        }
         return when (phase) {
             SubmitPhase.BindingGone -> {
                 reply(message.robotId, owner, texts.unbound())
@@ -125,19 +164,31 @@ class BridgeRouter(
                 reply(message.robotId, owner, texts.rebound())
                 InboundOutcome.REBOUND
             }
-            is SubmitPhase.Done -> when (phase.result) {
-                SubmitResult.SUBMITTED_TO_TERMINAL -> InboundOutcome.SUBMITTED_TO_TERMINAL
-                SubmitResult.NOT_READY -> {
-                    reply(message.robotId, owner, texts.notReady())
-                    InboundOutcome.NOT_READY
-                }
-                SubmitResult.OFFLINE -> {
-                    reply(message.robotId, owner, texts.offline())
-                    InboundOutcome.OFFLINE
-                }
+            SubmitPhase.PromptRejected -> {
+                reply(message.robotId, owner, texts.promptRejected())
+                InboundOutcome.PROMPT_REJECTED
             }
+            is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
+            is SubmitPhase.Answered -> outcomeOf(message.robotId, owner, phase.result)
         }
     }
+
+    private suspend fun outcomeOf(
+        robotId: RobotId,
+        owner: RobotOwner,
+        result: SubmitResult,
+    ): InboundOutcome =
+        when (result) {
+            SubmitResult.SUBMITTED_TO_TERMINAL -> InboundOutcome.SUBMITTED_TO_TERMINAL
+            SubmitResult.NOT_READY -> {
+                reply(robotId, owner, texts.notReady())
+                InboundOutcome.NOT_READY
+            }
+            SubmitResult.OFFLINE -> {
+                reply(robotId, owner, texts.offline())
+                InboundOutcome.OFFLINE
+            }
+        }
 
     /** 远程控制关闭时调用：丢弃尚未发出的回复与轮次状态，重新开启后不补发关闭前的内容。 */
     fun discardPending() {
@@ -208,6 +259,45 @@ class BridgeRouter(
         }
         return SubmitPhase.Done(SubmitResult.NOT_READY)
     }
+
+    private suspend fun press(
+        target: SessionTarget,
+        keys: List<String>,
+    ): SubmitResult {
+        for ((index, key) in keys.withIndex()) {
+            if (index > 0) delay(keyGapMs)
+            val result = sessionPort.press(target, key)
+            if (result != SubmitResult.SUBMITTED_TO_TERMINAL) return result
+        }
+        return SubmitResult.SUBMITTED_TO_TERMINAL
+    }
+
+    /** 作答后屏幕换成了新的框（多题的下一题、答案确认页、勾选变化），推给手机接着答。 */
+    private suspend fun refreshPrompt(
+        binding: Binding,
+        before: ScreenPrompt,
+    ) {
+        delay(promptSettleMs)
+        if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
+        val after = readPrompt(binding.target) ?: return
+        if (after.text != before.text) send(binding, promptText(binding, after))
+    }
+
+    /** 读屏失败按没有框处理：宁可照常提交，也不能让消息卡住。 */
+    private suspend fun readPrompt(target: SessionTarget): ScreenPrompt? =
+        try {
+            sessionPort.prompt(target)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+
+    /** 框排成聊天里的列表（见 [ScreenPrompts.render]），按渠道是否渲染 Markdown 选格式。 */
+    private fun promptText(
+        binding: Binding,
+        prompt: ScreenPrompt,
+    ): String = texts.prompt(ScreenPrompts.render(prompt, markdown = channelOf(binding.robotId)?.rendersMarkdown ?: true))
 
     /** 读取期间换绑的，事件交给当前绑定；攒下的回复按代次作废，发出时只认产生它的那次绑定。 */
     suspend fun onSessionEvents(
@@ -394,7 +484,9 @@ class BridgeRouter(
         reason: String?,
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
-        send(binding, texts.waiting(reason))
+        // 等待信号可能先于选择框画完到达，读不到就稍等再读一次；仍读不到才只报等待原因
+        val prompt = readPrompt(binding.target) ?: delay(promptSettleMs).let { readPrompt(binding.target) }
+        send(binding, if (prompt != null) promptText(binding, prompt) else texts.waiting(reason))
     }
 
     suspend fun onTranscriptRestarted(tabId: String) {
@@ -419,13 +511,18 @@ class BridgeRouter(
         bound?.let { onBound(it, project, agent, sessionTitle) }
     }
 
-    /** 用户把机器人绑到会话后，告诉本人当前连接到哪里。走正常的代次校验。 */
+    /** 手动绑定与自动恢复都等渠道真正上线，再通知本人当前连接；发送前复核绑定代次。 */
     suspend fun onBound(
         binding: Binding,
         project: String,
         agent: String,
         sessionTitle: String,
     ) {
+        if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
+        if (withTimeoutOrNull(reconnectWaitMs) { awaitOnline(binding.robotId) } == null) {
+            onWarning("机器人 ${binding.robotId.value} ${reconnectWaitMs / 1000} 秒内未上线，不发连接通知")
+            return
+        }
         send(binding, texts.connected(project, agent, sessionTitle), label = null)
     }
 
@@ -438,12 +535,15 @@ class BridgeRouter(
         project: String,
         agent: String,
         sessionTitle: String,
+    ) = onBound(binding, project, agent, sessionTitle)
+
+    /** 项目或 IDE 关闭：通知手机断开，但保留绑定供重新打开后接回；旧代次不得误报。 */
+    suspend fun onSuspended(
+        binding: Binding,
+        sessionTitle: String,
+        label: String?,
     ) {
-        if (withTimeoutOrNull(reconnectWaitMs) { awaitOnline(binding.robotId) } == null) {
-            onWarning("机器人 ${binding.robotId.value} ${reconnectWaitMs / 1000} 秒内未上线，不发重连通知")
-            return
-        }
-        send(binding, texts.reconnected(project, agent, sessionTitle), label = null)
+        send(binding, texts.released(sessionTitle), label)
     }
 
     /**

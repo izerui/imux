@@ -3,7 +3,10 @@ package com.github.izerui.imux.bridge.core
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.model.AgentType
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -64,6 +67,10 @@ class BridgeRouterTest {
 
         override fun waiting(reason: String?) = "WAIT($reason)"
 
+        override fun prompt(screen: String) = "PROMPT($screen)"
+
+        override fun promptRejected() = "PROMPT_REJECTED"
+
         override fun released(sessionTitle: String) = "RELEASED($sessionTitle)"
 
         override fun transcriptRestarted() = "RESTARTED"
@@ -73,12 +80,6 @@ class BridgeRouterTest {
         override fun turnWithoutReply() = "NO_REPLY"
 
         override fun turnInterrupted() = "INTERRUPTED"
-
-        override fun reconnected(
-            project: String,
-            agent: String,
-            sessionTitle: String,
-        ) = "RECONNECTED($project/$agent/$sessionTitle)"
 
         override fun connected(
             project: String,
@@ -372,6 +373,138 @@ class BridgeRouterTest {
         }
 
     @Test
+    fun `关闭提示保留绑定且重新挂接后使用已连接文案`() =
+        runBlocking {
+            val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+            router.onSuspended(binding, "修复登录", "imux · Codex · 修复登录")
+            assertEquals(listOf("RELEASED(修复登录)\n\n---\n> imux · Codex · 修复登录"), sentTexts())
+            assertEquals(binding, registry.bindingOf(robot))
+            val restored = registry.reattach(robot, "new-tab")!!
+            router.onReattached(restored, "imux", "Codex", "修复登录")
+            assertEquals("CONNECTED(imux/Codex/修复登录)", sentTexts().last())
+            assertEquals("new-tab", registry.bindingOf(robot)!!.target.tabId)
+        }
+
+    @Test
+    fun `关闭快照的绑定已被替换时不向新会话发送断开提示`() =
+        runBlocking {
+            val old = (registry.bind(robot, target) as BindResult.Bound).binding
+            val replacement = (registry.bind(robot, target.copy(tabId = "other-tab")) as BindResult.Bound).binding
+            router.onSuspended(old, "旧会话", null)
+            assertTrue(sentTexts().isEmpty())
+            assertEquals(replacement, registry.bindingOf(robot))
+        }
+
+    @Test
+    fun `取消恢复任务后机器人上线不再发送已连接提示`() =
+        runBlocking {
+            val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+            val online = CompletableDeferred<Unit>()
+            val waiting = CompletableDeferred<Unit>()
+            val r = BridgeRouter(registry, { owner }, port, { channel }, Texts, awaitOnline = {
+                waiting.complete(Unit)
+                online.await()
+            })
+            val job = launch { r.onReattached(binding, "imux", "Codex", "修复登录") }
+            waiting.await()
+            job.cancel()
+            r.onSuspended(binding, "修复登录", null)
+            online.complete(Unit)
+            job.join()
+            assertEquals(listOf("RELEASED(修复登录)"), sentTexts())
+            assertEquals(binding, registry.bindingOf(robot))
+        }
+
+    @Test(timeout = 5_000)
+    fun `手动连接等机器人真正上线后才通知手机`() =
+        runBlocking {
+            val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+            val online = CompletableDeferred<Unit>()
+            val waiting = CompletableDeferred<Unit>()
+            val r = BridgeRouter(registry, { owner }, port, { channel }, Texts, awaitOnline = {
+                waiting.complete(Unit)
+                online.await()
+            })
+            val job = launch { r.onRebound(emptyList(), binding, "imux", "Codex", "修复登录") }
+            waiting.await()
+            assertTrue("还未上线，不把保存绑定误报为连接成功", sentTexts().isEmpty())
+            online.complete(Unit)
+            job.join()
+            assertEquals(listOf("CONNECTED(imux/Codex/修复登录)"), sentTexts())
+        }
+
+    @Test(timeout = 5_000)
+    fun `手动连接限频重试期间关闭项目后手机只收到断开提示`() =
+        runBlocking {
+            val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+            val firstAttempt = CompletableDeferred<Unit>()
+            val delivered = mutableListOf<String>()
+            var connectionAttempts = 0
+            val limited = object : ChannelAdapter {
+                override val robotId = robot
+                override val maxTextBytes = 1000
+
+                override suspend fun send(message: OutboundMessage): DeliveryResult {
+                    if (message.text.startsWith("CONNECTED") && ++connectionAttempts == 1) {
+                        firstAttempt.complete(Unit)
+                        return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
+                    }
+                    delivered += message.text
+                    return DeliveryResult.Accepted
+                }
+            }
+            val r = BridgeRouter(registry, { owner }, port, { limited }, Texts, rateLimitRetryDelayMs = 50)
+            val projectScope = CoroutineScope(coroutineContext + Job(coroutineContext[Job]))
+            try {
+                val job = projectScope.launch { r.onRebound(emptyList(), binding, "imux", "Codex", "修复登录") }
+                firstAttempt.await()
+                projectScope.cancel()
+                r.onSuspended(binding, "修复登录", null)
+                job.join()
+                assertEquals(listOf("RELEASED(修复登录)"), delivered)
+                assertEquals("关闭后不能重试已连接提示", 1, connectionAttempts)
+                assertEquals("关闭项目保留绑定供恢复", binding, registry.bindingOf(robot))
+            } finally {
+                projectScope.cancel()
+            }
+        }
+
+    @Test(timeout = 5_000)
+    fun `换绑还在等待旧会话断开提示时关闭项目不再通知新会话已连接`() =
+        runBlocking {
+            val oldRobot = RobotId("old")
+            val old = (registry.bind(oldRobot, target) as BindResult.Bound).binding
+            registry.unbind(oldRobot)
+            val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+            val waiting = CompletableDeferred<Unit>()
+            val released = CompletableDeferred<Unit>()
+            val oldChannel = object : ChannelAdapter {
+                override val robotId = oldRobot
+                override val maxTextBytes = 1000
+
+                override suspend fun send(message: OutboundMessage): DeliveryResult {
+                    waiting.complete(Unit)
+                    released.await()
+                    return DeliveryResult.Accepted
+                }
+            }
+            val r = BridgeRouter(registry, { owner }, port, { if (it == oldRobot) oldChannel else channel }, Texts)
+            val projectScope = CoroutineScope(coroutineContext + Job(coroutineContext[Job]))
+            try {
+                val job = projectScope.launch { r.onRebound(listOf(old to "旧会话"), binding, "imux", "Codex", "修复登录") }
+                waiting.await()
+                projectScope.cancel()
+                r.onSuspended(binding, "修复登录", null)
+                released.complete(Unit)
+                job.join()
+                assertEquals(listOf("RELEASED(修复登录)"), sentTexts())
+                assertEquals(binding, registry.bindingOf(robot))
+            } finally {
+                projectScope.cancel()
+            }
+        }
+
+    @Test
     fun `机器人已登记但仍在连接时等待上线再发送恢复通知`() =
         runBlocking {
             registry.bind(robot, target)
@@ -391,7 +524,7 @@ class BridgeRouterTest {
             assertTrue("等待真实连接状态", job.isActive)
             status.value = ConnectionStatus.Online
             job.join()
-            assertEquals(listOf("RECONNECTED(imux/Claude/修复登录)"), sentTexts())
+            assertEquals(listOf("CONNECTED(imux/Claude/修复登录)"), sentTexts())
         }
 
     @Test
@@ -684,7 +817,7 @@ class BridgeRouterTest {
             r.onBound(binding, "imux", "Claude Code", "代理商改造")
             assertEquals("CONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
             r.onReattached(binding, "imux", "Claude Code", "代理商改造")
-            assertEquals("RECONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
+            assertEquals("CONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
             r.onReleased(binding, "代理商改造")
             assertEquals("RELEASED(代理商改造)$label", sentTexts().last())
         }
@@ -1322,5 +1455,235 @@ class BridgeRouterTest {
             assertFalse(warnings[0].contains(owner.senderId))
             assertFalse(warnings[0].contains(owner.chatId))
             assertFalse(warnings[0].contains("看看"))
+        }
+
+    /** 终端屏幕上的框按脚本逐次读出（读完停在最后一个），并记录提交与按键。 */
+    private class PromptPort(private val screens: List<ScreenPrompt?>) : TerminalSessionPort {
+        val submitted = mutableListOf<String>()
+        val pressed = mutableListOf<String>()
+        private var reads = 0
+
+        override suspend fun submit(
+            target: SessionTarget,
+            text: String,
+        ): SubmitResult {
+            submitted += text
+            return SubmitResult.SUBMITTED_TO_TERMINAL
+        }
+
+        override suspend fun prompt(target: SessionTarget): ScreenPrompt? = screens[minOf(reads++, screens.lastIndex)]
+
+        override suspend fun press(
+            target: SessionTarget,
+            keys: String,
+        ): SubmitResult {
+            pressed += keys
+            return SubmitResult.SUBMITTED_TO_TERMINAL
+        }
+    }
+
+    private val choose = ScreenPrompt("Do you want to proceed?\n❯ 1. Yes\n  2. No", options = setOf(1, 2))
+    private val ask =
+        ScreenPrompts.extract(
+            "你更喜欢哪种宠物？\n❯ 1. cat\n  2. dog\n  3. Type something.\n  4. Chat about this\nEnter to select · Esc to cancel",
+        )!!
+
+    private fun promptRouter(
+        p: TerminalSessionPort,
+        ch: FakeChannel = channel,
+    ) = BridgeRouter(
+        registry,
+        { if (it == robot) owner else null },
+        p,
+        { if (it == robot) ch else null },
+        Texts,
+        notReadyRetryDelayMs = 0,
+        keyGapMs = 0,
+        promptSettleMs = 0,
+    )
+
+    @Test
+    fun `等待时屏幕上有选择框就排成列表发到手机，渲染 Markdown 的编号加粗，不渲染的发纯文字`() =
+        runBlocking {
+            registry.bind(robot, target)
+            promptRouter(PromptPort(listOf(choose))).onWaiting("tab-1", "permission prompt")
+            assertEquals(listOf("PROMPT(Do you want to proceed?\n\n**1.** Yes  \n**2.** No)"), sentTexts())
+
+            val plain = FakeChannel(robot, rendersMarkdown = false)
+            promptRouter(PromptPort(listOf(choose)), plain).onWaiting("tab-1", "permission prompt")
+            assertEquals(listOf("PROMPT(Do you want to proceed?\n\n1. Yes\n2. No)"), plain.sent.map { it.text })
+        }
+
+    @Test
+    fun `等待时第一次没读到框会再读一次，仍读不到才只报等待原因`() =
+        runBlocking {
+            registry.bind(robot, target)
+            promptRouter(PromptPort(listOf(null, choose))).onWaiting("tab-1", "permission prompt")
+            promptRouter(PromptPort(listOf(null))).onWaiting("tab-1", "permission prompt")
+            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "WAIT(permission prompt)"), sentTexts())
+        }
+
+    @Test
+    fun `停在选择框上时明确选择只按键，不当作消息提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(choose))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 2")))
+            assertEquals(listOf("2"), p.pressed)
+            assertTrue(p.submitted.isEmpty())
+        }
+
+    @Test
+    fun `回复个人要求时移动到输入项并粘贴原文后提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ask, null))
+            promptRouter(p).onInbound(inbound("1", "仓鼠\n小的那种"))
+            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~仓鼠\n小的那种\u001b[201~", ScreenPrompts.ENTER), p.pressed)
+            assertTrue(p.submitted.isEmpty())
+        }
+
+    @Test
+    fun `没有可填写选项时按 Esc 拒绝这个框，再把这句话照常提交给会话`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(choose))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "改用 pnpm")))
+            assertEquals(listOf(ScreenPrompts.ESC), p.pressed)
+            assertEquals(listOf("改用 pnpm"), p.submitted)
+            assertFalse(sentTexts().contains("PROMPT_REJECTED"))
+        }
+
+    @Test
+    fun `屏幕上没有框时消息照常提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val none = PromptPort(listOf(null))
+            promptRouter(none).onInbound(inbound("1", "2"))
+            assertEquals(listOf("2"), none.submitted)
+            assertTrue(none.pressed.isEmpty())
+
+        }
+
+    @Test
+    fun `引用选择框作答时只使用回复正文选择`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val quoted = PromptPort(listOf(choose))
+            assertEquals(
+                InboundOutcome.SUBMITTED_TO_TERMINAL,
+                promptRouter(quoted).onInbound(InboundMessage(robot, "2", "me", "chat-1", "选 1", quote = "上一段")),
+            )
+            assertTrue(quoted.submitted.isEmpty())
+            assertEquals(listOf("1"), quoted.pressed)
+        }
+
+    @Test
+    fun `选择框打开时附件不提交以免误确认当前选项`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val attached = PromptPort(listOf(choose))
+            val r =
+                BridgeRouter(
+                    registry, { owner }, attached, { channel }, Texts,
+                    attachmentStore = { _, _ -> PlaceResult.Saved("a.png") },
+                    notReadyRetryDelayMs = 0, keyGapMs = 0, promptSettleMs = 0,
+                )
+            assertEquals(InboundOutcome.PROMPT_REJECTED, r.onInbound(inboundWith("3", "1", FakeAttachment())))
+            assertTrue(attached.submitted.isEmpty())
+            assertTrue(attached.pressed.isEmpty())
+        }
+
+    @Test
+    fun `作答后屏幕换成新框就推给手机，框没变或已关闭都不推`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val next = ScreenPrompt("你喜欢哪些水果？\n❯ 1. [ ] 苹果", options = setOf(1), checkboxOptions = setOf(1))
+            promptRouter(PromptPort(listOf(ask, next))).onInbound(inbound("1", "选 1"))
+            assertEquals(listOf("PROMPT(${ScreenPrompts.render(next, true)})"), sentTexts())
+
+            promptRouter(PromptPort(listOf(ask, ask))).onInbound(inbound("2", "下"))
+            promptRouter(PromptPort(listOf(ask, null))).onInbound(inbound("3", "选 2"))
+            assertEquals(1, channel.sent.size)
+        }
+
+    @Test
+    fun `单选题回多个编号或不存在的编号时不按编号、不替人答下一题，原话填进自定义输入项`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ask, null))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 1 3")))
+            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~选 1 3\u001b[201~", ScreenPrompts.ENTER), p.pressed)
+            assertTrue(p.submitted.isEmpty())
+            assertFalse(sentTexts().contains("PROMPT_REJECTED"))
+        }
+
+    @Test
+    fun `多选题回多个编号勾好后提交这道题`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ScreenPrompts.extract(RealScreens.MULTI_SELECT)))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 1 2")))
+            assertEquals(listOf("1", "2", "\u001b[B", "\u001b[B", "\u001b[B", ScreenPrompts.ENTER), p.pressed)
+            assertTrue(p.submitted.isEmpty())
+        }
+
+    @Test
+    fun `回自定义输入项本身的编号不单独按编号，原话填进输入项提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ask, null))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 3")))
+            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~选 3\u001b[201~", ScreenPrompts.ENTER), p.pressed)
+            assertFalse(sentTexts().contains("PROMPT_REJECTED"))
+        }
+
+    @Test
+    fun `真实多选画面混选离题项时不按编号，原话填进自定义输入项后提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ScreenPrompts.extract(RealScreens.MULTI_SELECT), null))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 4 1")))
+            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~选 4 1\u001b[201~", "\u001b[B", ScreenPrompts.ENTER), p.pressed)
+            assertTrue(p.submitted.isEmpty())
+        }
+
+    @Test
+    fun `多选框的个人要求填入自定义输入项后提交，不触发取消或普通消息通道`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ScreenPrompts.extract(RealScreens.MULTI_SELECT), null))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "苹果，但不要太酸")))
+            assertEquals(
+                listOf("\u001b[B", "\u001b[B", "\u001b[200~苹果，但不要太酸\u001b[201~", "\u001b[B", ScreenPrompts.ENTER),
+                p.pressed,
+            )
+            assertTrue(p.submitted.isEmpty())
+        }
+
+    @Test
+    fun `只回数字时对上选项就按编号，对不上的 8080 原话填进自定义输入项`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ask, null, ask, null))
+            val r = promptRouter(p)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "2")))
+            assertEquals(listOf("2"), p.pressed)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "8080")))
+            assertEquals(listOf("2", "\u001b[B", "\u001b[B", "\u001b[200~8080\u001b[201~", ScreenPrompts.ENTER), p.pressed)
+            assertTrue(p.submitted.isEmpty())
+        }
+
+    @Test
+    fun `自定义答案保留首尾空格与内部换行`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(ask, null))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "  猫\n  不要黑色的  ")))
+            assertEquals(
+                listOf("\u001b[B", "\u001b[B", "\u001b[200~  猫\n  不要黑色的  \u001b[201~", ScreenPrompts.ENTER),
+                p.pressed,
+            )
+            assertTrue(p.submitted.isEmpty())
         }
 }

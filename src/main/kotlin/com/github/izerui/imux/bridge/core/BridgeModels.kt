@@ -133,4 +133,7 @@ enum class InboundOutcome {
 
     /** 提交前发现已换绑：不提交到新终端，已提示本人重新发送。 */
     REBOUND,
+
+    /** 回复对不上终端里停着的选择框：没有按键，已提示怎么回。 */
+    PROMPT_REJECTED,
 }

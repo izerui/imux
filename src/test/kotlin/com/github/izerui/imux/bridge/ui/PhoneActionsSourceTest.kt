@@ -23,9 +23,9 @@ class PhoneActionsSourceTest {
         val service = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BindingService.kt")
         val bind = service.compact(service.bodyAfter("fun bind(project: Project, robotId: RobotId, target: SessionTarget, sessionTitle: String,)", '{'))
         assertTrue(bind.contains("occupant?.let{hub.bindings.unbind(it.robotId)}valresult=hub.bindings.bind(robotId,target)"))
-        assertTrue("断开与连接提示在同一个协程里按顺序发，绑定失败也通知占用者", bind.contains("hub.launch{hub.router.onRebound(released,binding,"))
-        assertTrue("只启动一个协程", Regex("hub\\.launch").findAll(bind).count() == 1)
-        assertTrue(bind.contains("TerminalBridgeService.getInstance(project).start()"))
+        assertTrue("断开与连接提示按顺序发，并受项目关闭取消", bind.contains("bridge.notifyConnection{hub.router.onRebound(released,binding,"))
+        assertTrue("只提交一组连接通知", Regex("bridge\\.notifyConnection").findAll(bind).count() == 1)
+        assertTrue("先启动关闭监听再提交通知", bind.contains("valbridge=TerminalBridgeService.getInstance(project)bridge.start()bridge.notifyConnection"))
     }
 
     @Test

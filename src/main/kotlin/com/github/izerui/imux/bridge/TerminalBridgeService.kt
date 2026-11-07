@@ -21,6 +21,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectCloseListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -57,6 +58,11 @@ class TerminalBridgeService(
     private val peerEvents = Dispatchers.IO.limitedParallelism(1)
     private val seenTabs = ConcurrentHashMap.newKeySet<String>()
     private val pendingReleases = ConcurrentHashMap.newKeySet<RobotId>()
+    private val closeNotifier = BridgeCloseNotifier(
+        send = { notice -> hub.router.onSuspended(notice.binding, notice.title, notice.label) },
+        onFailure = { LOG.warn("关闭时发送手机断开提示失败", it) },
+        onTimeout = { LOG.warn("关闭时发送手机断开提示超时，继续关闭") },
+    )
 
     @Volatile
     private var projectClosing = false
@@ -79,7 +85,7 @@ class TerminalBridgeService(
                 }
 
                 override fun projectClosing(project: Project) {
-                    if (project === this@TerminalBridgeService.project) projectClosing = true
+                    if (project === this@TerminalBridgeService.project) notifyClosing()
                 }
             },
         )
@@ -88,7 +94,7 @@ class TerminalBridgeService(
             AppLifecycleListener.TOPIC,
             object : AppLifecycleListener {
                 override fun appWillBeClosed(isRestart: Boolean) {
-                    projectClosing = true
+                    notifyClosing()
                 }
             },
         )
@@ -177,15 +183,30 @@ class TerminalBridgeService(
 
     /** 同一个会话在新标签里恢复（IDE 重启、项目重新打开）：告诉手机连接已自动恢复。 */
     private fun reattached(binding: Binding) {
+        if (projectClosing || project.isDisposed) return
         LOG.info("会话标签恢复，机器人 ${binding.robotId.value} 自动接回")
         SessionTitles.remember(binding)
         val title = SessionTitles.of(binding)
-        hub.launch { hub.router.onReattached(binding, project.name, binding.target.agentType.displayName, title) }
+        notifyConnection { hub.router.onReattached(binding, project.name, binding.target.agentType.displayName, title) }
+    }
+
+    /** 手动连接与自动恢复共用项目作用域，关闭后不再补发过期的连接提示。 */
+    internal fun notifyConnection(block: suspend () -> Unit) {
+        if (projectClosing || project.isDisposed) return
+        scope.launch { block() }
+    }
+
+    private fun notifyClosing() {
+        projectClosing = true
+        // 取消还在等上线或限频重试的连接提示，再发送“已断开”。
+        scope.cancel()
+        // 先取好标题和署名，发送线程不再访问即将销毁的项目服务。
+        closeNotifier.notifyOnce(bindingsInProject().map { ClosingBinding(it, SessionTitles.of(it), SessionTitles.label(it)) })
     }
 
     /**
      * 标签不见了先等一会儿再断开：IDE 退出、关项目时，终端可能比关闭信号先被关掉，立即断开会给手机发一条
-     * 「已断开」，重启后绑定却又自动接回。等待期间收到关闭信号就不断开；服务随项目关闭销毁时，这次等待一并取消。
+     * 「已断开」并移除绑定。等待期间收到关闭信号就保留绑定，由关闭回调通知手机；这次等待一并取消。
      */
     private fun scheduleRelease(binding: Binding) {
         if (!pendingReleases.add(binding.robotId)) return

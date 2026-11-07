@@ -62,6 +62,10 @@ class TabPollerTest {
 
         override fun waiting(reason: String?) = "WAIT($reason)"
 
+        override fun prompt(screen: String) = "PROMPT($screen)"
+
+        override fun promptRejected() = "PROMPT_REJECTED"
+
         override fun released(sessionTitle: String) = "RELEASED"
 
         override fun transcriptRestarted() = "RESTARTED"
@@ -71,12 +75,6 @@ class TabPollerTest {
         override fun turnWithoutReply() = "NO_REPLY"
 
         override fun turnInterrupted() = "INTERRUPTED"
-
-        override fun reconnected(
-            project: String,
-            agent: String,
-            sessionTitle: String,
-        ) = "RECONNECTED($project/$agent/$sessionTitle)"
 
         override fun connected(
             project: String,
