@@ -16,6 +16,7 @@ interface ChannelAdapter {
     /** 平台按 Markdown 渲染文本；为 false 时原样显示，不该发 Markdown 标记。 */
     val rendersMarkdown: Boolean get() = true
 
+    /** 内部分段后若已发送前缀，限频时须返回 [DeliveryResult.RetryRemaining]，不能表示整条被拒。 */
     suspend fun send(message: OutboundMessage): DeliveryResult
 }
 

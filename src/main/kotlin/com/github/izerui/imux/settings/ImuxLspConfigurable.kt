@@ -50,6 +50,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import org.jetbrains.plugins.terminal.TerminalToolWindowFactory
@@ -77,7 +78,9 @@ import javax.swing.JPanel
  *
  * 不做启动扫描、不弹通知：只有用户打开本页或主动刷新时才执行探测。
  */
-internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
+internal class ImuxLspConfigurable(
+    private val runDiagnostics: () -> LspReport = { diagnostics().run() },
+) : BoundConfigurable("LSP") {
     private val content = JPanel(BorderLayout())
 
     /**
@@ -192,13 +195,15 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     override fun apply() = Unit
 
     /**
-     * 页面关掉之后不许再有任何后台动作。
+     * 页面关闭后不再启动检测或更新界面；已执行的同步探测可以结束，但其结果作废。
      *
      * 等待中的收集协程随作用域一起取消，[running] 一并清空——同一个 Configurable 实例
      * 被再次 `createComponent` 时，界面上不该凭空出现几行「正在启用…」，
      * 它们对应的终端标签早就是上一次会话的事了。
      */
     override fun disposeUIResources() {
+        generation.incrementAndGet()
+        refreshRequest.incrementAndGet()
         scope?.cancel()
         scope = null
         running.clear()
@@ -249,21 +254,23 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
      * 同一次 intention 会让它连红两条用例——顺手一起改成带括号。
      */
     private fun refresh() {
+        val pageScope = scope ?: return
         val token = generation.incrementAndGet()
         refreshButton?.isEnabled = false
         if (lastReport == null) {
             showChecking()
         }
         ApplicationManager.getApplication().executeOnPooledThread {
+            if (!pageScope.isActive) return@executeOnPooledThread
             // 失败必须留痕：这一页唯一的诊断入口就是 idea.log，
             // 与 ShellBinaryProbe.locate() 的处理方式保持一致。
             val report =
-                runCatching { diagnostics().run() }
+                runCatching { runDiagnostics() }
                     .onFailure { LOG.warn("LSP 体检失败，页面显示为检测未完成", it) }
                     .getOrNull()
             ApplicationManager.getApplication().invokeLater(
                 {
-                    if (token == generation.get()) {
+                    if (scope === pageScope && token == generation.get()) {
                         if (report == null) {
                             showFailed()
                         } else {
@@ -276,13 +283,6 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             )
         }
     }
-
-    private fun diagnostics() =
-        LspDiagnostics(
-            userHome = Path.of(System.getProperty("user.home")),
-            binaryProbe = ShellBinaryProbe(),
-            homes = AgentHomes.current(),
-        )
 
     private fun showChecking() = replaceContent { JBLabel(ImuxBundle.message("settings.lsp.checking")) }
 
@@ -873,7 +873,7 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
             delay(REFRESH_DEBOUNCE_MS)
             if (ticket == refreshRequest.get()) {
                 ApplicationManager.getApplication().invokeLater(
-                    { if (scope != null) refresh() },
+                    { if (scope === pageScope) refresh() },
                     ModalityState.any(),
                 )
             }
@@ -1008,6 +1008,13 @@ internal class ImuxLspConfigurable : BoundConfigurable("LSP") {
     )
 
     private companion object {
+        private fun diagnostics() =
+            LspDiagnostics(
+                userHome = Path.of(System.getProperty("user.home")),
+                binaryProbe = ShellBinaryProbe(),
+                homes = AgentHomes.current(),
+            )
+
         val LOG = logger<ImuxLspConfigurable>()
 
         /**

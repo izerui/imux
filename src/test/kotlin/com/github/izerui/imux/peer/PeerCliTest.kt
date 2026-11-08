@@ -241,6 +241,28 @@ class PeerCliTest {
     }
 
     @Test
+    fun `Codex 重试恢复且正常退出时返回最终反馈`() {
+        assertEquals("PASS", runRecoveredCodex(0))
+    }
+
+    @Test
+    fun `Codex 成功结束事件不能掩盖非零退出码`() {
+        val error = org.junit.Assert.assertThrows(PeerCliException::class.java) {
+            runRecoveredCodex(3)
+        }
+        assertTrue(error.message.orEmpty().contains("exit code 3"))
+    }
+
+    private fun runRecoveredCodex(exitCode: Int): String? {
+        val java = Path.of(System.getProperty("java.home"), "bin", "java").toString()
+        val command = listOf(
+            java, "-cp", System.getProperty("java.class.path"),
+            PeerCliTest::class.java.name, "json-recovery", exitCode.toString(),
+        )
+        return runPeerCli(AgentType.CODEX, command, Path.of("."), "prompt", emptyMap(), 5, {}, {})
+    }
+
+    @Test
     fun `输出流耗尽超时会抛出异常`() {
         var thrown: PeerCliException? = null
 
@@ -359,6 +381,16 @@ class PeerCliTest {
                     println("""{"type":"item.started","item":{"type":"command_execution","command":"rg TODO"}}""")
                     println("""{"type":"item.completed","item":{"type":"command_execution","command":"rg TODO"}}""")
                     println("""{"type":"item.completed","item":{"type":"agent_message","text":"最终反馈"}}""")
+                }
+
+                "json-recovery" -> {
+                    System.`in`.readBytes()
+                    println(PEER_OUTPUT_MARKER)
+                    println("""{"type":"turn.started"}""")
+                    println("""{"type":"error","message":"stream disconnected"}""")
+                    println("""{"type":"item.completed","item":{"type":"agent_message","text":"PASS"}}""")
+                    println("""{"type":"turn.completed"}""")
+                    exitProcess(args[1].toInt())
                 }
 
                 "environment" -> {

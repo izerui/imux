@@ -115,6 +115,10 @@ enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }
 sealed interface DeliveryResult {
     data object Accepted : DeliveryResult
     data class Rejected(val reason: String) : DeliveryResult
+    /** 前缀已确认发送成功，其余文本被限频拒绝；只允许重试 [text]，不能重发原消息。 */
+    data class RetryRemaining(val text: String) : DeliveryResult {
+        override fun toString(): String = "RetryRemaining"
+    }
     data object Unknown : DeliveryResult
 
     companion object {

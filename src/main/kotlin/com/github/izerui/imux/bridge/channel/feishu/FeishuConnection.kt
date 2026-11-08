@@ -209,7 +209,7 @@ class FeishuConnection(
 
     /**
      * 路由器按 [maxTextBytes] 切段，但引号、反斜杠多的正文经两层转义后请求体仍可能超过 30 KB，整段拒发会丢掉这段回复；
-     * 超限时在这里对半切开分别发送（递归），每段照常过限频。遇到第一段失败即返回该失败，已发出的不撤回。
+     * 超限时在这里对半切开分别发送（递归），每段照常过限频。部分成功后限频只交回未发送的尾部，供路由器续发。
      */
     private suspend fun sendText(
         current: Run,
@@ -220,9 +220,22 @@ class FeishuConnection(
         val body = FeishuApi.markdownBody(chatId, text)
         if (body.toByteArray(StandardCharsets.UTF_8).size > FeishuApi.MAX_POST_BODY_BYTES) {
             val cut = splitIndex(text) ?: return DeliveryResult.Rejected("too large")
+            val tail = text.substring(cut)
             val head = sendText(current, chatId, text.substring(0, cut))
-            if (head != DeliveryResult.Accepted) return head
-            return sendText(current, chatId, text.substring(cut))
+            if (head != DeliveryResult.Accepted) {
+                // 前半段还可能再次切分；它尚未发送的部分后面，还要接上本层未尝试的后半段。
+                return if (head is DeliveryResult.RetryRemaining) {
+                    DeliveryResult.RetryRemaining(head.text + tail)
+                } else {
+                    head
+                }
+            }
+            val result = sendText(current, chatId, tail)
+            return if (result == DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)) {
+                DeliveryResult.RetryRemaining(tail)
+            } else {
+                result
+            }
         }
         var wait = limiter.tryAcquire(chatId)
         if (wait > 0) {

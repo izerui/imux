@@ -309,18 +309,20 @@ class ImuxLspUiSourceTest {
                 "若你只是动了排版或改了日志措辞，照下面的「期望」抄回去即可。）",
             """
             {
+                val pageScope = scope ?: return
                 val token = generation.incrementAndGet()
                 refreshButton?.isEnabled = false
                 if (lastReport == null) {
                     showChecking()
                 }
                 ApplicationManager.getApplication().executeOnPooledThread {
-                    val report = runCatching { diagnostics().run() }
+                    if (!pageScope.isActive) return@executeOnPooledThread
+                    val report = runCatching { runDiagnostics() }
                         .onFailure { LOG.warn("LSP 体检失败，页面显示为检测未完成", it) }
                         .getOrNull()
                     ApplicationManager.getApplication().invokeLater(
                         {
-                            if (token == generation.get()) {
+                            if (scope === pageScope && token == generation.get()) {
                                 if (report == null) {
                                     showFailed()
                                 } else {
@@ -489,7 +491,7 @@ class ImuxLspUiSourceTest {
         // 把这行守卫删掉、字段留着，竞态就复活了而断言照样绿。
         assertTrue(
             "过期结果不得覆盖最新结果",
-            normalized.contains("if (token == generation.get())"),
+            normalized.contains("if (scope === pageScope && token == generation.get())"),
         )
     }
 
@@ -1661,7 +1663,7 @@ class ImuxLspUiSourceTest {
                     delay(REFRESH_DEBOUNCE_MS)
                     if (ticket == refreshRequest.get()) {
                         ApplicationManager.getApplication().invokeLater(
-                            { if (scope != null) refresh() },
+                            { if (scope === pageScope) refresh() },
                             ModalityState.any(),
                         )
                     }
@@ -1697,7 +1699,7 @@ class ImuxLspUiSourceTest {
         )
         assertTrue(
             "页面 dispose 之后不得再刷新——那会白起一个登录 shell 去更新一块已经没人看的面板：$body",
-            body.contains("if(scope!=null)refresh()"),
+            body.contains("if(scope===pageScope)refresh()"),
         )
     }
 
@@ -1720,6 +1722,8 @@ class ImuxLspUiSourceTest {
         val body = compactArgs(bodyAfter("override fun disposeUIResources()", '{'))
 
         assertTrue("必须取消页面自己的作用域：$body", body.contains("scope?.cancel()scope=null"))
+        assertTrue("关闭时作废已发起的检测", body.contains("generation.incrementAndGet()"))
+        assertTrue("关闭时作废等待合并的刷新请求", body.contains("refreshRequest.incrementAndGet()"))
         assertTrue("「进行中」的标记必须一并清空：$body", body.contains("running.clear()"))
         // 组件映射握着整棵已经 dispose 的组件树。同一个实例被再次 createComponent 时，
         // 那些引用一条都不该活到下一次会话——它们指向的是上一个对话框里的 JLabel。

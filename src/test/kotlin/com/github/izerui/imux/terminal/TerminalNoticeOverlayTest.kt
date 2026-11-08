@@ -9,6 +9,7 @@ import com.intellij.openapi.util.Disposer
 import org.junit.After
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
@@ -75,6 +76,57 @@ class TerminalNoticeOverlayTest {
     }
 
     @Test
+    fun `提示连续更新后复用按钮只执行最新动作一次`() {
+        val views = mutableListOf<FakeNoticeView>()
+        val calls = mutableListOf<String>()
+        var anchor: javax.swing.JComponent? = null
+        val overlay = TerminalNoticeOverlay(parent, {}, { tone ->
+            FakeNoticeView(tone).also { views += it }
+        })
+        overlay.start()
+        val sink = overlay.sink(NoticeSource.PAIR)
+        sink.persistent(Notice("pair:scheduled", NoticeTone.INFO, "old",
+            actions = listOf(NoticeAction("cancel") { calls += "old" })))
+        val button = views.single().actionButtons.single()
+
+        repeat(3) { version ->
+            sink.persistent(Notice("pair:scheduled", NoticeTone.INFO, "new-$version",
+                actions = listOf(NoticeAction("cancel") {
+                    calls += "new-$version"
+                    anchor = it
+                })))
+        }
+        button.doClick()
+
+        assertEquals(listOf("new-2"), calls)
+        assertSame("弹出菜单等动作仍收到实际点击的按钮", button, anchor)
+        assertEquals("只更新动作，无需重建提示条", 1, views.size)
+    }
+
+    @Test
+    fun `提示更新后两个按钮各自执行对应的新动作`() {
+        val view = FakeNoticeView(NoticeTone.INFO)
+        val calls = mutableListOf<String>()
+        val overlay = TerminalNoticeOverlay(parent, {}, { view })
+        overlay.start()
+        val sink = overlay.sink(NoticeSource.PAIR)
+        sink.persistent(Notice("pair", NoticeTone.INFO, "old", actions = listOf(
+            NoticeAction("retry") { calls += "old-retry" },
+            NoticeAction("cancel") { calls += "old-cancel" },
+        )))
+        sink.persistent(Notice("pair", NoticeTone.INFO, "new", actions = listOf(
+            NoticeAction("retry") { calls += "new-retry" },
+            NoticeAction("cancel") { calls += "new-cancel" },
+        )))
+
+        view.actionButtons[1].doClick()
+        assertEquals(listOf("new-cancel"), calls)
+        calls.clear()
+        view.actionButtons[0].doClick()
+        assertEquals(listOf("new-retry"), calls)
+    }
+
+    @Test
     fun `轨迹已失败时打开终端不会在初始化途中回调编辑器`() {
         val editor = FakeEditor(parent) { true }
         assertEquals("start 之后才画出失败提示并回调一次", 1, editor.refreshCount)
@@ -128,6 +180,7 @@ class TerminalNoticeOverlayTest {
 /** 平台通知条依赖编辑器配色服务，单元测试里用普通组件代替，行为（文字、链接、×）照样走提示层。 */
 private class FakeNoticeView(tone: NoticeTone) : NoticeView {
     override val component = javax.swing.JPanel()
+    val actionButtons = mutableListOf<javax.swing.JButton>()
     private val label = javax.swing.JLabel()
 
     init {
@@ -145,6 +198,7 @@ private class FakeNoticeView(tone: NoticeTone) : NoticeView {
     override fun addAction(text: String, run: (javax.swing.JComponent) -> Unit) {
         lateinit var button: javax.swing.JButton
         button = javax.swing.JButton(text).apply { addActionListener { run(button) } }
+        actionButtons += button
         component.add(button)
     }
 

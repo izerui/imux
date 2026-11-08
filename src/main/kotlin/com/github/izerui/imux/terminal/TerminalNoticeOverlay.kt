@@ -181,11 +181,15 @@ internal class TerminalNoticeOverlay(
         private val source = first.source
         private val actionTexts = first.notice.actions.map { it.text }
         private val closable = first.notice.closable
+        private var actions = first.notice.actions
         private var remaining = 1f
         private var flash = first.flash
         private val view =
             viewFactory(first.notice.tone).apply {
-                first.notice.actions.forEach { action -> addAction(action.text, action.run) }
+                first.notice.actions.forEachIndexed { index, action ->
+                    // 提示行会复用，点击时读取最新动作，避免保留更新前的会话身份。
+                    addAction(action.text) { anchor -> actions[index].run(anchor) }
+                }
                 if (first.notice.closable) {
                     setCloseAction {
                         stack.dismiss(source)
@@ -203,6 +207,7 @@ internal class TerminalNoticeOverlay(
             notice.id == id && notice.notice.actions.map { it.text } == actionTexts && notice.notice.closable == closable
 
         fun update(notice: ShownNotice) {
+            actions = notice.notice.actions
             view.setText(notice.notice.text)
             view.setIcon(notice.notice.icon ?: defaultIcon(notice.notice.tone))
             flash = notice.flash

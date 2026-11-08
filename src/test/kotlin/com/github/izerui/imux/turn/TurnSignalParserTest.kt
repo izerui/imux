@@ -89,6 +89,41 @@ class TurnSignalParserTest {
     // ---- Codex ----
 
     @Test
+    fun `Codex 普通消息中的轮次关键字不改变状态`() {
+        for (word in listOf("task_started", "task_complete", "turn_aborted")) {
+            val line = """{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"$word"}]}}"""
+            assertEquals("$word 不开启轮次", TurnState.IDLE, codex(TurnState.IDLE, line).state)
+            val working = codex(TurnState.WORKING, line)
+            assertEquals("$word 不结束轮次", TurnState.WORKING, working.state)
+            assertEquals("$word 不产生提醒", TurnEvent.NONE, working.event)
+        }
+    }
+
+    @Test
+    fun `Codex 完成信号必须来自根事件的直接 payload 类型`() {
+        val ignored = listOf(
+            """{"type":"response_item","payload":{"type":"task_complete"}}""",
+            """{"metadata":{"type":"event_msg","payload":{"type":"task_complete"}}}""",
+            """{"type":"event_msg","payload":{"metadata":{"type":"task_complete"}}}""",
+            """{"type":"event_msg","payload":{"type":"token_count","text":"task_complete"}}""",
+            """{"type":"event_msg","payload":"task_complete"}""",
+        )
+        for (line in ignored) {
+            val result = codex(TurnState.WORKING, line)
+            assertEquals(line, TurnState.WORKING, result.state)
+            assertEquals(line, TurnEvent.NONE, result.event)
+        }
+    }
+
+    @Test
+    fun `Codex 完成事件正文提及开始关键字仍按完成处理`() {
+        val line = """{ "payload": { "last_agent_message": "task_started", "type": "task_complete" }, "type": "event_msg" }"""
+        val result = codex(TurnState.WORKING, line)
+        assertEquals(TurnState.IDLE, result.state)
+        assertEquals(TurnEvent.COMPLETED, result.event)
+    }
+
+    @Test
     fun `codex task_started 视为进行中`() {
         assertEquals(TurnState.WORKING, codex(TurnState.IDLE, started).state)
     }

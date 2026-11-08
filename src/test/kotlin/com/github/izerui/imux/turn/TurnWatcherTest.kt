@@ -27,6 +27,38 @@ class TurnWatcherTest {
 
     private fun File.append(line: String) = appendText("$line\n")
 
+    @Test
+    fun `普通正文不提前结束监控轮次而真实完成事件仍提醒`() {
+        val file = newFile("text-event.jsonl")
+        val watcher = TurnWatcher()
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+        file.append(started)
+        assertTrue(watcher.poll().isEmpty())
+        assertEquals(setOf("s1"), watcher.workingIds())
+
+        file.append("""{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"task_complete"}]}}""")
+        assertTrue("正文不触发完成提醒", watcher.poll().isEmpty())
+        assertEquals("正文不清除运行标记", setOf("s1"), watcher.workingIds())
+
+        file.append(done)
+        assertEquals(listOf("s1"), watcher.poll())
+        assertTrue(watcher.workingIds().isEmpty())
+        assertTrue("完成只提醒一次", watcher.poll().isEmpty())
+    }
+
+    @Test
+    fun `启动回溯时正文中的完成关键字不掩盖运行状态`() {
+        val text = """{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"task_complete"}]}}"""
+        val file = newFile("history-text-event.jsonl", "$started\n$text\n")
+        val watcher = TurnWatcher()
+        watcher.watch("s1", AgentType.CODEX, file.toPath())
+
+        assertEquals(setOf("s1"), watcher.workingIds())
+        assertTrue("回溯历史不发提醒", watcher.poll().isEmpty())
+        file.append(done)
+        assertEquals(listOf("s1"), watcher.poll())
+    }
+
     /** 这条最关键：插件启动后，历史会话不该莫名其妙地被标记。 */
     @Test
     fun `开始监控时不因历史内容误报`() {

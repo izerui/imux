@@ -89,11 +89,15 @@ object TurnSignalParser {
         else -> null
     }
 
-    private fun codexSignal(line: String): Signal? = when {
-        line.contains(TASK_STARTED) -> Signal(TurnState.WORKING, TurnEvent.NONE)
-        line.contains(TASK_COMPLETE) -> Signal(TurnState.IDLE, TurnEvent.COMPLETED)
-        line.contains(TURN_ABORTED) -> Signal(TurnState.IDLE, TurnEvent.ABORTED)
-        else -> null
+    private fun codexSignal(line: String): Signal? {
+        // 正文和工具结果也可能包含轮次关键字，只认事件记录的直接字段。
+        if (JsonLineScanner.topLevelStringValue(line, "type") != "event_msg") return null
+        return when (JsonLineScanner.objectStringValue(line, "payload", "type")) {
+            TASK_STARTED -> Signal(TurnState.WORKING, TurnEvent.NONE)
+            TASK_COMPLETE -> Signal(TurnState.IDLE, TurnEvent.COMPLETED)
+            TURN_ABORTED -> Signal(TurnState.IDLE, TurnEvent.ABORTED)
+            else -> null
+        }
     }
 
     /**
@@ -135,7 +139,7 @@ object TurnSignalParser {
     private const val PI_USER = "user"
     private const val PI_ASSISTANT = "assistant"
 
-    private const val TASK_STARTED = "\"task_started\""
-    private const val TASK_COMPLETE = "\"task_complete\""
-    private const val TURN_ABORTED = "\"turn_aborted\""
+    private const val TASK_STARTED = "task_started"
+    private const val TASK_COMPLETE = "task_complete"
+    private const val TURN_ABORTED = "turn_aborted"
 }

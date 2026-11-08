@@ -36,6 +36,17 @@ class BridgeHubDeliveryTest {
     }
 
     @Test
+    fun `部分发送后的限频日志不包含剩余正文`() {
+        val result = DeliveryResult.RetryRemaining("private remainder")
+        val log = deliveryLog(message, result)!!
+        assertTrue(log.warn)
+        assertTrue(log.text.contains("r1"))
+        assertFalse(log.text.contains(message.text))
+        assertFalse(log.text.contains(result.text))
+        assertFalse(result.toString().contains(result.text))
+    }
+
+    @Test
     fun `中枢把送达结果接到日志`() {
         val hub = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/BridgeHub.kt")
         assertTrue(hub.compact(hub.normalized).contains("onDelivery=::logDelivery"))

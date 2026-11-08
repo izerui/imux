@@ -13,6 +13,14 @@ import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
 import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
+import com.github.izerui.imux.bridge.BundleBridgeTexts
+import com.github.izerui.imux.bridge.core.BindingRegistry
+import com.github.izerui.imux.bridge.core.BridgeRouter
+import com.github.izerui.imux.bridge.core.RobotOwner
+import com.github.izerui.imux.bridge.core.SessionTarget
+import com.github.izerui.imux.bridge.core.SubmitResult
+import com.github.izerui.imux.bridge.core.TerminalSessionPort
+import com.github.izerui.imux.model.AgentType
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -90,6 +98,8 @@ class FeishuConnectionTest {
     @Volatile
     private var sendCode = 0
 
+    private var sendResponse: (() -> Pair<Int, String>)? = null
+
     @Volatile
     private var endpointBody = endpoint(pingSeconds = 1_000)
 
@@ -130,7 +140,8 @@ class FeishuConnectionTest {
 
                 url.endsWith("/tenant_access_token/internal") -> 200 to """{"code":0,"tenant_access_token":"T","expire":7200}"""
                 url.endsWith("/bot/v3/info") -> 200 to """{"code":0,"bot":{"app_name":"我的助手"}}"""
-                method == "POST" && url.contains("/im/v1/messages?") -> 200 to """{"code":$sendCode,"msg":"m"}"""
+                method == "POST" && url.contains("/im/v1/messages?") ->
+                    sendResponse?.invoke() ?: (200 to """{"code":$sendCode,"msg":"m"}""")
                 url.endsWith("/speech_to_text/v1/speech/file_recognize") -> 200 to """{"code":$speechCode,"msg":"m","data":{"recognition_text":"跑一下单测"}}"""
                 method == "GET" && url.contains("/im/v1/messages/") -> {
                     quoteEntered.complete(Unit)
@@ -752,13 +763,118 @@ class FeishuConnectionTest {
         }
 
     @Test
+    fun `路由遇到飞书尾段本地限频后只续发尾段`() = runBlocking {
+        var clock = 0L
+        val conn = connection(limiter = SlidingWindowLimiter(1, 1_000) { clock }, maxRateWaitMillis = 0)
+        startAndAwaitOnline(conn)
+        val before = http.calls.size
+        val text = "HEAD" + "\"".repeat(9_000) + "TAIL"
+        router(conn) { _, _ -> clock += 1_000 }.onStatus("tab", text)
+
+        val sent = sentTexts(before)
+        assertEquals("首段只发一次", 1, sent.count { it.startsWith("HEAD") })
+        assertEquals("尾段最终送达", 1, sent.count { it.endsWith("TAIL") })
+        assertEquals(text, sent.joinToString(""))
+    }
+
+    @Test
+    fun `路由遇到飞书服务端尾段限频后不重复首段`() = runBlocking {
+        var attempts = 0
+        sendResponse = {
+            attempts++
+            200 to """{"code":${if (attempts == 2) 99991400 else 0},"msg":"m"}"""
+        }
+        val conn = connection(limiter = SlidingWindowLimiter(20, 1_000))
+        startAndAwaitOnline(conn)
+        val before = http.calls.size
+        val text = "HEAD" + "\"".repeat(9_000) + "TAIL"
+        router(conn).onStatus("tab", text)
+
+        val sent = sentTexts(before)
+        assertEquals("首段一次，尾段拒绝后重试一次", 3, sent.size)
+        assertEquals(sent[1], sent[2])
+        assertEquals(text, sent[0] + sent[2])
+    }
+
+    private fun router(
+        conn: FeishuConnection,
+        bindings: BindingRegistry = BindingRegistry().apply {
+            bind(conn.robotId, SessionTarget("/p", "tab", AgentType.CODEX, "session"))
+        },
+        onDelivery: (OutboundMessage, DeliveryResult) -> Unit = { _, _ -> },
+    ) = BridgeRouter(
+        bindings, { RobotOwner("owner", "chat") },
+        TerminalSessionPort { _, _ -> SubmitResult.OFFLINE }, { conn }, BundleBridgeTexts,
+        rateLimitRetryDelayMs = 0, onDelivery = onDelivery,
+    )
+
+    @Test
+    fun `递归分段限频后续发保留尚未尝试的外层尾部`() = runBlocking {
+        var clock = 0L
+        val conn = connection(limiter = SlidingWindowLimiter(1, 1_000) { clock }, maxRateWaitMillis = 0)
+        startAndAwaitOnline(conn)
+        val before = http.calls.size
+        val text = "HEAD" + "\"".repeat(40_000) + "TAIL"
+        var pending = text
+        var attempts = 0
+        while (true) {
+            assertTrue("续发应完成而不是循环重发", attempts++ < 20)
+            val result = conn.send(OutboundMessage(conn.robotId, "chat", pending))
+            if (result == DeliveryResult.Accepted) break
+            assertTrue("部分成功后返回未发送文本", result is DeliveryResult.RetryRemaining)
+            pending = (result as DeliveryResult.RetryRemaining).text
+            clock += 1_000
+        }
+        val sent = sentTexts(before)
+        assertTrue("覆盖多层递归分段", sent.size > 2)
+        assertEquals(text, sent.joinToString(""))
+    }
+
+    @Test
+    fun `飞书部分发送后断开绑定不续发尾段`() = runBlocking {
+        var clock = 0L
+        val conn = connection(limiter = SlidingWindowLimiter(1, 1_000) { clock }, maxRateWaitMillis = 0)
+        startAndAwaitOnline(conn)
+        val bindings = BindingRegistry()
+        bindings.bind(conn.robotId, SessionTarget("/p", "tab", AgentType.CODEX, "session"))
+        val before = http.calls.size
+        router(conn, bindings) { _, _ ->
+            clock += 1_000
+            bindings.unbind(conn.robotId)
+        }.onStatus("tab", "HEAD" + "\"".repeat(9_000) + "TAIL")
+        val sent = sentTexts(before)
+        assertEquals(1, sent.size)
+        assertTrue(sent.single().startsWith("HEAD"))
+        assertTrue(!sent.single().endsWith("TAIL"))
+    }
+
+    @Test
+    fun `飞书尾段非限频失败不触发整条重试`() = runBlocking {
+        for (failure in listOf(200 to """{"code":230006,"msg":"no permission"}""", 502 to "unavailable")) {
+            var attempts = 0
+            sendResponse = {
+                attempts++
+                if (attempts == 1) 200 to """{"code":0}""" else failure
+            }
+            val conn = connection(limiter = SlidingWindowLimiter(20, 1_000))
+            startAndAwaitOnline(conn)
+            val before = http.calls.size
+            router(conn).onStatus("tab", "HEAD" + "\"".repeat(9_000) + "TAIL")
+            val sent = sentTexts(before)
+            assertEquals("$failure 不重试", 2, sent.size)
+            assertEquals("$failure 首段只发送一次", 1, sent.count { it.startsWith("HEAD") })
+            stopAndAwait(conn)
+        }
+    }
+
+    @Test
     fun `分段中某段失败即返回该失败，已发出的不撤回`() =
         runBlocking {
             val conn = connection(limiter = SlidingWindowLimiter(1, 1_000) { 0L }, maxRateWaitMillis = 0)
             startAndAwaitOnline(conn)
             val before = http.calls.size
             assertEquals(
-                DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED),
+                DeliveryResult.RetryRemaining("\"".repeat(4_500)),
                 conn.send(OutboundMessage(RobotId("r"), "ou_me", "\"".repeat(9_000)))
             )
             assertEquals(1, sentTexts(before).size)

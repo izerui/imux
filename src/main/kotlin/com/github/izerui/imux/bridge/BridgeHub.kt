@@ -151,6 +151,7 @@ internal fun deliveryLog(
         )
 
         DeliveryResult.Unknown -> DeliveryLog(false, "出站消息结果不明：robot=${message.robotId.value}")
+        is DeliveryResult.RetryRemaining -> DeliveryLog(true, "出站消息部分已发送，剩余文本被限频：robot=${message.robotId.value}")
     }
 
 private val DELIVERY_LOG = logger<BridgeHub>()

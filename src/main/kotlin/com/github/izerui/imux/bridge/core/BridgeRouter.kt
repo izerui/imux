@@ -618,12 +618,14 @@ class BridgeRouter(
      * 发一条消息。被渠道限频拒发时稍后重发（最多 [RATE_LIMIT_RETRIES] 次），不直接丢掉：
      * 丢掉的若是一轮的最终回复，手机上会一直以为还在跑。重发期间同一标签后面的消息排在后面，顺序不乱；
      * [stillCurrent] 为 false（已换绑或断开）就不再重发。结果不明（网络异常）不重发，以免重复。
+     * 渠道已发送部分正文时，后续尝试只带未发送的尾部，沿用本次发送的重试次数上限。
      */
     private suspend fun deliver(
         channel: ChannelAdapter,
         message: OutboundMessage,
         stillCurrent: () -> Boolean = { true },
     ) {
+        var pending = message
         repeat(RATE_LIMIT_RETRIES + 1) { attempt ->
             if (attempt > 0) {
                 delay(rateLimitRetryDelayMs)
@@ -631,15 +633,19 @@ class BridgeRouter(
             }
             val result =
                 try {
-                    channel.send(message)
+                    channel.send(pending)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
                     // 渠道异常不能冒泡到终端或监控；结果不明，交给上层显示，不自动重发
                     DeliveryResult.Unknown
                 }
-            onDelivery(message, result)
-            if (result != DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)) return
+            onDelivery(pending, result)
+            when {
+                result is DeliveryResult.RetryRemaining -> pending = pending.copy(text = result.text)
+                result == DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED) -> Unit
+                else -> return
+            }
         }
     }
 

@@ -160,6 +160,32 @@ class PeerProgressTest {
     }
 
     @Test
+    fun `Codex 临时错误在明确成功结束后清除`() {
+        val events = mutableListOf<PeerProgressEvent>()
+        val parser = PeerJsonEventParser(AgentType.CODEX, events::add)
+        parser.accept("""{"type":"turn.started"}""")
+        parser.accept("""{"type":"error","message":"stream disconnected"}""")
+        parser.accept("""{"type":"item.completed","item":{"type":"agent_message","text":"PASS"}}""")
+
+        assertEquals("仅有正文不能证明成功", "stream disconnected", parser.failureDetail())
+        parser.accept("""{"type":"turn.completed"}""")
+
+        assertNull(parser.failureDetail())
+        assertEquals("PASS", parser.finalText())
+        assertEquals(PeerProgressKind.COMPLETED, events.last().kind)
+    }
+
+    @Test
+    fun `Codex 重试最终失败时保留最终错误`() {
+        val parser = PeerJsonEventParser(AgentType.CODEX) {}
+        parser.accept("""{"type":"error","message":"stream disconnected"}""")
+        parser.accept("""{"type":"item.completed","item":{"type":"agent_message","text":"部分反馈"}}""")
+        parser.accept("""{"type":"turn.failed","error":{"message":"retry limit exceeded"}}""")
+
+        assertEquals("retry limit exceeded", parser.failureDetail())
+    }
+
+    @Test
     fun `Codex turn·failed 事件保留 failureDetail`() {
         val events = mutableListOf<PeerProgressEvent>()
         val parser = PeerJsonEventParser(AgentType.CODEX, events::add)

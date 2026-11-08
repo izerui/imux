@@ -75,7 +75,11 @@ internal class PeerJsonEventParser(
                 }
             }
 
-            "turn.completed" -> emit(PeerProgressKind.COMPLETED)
+            "turn.completed" -> {
+                // error 可能只是重试中的临时错误，明确成功结束后不再作为最终失败。
+                lastFailureDetail = null
+                emit(PeerProgressKind.COMPLETED)
+            }
             "turn.failed", "error" ->
                 emit(
                     PeerProgressKind.FAILED,

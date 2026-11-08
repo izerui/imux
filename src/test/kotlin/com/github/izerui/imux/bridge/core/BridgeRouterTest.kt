@@ -691,6 +691,25 @@ class BridgeRouterTest {
         }
 
     @Test
+    fun `部分发送后的尾段限频仍受单次发送重试上限约束`() = runBlocking {
+        registry.bind(robot, target)
+        val attempts = mutableListOf<String>()
+        val limited = object : ChannelAdapter {
+            override val robotId = robot
+            override val maxTextBytes = 1000
+
+            override suspend fun send(message: OutboundMessage): DeliveryResult {
+                attempts += message.text
+                return if (attempts.size == 1) DeliveryResult.RetryRemaining("尾段")
+                else DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
+            }
+        }
+        val retrying = BridgeRouter(registry, { owner }, port, { limited }, Texts, rateLimitRetryDelayMs = 0)
+        retrying.onStatus("tab-1", "首段尾段")
+        assertEquals(listOf("首段尾段") + List(6) { "尾段" }, attempts)
+    }
+
+    @Test
     fun `渠道限频拒发时稍后重发，换绑后不再重发`() =
         runBlocking {
             registry.bind(robot, target)
