@@ -9,6 +9,28 @@ import org.junit.Test
 
 class TranscriptDecodersTest {
     @Test
+    fun `Codex 失败结束保留原因且没有成功结束事件`() {
+        val line = """{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"unexpected status 503 Service Unavailable","codex_error_info":{"http_connection_failed":{"http_status_code":503}}}}}"""
+        assertEquals(listOf(SessionEvent.TurnFailed("unexpected status 503 Service Unavailable")), CodexTranscriptDecoder.decode(line))
+    }
+
+    @Test
+    fun `Codex 错误缺少详情仍按失败结束`() {
+        assertEquals(
+            listOf(SessionEvent.TurnFailed("")),
+            CodexTranscriptDecoder.decode("""{"type":"event_msg","payload":{"type":"task_complete","error":{}}}"""),
+        )
+    }
+
+    @Test
+    fun `Codex 成功结束允许 error 为 null`() {
+        assertEquals(
+            listOf(SessionEvent.TurnEnded),
+            CodexTranscriptDecoder.decode("""{"type":"event_msg","payload":{"type":"task_complete","error":null}}"""),
+        )
+    }
+
+    @Test
     fun `Claude 区分用户文本、助手文本、工具调用与结果且保留换行`() {
         val user = """{"type":"user","uuid":"u1","origin":{"kind":"human"},"message":{"role":"user","content":"第一行\n第二行"}}"""
         val assistant =

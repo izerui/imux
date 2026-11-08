@@ -31,6 +31,10 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun turnWithoutReply() = ImuxBundle.message("bridge.status.turnWithoutReply")
 
+    override fun turnFailed(reason: String) =
+        if (reason.isBlank()) ImuxBundle.message("bridge.status.turnFailedWithoutReason")
+        else ImuxBundle.message("bridge.status.turnFailed", reason)
+
     override fun turnInterrupted() = ImuxBundle.message("bridge.status.turnInterrupted")
 
     override fun backgroundRunning(tasks: List<String?>) =

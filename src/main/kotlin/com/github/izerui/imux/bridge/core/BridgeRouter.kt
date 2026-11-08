@@ -334,6 +334,13 @@ class BridgeRouter(
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
                 }
+                is SessionEvent.TurnFailed -> {
+                    tab(tabId) { interrupt() }
+                    val reason = event.reason.lineSequence().map(String::trim).firstOrNull { it.isNotEmpty() }.orEmpty()
+                    send(binding, texts.turnFailed(reason))
+                    sendBackgroundRunning(tabId)
+                    sendAfterReply(tabId)
+                }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
                 is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
                 is SessionEvent.BackgroundEnded -> tab(tabId) { backgroundEnded(event.taskId) }

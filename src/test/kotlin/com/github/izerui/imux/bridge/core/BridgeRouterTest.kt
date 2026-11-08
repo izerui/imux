@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge.core
 
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
+import com.github.izerui.imux.bridge.transcript.CodexTranscriptDecoder
 import com.github.izerui.imux.model.AgentType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -78,6 +79,8 @@ class BridgeRouterTest {
         override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"
 
         override fun turnWithoutReply() = "NO_REPLY"
+
+        override fun turnFailed(reason: String) = "FAILED($reason)"
 
         override fun turnInterrupted() = "INTERRUPTED"
 
@@ -569,7 +572,80 @@ class BridgeRouterTest {
             assertEquals(listOf("NO_REPLY"), sentTexts())
         }
 
+    @Test
+    fun `Codex 中途重试报错不推送且恢复成功后只发送最终回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(
+                """{"type":"event_msg","payload":{"type":"task_started"}}""",
+            ))
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(
+                """{"type":"event_msg","payload":{"type":"stream_error","message":"stream disconnected; retrying 1/5"}}""",
+            ))
+            clock = 10_000
+            clocked.onQuiet("tab-1")
+            assertTrue("重试期间不发异常或空回复提示", sentTexts().isEmpty())
+
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(
+                """{"type":"event_msg","payload":{"type":"error","message":"503 Service Unavailable"}}""",
+            ))
+            assertTrue("独立错误事件没有结束标记时不发失败提示", sentTexts().isEmpty())
+
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(
+                """{"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"重试后已完成"}]}}""",
+            ))
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(
+                """{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"重试后已完成","error":null}}""",
+            ))
+            clocked.onTurnCompleted("tab-1", clocked.currentTurn("tab-1"))
+            clock = 20_000
+            clocked.onQuiet("tab-1")
+            assertEquals(listOf("重试后已完成"), sentTexts())
+        }
+
+    @Test
+    fun `Codex 失败结束将异常原因发到手机并取消空回复提示`() =
+        runBlocking {
+            registry.bind(robot, target)
+            clocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.AssistantText("我先检查")))
+            val failure = """{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"unexpected status 503 Service Unavailable: Service temporarily unavailable","codex_error_info":{"http_connection_failed":{"http_status_code":503}}}}}"""
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(failure))
+            clocked.onTurnCompleted("tab-1", clocked.currentTurn("tab-1"))
+            clock = 10_000
+            clocked.onQuiet("tab-1")
+            assertEquals(listOf("FAILED(unexpected status 503 Service Unavailable: Service temporarily unavailable)"), sentTexts())
+        }
+
+    @Test
+    fun `IDE 完成信号先到时迟到的 Codex 失败替换空回复提示并发出排队状态`() =
+        runBlocking {
+            registry.bind(robot, target)
+            clocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted))
+            clocked.onTurnCompleted("tab-1", clocked.currentTurn("tab-1"))
+            clocked.onAfterReply("tab-1", "后续状态")
+            clocked.onSessionEvents("tab-1", CodexTranscriptDecoder.decode(
+                """{"type":"event_msg","payload":{"type":"task_complete","error":{"message":"connection closed"}}}""",
+            ))
+            clock = 10_000
+            clocked.onQuiet("tab-1")
+            assertEquals(listOf("FAILED(connection closed)", "后续状态"), sentTexts())
+        }
+
     private var clock = 0L
+
+    @Test
+    fun `失败仅发送首行原因且下一轮正常回复不受影响`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(
+                SessionEvent.TurnStarted,
+                SessionEvent.TurnFailed("\n connection closed \nstack trace"),
+                SessionEvent.TurnStarted,
+                SessionEvent.AssistantText("修复完成"),
+                SessionEvent.TurnEnded,
+            ))
+            assertEquals(listOf("FAILED(connection closed)", "修复完成"), sentTexts())
+        }
 
     private val clocked =
         BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) channel else null }, Texts, noReplyGraceMs = 3_000, now = { clock })

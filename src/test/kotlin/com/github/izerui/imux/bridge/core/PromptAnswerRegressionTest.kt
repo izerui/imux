@@ -402,6 +402,8 @@ class PromptAnswerRegressionTest {
 
         override fun turnWithoutReply() = "NO_REPLY"
 
+        override fun turnFailed(reason: String) = "FAILED($reason)"
+
         override fun turnInterrupted() = "INTERRUPTED"
 
         override fun backgroundRunning(tasks: List<String?>) = "BG"

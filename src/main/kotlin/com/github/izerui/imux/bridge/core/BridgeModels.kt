@@ -84,6 +84,9 @@ sealed interface SessionEvent {
      */
     data object TurnEnded : SessionEvent
 
+    /** CLI 已因错误结束本轮；不是自动重试中的临时错误。 */
+    data class TurnFailed(val reason: String) : SessionEvent
+
     /** 助手发起了一个后台运行的工具调用（后台命令、后台子代理），[description] 是它的说明，等结果里给出任务 id。 */
     data class BackgroundLaunched(
         val toolUseId: String,

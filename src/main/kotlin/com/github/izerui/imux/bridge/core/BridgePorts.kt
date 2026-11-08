@@ -71,6 +71,9 @@ interface BridgeTexts {
     /** 一轮结束了，但没有文字回复（只调了工具、只执行了命令）。 */
     fun turnWithoutReply(): String
 
+    /** 本轮失败，只展示简短原因，不把异常终止当成成功。 */
+    fun turnFailed(reason: String): String
+
     /** 这一轮在电脑上被中断。 */
     fun turnInterrupted(): String
 

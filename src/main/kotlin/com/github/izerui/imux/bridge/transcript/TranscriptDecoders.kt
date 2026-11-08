@@ -205,7 +205,15 @@ object CodexTranscriptDecoder : TranscriptDecoder {
     private fun eventMsg(payload: JsonObject): List<SessionEvent> =
         when (payload.string("type")) {
             "task_started" -> listOf(SessionEvent.TurnStarted)
-            "task_complete" -> listOf(SessionEvent.TurnEnded)
+            "task_complete" -> {
+                // Codex 的失败原因随结束标记落盘，last_agent_message 此时可以为 null。
+                val error = payload.obj("error")
+                if (error != null) {
+                    listOf(SessionEvent.TurnFailed(error.string("message").orEmpty()))
+                } else {
+                    listOf(SessionEvent.TurnEnded)
+                }
+            }
             // 被新输入替换（replaced）时紧接着就是新一轮，只有用户中断才说
             "turn_aborted" -> if (payload.string("reason") == "interrupted") listOf(SessionEvent.TurnInterrupted) else emptyList()
             "item_completed" -> {
