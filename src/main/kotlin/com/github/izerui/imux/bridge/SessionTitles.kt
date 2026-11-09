@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.core.Binding
+import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
@@ -16,21 +17,38 @@ import java.util.concurrent.ConcurrentHashMap
  */
 /**
  * 署名的三段，各自限长后再拼：工程名、智能体名、会话标题都至少留下一部分，
- * 拼出来的整行也在路由的署名上限（100 字）之内，不会被整行截断挤掉后面的段。
+ * 拼出来的整行（含图标）也在路由的署名上限（100 字）之内，不会被整行截断挤掉后面的段。
+ * 工程名前加 📂，智能体名前加 [agentIcon]，手机上一眼分得清各段。
  */
 internal fun sessionLabel(
     project: String,
     agent: String,
     title: String,
+    agentIcon: String = "",
 ): String =
-    listOf(project to MAX_LABEL_PROJECT_CHARS, agent to MAX_LABEL_AGENT_CHARS, title to MAX_LABEL_TITLE_CHARS)
-        .map { (text, max) -> text.trim().let { if (it.length > max) it.take(max - 1) + "…" else it } }
-        .filter(String::isNotEmpty)
-        .joinToString(" · ")
+    listOf(
+        Triple(project, MAX_LABEL_PROJECT_CHARS, PROJECT_ICON),
+        Triple(agent, MAX_LABEL_AGENT_CHARS, agentIcon),
+        Triple(title, MAX_LABEL_TITLE_CHARS, ""),
+    ).mapNotNull { (text, max, icon) ->
+        val shown = text.trim().let { if (it.length > max) it.take(max - 1) + "…" else it }
+        shown.takeIf(String::isNotEmpty)?.let { if (icon.isEmpty()) it else "$icon $it" }
+    }.joinToString(" · ")
 
+/** 智能体在署名里的图标。 */
+internal fun agentIcon(type: AgentType): String =
+    when (type) {
+        AgentType.CLAUDE -> "✴️"
+        AgentType.CODEX -> "⚛️"
+        AgentType.PI -> "🚀"
+    }
+
+private const val PROJECT_ICON = "📂"
 private const val MAX_LABEL_PROJECT_CHARS = 30
 private const val MAX_LABEL_AGENT_CHARS = 20
-private const val MAX_LABEL_TITLE_CHARS = 40
+
+/** 两个图标各占 3 个字符（含空格），标题让出这部分，整行仍不超过 100。 */
+private const val MAX_LABEL_TITLE_CHARS = 38
 
 object SessionTitles {
     /** 绑定标签最近一次的名字：标签关闭后取不到标签标题，发断开提示时用它。 */
@@ -54,7 +72,7 @@ object SessionTitles {
     fun label(binding: Binding): String {
         val project = ProjectManager.getInstance().openProjects.firstOrNull { it.basePath == binding.target.projectPath && !it.isDisposed }
         val projectName = project?.name ?: binding.target.projectPath.substringAfterLast('/').substringAfterLast('\\')
-        return sessionLabel(projectName, binding.target.agentType.displayName, of(binding))
+        return sessionLabel(projectName, binding.target.agentType.displayName, of(binding), agentIcon(binding.target.agentType))
     }
 
     /** 正在显示的终端标签。 */
