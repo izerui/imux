@@ -18,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 署名的三段，各自限长后再拼：工程名、智能体名、会话标题都至少留下一部分，
  * 拼出来的整行（含图标）也在路由的署名上限（100 字）之内，不会被整行截断挤掉后面的段。
- * 工程名前加 📂，智能体名前加 [agentIcon]，手机上一眼分得清各段。
+ * 工程名前加 📂，智能体名前加 [agentIcon]，会话标题前加 💬，手机上一眼分得清各段。
  */
 internal fun sessionLabel(
     project: String,
@@ -29,7 +29,7 @@ internal fun sessionLabel(
     listOf(
         Triple(project, MAX_LABEL_PROJECT_CHARS, PROJECT_ICON),
         Triple(agent, MAX_LABEL_AGENT_CHARS, agentIcon),
-        Triple(title, MAX_LABEL_TITLE_CHARS, ""),
+        Triple(title, MAX_LABEL_TITLE_CHARS, TITLE_ICON),
     ).mapNotNull { (text, max, icon) ->
         val shown = text.trim().let { if (it.length > max) it.take(max - 1) + "…" else it }
         shown.takeIf(String::isNotEmpty)?.let { if (icon.isEmpty()) it else "$icon $it" }
@@ -44,11 +44,12 @@ internal fun agentIcon(type: AgentType): String =
     }
 
 private const val PROJECT_ICON = "📂"
+private const val TITLE_ICON = "💬"
 private const val MAX_LABEL_PROJECT_CHARS = 30
 private const val MAX_LABEL_AGENT_CHARS = 20
 
-/** 两个图标各占 3 个字符（含空格），标题让出这部分，整行仍不超过 100。 */
-private const val MAX_LABEL_TITLE_CHARS = 38
+/** 三个图标各占 3 个字符（含空格），标题让出这部分，整行仍不超过 100。 */
+private const val MAX_LABEL_TITLE_CHARS = 35
 
 object SessionTitles {
     /** 绑定标签最近一次的名字：标签关闭后取不到标签标题，发断开提示时用它。 */

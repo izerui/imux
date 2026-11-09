@@ -871,7 +871,7 @@ class BridgeRouterTest {
             val footer = sentTexts().single().substringAfter("\n> ")
             assertEquals("路由没有再截断", label, footer)
             assertTrue("智能体名还在", footer.contains(" · ✴️ Claude Code · "))
-            assertTrue("会话标题还在", footer.endsWith("会".repeat(37) + "…"))
+            assertTrue("会话标题还在", footer.endsWith("💬 " + "会".repeat(34) + "…"))
         }
 
     @Test
