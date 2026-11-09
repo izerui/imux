@@ -28,7 +28,7 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun promptRejected() = ImuxBundle.message("bridge.reply.promptRejected")
 
-    override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", sessionTitle)
+    override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", "$TITLE_ICON $sessionTitle")
 
     override fun transcriptRestarted() = ImuxBundle.message("bridge.status.transcriptRestarted")
 
@@ -50,7 +50,7 @@ internal object BundleBridgeTexts : BridgeTexts {
         project: String,
         agent: String,
         sessionTitle: String,
-    ) = ImuxBundle.message("bridge.status.connected", project, agent, sessionTitle)
+    ) = ImuxBundle.message("bridge.status.connected", "$PROJECT_ICON $project", agent, "$TITLE_ICON $sessionTitle")
 
     // 配对回复由机器人管理直接发出，不经过路由器，所以不在 BridgeTexts 接口里
     fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")

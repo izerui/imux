@@ -43,8 +43,11 @@ internal fun agentIcon(type: AgentType): String =
         AgentType.PI -> "🚀"
     }
 
-private const val PROJECT_ICON = "📂"
-private const val TITLE_ICON = "💬"
+/** 带图标的智能体名，署名之外的手机提示（如「已连接」）也用它。 */
+internal fun agentName(type: AgentType): String = "${agentIcon(type)} ${type.displayName}"
+
+internal const val PROJECT_ICON = "📂"
+internal const val TITLE_ICON = "💬"
 private const val MAX_LABEL_PROJECT_CHARS = 30
 private const val MAX_LABEL_AGENT_CHARS = 20
 

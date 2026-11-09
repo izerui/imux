@@ -34,7 +34,7 @@ object BindingService {
         val bridge = TerminalBridgeService.getInstance(project)
         bridge.start()
         // 断开与连接的提示在同一个协程里按顺序发；占用者已经断开，即使这次绑定没成功它的手机也要收到断开提示
-        bridge.notifyConnection { hub.router.onRebound(released, binding, project.name, target.agentType.displayName, sessionTitle) }
+        bridge.notifyConnection { hub.router.onRebound(released, binding, project.name, agentName(target.agentType), sessionTitle) }
         return binding
     }
 
