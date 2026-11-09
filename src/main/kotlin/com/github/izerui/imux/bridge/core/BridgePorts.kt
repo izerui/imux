@@ -62,6 +62,9 @@ interface BridgeTexts {
     /** 终端停在选择框上：[screen] 是排成列表的框（已按渠道排好版），后面附上怎么在手机上作答。 */
     fun prompt(screen: String): String
 
+    /** 推给手机的框已在电脑上处理；[answer] 是提问的作答（每题「问题 → 答案」），拿不到时为 null。 */
+    fun promptAnsweredLocally(answer: String?): String
+
     /** 回复对不上屏幕上的框（编号不存在、单选题回了多个编号、多选题回了一句话），什么也没按。 */
     fun promptRejected(): String
 

@@ -108,6 +108,12 @@ sealed interface SessionEvent {
 
     /** 这一轮在电脑上被中断（Esc）：不会再有结论，也没有结束标记。 */
     data object TurnInterrupted : SessionEvent
+
+    /**
+     * 工具调用的结果写进了记录：此前停着的选择框（权限确认、提问）已经结束。
+     * [answer] 是提问（Claude 的 AskUserQuestion）的作答，每题一段「问题 → 答案」；其它工具为 null。
+     */
+    data class ToolResult(val answer: String?) : SessionEvent
 }
 
 enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }

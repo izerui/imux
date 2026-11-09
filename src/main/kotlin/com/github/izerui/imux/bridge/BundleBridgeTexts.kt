@@ -23,6 +23,9 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun prompt(screen: String) = ImuxBundle.message("bridge.status.prompt", screen)
 
+    override fun promptAnsweredLocally(answer: String?) =
+        if (answer == null) ImuxBundle.message("bridge.status.promptHandledLocally") else ImuxBundle.message("bridge.status.promptAnsweredLocally", answer)
+
     override fun promptRejected() = ImuxBundle.message("bridge.reply.promptRejected")
 
     override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", sessionTitle)

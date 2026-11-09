@@ -31,6 +31,7 @@ internal class TabPoller(
             if (enabled()) {
                 deliver(tabId, tails.read(tabId))
                 router.onQuiet(tabId)
+                router.onPromptTick(tabId)
             }
         }
 

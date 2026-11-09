@@ -394,6 +394,8 @@ class PromptAnswerRegressionTest {
 
         override fun prompt(screen: String) = "PROMPT"
 
+        override fun promptAnsweredLocally(answer: String?) = "ANSWERED_LOCALLY($answer)"
+
         override fun promptRejected() = "PROMPT_REJECTED"
 
         override fun released(sessionTitle: String) = "RELEASED"

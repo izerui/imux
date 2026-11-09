@@ -47,7 +47,7 @@ class TranscriptDecodersTest {
             listOf(SessionEvent.AssistantText("```kt\nval a = 1\n```"), SessionEvent.ToolStarted),
             ClaudeTranscriptDecoder.decode(assistant),
         )
-        assertTrue("工具结果不产生事件", ClaudeTranscriptDecoder.decode(result).isEmpty())
+        assertEquals("工具结果只标记停着的框已结束", listOf(SessionEvent.ToolResult(null)), ClaudeTranscriptDecoder.decode(result))
     }
 
     @Test
@@ -201,7 +201,7 @@ class TranscriptDecodersTest {
         assertEquals("子代理通知等注入开启的一轮也有 task_started", listOf(SessionEvent.TurnStarted), CodexTranscriptDecoder.decode(started))
         assertEquals(listOf(SessionEvent.AssistantText("好的")), CodexTranscriptDecoder.decode(assistant))
         assertEquals(listOf(SessionEvent.ToolStarted), CodexTranscriptDecoder.decode(call))
-        assertTrue("工具结果不产生事件", CodexTranscriptDecoder.decode(output).isEmpty())
+        assertEquals("工具结果只标记停着的框已结束", listOf(SessionEvent.ToolResult(null)), CodexTranscriptDecoder.decode(output))
         assertTrue("助手消息的镜像不能重复转发", CodexTranscriptDecoder.decode(mirror).isEmpty())
         assertTrue(CodexTranscriptDecoder.decode(otherItem).isEmpty())
     }
@@ -239,40 +239,40 @@ class TranscriptDecodersTest {
         val launch =
             """{"type":"assistant","message":{"role":"assistant","content":[""" +
                 """{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pnpm build","description":"完整构建","run_in_background":true}}]}}"""
-        assertEquals(listOf(SessionEvent.BackgroundLaunched("t1", "完整构建"), SessionEvent.ToolStarted), ClaudeTranscriptDecoder.decode(launch))
+        assertEquals(listOf(SessionEvent.BackgroundLaunched("t1", "完整构建"), SessionEvent.ToolStarted), claudeEvents(launch))
 
         val bash =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b9"}]},""" +
                 """"toolUseResult":{"stdout":"","backgroundTaskId":"b9"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundStarted("b9", "t1", null)), ClaudeTranscriptDecoder.decode(bash))
+        assertEquals(listOf(SessionEvent.BackgroundStarted("b9", "t1", null)), claudeEvents(bash))
 
         val agent =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":[]}]},""" +
                 """"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a7","description":"评审"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundStarted("a7", "t2", "评审")), ClaudeTranscriptDecoder.decode(agent))
+        assertEquals(listOf(SessionEvent.BackgroundStarted("a7", "t2", "评审")), claudeEvents(agent))
 
         val resumed =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":[]}]},""" +
                 """"toolUseResult":{"success":true,"resumedAgentId":"a7"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundStarted("a7", null)), ClaudeTranscriptDecoder.decode(resumed))
+        assertEquals(listOf(SessionEvent.BackgroundStarted("a7", null)), claudeEvents(resumed))
 
         val finishedAgent =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"done"}]},""" +
                 """"toolUseResult":{"status":"completed","agentId":"a8"}}"""
-        assertTrue("同步跑完的子代理不算后台任务", ClaudeTranscriptDecoder.decode(finishedAgent).isEmpty())
+        assertTrue("同步跑完的子代理不算后台任务", claudeEvents(finishedAgent).isEmpty())
 
         val notification =
             """{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":""" +
                 """"<task-notification>\n<task-id>b9</task-id>\n<status>completed</status>\n<summary>Background command done</summary>\n</task-notification>"}}"""
-        assertEquals("通知既说明任务结束，也开启新一轮", listOf(SessionEvent.BackgroundEnded("b9"), SessionEvent.TurnStarted), ClaudeTranscriptDecoder.decode(notification))
+        assertEquals("通知既说明任务结束，也开启新一轮", listOf(SessionEvent.BackgroundEnded("b9"), SessionEvent.TurnStarted), claudeEvents(notification))
 
         val queued =
             """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a7</task-id>\n<status>completed</status>\n</task-notification>"}"""
-        assertEquals(listOf(SessionEvent.BackgroundEnded("a7")), ClaudeTranscriptDecoder.decode(queued))
+        assertEquals(listOf(SessionEvent.BackgroundEnded("a7")), claudeEvents(queued))
 
         val waiting =
             """{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a7</task-id>\n<summary>Agent \"评审\" is waiting on its own background work</summary>\n</task-notification>"}"""
-        assertTrue("子代理还在等自己的后台工作，不算结束", ClaudeTranscriptDecoder.decode(waiting).isEmpty())
+        assertTrue("子代理还在等自己的后台工作，不算结束", claudeEvents(waiting).isEmpty())
     }
 
     @Test
@@ -291,25 +291,45 @@ class TranscriptDecodersTest {
     fun `Codex 子代理：spawn 开始，结束通知、wait 结果或 close 结束`() {
         val spawn =
             """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"agent_id\":\"ag1\",\"nickname\":\"Boyle\"}"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundStarted("ag1", null, "Boyle")), CodexTranscriptDecoder.decode(spawn))
+        assertEquals(listOf(SessionEvent.BackgroundStarted("ag1", null, "Boyle")), codexEvents(spawn))
 
         val notification =
             """{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text",""" +
                 """"text":"<subagent_notification>\n{\"agent_path\":\"ag1\",\"status\":{\"completed\":\"ok\"}}\n</subagent_notification>"}]}}"""
-        assertEquals(listOf(SessionEvent.BackgroundEnded("ag1")), CodexTranscriptDecoder.decode(notification))
+        assertEquals(listOf(SessionEvent.BackgroundEnded("ag1")), codexEvents(notification))
 
         val waited =
             """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":"{\"status\":{\"ag2\":{\"errored\":\"429\"},\"ag3\":{\"running\":null}}}"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundEnded("ag2")), CodexTranscriptDecoder.decode(waited))
+        assertEquals(listOf(SessionEvent.BackgroundEnded("ag2")), codexEvents(waited))
 
         val timedOut = """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c3","output":"{\"status\":{},\"timed_out\":true}"}}"""
-        assertTrue(CodexTranscriptDecoder.decode(timedOut).isEmpty())
+        assertTrue(codexEvents(timedOut).isEmpty())
 
         val close =
             """{"type":"response_item","payload":{"type":"function_call","name":"close_agent","arguments":"{\"target\":\"ag4\"}","call_id":"c4"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundEnded("ag4"), SessionEvent.ToolStarted), CodexTranscriptDecoder.decode(close))
+        assertEquals(listOf(SessionEvent.BackgroundEnded("ag4"), SessionEvent.ToolStarted), codexEvents(close))
 
         val plainOutput = """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c5","output":"Process exited with code 0"}}"""
-        assertTrue("普通命令输出不产生事件", CodexTranscriptDecoder.decode(plainOutput).isEmpty())
+        assertTrue("普通命令输出不产生事件", codexEvents(plainOutput).isEmpty())
     }
+
+    @Test
+    fun `Claude 提问的结果带回每题的作答`() {
+        val answered =
+            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The user answered: ..."}]},""" +
+                """"toolUseResult":{"questions":[],"answers":{"你更喜欢哪种宠物？":"cat","颜色？":"蓝色"}}}"""
+        assertEquals(
+            listOf(SessionEvent.ToolResult("你更喜欢哪种宠物？\n→ cat\n\n颜色？\n→ 蓝色")),
+            ClaudeTranscriptDecoder.decode(answered),
+        )
+
+        val empty =
+            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"x"}]},"toolUseResult":{"answers":{}}}"""
+        assertEquals("没有作答就不带内容", listOf(SessionEvent.ToolResult(null)), ClaudeTranscriptDecoder.decode(empty))
+    }
+
+    /** 后台任务的用例只看后台事件；工具结果另有用例。 */
+    private fun claudeEvents(line: String) = ClaudeTranscriptDecoder.decode(line).filterNot { it is SessionEvent.ToolResult }
+
+    private fun codexEvents(line: String) = CodexTranscriptDecoder.decode(line).filterNot { it is SessionEvent.ToolResult }
 }

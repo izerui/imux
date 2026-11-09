@@ -5,6 +5,7 @@ import com.github.izerui.imux.bridge.transcript.CodexTranscriptDecoder
 import com.github.izerui.imux.model.AgentType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -69,6 +70,8 @@ class BridgeRouterTest {
         override fun waiting(reason: String?) = "WAIT($reason)"
 
         override fun prompt(screen: String) = "PROMPT($screen)"
+
+        override fun promptAnsweredLocally(answer: String?) = "ANSWERED_LOCALLY($answer)"
 
         override fun promptRejected() = "PROMPT_REJECTED"
 
@@ -1616,6 +1619,170 @@ class BridgeRouterTest {
             promptRouter(PromptPort(listOf(null, choose))).onWaiting("tab-1", "permission prompt")
             promptRouter(PromptPort(listOf(null))).onWaiting("tab-1", "permission prompt")
             assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "WAIT(permission prompt)"), sentTexts())
+        }
+
+    @Test
+    fun `推给手机的提问在电脑上答了，先告诉手机答了什么，再发之后的回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(PromptPort(listOf(ask, null)))
+            r.onWaiting("tab-1", "AskUserQuestion")
+            r.onSessionEvents(
+                "tab-1",
+                listOf(SessionEvent.ToolResult("你更喜欢哪种宠物？\n→ cat"), SessionEvent.AssistantText("好，选猫"), SessionEvent.TurnEnded),
+            )
+            assertEquals(
+                listOf("PROMPT(${ScreenPrompts.render(ask, true)})", "ANSWERED_LOCALLY(你更喜欢哪种宠物？\n→ cat)", "好，选猫"),
+                sentTexts(),
+            )
+        }
+
+    @Test
+    fun `权限框在电脑上批准后工具还在跑：屏幕上连续两次没有框就告诉手机，之后的工具结果不重复提示`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(PromptPort(listOf(choose, null)))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onPromptTick("tab-1")
+            assertEquals("只读不到一次可能是重绘，不提示", 1, sentTexts().size)
+            r.onPromptTick("tab-1")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null)))
+            r.onPromptTick("tab-1")
+            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "ANSWERED_LOCALLY(null)"), sentTexts())
+        }
+
+    @Test
+    fun `框还在屏幕上时，别的工具结果或一次重绘读不到都不算电脑上作答`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(PromptPort(listOf(choose, choose, null, choose)))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null)))
+            r.onPromptTick("tab-1")
+            r.onPromptTick("tab-1")
+            r.onPromptTick("tab-1")
+            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})"), sentTexts())
+        }
+
+    @Test
+    fun `手机作答的框关掉后不提示电脑上作答`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val p = PromptPort(listOf(choose, choose, null))
+            val r = promptRouter(p)
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null)))
+            r.onPromptTick("tab-1")
+            r.onPromptTick("tab-1")
+            assertEquals(listOf("1"), p.pressed)
+            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})"), sentTexts())
+        }
+
+    @Test
+    fun `手机作答时按键失败或出错，框还在，之后在电脑上处理照样告诉手机`() =
+        runBlocking {
+            registry.bind(robot, target)
+            for (failure in listOf<suspend () -> SubmitResult>({ SubmitResult.OFFLINE }, { error("终端断开") })) {
+                channel.sent.clear()
+                val port =
+                    object : TerminalSessionPort by PromptPort(listOf(choose, choose, null)) {
+                        override suspend fun press(
+                            target: SessionTarget,
+                            keys: String,
+                        ): SubmitResult = failure()
+                    }
+                val r = promptRouter(port)
+                r.onWaiting("tab-1", "permission prompt")
+                assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("p1", "1")))
+                r.onPromptTick("tab-1")
+                r.onPromptTick("tab-1")
+                assertEquals(
+                    listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "OFFLINE", "ANSWERED_LOCALLY(null)"),
+                    sentTexts(),
+                )
+            }
+        }
+
+    /** 读屏按脚本逐次给出，每一步可以挂起；用来让旧的读屏卡住，期间手机答题。 */
+    private class GatedPort(vararg reads: suspend () -> ScreenPrompt?) : TerminalSessionPort {
+        private val reads = ArrayDeque(reads.toList())
+        val pressed = mutableListOf<String>()
+
+        override suspend fun submit(
+            target: SessionTarget,
+            text: String,
+        ) = error("选择框开着时不应走普通提交")
+
+        override suspend fun prompt(target: SessionTarget): ScreenPrompt? = reads.removeFirst()()
+
+        override suspend fun press(
+            target: SessionTarget,
+            keys: String,
+        ): SubmitResult {
+            pressed += keys
+            return SubmitResult.SUBMITTED_TO_TERMINAL
+        }
+    }
+
+    private val nextQuestion =
+        ScreenPrompts.extract("颜色？\n❯ 1. 红\n  2. 蓝\n  3. Type something.\nEnter to select · Esc to cancel")!!
+
+    @Test
+    fun `轮询读屏期间手机答完第一题并推了第二题：旧的读屏结果作废，不误报，第二题仍在跟踪`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val gate = CompletableDeferred<Unit>()
+            val port =
+                GatedPort(
+                    { ask }, // 等待时推第一题
+                    { gate.await(); null }, // 轮询的旧读屏：卡住，放行时第一题已经不在
+                    { ask }, // 手机作答前读到第一题
+                    { nextQuestion }, // 作答后屏幕换成第二题，推给手机
+                    { null }, // 之后第二题在电脑上答掉
+                    { null },
+                )
+            val r = promptRouter(port)
+            r.onWaiting("tab-1", "AskUserQuestion")
+            val staleTick = launch(start = CoroutineStart.UNDISPATCHED) { r.onPromptTick("tab-1") }
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
+            gate.complete(Unit)
+            staleTick.join()
+
+            val prompts = listOf("PROMPT(${ScreenPrompts.render(ask, true)})", "PROMPT(${ScreenPrompts.render(nextQuestion, true)})")
+            assertEquals("旧的读屏不关第二题，也不算一次漏读", prompts, sentTexts())
+            r.onPromptTick("tab-1")
+            assertEquals(prompts, sentTexts())
+            r.onPromptTick("tab-1")
+            assertEquals("第二题仍在跟踪：电脑上答掉照样提示", prompts + "ANSWERED_LOCALLY(null)", sentTexts())
+        }
+
+    @Test
+    fun `读到记录时读屏期间手机答完第一题并推了第二题：旧的读屏结果不关第二题`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val gate = CompletableDeferred<Unit>()
+            val port =
+                GatedPort(
+                    { ask },
+                    { gate.await(); null },
+                    { ask },
+                    { nextQuestion },
+                    { null },
+                    { null },
+                )
+            val r = promptRouter(port)
+            r.onWaiting("tab-1", "AskUserQuestion")
+            val staleEvents = launch(start = CoroutineStart.UNDISPATCHED) { r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null))) }
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
+            gate.complete(Unit)
+            staleEvents.join()
+
+            val prompts = listOf("PROMPT(${ScreenPrompts.render(ask, true)})", "PROMPT(${ScreenPrompts.render(nextQuestion, true)})")
+            assertEquals(prompts, sentTexts())
+            r.onPromptTick("tab-1")
+            r.onPromptTick("tab-1")
+            assertEquals("第二题仍在跟踪", prompts + "ANSWERED_LOCALLY(null)", sentTexts())
         }
 
     @Test

@@ -1,5 +1,11 @@
 package com.github.izerui.imux.bridge.core
 
+/** 推给手机的一个框：[epoch] 是当时的绑定代次，[seq] 区分同一绑定先后推的框。 */
+internal data class ShownPrompt(
+    val epoch: Long,
+    val seq: Long,
+)
+
 /** 本轮攒下的最终回复，连同产生它时的绑定代次；换绑后作废。 */
 internal class PendingReply(
     val epoch: Long,
@@ -165,6 +171,48 @@ internal class TabState {
 
     fun takeReply(): PendingReply? = pending.also { pending = null }
 
+    /** 推给手机、手机还没作答的框；null 表示没有。电脑上作答后要告诉手机，否则手机以为还停着。 */
+    var shownPrompt: ShownPrompt? = null
+        private set
+
+    private var promptSeq = 0L
+
+    /** 定时轮询时连续几次没在屏幕上看到框；重绘时偶尔读不到，连续两次才算框已关掉。 */
+    private var promptMisses = 0
+
+    /** 推给手机一个框；每次都换新代次，读屏期间换了框（例如手机答完一题、推了下一题），旧的读屏结果就作废。 */
+    fun promptShown(epoch: Long) {
+        shownPrompt = ShownPrompt(epoch, ++promptSeq)
+        promptMisses = 0
+    }
+
+    /** 手机来答：不再跟踪，交出原来的，按键失败时用 [restorePrompt] 放回。 */
+    fun promptClosed(): ShownPrompt? = shownPrompt.also { shownPrompt = null }
+
+    /** 期间没推过新框时才放回，不覆盖新框。 */
+    fun restorePrompt(prompt: ShownPrompt) {
+        if (shownPrompt == null) {
+            shownPrompt = prompt
+            promptMisses = 0
+        }
+    }
+
+    /** 读屏前取的快照 [prompt] 仍是当前的框时才关闭，返回是否关闭。 */
+    fun closePrompt(prompt: ShownPrompt): Boolean = (shownPrompt == prompt).also { if (it) shownPrompt = null }
+
+    /**
+     * 定时轮询的读屏结果：快照 [prompt] 已不是当前的框就作废。框还在就清零，不在时累计，
+     * 连续 [PROMPT_MISSES] 次就关闭并返回 true。
+     */
+    fun promptMissed(
+        prompt: ShownPrompt,
+        onScreen: Boolean,
+    ): Boolean {
+        if (shownPrompt != prompt) return false
+        promptMisses = if (onScreen) 0 else promptMisses + 1
+        return promptMisses >= PROMPT_MISSES && closePrompt(prompt)
+    }
+
     /** 手机发来的输入提交到终端后，会在记录里再次出现，届时不回显到手机。 */
     fun expectEcho(text: String) {
         remoteEchoes.addLast(normalize(text))
@@ -183,6 +231,7 @@ internal class TabState {
 
     private companion object {
         const val ECHO_CAPACITY = 20
+        const val PROMPT_MISSES = 2
         const val BACKGROUND_CAPACITY = 200
 
         /** 超过 [BACKGROUND_CAPACITY] 时丢掉最早的。 */

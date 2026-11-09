@@ -42,7 +42,7 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         if (message.string("model") == "<synthetic>" && !root.flag("isApiErrorMessage")) return emptyList()
         val content = message.get("content") ?: return emptyList()
         return when (message.string("role")) {
-            "user" -> backgroundStarted(root, content) + userEvents(content, humanOrigin(root))
+            "user" -> backgroundStarted(root, content) + toolResult(root, content) + userEvents(content, humanOrigin(root))
             // 一条消息的各个块分行写入且都带 stop_reason；只在含正文的那一行标记结束，结论才在结束之前。
             // 除了还要调工具（tool_use、pause_turn），其余收尾都算本轮结束：end_turn 之外，
             // 输出超长截断、API 报错也会带着正文停下，漏标的话这一轮就没有结论发出
@@ -91,6 +91,21 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
                 ?: result.string("agentId")?.takeIf { result.string("status") == "async_launched" }
                 ?: return listOfNotNull(result.string("resumedAgentId")?.let { SessionEvent.BackgroundStarted(it, null) })
         return listOf(SessionEvent.BackgroundStarted(taskId, toolUseId, result.string("description")))
+    }
+
+    /** 工具结果；提问的结果在 `toolUseResult.answers` 里按「问题: 答案」给出作答。 */
+    private fun toolResult(
+        root: JsonObject,
+        content: JsonElement,
+    ): List<SessionEvent> {
+        if (blocks(content).none { it.string("type") == "tool_result" }) return emptyList()
+        val answers = root.obj("toolUseResult")?.obj("answers")
+        val answer =
+            answers?.entrySet()
+                ?.mapNotNull { (question, value) -> value.takeIf { it.isJsonPrimitive }?.asString?.let { "$question\n→ $it" } }
+                ?.joinToString("\n\n")
+                ?.takeIf(String::isNotEmpty)
+        return listOf(SessionEvent.ToolResult(answer))
     }
 
     /**
@@ -162,7 +177,7 @@ object CodexTranscriptDecoder : TranscriptDecoder {
             type == "message" -> messageEvents(payload)
             type == "function_call" -> listOfNotNull(closedAgent(payload), SessionEvent.ToolStarted)
             type.endsWith("_call") -> listOf(SessionEvent.ToolStarted)
-            type == "function_call_output" -> agentOutput(payload)
+            type == "function_call_output" -> agentOutput(payload) + SessionEvent.ToolResult(null)
             else -> emptyList()
         }
     }
