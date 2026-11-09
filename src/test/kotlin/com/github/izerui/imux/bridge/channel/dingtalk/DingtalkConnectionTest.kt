@@ -691,7 +691,7 @@ class DingtalkConnectionTest {
             val conn = connection()
             startAndAwaitOnline(conn)
             sendThrows = true
-            assertEquals(DeliveryResult.Unknown, send(conn))
+            assertTrue(send(conn) is DeliveryResult.Unknown)
             stopAndAwait(conn)
             assertEquals(listOf(ConnectionStatus.Connecting, ConnectionStatus.Online, ConnectionStatus.Stopped), statuses.toList())
         }

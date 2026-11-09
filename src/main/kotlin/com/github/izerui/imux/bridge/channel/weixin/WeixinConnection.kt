@@ -180,7 +180,7 @@ class WeixinConnection(
                 DeliveryResult.Accepted
             }
 
-            is WeixinResult.Network -> DeliveryResult.Unknown
+            is WeixinResult.Network -> DeliveryResult.Unknown(result.reason)
             is WeixinResult.Error -> {
                 // 官方发送失败只抛普通错误、不影响收消息（api.ts:585-596）；其它错误码没有定义，统一如实提示（设计第 7 节）
                 blockSend(current, ConnectionStatus.SendFailing("bridge.weixin.sendRejected", result.code))

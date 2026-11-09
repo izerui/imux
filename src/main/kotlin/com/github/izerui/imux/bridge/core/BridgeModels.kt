@@ -119,7 +119,8 @@ sealed interface DeliveryResult {
     data class RetryRemaining(val text: String) : DeliveryResult {
         override fun toString(): String = "RetryRemaining"
     }
-    data object Unknown : DeliveryResult
+    /** 结果不明（网络异常、超时等），[reason] 只用于日志排查，不含正文。 */
+    data class Unknown(val reason: String = "") : DeliveryResult
 
     companion object {
         /** 渠道因限频拒发时 [Rejected.reason] 的取值；路由器据此稍后重发，而不是丢掉。 */

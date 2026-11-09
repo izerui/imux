@@ -636,9 +636,9 @@ class BridgeRouter(
                     channel.send(pending)
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     // 渠道异常不能冒泡到终端或监控；结果不明，交给上层显示，不自动重发
-                    DeliveryResult.Unknown
+                    DeliveryResult.Unknown(e.javaClass.name)
                 }
             onDelivery(pending, result)
             when {

@@ -250,7 +250,7 @@ class FeishuConnection(
                 DeliveryResult.Accepted
             }
 
-            is FeishuResult.Network -> DeliveryResult.Unknown
+            is FeishuResult.Network -> DeliveryResult.Unknown(result.reason)
             is FeishuResult.Error -> {
                 sendFailing(result.code)?.let { sendBlocked(current, it) }
                 if (result.code in FeishuCodes.RATE_LIMITED) DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED) else DeliveryResult.Rejected(

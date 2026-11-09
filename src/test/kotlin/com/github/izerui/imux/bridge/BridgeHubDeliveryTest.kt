@@ -28,10 +28,11 @@ class BridgeHubDeliveryTest {
     }
 
     @Test
-    fun `结果不明记信息，不含正文`() {
-        val log = deliveryLog(message, DeliveryResult.Unknown)!!
-        assertEquals(false, log.warn)
+    fun `结果不明记警告并带原因，不含正文`() {
+        val log = deliveryLog(message, DeliveryResult.Unknown("ConnectException"))!!
+        assertEquals(true, log.warn)
         assertTrue(log.text.contains("r1"))
+        assertTrue(log.text.contains("ConnectException"))
         assertFalse(log.text.contains("secret body text"))
     }
 

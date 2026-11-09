@@ -327,7 +327,7 @@ class WeixinConnectionTest {
                     now = { clock },
                 )
             broken.start(InboundSink { }) { statuses += it }
-            assertEquals(DeliveryResult.Unknown, broken.send(OutboundMessage(RobotId("r"), "u", "x")))
+            assertTrue(broken.send(OutboundMessage(RobotId("r"), "u", "x")) is DeliveryResult.Unknown)
             stopAndAwait(broken)
             assertTrue(statuses.toString(), statuses.none { it is ConnectionStatus.SendFailing })
         }

@@ -220,7 +220,7 @@ class DingtalkConnection(
                     }
                 }
 
-            is DingtalkResult.Network -> DeliveryResult.Unknown
+            is DingtalkResult.Network -> DeliveryResult.Unknown(result.reason)
             is DingtalkResult.Error -> {
                 sendFailing(result)?.let { blockSend(current, it) }
                 if (DingtalkCodes.isRateLimited(result.code)) {

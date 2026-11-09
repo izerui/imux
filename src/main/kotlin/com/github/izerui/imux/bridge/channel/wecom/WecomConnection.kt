@@ -157,12 +157,12 @@ class WecomConnection(
                 request(s, transport, reqId, WecomProtocol.sendMarkdown(reqId, message.chatId, message.text))
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: IOException) {
-                return DeliveryResult.Unknown
-            } catch (_: IllegalStateException) {
+            } catch (e: IOException) {
+                return DeliveryResult.Unknown(e.javaClass.name)
+            } catch (e: IllegalStateException) {
                 // 取消挂起的 JDK WebSocket send 后，下一次 sendText 可能抛 IllegalStateException
-                return DeliveryResult.Unknown
-            } ?: return DeliveryResult.Unknown
+                return DeliveryResult.Unknown(e.javaClass.name)
+            } ?: return DeliveryResult.Unknown("no ack")
         return when (ack.errcode) {
             0 -> DeliveryResult.Accepted
             // 服务端的会话限频（每会话 30 条/分钟、1000 条/小时）

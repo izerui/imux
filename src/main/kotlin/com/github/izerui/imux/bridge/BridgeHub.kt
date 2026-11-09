@@ -150,7 +150,7 @@ internal fun deliveryLog(
             "出站消息被拒绝：robot=${message.robotId.value} reason=${result.reason}"
         )
 
-        DeliveryResult.Unknown -> DeliveryLog(false, "出站消息结果不明：robot=${message.robotId.value}")
+        is DeliveryResult.Unknown -> DeliveryLog(true, "出站消息结果不明：robot=${message.robotId.value} reason=${result.reason}")
         is DeliveryResult.RetryRemaining -> DeliveryLog(true, "出站消息部分已发送，剩余文本被限频：robot=${message.robotId.value}")
     }
 

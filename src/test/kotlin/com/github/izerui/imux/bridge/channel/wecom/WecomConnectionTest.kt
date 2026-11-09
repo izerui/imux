@@ -257,7 +257,7 @@ class WecomConnectionTest {
             }
             withTimeout(1_000) { while (transports.first().sent.none { "aibot_send_msg" in it }) delay(5) }
             transports.first().close()
-            assertEquals(DeliveryResult.Unknown, withTimeout(1_000) { result.await() })
+            assertTrue(withTimeout(1_000) { result.await() } is DeliveryResult.Unknown)
         }
 
     @Test
@@ -316,7 +316,7 @@ class WecomConnectionTest {
             // 心跳应在约 MAX_MISSED_PINGS 个周期后触发重连
             withTimeout(5_000) { while (opens.get() < 2) delay(5) }
             // 同时进行的 send 应在超时后返回 Unknown
-            assertEquals(DeliveryResult.Unknown, withTimeout(2_000) { sendResult.await() })
+            assertTrue(withTimeout(2_000) { sendResult.await() } is DeliveryResult.Unknown)
         }
 
     @Test
