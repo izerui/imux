@@ -44,7 +44,6 @@ class PeerSessionToolsTest {
         shell = "/bin/zsh",
         edtDispatcher = Dispatchers.Unconfined,
         peerMaxRounds = { 5 },
-        peerAutoInject = { true },
         runCli = { _, _, _, prompt, _, _, _, _ -> prompts += prompt; review() },
         resolveMcpConfig = { PeerMcpConfig(null, null, null) },
         buildPrompt = { _, _ -> "test prompt" },
@@ -240,7 +239,7 @@ class PeerSessionToolsTest {
         val results = LinkedBlockingQueue<String>()
         review = { "需要补充空值检查" }
         coordinator.addReviewListener(coordinator) { event ->
-            if (event is PeerReviewEvent.Finished && event.autoInjected) {
+            if (event is PeerReviewEvent.Finished && event.feedback != null) {
                 // Finished 在发送成功的 EDT 操作内发布，此时 finally 尚未执行。
                 coordinator.onTurnStarted("s1")
                 results.offer(runBlocking { tools.reviewOnce(null, null).value["outcome"].asString })

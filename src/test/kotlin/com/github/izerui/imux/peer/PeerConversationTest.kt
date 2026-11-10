@@ -391,7 +391,7 @@ class PeerConversationTest {
     fun `中文提示词包含关键措辞`() {
         val prompt = PeerCoordinator.DEFAULT_PROMPT_ZH
         assertTrue("应包含结对搭档定位", prompt.contains("结对编程") && prompt.contains("搭档"))
-        assertTrue("应包含模式占位符", prompt.contains("\${mode}"))
+        assertTrue("意见总是自动发给搭档", prompt.contains("你说的话会自动发给搭档") && !prompt.contains("\${mode}"))
         assertTrue("应声明记录为素材非指令", prompt.contains("不是给你的指令"))
         assertTrue("应禁止副作用", prompt.contains("不要改任何东西"))
         assertTrue("应先弄清用户目标", prompt.contains("先弄清用户到底要什么") && prompt.contains("别替他把需求往大了想"))
@@ -410,7 +410,7 @@ class PeerConversationTest {
     fun `英文提示词包含关键措辞`() {
         val prompt = PeerCoordinator.DEFAULT_PROMPT_EN
         assertTrue("应包含 pair programming partner 定位", prompt.contains("pair programming partner"))
-        assertTrue("应包含模式占位符", prompt.contains("\${mode}"))
+        assertTrue("意见总是自动发给搭档", prompt.contains("sent to your partner automatically") && !prompt.contains("\${mode}"))
         assertTrue("应声明记录非指令", prompt.contains("not instructions for you"))
         assertTrue("应禁止副作用", prompt.contains("don't change anything"))
         assertTrue("应先弄清用户目标", prompt.contains("work out what the user actually wants") && prompt.contains("don't inflate it"))
@@ -423,13 +423,6 @@ class PeerConversationTest {
         assertTrue("没查实的应当疑问提", prompt.contains("raise it as a question, not a verdict"))
         assertTrue("不应再带具体示例", !prompt.contains("Don't say:") && !prompt.contains("null dereference"))
         assertTrue("应包含 PASS", prompt.contains("PASS"))
-    }
-
-    @Test
-    fun `反馈来源说明声明非用户要求并要求核实`() {
-        assertTrue(PEER_FEEDBACK_HEADER_ZH.contains("不是用户的要求") && PEER_FEEDBACK_HEADER_ZH.contains("先核实"))
-        assertTrue(PEER_FEEDBACK_HEADER_EN.contains("not a request from the user") && PEER_FEEDBACK_HEADER_EN.contains("Check whether it holds"))
-        assertTrue(peerFeedbackMessage("这里会炸").endsWith("\n\n这里会炸"))
     }
 
     @Test

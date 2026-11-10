@@ -118,7 +118,6 @@ class OneShotResultTraceTest {
                 shell = "/bin/zsh",
                 edtDispatcher = Dispatchers.Unconfined,
                 peerMaxRounds = { 5 },
-                peerAutoInject = { true },
                 runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
                 resolveMcpConfig = { PeerMcpConfig(null, null, null) },
                 buildPrompt = { _, _ -> "test prompt" },

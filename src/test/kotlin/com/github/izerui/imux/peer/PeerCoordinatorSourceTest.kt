@@ -106,11 +106,11 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `构造函数接受可注入的 resolveMcpConfig、edtDispatcher、peerMaxRounds 和 peerAutoInject`() {
+    fun `构造函数接受可注入的 resolveMcpConfig、edtDispatcher、peerMaxRounds`() {
         assertTrue(coordinator.contains("resolveMcpConfig: (AgentType) -> PeerMcpConfig"))
         assertTrue(coordinator.contains("edtDispatcher: kotlin.coroutines.CoroutineContext?"))
         assertTrue(coordinator.contains("peerMaxRounds: () -> Int"))
-        assertTrue(coordinator.contains("peerAutoInject: () -> Boolean"))
+        assertFalse("反馈总是自动发送，不再有开关", coordinator.contains("peerAutoInject"))
     }
 
     @Test
@@ -207,25 +207,5 @@ class PeerCoordinatorSourceTest {
         assertFalse("不应再有重试次数上限", coordinator.contains("SEND_READY_ATTEMPTS"))
         assertFalse("兜底不应动剪贴板", coordinator.contains("copyTextToClipboard("))
         assertTrue("兜底应通知用户", coordinator.contains("action.peer.notification.undelivered"))
-    }
-
-    @Test
-    fun `发进主会话的反馈带来源说明，展示用的仍是原话`() {
-        assertTrue("应先加来源说明", coordinator.contains("val message = peerFeedbackMessage(feedback)"))
-        assertTrue("自动发送应使用带说明的文字", coordinator.contains("injectFeedback(mainSessionKey, message, run, guard)"))
-        assertTrue("暂存应使用带说明的文字", coordinator.contains("stageFeedback(mainSessionKey, message, run, previousInput)"))
-        assertTrue("结果记录应保留原话", coordinator.contains("outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)"))
-    }
-
-    @Test
-    fun `关闭自动发送只把反馈填入输入框`() {
-        val reviewFun =
-            coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
-        val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
-
-        assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, message, run, previousInput)"))
-        assertTrue("暂存反馈应使用 require 括号粘贴模式", stageFun.contains("tryStagePeerFeedback("))
-        assertTrue("终端消失时应走通用兜底", stageFun.contains("notifyFeedbackUndelivered"))
-        assertTrue("终端未就绪时应走带复制的通知", stageFun.contains("notifyFeedbackNotReady"))
     }
 }

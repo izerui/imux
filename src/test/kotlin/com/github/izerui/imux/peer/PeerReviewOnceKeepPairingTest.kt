@@ -30,7 +30,6 @@ class PeerReviewOnceKeepPairingTest {
     private fun coordinator(
         replies: List<String>,
         maxRounds: Int = 5,
-        autoInject: Boolean = true,
         entered: CountDownLatch? = null,
         gate: CountDownLatch? = null,
     ): PeerCoordinator {
@@ -44,7 +43,6 @@ class PeerReviewOnceKeepPairingTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { maxRounds },
-            peerAutoInject = { autoInject },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 prompts += prompt
                 entered?.countDown()
@@ -135,17 +133,6 @@ class PeerReviewOnceKeepPairingTest {
             Thread.sleep(100)
             assertEquals(AgentType.CODEX, c.boundTarget("s1"))
             assertEquals(1, prompts.size)
-        }
-
-    @Test
-    fun `意见没能自动发送时不计轮次：上限为 1 时下一轮仍会审查`() =
-        using(coordinator(listOf("请修复", "PASS"), maxRounds = 1, autoInject = false)) { c ->
-            c.reviewOnce("s1", AgentType.CODEX, instruction, keepPairing = true)
-            awaitConcluded(c, 1)
-            c.onTurnStarted("s1")
-            c.onTurnCompleted("s1")
-            awaitConcluded(c, 2)
-            assertEquals(2, prompts.size)
         }
 
     @Test

@@ -86,11 +86,6 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 }
             }
             group(ImuxBundle.message("settings.group.peer.programming")) {
-                row {
-                    checkBox(ImuxBundle.message("settings.peer.auto.inject"))
-                        .bindSelected(settings.state::peerAutoInject)
-                        .comment(ImuxBundle.message("settings.peer.auto.inject.comment"))
-                }
                 row(ImuxBundle.message("settings.peer.max.rounds")) {
                     intTextField(1..50)
                         .bindIntText(settings.state::peerMaxRounds)

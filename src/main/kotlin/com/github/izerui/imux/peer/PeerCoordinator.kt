@@ -104,12 +104,11 @@ sealed interface PeerReviewEvent {
         val oneShot: Boolean,
     ) : PeerReviewEvent
 
-    /** [feedback] 是意见原文（仅 FEEDBACK）；[autoInjected] 为 true 表示意见已作为新一轮发给主会话，否则只填进了输入框。 */
+    /** [feedback] 是意见原文（仅 FEEDBACK），这时意见已作为新一轮发给主会话。 */
     data class Finished(
         override val sessionKey: String,
         val outcome: PeerOutcome,
         val feedback: String? = null,
-        val autoInjected: Boolean = false,
     ) : PeerReviewEvent {
         override val targetAgentType get() = outcome.targetAgentType
     }
@@ -151,7 +150,6 @@ class PeerCoordinator internal constructor(
     private val shell: String,
     private val edtDispatcher: kotlin.coroutines.CoroutineContext? = null,
     private val peerMaxRounds: () -> Int = { ImuxSettings.getInstance().state.peerMaxRounds },
-    private val peerAutoInject: () -> Boolean = { ImuxSettings.getInstance().state.peerAutoInject },
     private val runCli: (
         agentType: AgentType,
         command: List<String>,
@@ -174,7 +172,6 @@ class PeerCoordinator internal constructor(
     private val onFeedbackUndelivered: ((sessionKey: String, feedback: String) -> Unit)? = null,
     /** 单次审查返回 PASS 时的通知。为 null 时用 [notifyOneShotPassed]：弹 IDE 通知。 */
     private val onOneShotPassed: (() -> Unit)? = null,
-    private val readUserInput: (AgentSession) -> PeerUserInput? = ::latestPeerUserInput,
 ) : Disposable {
     private val edt: kotlin.coroutines.CoroutineContext by lazy { edtDispatcher ?: Dispatchers.EDT }
     @Volatile private var disposed = false
@@ -293,9 +290,8 @@ class PeerCoordinator internal constructor(
      * 预约在这一轮结束时审查一次，审完自动解除，与 [reviewOnce] 的单次审查相同。
      * 供会话自己在一轮中途调用（MCP）：那时立即开审只能看到半截工作。
      * 在这里统一判定结对、反馈轮与关闭状态；再次预约覆盖前一次。
-     * 仅待手动提交的反馈需要读取会话记录，IO 期间可关闭/换会话，回来后须重新验证对象身份。
      */
-    internal suspend fun scheduleReviewOnce(
+    internal fun scheduleReviewOnce(
         sessionKey: String,
         targetAgentType: AgentType,
         userInstruction: String?,
@@ -304,16 +300,6 @@ class PeerCoordinator internal constructor(
         if (disposed) return PeerScheduleResult.CLOSED
         if (bindings.containsKey(sessionKey)) return PeerScheduleResult.ALREADY_PAIRED
         val lifecycle = reviewLifecycles.computeIfAbsent(sessionKey) { PeerReviewLifecycle() }
-        val staged = lifecycle.feedback as? PeerReviewLifecycle.Feedback.Staged
-        if (staged != null) {
-            val cancellationVersion = lifecycle.scheduleCancellationVersion
-            val session = model.sessionOf(sessionKey)
-            val latest = withContext(Dispatchers.IO) { session?.let(readUserInput) }
-            if (disposed || reviewLifecycles[sessionKey] !== lifecycle) return PeerScheduleResult.CLOSED
-            if (bindings.containsKey(sessionKey)) return PeerScheduleResult.ALREADY_PAIRED
-            if (lifecycle.scheduleCancellationVersion != cancellationVersion) return PeerScheduleResult.STATE_CHANGED
-            if (!lifecycle.observeSubmission(staged, latest)) return PeerScheduleResult.STATE_CHANGED
-        }
         if (lifecycle.isHandlingFeedback) return PeerScheduleResult.FEEDBACK_TURN
         lifecycle.schedule(targetAgentType, userInstruction)
         notifyStateChanged(sessionKey)
@@ -557,8 +543,7 @@ class PeerCoordinator internal constructor(
         if (currentBinding.generation != run.bindingGeneration) return
         val freshTask = extractTask(mainSessionKey)
         if (!runIsCurrent(mainSessionKey, run, guard)) return
-        val effectiveAutoInject = peerAutoInject()
-        val buildFn: (String, String) -> String = buildPrompt ?: { task, conv -> buildReviewPrompt(task, conv, effectiveAutoInject) }
+        val buildFn: (String, String) -> String = buildPrompt ?: ::buildReviewPrompt
         var conversation = collectLatestConversation(mainSessionKey)
         var maxConvChars = conversation.length
         val oneShotInstruction = run.instruction
@@ -661,22 +646,10 @@ class PeerCoordinator internal constructor(
             return
         }
 
-        // 暂存前记住最后一条用户记录；之后仅新提交且内容相符的记录算反馈轮。
-        val previousInput =
-            if (reviewLifecycles[mainSessionKey]?.isOneShot == true) model.sessionOf(mainSessionKey)?.let(readUserInput)
-            else null
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
-            val autoInject = peerAutoInject()
-            val message = peerFeedbackMessage(feedback)
-            val delivered =
-                if (autoInject) {
-                    injectFeedback(mainSessionKey, message, run, guard)
-                } else {
-                    stageFeedback(mainSessionKey, message, run, previousInput)
-                }
-            if (delivered) {
-                recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)
+            if (injectFeedback(mainSessionKey, feedback, run, guard)) {
+                recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback)
             }
         }
     }
@@ -695,11 +668,10 @@ class PeerCoordinator internal constructor(
         run: PeerRun,
         outcome: PeerOutcome,
         feedback: String? = null,
-        autoInjected: Boolean = false,
     ) {
         reviewLifecycles[sessionKey]?.recordOutcome(outcome)
         run.concluded = true
-        announce(PeerReviewEvent.Finished(sessionKey, outcome, feedback, autoInjected))
+        announce(PeerReviewEvent.Finished(sessionKey, outcome, feedback))
         notifyStateChanged(sessionKey)
     }
 
@@ -733,20 +705,15 @@ class PeerCoordinator internal constructor(
     private fun buildReviewPrompt(
         task: String,
         conversation: String,
-        effectiveAutoInject: Boolean,
     ): String {
         val customPrompt = ImuxSettings.getInstance().state.peerPromptOverride
         if (customPrompt != null) {
             val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-            val modeText = if (isChinese) {
-                if (effectiveAutoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
-            } else {
-                if (effectiveAutoInject) MODE_AUTO_EN else MODE_STAGE_EN
-            }
+            // 旧版本可选「填入输入框」时用 ${mode} 切换说法；只剩自动发送后，老的自定义提示词里的占位符换成这一句
             var result = customPrompt
                 .replace("\${task}", task)
                 .replace("\${conversation}", conversation)
-                .replace("\${mode}", modeText)
+                .replace("\${mode}", if (isChinese) LEGACY_MODE_ZH else LEGACY_MODE_EN)
             val missingTask = "\${task}" !in customPrompt && task.isNotBlank()
             val missingConversation = "\${conversation}" !in customPrompt && conversation.isNotBlank()
             if (missingTask || missingConversation) {
@@ -775,14 +742,7 @@ class PeerCoordinator internal constructor(
             } else {
                 "## Conversation\n\n$conversation\n\n"
             }
-        val modeSection =
-            if (isChinese) {
-                if (effectiveAutoInject) MODE_AUTO_ZH else MODE_STAGE_ZH
-            } else {
-                if (effectiveAutoInject) MODE_AUTO_EN else MODE_STAGE_EN
-            }
         return defaultPeerPromptForLanguage(currentLanguage)
-            .replace("\${mode}", modeSection)
             .replace("\${task}", task)
             .replace("\${conversation}", conversationSection)
     }
@@ -851,7 +811,7 @@ class PeerCoordinator internal constructor(
         LOG.info("结对编程：注入反馈到主会话 $mainSessionKey（${prompt.length} 字符，outputModel=${hint?.let { System.identityHashCode(it.outputModel).toString(16) } ?: "none"}，offset=${hint?.absoluteOffset ?: -1}）")
         roundCounts.computeIfAbsent(mainSessionKey) { AtomicInteger(0) }.incrementAndGet()
         peerInjectedSessions.add(mainSessionKey)
-        reviewLifecycles[mainSessionKey]?.feedbackDelivered(run.bindingGeneration, prompt, true, null)
+        reviewLifecycles[mainSessionKey]?.feedbackDelivered(run.bindingGeneration)
         rememberSentFeedback(mainSessionKey, prompt)
         hint?.let {
             val history = feedbackHints.getOrPut(mainSessionKey) { ArrayDeque() }
@@ -860,30 +820,6 @@ class PeerCoordinator internal constructor(
             notifyStateChanged(mainSessionKey)
         }
         return true
-    }
-
-    private fun stageFeedback(
-        mainSessionKey: String,
-        prompt: String,
-        run: PeerRun,
-        previousInput: PeerUserInput?,
-    ): Boolean {
-        val view = viewOf(mainSessionKey)
-        if (view == null) {
-            LOG.warn("结对编程：找不到主会话终端 $mainSessionKey")
-            (onFeedbackUndelivered ?: ::notifyFeedbackUndelivered).invoke(mainSessionKey, prompt)
-            return false
-        }
-        val sent = tryStagePeerFeedback(view.createSendTextBuilder(), prompt)
-        if (sent) {
-            reviewLifecycles[mainSessionKey]?.feedbackDelivered(run.bindingGeneration, prompt, false, previousInput)
-            LOG.info("结对编程：暂存反馈到主会话输入框 $mainSessionKey（${prompt.length} 字符）")
-            rememberSentFeedback(mainSessionKey, prompt)
-        } else {
-            LOG.warn("结对编程：终端未就绪（括号粘贴模式未开启），反馈未暂存 $mainSessionKey")
-            (onFeedbackUndelivered ?: { _, text -> notifyFeedbackNotReady(text) }).invoke(mainSessionKey, prompt)
-        }
-        return sent
     }
 
     /**
@@ -904,24 +840,6 @@ class PeerCoordinator internal constructor(
             .createNotification(
                 ImuxBundle.message("action.peer.notification.title"),
                 ImuxBundle.message("action.peer.notification.undelivered"),
-                NotificationType.WARNING,
-            )
-        notification.addAction(NotificationAction.createSimpleExpiring(
-            ImuxBundle.message("action.peer.notification.copy"),
-        ) {
-            val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-            clipboard.setContents(java.awt.datatransfer.StringSelection(prompt), null)
-        })
-        notification.notify(project)
-    }
-
-    private fun notifyFeedbackNotReady(prompt: String) {
-        val notification = NotificationGroupManager
-            .getInstance()
-            .getNotificationGroup(NOTIFICATION_GROUP)
-            .createNotification(
-                ImuxBundle.message("action.peer.notification.title"),
-                ImuxBundle.message("action.peer.notification.not.ready"),
                 NotificationType.WARNING,
             )
         notification.addAction(NotificationAction.createSimpleExpiring(
@@ -967,13 +885,11 @@ class PeerCoordinator internal constructor(
         /** 等待终端进入括号粘贴的轮询间隔。没有重试次数上限，理由见 injectFeedback。 */
         private const val SEND_READY_RETRY_MILLIS = 100L
 
-        private const val MODE_AUTO_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
-        private const val MODE_STAGE_ZH = "你说的话会先放到输入框里，用户看过之后决定要不要发。"
-        private const val MODE_AUTO_EN = "What you say will be sent to your partner automatically — they'll see it and continue working."
-        private const val MODE_STAGE_EN = "What you say will be staged in the input box for the user to review before sending."
+        private const val LEGACY_MODE_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
+        private const val LEGACY_MODE_EN = "What you say will be sent to your partner automatically — they'll see it and continue working."
 
         val DEFAULT_PROMPT_ZH = """
-你是结对编程中的搭档。${'$'}{mode}
+你是结对编程中的搭档。你说的话会自动发给搭档，搭档会直接看到并继续工作。
 
 你的搭档在帮用户干活，你坐在旁边一起看。你能用项目里的所有工具查代码、做只读的检查，但不要改任何东西——不写文件、不跑会改东西的命令、不做有副作用的事。
 
@@ -996,7 +912,7 @@ ${'$'}{conversation}
 """.trimIndent()
 
         val DEFAULT_PROMPT_EN = """
-You're the pair programming partner. ${'$'}{mode}
+You're the pair programming partner. What you say will be sent to your partner automatically — they'll see it and continue working.
 
 Your partner is doing the user's task, and you're sitting next to them. You have full tool access to the project and can check code or run read-only checks yourself, but don't change anything — no writing files, no running commands that change things, no side effects.
 
@@ -1032,10 +948,6 @@ If you have nothing to say this round, output the single word PASS and nothing e
 internal fun trySendPeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
     builder.requireBracketedPasteMode()
         .shouldExecute()
-        .trySend(prompt)
-
-internal fun tryStagePeerFeedback(builder: TerminalSendTextBuilder, prompt: String): Boolean =
-    builder.requireBracketedPasteMode()
         .trySend(prompt)
 
 private val CONTEXT_OVERFLOW_PATTERNS = listOf(
@@ -1119,19 +1031,6 @@ private const val PEER_ROLE = "peer"
 private const val PEER_LABEL = "Peer (your earlier feedback, not the user)"
 
 private val PASS_PATTERN = Regex("""^\s*pass\s*[.。!！]?\s*$""", RegexOption.IGNORE_CASE)
-
-/**
- * 反馈作为 user 消息进入主会话，不标来源的话主会话会把它当成用户的要求照单全收。
- * 副驾驶只看到一段记录，判断可能有错，所以标明这是搭档的看法、成立与否由主会话自己核实。
- * 只加在发进终端的文字上；界面和手机上展示的仍是副驾驶原话。
- */
-internal fun peerFeedbackMessage(feedback: String): String {
-    val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-    return (if (isChinese) PEER_FEEDBACK_HEADER_ZH else PEER_FEEDBACK_HEADER_EN) + feedback
-}
-
-internal const val PEER_FEEDBACK_HEADER_ZH = "[结对编程搭档的看法，不是用户的要求。是否成立请你先核实，再决定怎么处理。]\n\n"
-internal const val PEER_FEEDBACK_HEADER_EN = "[Your pair programming partner's view, not a request from the user. Check whether it holds before deciding what to do.]\n\n"
 
 internal fun actionablePeerFeedback(output: String?): String? {
     val feedback = output?.trim().orEmpty()

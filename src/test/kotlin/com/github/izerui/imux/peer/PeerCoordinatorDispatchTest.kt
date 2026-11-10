@@ -43,7 +43,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "feedback" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -61,9 +60,9 @@ class PeerCoordinatorDispatchTest {
             coordinator.onTurnCompleted("s-codex")
             coordinator.onTurnCompleted("s-pi")
             assertTrue("三种反馈应完成分派", latch.await(5, TimeUnit.SECONDS))
-            assertTrue("Claude 反馈应被受理", "s-claude: " + peerFeedbackMessage("feedback") in accepted)
-            assertTrue("Codex 反馈应被受理", "s-codex: " + peerFeedbackMessage("feedback") in accepted)
-            assertTrue("Pi 反馈应被受理", "s-pi: " + peerFeedbackMessage("feedback") in accepted)
+            assertTrue("Claude 反馈应被受理", "s-claude: feedback" in accepted)
+            assertTrue("Codex 反馈应被受理", "s-codex: feedback" in accepted)
+            assertTrue("Pi 反馈应被受理", "s-pi: feedback" in accepted)
         } finally {
             coordinator.dispose()
             scope.cancel()
@@ -135,54 +134,6 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
-    fun `tryStagePeerFeedback 成功时不调用 shouldExecute`() {
-        val calls = mutableListOf<String>()
-        val builder = Proxy.newProxyInstance(
-            TerminalSendTextBuilder::class.java.classLoader,
-            arrayOf(TerminalSendTextBuilder::class.java),
-        ) { proxy, method, args ->
-            calls += method.name
-            when (method.name) {
-                "requireBracketedPasteMode" -> proxy
-                "shouldExecute" -> error("暂存不应调用 shouldExecute")
-                "trySend" -> {
-                    assertEquals("staged content", args?.single())
-                    true
-                }
-                else -> error("不应调用 ${method.name}")
-            }
-        } as TerminalSendTextBuilder
-
-        assertTrue(tryStagePeerFeedback(builder, "staged content"))
-        assertEquals(
-            listOf("requireBracketedPasteMode", "trySend"),
-            calls,
-        )
-    }
-
-    @Test
-    fun `tryStagePeerFeedback 未就绪时返回 false`() {
-        val calls = mutableListOf<String>()
-        val builder = Proxy.newProxyInstance(
-            TerminalSendTextBuilder::class.java.classLoader,
-            arrayOf(TerminalSendTextBuilder::class.java),
-        ) { proxy, method, _ ->
-            calls += method.name
-            when (method.name) {
-                "requireBracketedPasteMode" -> proxy
-                "trySend" -> false
-                else -> error("不应调用 ${method.name}")
-            }
-        } as TerminalSendTextBuilder
-
-        assertFalse(tryStagePeerFeedback(builder, "content"))
-        assertEquals(
-            listOf("requireBracketedPasteMode", "trySend"),
-            calls,
-        )
-    }
-
-    @Test
     fun `终端稍后就绪时只发送一次反馈并登记轮次`() {
         val attempts = AtomicInteger()
         val firstAttempt = CountDownLatch(1)
@@ -198,7 +149,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 1 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliCalls.incrementAndGet()
                 "feedback"
@@ -206,7 +156,7 @@ class PeerCoordinatorDispatchTest {
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
             sendAutoFeedback = { _, feedback ->
-                assertEquals(peerFeedbackMessage("feedback"), feedback)
+                assertEquals("feedback", feedback)
                 if (attempts.incrementAndGet() == 1) {
                     firstAttempt.countDown()
                     false
@@ -253,7 +203,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliCalls.incrementAndGet()
                 twoReviews.countDown()
@@ -270,7 +219,7 @@ class PeerCoordinatorDispatchTest {
             coordinator.bind("s-undeliver", AgentType.CLAUDE)
             coordinator.onTurnCompleted("s-undeliver")
             assertTrue("重试耗尽后应触发兜底", done.await(5, TimeUnit.SECONDS))
-            assertEquals(listOf("s-undeliver: " + peerFeedbackMessage("feedback")), undelivered.toList())
+            assertEquals(listOf("s-undeliver: feedback"), undelivered.toList())
             val review = scope.coroutineContext[Job]!!.children.singleOrNull()
             if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
             // 没送达就不该计入轮次上限，否则用户白白少一轮审查。
@@ -296,7 +245,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "feedback" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -341,7 +289,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, command, _, _, environment, _, _, _ ->
                 capture.set(CapturedCliCall(agentType, command, environment))
                 latch.countDown()
@@ -445,7 +392,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 1 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 callCount.incrementAndGet()
                 cliStarted.countDown()
@@ -495,7 +441,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 1 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 if (calls.incrementAndGet() == 1) {
                     firstCliStarted.countDown()
@@ -557,7 +502,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, _, _, _, _, _, onProcess, _ ->
                 val n = callCount.incrementAndGet()
                 if (n == 1) {
@@ -618,7 +562,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 val n = callCount.incrementAndGet()
                 if (n == 1) {
@@ -652,7 +595,7 @@ class PeerCoordinatorDispatchTest {
             assertTrue("新轮次反馈应发送", feedbackSent.await(5, TimeUnit.SECONDS))
             runBlocking { withTimeout(5_000) { oldReview.join() } }
 
-            assertEquals("只应注入新轮次反馈", listOf("s1: " + peerFeedbackMessage("fresh feedback from new run")), injected.toList())
+            assertEquals("只应注入新轮次反馈", listOf("s1: fresh feedback from new run"), injected.toList())
             assertEquals(
                 "绑定的 targetAgentType 不应被破坏",
                 AgentType.CLAUDE,
@@ -683,7 +626,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, _, _, _, _, _, _, _ ->
                 val n = callCount.incrementAndGet()
                 cliAgentTypes.add(agentType)
@@ -746,7 +688,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, _, _, _, _, _, _, _ ->
                 cliAgentTypes.add(agentType)
                 callCount.incrementAndGet()
@@ -812,7 +753,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, _, _, _, _, _, _, _ ->
                 val n = callCount.incrementAndGet()
                 cliAgentTypes.add(agentType)
@@ -874,7 +814,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 callCount.incrementAndGet()
                 cliStarted.countDown()
@@ -924,7 +863,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 cliCalls.add(prompt)
                 allDone.countDown()
@@ -981,7 +919,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 callCount.incrementAndGet()
                 cliStarted.countDown()
@@ -1030,7 +967,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 val n = callCount.incrementAndGet()
                 if (n == 1) {
@@ -1063,11 +999,11 @@ class PeerCoordinatorDispatchTest {
 
             assertFalse(
                 "旧 run 的 stale feedback 不应被注入",
-                injectedFeedback.contains(peerFeedbackMessage("stale feedback")),
+                injectedFeedback.contains("stale feedback"),
             )
             assertTrue(
                 "新 run 的 fresh feedback 应被注入",
-                injectedFeedback.contains(peerFeedbackMessage("fresh feedback")),
+                injectedFeedback.contains("fresh feedback"),
             )
         } finally {
             coordinator.dispose()
@@ -1098,7 +1034,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, onProcess, _ ->
                 val n = callCount.incrementAndGet()
                 if (n == 1) {
@@ -1163,7 +1098,7 @@ class PeerCoordinatorDispatchTest {
             assertTrue("旧进程应被终止", oldProcessDestroyed.get())
             assertTrue(
                 "新 run 的反馈应被注入",
-                injectedFeedback.contains(peerFeedbackMessage("new-run-feedback")),
+                injectedFeedback.contains("new-run-feedback"),
             )
             val status = coordinator.status("s1")
             assertNotNull("绑定应仍存在", status)
@@ -1214,7 +1149,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, _, cwd, prompt, _, timeoutSeconds, onProcess, onProgress ->
                 capturedPrompts.add(prompt)
                 if (callCount.incrementAndGet() == 1) {
@@ -1239,7 +1173,7 @@ class PeerCoordinatorDispatchTest {
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { task, conversation -> "task=$task\nconversation=$conversation" },
             sendAutoFeedback = { _, feedback ->
-                assertEquals(peerFeedbackMessage("feedback after shrink"), feedback)
+                assertEquals("feedback after shrink", feedback)
                 feedbackSent.countDown()
                 true
             },
@@ -1274,7 +1208,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 callCount.incrementAndGet()
                 throw PeerCliException("authentication failed")
@@ -1308,7 +1241,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 callCount.incrementAndGet()
                 throw PeerCliException("context window exceeded")
@@ -1357,7 +1289,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 capturedPrompts.add(prompt)
                 if (callCount.incrementAndGet() <= 3) {
@@ -1421,7 +1352,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 capturedPrompts.add(prompt)
                 if (callCount.incrementAndGet() == 1) {
@@ -1487,7 +1417,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { agentType, _, cwd, prompt, _, timeoutSeconds, onProcess, onProgress ->
                 capturedPrompts.add(prompt)
                 if (callCount.incrementAndGet() == 1) {
@@ -1512,7 +1441,7 @@ class PeerCoordinatorDispatchTest {
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { task, conv -> "task=$task\nconv=$conv" },
             sendAutoFeedback = { _, feedback ->
-                assertEquals(peerFeedbackMessage("feedback after exit0 retry"), feedback)
+                assertEquals("feedback after exit0 retry", feedback)
                 feedbackSent.countDown()
                 true
             },
@@ -1546,7 +1475,6 @@ class PeerCoordinatorDispatchTest {
         shell = "/bin/zsh",
         edtDispatcher = Dispatchers.Unconfined,
         peerMaxRounds = { 5 },
-        peerAutoInject = { true },
         runCli = runCli,
         resolveMcpConfig = { PeerMcpConfig(null, null, null) },
         buildPrompt = { _, _ -> "test prompt" },
@@ -1650,7 +1578,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, onProgress ->
                 onProgress(PeerProgressEvent(PeerProgressKind.TOOL_STARTED, "./gradlew test"))
                 toolSeen.countDown()
@@ -1702,7 +1629,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> output },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -1844,7 +1770,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -1898,7 +1823,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "请补上空列表的测试" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -1951,7 +1875,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliCalled.countDown()
                 "PASS"
@@ -1985,7 +1908,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -2019,7 +1941,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "PASS" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -2041,7 +1962,7 @@ class PeerCoordinatorDispatchTest {
     }
 
     @Test
-    fun `reviewOnce 遵循自动发送设置`() {
+    fun `reviewOnce 的反馈自动发送`() {
         val autoInjected = ConcurrentLinkedQueue<String>()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val unbound = CountDownLatch(1)
@@ -2054,7 +1975,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ -> "some actionable feedback" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
@@ -2070,49 +1990,7 @@ class PeerCoordinatorDispatchTest {
             }
             coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
             assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
-            assertEquals("自动发送开启时反馈应走 sendAutoFeedback", peerFeedbackMessage("some actionable feedback"), autoInjected.single())
-        } finally {
-            coordinator.dispose()
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `reviewOnce 关闭自动发送时反馈走暂存`() {
-        val autoInjected = ConcurrentLinkedQueue<String>()
-        val stagedFeedback = ConcurrentLinkedQueue<String>()
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val unbound = CountDownLatch(1)
-        val coordinator = PeerCoordinator(
-            project = testProject(),
-            projectPath = "/tmp/test-project",
-            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
-            viewOf = { null },
-            coroutineScope = scope,
-            shell = "/bin/zsh",
-            edtDispatcher = Dispatchers.Unconfined,
-            peerMaxRounds = { 5 },
-            peerAutoInject = { false },
-            runCli = { _, _, _, _, _, _, _, _ -> "some actionable feedback" },
-            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
-            buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
-                autoInjected.add(feedback)
-                true
-            },
-            onFeedbackUndelivered = { _, feedback ->
-                stagedFeedback.add(feedback)
-            },
-        )
-        try {
-            coordinator.addStateListener(coordinator) { key ->
-                if (key == "s1" && coordinator.status("s1") == null) unbound.countDown()
-            }
-            coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
-            assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
-            assertTrue("关闭自动发送时不应调用 sendAutoFeedback", autoInjected.isEmpty())
-            assertEquals("反馈应到达暂存路径", peerFeedbackMessage("some actionable feedback"), stagedFeedback.single())
-            assertTrue("最终不应有绑定", coordinator.boundTarget("s1") == null)
+            assertEquals("自动发送开启时反馈应走 sendAutoFeedback", "some actionable feedback", autoInjected.single())
         } finally {
             coordinator.dispose()
             scope.cancel()
@@ -2133,7 +2011,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 capturedPrompts.add(prompt)
                 done.countDown()
@@ -2171,7 +2048,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliStarted.countDown()
                 cliBlocked.await(5, TimeUnit.SECONDS)
@@ -2209,7 +2085,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliCount.incrementAndGet()
                 cliStarted.countDown()
@@ -2268,7 +2143,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, prompt, _, _, _, _ ->
                 capturedPrompts.add(prompt)
                 if (callCount.getAndIncrement() == 0) {
@@ -2317,7 +2191,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliStarted.countDown()
                 cliBlocked.await(5, TimeUnit.SECONDS)
@@ -2359,7 +2232,6 @@ class PeerCoordinatorDispatchTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { 5 },
-            peerAutoInject = { true },
             runCli = { _, _, _, _, _, _, _, _ ->
                 cliCount.incrementAndGet()
                 latch.countDown()
@@ -2375,114 +2247,6 @@ class PeerCoordinatorDispatchTest {
             Thread.sleep(300)
             assertEquals("持续绑定存在时 reviewOnce 不应调用 CLI", 0, cliCount.get())
             assertEquals("原绑定应保留", AgentType.CLAUDE, coordinator.boundTarget("s1"))
-        } finally {
-            coordinator.dispose()
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `持续模式审查途中关闭自动发送后反馈走暂存`() {
-        val cliStarted = CountDownLatch(1)
-        val cliBlocked = CountDownLatch(1)
-        val autoInjectFlag = AtomicReference(true)
-        val autoInjected = ConcurrentLinkedQueue<String>()
-        val stagedFeedback = ConcurrentLinkedQueue<String>()
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val coordinator = PeerCoordinator(
-            project = testProject(),
-            projectPath = "/tmp/test-project",
-            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
-            viewOf = { null },
-            coroutineScope = scope,
-            shell = "/bin/zsh",
-            edtDispatcher = Dispatchers.Unconfined,
-            peerMaxRounds = { 5 },
-            peerAutoInject = { autoInjectFlag.get() },
-            runCli = { _, _, _, _, _, _, _, _ ->
-                cliStarted.countDown()
-                cliBlocked.await(5, TimeUnit.SECONDS)
-                "actionable feedback"
-            },
-            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
-            buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
-                autoInjected.add(feedback)
-                true
-            },
-            onFeedbackUndelivered = { _, feedback ->
-                stagedFeedback.add(feedback)
-            },
-        )
-        try {
-            coordinator.bind("s1", AgentType.CLAUDE)
-            coordinator.onTurnCompleted("s1")
-            assertTrue("CLI 应启动", cliStarted.await(5, TimeUnit.SECONDS))
-            autoInjectFlag.set(false)
-            cliBlocked.countDown()
-            val review = scope.coroutineContext[Job]!!.children.firstOrNull()
-            if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
-            assertTrue("关闭自动发送后不应调用 sendAutoFeedback", autoInjected.isEmpty())
-            assertEquals("反馈应到达暂存路径", peerFeedbackMessage("actionable feedback"), stagedFeedback.single())
-        } finally {
-            coordinator.dispose()
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `stageFeedback 在终端未就绪时不发送多行文本`() {
-        val undelivered = ConcurrentLinkedQueue<String>()
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val done = CountDownLatch(1)
-        val coordinator = PeerCoordinator(
-            project = testProject(),
-            projectPath = "/tmp/test-project",
-            model = SessionListModel(scan = { emptyList() }, clock = Instant::now),
-            viewOf = { key ->
-                Proxy.newProxyInstance(
-                    com.intellij.terminal.frontend.view.TerminalView::class.java.classLoader,
-                    arrayOf(com.intellij.terminal.frontend.view.TerminalView::class.java),
-                ) { proxy, method, _ ->
-                    when (method.name) {
-                        "createSendTextBuilder" -> {
-                            Proxy.newProxyInstance(
-                                TerminalSendTextBuilder::class.java.classLoader,
-                                arrayOf(TerminalSendTextBuilder::class.java),
-                            ) { builderProxy, builderMethod, _ ->
-                                when (builderMethod.name) {
-                                    "requireBracketedPasteMode", "shouldExecute" -> builderProxy
-                                    "trySend" -> false
-                                    else -> builderProxy
-                                }
-                            } as TerminalSendTextBuilder
-                        }
-                        "hashCode" -> System.identityHashCode(proxy)
-                        "equals" -> proxy === null
-                        "toString" -> "MockTerminalView"
-                        else -> null
-                    }
-                } as com.intellij.terminal.frontend.view.TerminalView
-            },
-            coroutineScope = scope,
-            shell = "/bin/zsh",
-            edtDispatcher = Dispatchers.Unconfined,
-            peerMaxRounds = { 5 },
-            peerAutoInject = { false },
-            runCli = { _, _, _, _, _, _, _, _ -> "multi\nline\nfeedback" },
-            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
-            buildPrompt = { _, _ -> "test prompt" },
-            onFeedbackUndelivered = { _, feedback ->
-                undelivered.add(feedback)
-                done.countDown()
-            },
-        )
-        try {
-            coordinator.bind("s1", AgentType.CLAUDE)
-            coordinator.onTurnCompleted("s1")
-            assertTrue("应触发未送达回调", done.await(5, TimeUnit.SECONDS))
-            val feedback = undelivered.single()
-            assertEquals("兜底应收到完整反馈原文", peerFeedbackMessage("multi\nline\nfeedback"), feedback)
         } finally {
             coordinator.dispose()
             scope.cancel()

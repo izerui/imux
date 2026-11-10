@@ -17,7 +17,7 @@ class PeerReviewTextsTest {
 
     private val started = PeerReviewEvent.Started("s1", AgentType.CODEX, 2, oneShot = false)
     private val startedOnce = PeerReviewEvent.Started("s1", AgentType.CODEX, 1, oneShot = true)
-    private val injected = PeerReviewEvent.Finished("s1", outcome(PeerOutcomeKind.FEEDBACK), "第 12 行空指针", autoInjected = true)
+    private val injected = PeerReviewEvent.Finished("s1", outcome(PeerOutcomeKind.FEEDBACK), "第 12 行空指针")
     private val turnStarted = PeerReviewEvent.Stopped("s1", AgentType.CODEX, PeerStopReason.TURN_STARTED)
 
     /** 之后不会再引出新输入的结局。 */
@@ -26,8 +26,6 @@ class PeerReviewTextsTest {
             PeerReviewEvent.Finished("s1", outcome(PeerOutcomeKind.PASSED)),
             PeerReviewEvent.Finished("s1", outcome(PeerOutcomeKind.FAILED, "调用超时")),
         ) + (PeerStopReason.entries - PeerStopReason.TURN_STARTED).map { PeerReviewEvent.Stopped("s1", AgentType.CODEX, it, maxRounds = 3) }
-
-    private val staged = PeerReviewEvent.Finished("s1", outcome(PeerOutcomeKind.FEEDBACK), "第 12 行空指针", autoInjected = false)
 
     private fun zh(event: PeerReviewEvent) =
         peerReviewText(event) { key, args -> ImuxBundle.message(PluginLanguage.SIMPLIFIED_CHINESE, key, *args.toTypedArray()) }
@@ -55,13 +53,7 @@ class PeerReviewTextsTest {
     fun `审查中又发了消息、审查被取消时立即说明，其余不用立即发`() {
         assertTrue(zh(turnStarted)!!.contains("已取消"))
         assertTrue(turnStarted.immediate())
-        for (event in idle + started + startedOnce + staged) assertTrue(!event.immediate())
-    }
-
-    @Test
-    fun `意见只填进输入框时说一声，手机上不会有那条输入`() {
-        val text = zh(staged)!!
-        assertTrue(text.contains("IDE") && !text.contains("第 12 行空指针"))
+        for (event in idle + started + startedOnce + injected) assertTrue(!event.immediate())
     }
 
     @Test
@@ -72,7 +64,7 @@ class PeerReviewTextsTest {
 
     @Test
     fun `每种语言都能排出完整的文字`() {
-        for (language in PluginLanguage.entries) for (event in idle + started + startedOnce + staged) {
+        for (language in PluginLanguage.entries) for (event in idle + started + startedOnce) {
             val text = peerReviewText(event) { key, args -> ImuxBundle.message(language, key, *args.toTypedArray()) }
             assertTrue("$language $event", !text.isNullOrBlank() && !text.contains("{") && !text.contains("''"))
         }

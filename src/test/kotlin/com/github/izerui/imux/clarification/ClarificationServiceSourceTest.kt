@@ -53,7 +53,6 @@ class ClarificationServiceSourceTest {
     @Test
     fun `发送复用结对编程的括号粘贴加回车`() {
         assertTrue(source.normalized.contains("trySendPeerFeedback("))
-        assertFalse(source.normalized.contains("tryStagePeerFeedback("))
     }
 
     @Test

@@ -36,7 +36,6 @@ Object.assign(window.UI, (() => {
       <div class="grp">智能体</div>
       <div class="row">${cb()}<img src="materials/claude@2x.png" width="28">Claude Code　${cb()}<img src="materials/codex@2x_dark.png" width="28">Codex　${cb()}<img src="materials/pi@2x_dark.png" width="28">Pi</div>
       <div class="grp">结对编程</div>
-      <div class="row">${cb()}自动发送副驾驶反馈到主会话</div>
       <div class="row">最大轮次：<span class="fld" style="width:90px" data-rounds>5</span></div>
       <div class="row">默认伙伴：<span class="fld" style="width:760px">自动（已启用列表里排在会话自身之后的下一个）▾</span></div>
       <div class="grp">Project 窗口</div>

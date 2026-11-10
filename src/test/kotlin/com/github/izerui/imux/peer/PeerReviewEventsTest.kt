@@ -27,7 +27,7 @@ class PeerReviewEventsTest {
 
     private fun coordinator(
         maxRounds: Int = 5,
-        autoInject: Boolean = true,
+        sendAutoFeedback: ((String, String) -> Boolean)? = { _, _ -> true },
         runCli: (AgentType, List<String>, Path, String, Map<String, String>, Long, (Process?) -> Unit, (PeerProgressEvent) -> Unit) -> String?,
     ): PeerCoordinator =
         PeerCoordinator(
@@ -39,11 +39,10 @@ class PeerReviewEventsTest {
             shell = "/bin/zsh",
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { maxRounds },
-            peerAutoInject = { autoInject },
             runCli = runCli,
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, _ -> true },
+            sendAutoFeedback = sendAutoFeedback,
             onFeedbackUndelivered = { _, _ -> },
             onOneShotPassed = {},
         ).also { c -> c.addReviewListener(c) { events += it } }
@@ -79,19 +78,18 @@ class PeerReviewEventsTest {
         }
 
     @Test
-    fun `意见自动注入时带上原文并标明已交给主会话`() =
+    fun `意见自动注入时带上原文`() =
         using(coordinator(runCli = output("第 12 行空指针，请修复"))) { c ->
             c.bind("s1", AgentType.CODEX)
             awaitIdle(c) { c.onTurnCompleted("s1") }
             val finished = events.last() as PeerReviewEvent.Finished
             assertEquals(PeerOutcomeKind.FEEDBACK, finished.outcome.kind)
             assertEquals("第 12 行空指针，请修复", finished.feedback)
-            assertTrue(finished.autoInjected)
         }
 
     @Test
     fun `意见没送到终端时报告审查中断，不让手机一直等`() =
-        using(coordinator(autoInject = false, runCli = output("请修复"))) { c ->
+        using(coordinator(sendAutoFeedback = null, runCli = output("请修复"))) { c ->
             c.bind("s1", AgentType.CODEX)
             awaitIdle(c) { c.onTurnCompleted("s1") }
             assertEquals(PeerReviewEvent.Stopped("s1", AgentType.CODEX, PeerStopReason.INTERRUPTED), events.last())

@@ -27,7 +27,7 @@ class PeerReviewLifecycleTest {
     fun `审查解绑保留反馈保护而轮次完成清理保护`() {
         val state = PeerReviewLifecycle()
         state.startOneShot(1)
-        state.feedbackDelivered(1, "反馈", true, null)
+        state.feedbackDelivered(1)
         state.detachReview()
         assertFalse(state.isOneShot)
         assertTrue("审查结束不代表反馈处理结束", state.isHandlingFeedback)
@@ -39,49 +39,9 @@ class PeerReviewLifecycleTest {
     fun `旧审查代次不能为新的单次审查设置反馈保护`() {
         val state = PeerReviewLifecycle()
         state.startOneShot(2)
-        state.feedbackDelivered(1, "过时反馈", true, null)
+        state.feedbackDelivered(1)
         assertFalse(state.isHandlingFeedback)
         assertTrue("新审查仍然有效", state.isOneShot(2))
-    }
-
-    @Test
-    fun `提交记录读取期间轮次结束不恢复反馈保护`() {
-        val state = stagedState()
-        val pending = state.feedback as PeerReviewLifecycle.Feedback.Staged
-        state.turnCompleted()
-        assertFalse(state.observeSubmission(pending, PeerUserInput("new", "反馈")))
-        assertNull(state.feedback)
-    }
-
-    @Test
-    fun `旧提交记录读取结果不能覆盖新审查的暂存反馈`() {
-        val state = stagedState()
-        val pending = state.feedback as PeerReviewLifecycle.Feedback.Staged
-        state.bind()
-        state.startOneShot(2)
-        state.feedbackDelivered(2, "新反馈", false, null)
-        assertFalse(state.observeSubmission(pending, PeerUserInput("new", "反馈")))
-        assertEquals("新反馈", (state.feedback as PeerReviewLifecycle.Feedback.Staged).text)
-    }
-
-    @Test
-    fun `暂存后没有新的用户记录时不认定已提交`() {
-        val previous = PeerUserInput("old", "反馈")
-        val state = PeerReviewLifecycle()
-        state.startOneShot(1)
-        state.feedbackDelivered(1, "反馈", false, previous)
-        val pending = state.feedback as PeerReviewLifecycle.Feedback.Staged
-        state.observeSubmission(pending, previous)
-        assertFalse(state.isHandlingFeedback)
-        state.observeSubmission(pending, null)
-        assertFalse("文件未就绪也不能推断用户提交", state.isHandlingFeedback)
-        state.observeSubmission(pending, PeerUserInput("new", "反馈"))
-        assertTrue("新记录的相同内容才是提交", state.isHandlingFeedback)
-    }
-
-    private fun stagedState() = PeerReviewLifecycle().apply {
-        startOneShot(1)
-        feedbackDelivered(1, "反馈", false, PeerUserInput("old", "原任务"))
     }
 
     private fun outcome(kind: PeerOutcomeKind) = PeerOutcome(kind, AgentType.CODEX, 1, 1L)

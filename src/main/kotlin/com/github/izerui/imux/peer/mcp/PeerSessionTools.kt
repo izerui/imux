@@ -71,7 +71,7 @@ internal class PeerSessionTools(
      * 正在处理单次审查意见的这一轮不再预约，返回 `skipped_feedback_turn`。
      * [instruction] 是给审查者的额外要求，只用于这一次。
      */
-    suspend fun reviewOnce(agent: String?, instruction: String?): PeerToolResult {
+    fun reviewOnce(agent: String?, instruction: String?): PeerToolResult {
         val (key, peer) = session() ?: return closed()
         val target = partner(agent) ?: return notEnabled()
         return when (peer.scheduleReviewOnce(key, target, instruction?.trim()?.takeIf(String::isNotEmpty))) {
@@ -80,7 +80,6 @@ internal class PeerSessionTools(
                 addProperty("partner", peer.boundTarget(key)?.cli)
             })
             PeerScheduleResult.FEEDBACK_TURN -> outcome("skipped_feedback_turn")
-            PeerScheduleResult.STATE_CHANGED -> outcome("skipped_state_changed")
             PeerScheduleResult.CLOSED -> closed()
             PeerScheduleResult.SCHEDULED -> {
                 onScheduled(target)
