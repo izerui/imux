@@ -7,10 +7,9 @@ import org.junit.Test
 /** 按 Claude Code 2.1.308 实测：权限框第 1 项是 Yes，Esc 拒绝并回到输入框。 */
 class PermissionPromptsTest {
     @Test
-    fun `工具名一行，要批准的内容逐行跟在后面；Markdown 渠道工具名加粗、行首像列表的转义`() {
+    fun `工具名一行，要批准的内容逐行跟在后面；工具名加粗、行首像列表的转义`() {
         val call = ToolCall("Bash", "删除临时文件\n- rm *.tmp")
-        assertEquals("Bash\n删除临时文件\n- rm *.tmp", PermissionPrompts.render(call, markdown = false))
-        assertEquals("**Bash**  \n删除临时文件  \n\\- rm \\*.tmp", PermissionPrompts.render(call, markdown = true))
+        assertEquals("**Bash**  \n删除临时文件  \n\\- rm \\*.tmp", PermissionPrompts.render(call))
     }
 
     @Test

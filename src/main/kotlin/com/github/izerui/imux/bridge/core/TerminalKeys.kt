@@ -13,13 +13,13 @@ internal object TerminalKeys {
     private val TRAILING_PUNCTUATION = charArrayOf('。', '.', '！', '!', '，', ',', '？', '?', '~', '～')
 }
 
-/** 推到手机的列表在 Markdown 渠道里的转义。 */
+/** 推到手机的列表的转义；各手机端都按 Markdown 渲染。 */
 internal object PhoneMarkdown {
+    /** 列表各行之间的换行：行尾两个空格才是 Markdown 的硬换行。 */
+    const val LINE_BREAK = "  \n"
+
     /** 行内的 `*`、反引号会被当成强调、代码，命令里常有，转义后原样显示。 */
-    fun inline(
-        text: String,
-        markdown: Boolean,
-    ): String = if (markdown) text.replace("\\", "\\\\").replace("*", "\\*").replace("`", "\\`") else text
+    fun inline(text: String): String = text.replace("\\", "\\\\").replace("*", "\\*").replace("`", "\\`")
 
     /** 行首像标题、引用、列表号的转义，免得渲染成标题或列表。 */
     fun escapeLineStart(line: String): String {

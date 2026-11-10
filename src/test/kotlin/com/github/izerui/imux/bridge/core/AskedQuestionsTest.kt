@@ -59,13 +59,13 @@ class AskedQuestionsTest {
 
     @Test
     fun `列表：选项用和电脑上一样的数字编号，说明接在后面，多选题标注`() {
-        assertEquals("选哪个？\n1. 苹果 · 红\n2. 香蕉 · 黄\n3. 葡萄", AskedQuestions.render(fruit, markdown = false, multiSelectMark = "（可多选）"))
-        assertEquals("要哪些配料？（可多选）\n1. 糖 · 甜\n2. 冰 · 凉", AskedQuestions.render(toppings, markdown = false, multiSelectMark = "（可多选）"))
+        assertEquals("选哪个？  \n**1.** 苹果 · 红  \n**2.** 香蕉 · 黄  \n**3.** 葡萄", AskedQuestions.render(fruit, multiSelectMark = "（可多选）"))
+        assertEquals("要哪些配料？（可多选）  \n**1.** 糖 · 甜  \n**2.** 冰 · 凉", AskedQuestions.render(toppings, multiSelectMark = "（可多选）"))
     }
 
     @Test
-    fun `Markdown 渠道编号加粗、硬换行，正文里的星号转义，题目开头像标题时转义`() {
+    fun `编号加粗、硬换行，正文里的星号转义，题目开头像标题时转义`() {
         val question = AskedQuestion("# 用 *哪个*？", false, listOf(AskedOption("a*b", null)))
-        assertEquals("\\# 用 \\*哪个\\*？  \n**1.** a\\*b", AskedQuestions.render(question, markdown = true, multiSelectMark = ""))
+        assertEquals("\\# 用 \\*哪个\\*？  \n**1.** a\\*b", AskedQuestions.render(question, multiSelectMark = ""))
     }
 }

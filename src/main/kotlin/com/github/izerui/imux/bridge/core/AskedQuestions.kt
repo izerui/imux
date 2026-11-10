@@ -27,19 +27,17 @@ object AskedQuestions {
     /** 一道题排成列表：题目一行，选项用编号；[multiSelectMark] 跟在多选题题目后面。 */
     fun render(
         question: AskedQuestion,
-        markdown: Boolean,
         multiSelectMark: String,
     ): String {
-        val lineBreak = if (markdown) "  \n" else "\n"
-        val title = PhoneMarkdown.inline(question.question.trim(), markdown) + if (question.multiSelect) multiSelectMark else ""
-        val head = if (markdown) PhoneMarkdown.escapeLineStart(title) else title
+        val title = PhoneMarkdown.inline(question.question.trim()) + if (question.multiSelect) multiSelectMark else ""
+        val head = PhoneMarkdown.escapeLineStart(title)
         val options =
             question.options.withIndex().map { (i, option) ->
                 val number = "${i + 1}."
-                val description = option.description?.trim()?.takeIf(String::isNotEmpty)?.let { " · " + PhoneMarkdown.inline(it, markdown) }.orEmpty()
-                (if (markdown) "**$number**" else number) + " " + PhoneMarkdown.inline(option.label.trim(), markdown) + description
+                val description = option.description?.trim()?.takeIf(String::isNotEmpty)?.let { " · " + PhoneMarkdown.inline(it) }.orEmpty()
+                "**$number** " + PhoneMarkdown.inline(option.label.trim()) + description
             }
-        return (listOf(head) + options).joinToString(lineBreak)
+        return (listOf(head) + options).joinToString(PhoneMarkdown.LINE_BREAK)
     }
 
     /**

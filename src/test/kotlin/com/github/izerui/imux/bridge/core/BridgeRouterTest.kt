@@ -44,7 +44,6 @@ class BridgeRouterTest {
     private class FakeChannel(
         override val robotId: RobotId,
         override val maxTextBytes: Int = 1000,
-        override val rendersMarkdown: Boolean = true,
     ) : ChannelAdapter {
         val sent = mutableListOf<OutboundMessage>()
         var afterSend: () -> Unit = {}
@@ -826,17 +825,6 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `不渲染 Markdown 的渠道用字符横线署名`() =
-        runBlocking {
-            val plain = FakeChannel(robot, rendersMarkdown = false)
-            val r = titledRouter(plain)
-            registry.bind(robot, target)
-            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
-            r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
-            assertEquals(listOf("答案\n\n──────────\nimux · Claude Code · 代理商改造"), plain.sent.map { it.text })
-        }
-
-    @Test
     fun `分段发送时只有最后一段署名，每段都不超过渠道上限`() =
         runBlocking {
             val small = FakeChannel(robot, maxTextBytes = 120)
@@ -888,7 +876,7 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `署名放进行内代码，标题号列表号不用转义，带反引号时加长外层，纯文本渠道不包`() =
+    fun `署名放进行内代码，标题号列表号不用转义，带反引号时加长外层`() =
         runBlocking {
             registry.bind(robot, target)
             suspend fun footerOf(
@@ -903,7 +891,6 @@ class BridgeRouterTest {
             assertEquals("` # 修复登录 `", footerOf("# 修复登录"))
             assertEquals("` 12. 修复登录 `", footerOf("12. 修复登录"))
             assertEquals("``` 修复 `a` 和 ``b`` ```", footerOf("修复 `a` 和 ``b``"))
-            assertEquals("# 修复登录", footerOf("# 修复登录", FakeChannel(robot, rendersMarkdown = false)))
         }
 
     private val label = "\n\n---\n` imux · Claude Code · 代理商改造 `"
@@ -1608,8 +1595,8 @@ class BridgeRouterTest {
 
     private fun asked(vararg questions: AskedQuestion) = SessionEvent.QuestionAsked("q1", questions.toList())
 
-    private val firstPushed = "QUESTION1/2(${AskedQuestions.render(fruit, true, "(多选)")})"
-    private val secondPushed = "QUESTION2/2(${AskedQuestions.render(drink, true, "(多选)")})"
+    private val firstPushed = "QUESTION1/2(${AskedQuestions.render(fruit, "(多选)")})"
+    private val secondPushed = "QUESTION2/2(${AskedQuestions.render(drink, "(多选)")})"
 
     // ---- 提问 ----
 
@@ -1974,7 +1961,7 @@ class BridgeRouterTest {
     fun `长计划、长命令截短到一条消息之内`() =
         runBlocking {
             registry.bind(robot, target)
-            val small = FakeChannel(robot, maxTextBytes = 1000, rendersMarkdown = false)
+            val small = FakeChannel(robot, maxTextBytes = 1000)
             for (event in listOf(
                 SessionEvent.ToolCalled("p1", "ExitPlanMode", "步骤".repeat(800)),
                 SessionEvent.ToolCalled("b1", "Bash", "echo " + "x".repeat(3000)),

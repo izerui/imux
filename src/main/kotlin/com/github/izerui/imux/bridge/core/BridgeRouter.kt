@@ -332,14 +332,13 @@ class BridgeRouter(
     private fun TabState.currentQuestionText(binding: Binding): String? {
         val questions = askedQuestions ?: return null
         val question = questions.getOrNull(questionIndex) ?: return null
-        val markdown = channelOf(binding.robotId)?.rendersMarkdown ?: true
-        return texts.question(AskedQuestions.render(question, markdown, texts.multiSelectMark()), questionIndex + 1, questions.size)
+        return texts.question(AskedQuestions.render(question, texts.multiSelectMark()), questionIndex + 1, questions.size)
     }
 
     private fun permissionText(
         binding: Binding,
         call: ToolCall,
-    ): String = fitted(binding, PermissionPrompts.render(call, channelOf(binding.robotId)?.rendersMarkdown ?: true), texts::permission)
+    ): String = fitted(binding, PermissionPrompts.render(call), texts::permission)
 
     /**
      * 计划、长命令截短到一条消息之内：拆成几条发，微信这类有条数额度的渠道会白白耗掉额度，
@@ -703,7 +702,7 @@ class BridgeRouter(
     ) {
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
-        val footer = footer(label, channel.rendersMarkdown)
+        val footer = footer(label)
         val budget = (channel.maxTextBytes - footer.toByteArray(Charsets.UTF_8).size).coerceAtLeast(TextSegmenter.MIN_SEGMENT_BYTES)
         val segments = TextSegmenter.split(if (footer.isEmpty()) text else text.trimEnd(), budget)
         for ((index, part) in segments.withIndex()) {
@@ -731,7 +730,7 @@ class BridgeRouter(
         label: String?,
         channel: ChannelAdapter,
     ): String {
-        val footer = footer(label, channel.rendersMarkdown)
+        val footer = footer(label)
         return if (footer.isEmpty()) text else text.trimEnd() + footer
     }
 
@@ -789,16 +788,12 @@ class BridgeRouter(
     }
 
     /**
-     * 分割线下一行写署名，整行放进行内代码，不用引用块；不渲染 Markdown 的渠道用字符横线代替，也不包反引号。
+     * 分割线下一行写署名，整行放进行内代码，不用引用块。
      * 行内代码里不解析标题号、列表号，不用再转义；标题里带反引号时，外层反引号比里面最长的一串多一个。
      */
-    private fun footer(
-        label: String?,
-        markdown: Boolean,
-    ): String {
+    private fun footer(label: String?): String {
         val line = label?.replace(WHITESPACE, " ")?.trim()?.takeIf(String::isNotEmpty) ?: return ""
         val shown = if (line.length > MAX_LABEL_CHARS) line.take(MAX_LABEL_CHARS - 1) + "…" else line
-        if (!markdown) return "\n\n$PLAIN_RULE\n$shown"
         val fence = "`".repeat((BACKTICKS.findAll(shown).maxOfOrNull { it.value.length } ?: 0) + 1)
         return "\n\n---\n$fence $shown $fence"
     }
@@ -810,7 +805,6 @@ class BridgeRouter(
         const val SIGNATURE_RESERVE_BYTES = 100 * 4 + 32
         val WHITESPACE = Regex("\\s+")
         val BACKTICKS = Regex("`+")
-        const val PLAIN_RULE = "──────────"
 
         /** 署名只为分辨会话，过长时截短，不挤占正文的分段额度。 */
         const val MAX_LABEL_CHARS = 100

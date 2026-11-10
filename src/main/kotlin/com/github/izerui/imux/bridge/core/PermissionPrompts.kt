@@ -13,14 +13,10 @@ package com.github.izerui.imux.bridge.core
  */
 object PermissionPrompts {
     /** 工具名一行，要批准的内容逐行跟在后面。 */
-    internal fun render(
-        call: ToolCall,
-        markdown: Boolean,
-    ): String {
-        val lineBreak = if (markdown) "  \n" else "\n"
-        val name = if (markdown) "**${PhoneMarkdown.inline(call.name, true)}**" else call.name
-        val detail = call.detail.lines().filter(String::isNotBlank).map { if (markdown) PhoneMarkdown.escapeLineStart(PhoneMarkdown.inline(it.trim(), true)) else it.trim() }
-        return (listOf(name) + detail).joinToString(lineBreak)
+    internal fun render(call: ToolCall): String {
+        val name = "**${PhoneMarkdown.inline(call.name)}**"
+        val detail = call.detail.lines().filter(String::isNotBlank).map { PhoneMarkdown.escapeLineStart(PhoneMarkdown.inline(it.trim())) }
+        return (listOf(name) + detail).joinToString(PhoneMarkdown.LINE_BREAK)
     }
 
     /** 手机回复的按键，以及按完后是否还要把原话发给会话。 */
