@@ -23,7 +23,7 @@ class RobotRowsTest {
         }
 
     @Test
-    fun `表格行包含渠道、状态与当前会话`() {
+    fun `表格行包含渠道、状态、工程、智能体与当前会话`() {
         val robots =
             listOf(
                 RobotRecord(RobotId("a"), "开发助手 1", ChannelKind.WECOM, ownerSenderId = "u", ownerChatId = "u"),
@@ -36,12 +36,13 @@ class RobotRowsTest {
                 statusOf = { if (it.value == "a") ConnectionStatus.Online else null },
                 bindingOf = { if (it.value == "a") binding else null },
                 titleOf = { "修复终端滚动" },
+                projectOf = { "imux" },
                 labels = labels,
                 bridgeEnabled = true,
             )
         assertEquals(
             listOf(
-                RobotRow(RobotId("a"), "开发助手 1", "wecom", "Online+bound", "修复终端滚动", RobotHealth.OK),
+                RobotRow(RobotId("a"), "开发助手 1", "wecom", "Online+bound", "修复终端滚动", RobotHealth.OK, "imux", AgentType.CODEX),
                 RobotRow(RobotId("b"), "开发助手 2", "wecom", "pairing", null, RobotHealth.NONE),
             ),
             rows,

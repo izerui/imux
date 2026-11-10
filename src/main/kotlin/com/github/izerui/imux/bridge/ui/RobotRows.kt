@@ -6,6 +6,7 @@ import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.robot.RobotRecord
+import com.github.izerui.imux.model.AgentType
 
 /**
  * 状态圆点：绿点表示可用，黄点表示需要处理（待配对、连接中、失败、被接管）。
@@ -20,6 +21,9 @@ data class RobotRow(
     val status: String,
     val session: String?,
     val health: RobotHealth = RobotHealth.NONE,
+    /** 连着的会话所在工程与智能体，空闲时为空。 */
+    val project: String? = null,
+    val agent: AgentType? = null,
 )
 
 interface RowLabels {
@@ -52,6 +56,7 @@ fun robotRows(
     statusOf: (RobotId) -> ConnectionStatus?,
     bindingOf: (RobotId) -> Binding?,
     titleOf: (Binding) -> String,
+    projectOf: (Binding) -> String,
     labels: RowLabels,
     bridgeEnabled: Boolean,
 ): List<RobotRow> =
@@ -66,6 +71,8 @@ fun robotRows(
             status = labels.status(status, paired, bound = binding != null),
             session = binding?.let(titleOf),
             health = robotHealth(status, paired, bridgeEnabled),
+            project = binding?.let(projectOf),
+            agent = binding?.target?.agentType,
         )
     }
 

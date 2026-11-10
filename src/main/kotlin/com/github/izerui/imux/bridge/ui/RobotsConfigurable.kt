@@ -6,6 +6,7 @@ import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.SessionTitles
+import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.BannerColors
 import com.github.izerui.imux.terminal.SessionDecorationsListener
@@ -38,12 +39,12 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
     override fun createPanel(): DialogPanel {
         val table =
             object : JBTable(model) {
-                // 前三列按内容定宽（各列最多占三成），余下都给会话列；用户拖动列宽时不干预
+                // 会话列之前的各列按内容定宽（各列最多占两成），余下都给会话列；用户拖动列宽时不干预
                 override fun doLayout() {
-                    if (tableHeader?.resizingColumn == null && columnModel.columnCount == 4) {
-                        val widths = (0..2).map { minOf(contentWidth(it), width * 3 / 10) }
+                    if (tableHeader?.resizingColumn == null && columnModel.columnCount == SESSION_COLUMN + 1) {
+                        val widths = (0 until SESSION_COLUMN).map { minOf(contentWidth(it), width / 5) }
                         widths.forEachIndexed { index, w -> columnModel.getColumn(index).preferredWidth = w }
-                        columnModel.getColumn(3).preferredWidth = maxOf(width - widths.sum(), 0)
+                        columnModel.getColumn(SESSION_COLUMN).preferredWidth = maxOf(width - widths.sum(), 0)
                     }
                     super.doLayout()
                 }
@@ -63,6 +64,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 setShowGrid(false)
                 emptyText.text = ImuxBundle.message("bridge.settings.empty")
                 columnModel.getColumn(STATUS_COLUMN).cellRenderer = StatusRenderer()
+                columnModel.getColumn(AGENT_COLUMN).cellRenderer = AgentRenderer()
             }.also { this.table = it }
         val decorated =
             ToolbarDecorator.createDecorator(table)
@@ -157,6 +159,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 statusOf = manager::statusOf,
                 bindingOf = { hub.bindings.bindingOf(it) },
                 titleOf = SessionTitles::of,
+                projectOf = SessionTitles::projectName,
                 labels = BundleRowLabels,
                 bridgeEnabled = true,
             )
@@ -239,6 +242,27 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
         }
     }
 
+    /** 智能体列只画图标，名字放在悬停提示里；空闲时同其他列显示「—」。 */
+    private inner class AgentRenderer : ColoredTableCellRenderer() {
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            val agent = model.rows.getOrNull(row)?.agent
+            // 渲染器各行复用，提示要每次重设
+            toolTipText = agent?.displayName
+            if (agent == null) {
+                append("—")
+                return
+            }
+            icon = AgentIcons.forAgent(agent)
+        }
+    }
+
     private class RobotTableModel : AbstractTableModel() {
         var rows: List<RobotRow> = emptyList()
             set(value) {
@@ -254,6 +278,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 "bridge.settings.column.name",
                 "bridge.settings.column.channel",
                 "bridge.settings.column.status",
+                "bridge.settings.column.project",
+                "bridge.settings.column.agent",
                 "bridge.settings.column.session"
             )
 
@@ -272,6 +298,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 NAME_COLUMN -> row.name
                 CHANNEL_COLUMN -> row.channel
                 STATUS_COLUMN -> row.status
+                PROJECT_COLUMN -> row.project ?: "—"
+                AGENT_COLUMN -> row.agent?.displayName ?: "—"
                 else -> row.session ?: "—"
             }
         }
@@ -284,7 +312,10 @@ internal fun sameRobotsInOrder(
     after: List<RobotRow>,
 ): Boolean = before.map { it.id } == after.map { it.id }
 
-/** 表格列顺序：机器人、渠道、状态、当前连接的会话。 */
+/** 表格列顺序：机器人、渠道、状态、工程、智能体、当前连接的会话。 */
 private const val NAME_COLUMN = 0
 private const val CHANNEL_COLUMN = 1
 private const val STATUS_COLUMN = 2
+private const val PROJECT_COLUMN = 3
+private const val AGENT_COLUMN = 4
+private const val SESSION_COLUMN = 5

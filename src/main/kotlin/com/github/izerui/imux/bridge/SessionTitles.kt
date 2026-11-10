@@ -58,12 +58,13 @@ object SessionTitles {
 
     /**
      * 手机回复末尾的署名：💬 工程 · 智能体 · 会话标题，同时连着几个会话时据此分辨。
-     * 工程已关闭时取项目路径的最后一段。
      */
-    fun label(binding: Binding): String {
+    fun label(binding: Binding): String = sessionLabel(projectName(binding), binding.target.agentType.displayName, of(binding))
+
+    /** 会话所在工程的名字；工程已关闭时取项目路径的最后一段。 */
+    fun projectName(binding: Binding): String {
         val project = ProjectManager.getInstance().openProjects.firstOrNull { it.basePath == binding.target.projectPath && !it.isDisposed }
-        val projectName = project?.name ?: binding.target.projectPath.substringAfterLast('/').substringAfterLast('\\')
-        return sessionLabel(projectName, binding.target.agentType.displayName, of(binding))
+        return project?.name ?: binding.target.projectPath.substringAfterLast('/').substringAfterLast('\\')
     }
 
     /** 正在显示的终端标签。 */
