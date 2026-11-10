@@ -79,7 +79,7 @@ class BridgeRouterTest {
 
         override fun dialogOpen() = "DIALOG_OPEN"
 
-        override fun questions(listing: String, count: Int) = "QUESTIONS$count($listing)"
+        override fun question(listing: String, number: Int, total: Int) = "QUESTION$number/$total($listing)"
 
 
         override fun multiSelectMark() = "(多选)"
@@ -1609,19 +1609,20 @@ class BridgeRouterTest {
 
     private fun asked(vararg questions: AskedQuestion) = SessionEvent.QuestionAsked("q1", questions.toList())
 
-    private val questionsPushed = "QUESTIONS2(${AskedQuestions.render(listOf(fruit, drink), true, "(多选)")})"
+    private val firstPushed = "QUESTION1/2(${AskedQuestions.render(fruit, true, "(多选)")})"
+    private val secondPushed = "QUESTION2/2(${AskedQuestions.render(drink, true, "(多选)")})"
 
     // ---- 提问 ----
 
     @Test
-    fun `提问：等待时一次列出全部题目，等待通知重复到达不重发`() =
+    fun `提问：等待时只推第 1 题，等待通知重复到达不重发`() =
         runBlocking {
             registry.bind(robot, target)
             val r = promptRouter(KeysPort())
             r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
             r.onWaiting("tab-1", "input needed")
             r.onWaiting("tab-1", "input needed")
-            assertEquals(listOf(questionsPushed), sentTexts())
+            assertEquals(listOf(firstPushed), sentTexts())
         }
 
     @Test
@@ -1631,27 +1632,45 @@ class BridgeRouterTest {
             val r = promptRouter(KeysPort())
             r.onWaiting("tab-1", "input needed")
             r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
-            assertEquals(listOf("WAIT(input needed)", questionsPushed), sentTexts())
+            assertEquals(listOf("WAIT(input needed)", firstPushed), sentTexts())
         }
 
     @Test
-    fun `提问：手机按行作答，Esc 关框后把译成选项原文的回答作为消息发出；随后的拒绝结果、中断与回显不推给手机`() =
+    fun `提问：一题一题答，电脑上同时按右键翻到下一题；最后一题答完 Esc 关框，各题答案作为一条消息发出，随后的结果、中断与回显不推`() =
         runBlocking {
             registry.bind(robot, target)
             val port = KeysPort()
             val r = promptRouter(port)
             r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
             r.onWaiting("tab-1", "input needed")
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "B\nA")))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "2")))
+            assertEquals("电脑上只按右键翻到第 2 题，不按编号", listOf(TerminalKeys.RIGHT), port.pressed)
+            assertEquals(listOf(firstPushed, secondPushed), sentTexts())
+            assertTrue(port.submitted.isEmpty())
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "1")))
             val answer = "选哪个？ → 香蕉\n喝什么？ → 茶"
-            assertEquals(listOf(TerminalKeys.ESC), port.pressed)
+            assertEquals(listOf(TerminalKeys.RIGHT, TerminalKeys.ESC), port.pressed)
             assertEquals(listOf(answer), port.submitted)
             r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("q1", null), SessionEvent.TurnInterrupted, SessionEvent.UserText(answer)))
-            assertEquals(1, sentTexts().size)
+            assertEquals(2, sentTexts().size)
         }
 
     @Test
-    fun `提问：随口一说原样发出`() =
+    fun `提问：中间一题随口一说，电脑上只翻页不作答，原话作为这道题的回答`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
+            r.onWaiting("tab-1", "input needed")
+            r.onInbound(inbound("1", "都行，你定"))
+            r.onInbound(inbound("2", "咖啡"))
+            assertEquals(listOf(TerminalKeys.RIGHT, TerminalKeys.ESC), port.pressed)
+            assertEquals(listOf("选哪个？ → 都行，你定\n喝什么？ → 咖啡"), port.submitted)
+        }
+
+    @Test
+    fun `提问：只有一题时随口一说，Esc 关框后原话作为回答发出`() =
         runBlocking {
             registry.bind(robot, target)
             val port = KeysPort()
@@ -1660,7 +1679,23 @@ class BridgeRouterTest {
             r.onWaiting("tab-1", "input needed")
             r.onInbound(inbound("1", "第二个吧"))
             assertEquals(listOf(TerminalKeys.ESC), port.pressed)
-            assertEquals(listOf("第二个吧"), port.submitted)
+            assertEquals(listOf("选哪个？ → 第二个吧"), port.submitted)
+        }
+
+    @Test
+    fun `提问：手机答到一半在电脑上答完了，手机收到答了什么，已记下的答案不再发出`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
+            r.onWaiting("tab-1", "input needed")
+            r.onInbound(inbound("1", "2"))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("q1", "选哪个？\n→ 香蕉\n\n喝什么？\n→ 咖啡")))
+            assertEquals("ANSWERED_LOCALLY(选哪个？\n→ 香蕉\n\n喝什么？\n→ 咖啡)", sentTexts().last())
+            r.onResumed("tab-1")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "继续")))
+            assertEquals(listOf("继续"), port.submitted)
         }
 
     @Test
@@ -1677,18 +1712,23 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `提问：按键失败时仍可作答，再回一次照样作答`() =
+    fun `提问：按键失败时这题不算答过，再回一次照样作答`() =
         runBlocking {
             registry.bind(robot, target)
             val port = KeysPort(SubmitResult.OFFLINE)
             val r = promptRouter(port)
-            r.onSessionEvents("tab-1", listOf(asked(fruit)))
+            r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
             r.onWaiting("tab-1", "input needed")
-            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "A")))
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "1")))
+            assertEquals("没翻页就不推下一题，只回离线提示", listOf(firstPushed, "OFFLINE"), sentTexts())
             port.pressResult = SubmitResult.SUBMITTED_TO_TERMINAL
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "B")))
-            assertEquals(listOf(TerminalKeys.ESC, TerminalKeys.ESC), port.pressed)
-            assertEquals(listOf("选哪个？ → 香蕉"), port.submitted)
+            r.onInbound(inbound("2", "2"))
+            port.pressResult = SubmitResult.OFFLINE
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("3", "1")))
+            port.pressResult = SubmitResult.SUBMITTED_TO_TERMINAL
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("4", "2")))
+            assertEquals(listOf(TerminalKeys.RIGHT, TerminalKeys.RIGHT, TerminalKeys.ESC, TerminalKeys.ESC), port.pressed)
+            assertEquals("失败的那次不算", listOf("选哪个？ → 香蕉\n喝什么？ → 咖啡"), port.submitted)
         }
 
     @Test

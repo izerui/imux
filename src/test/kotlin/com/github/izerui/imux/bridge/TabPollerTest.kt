@@ -72,7 +72,7 @@ class TabPollerTest {
 
         override fun dialogOpen() = "DIALOG_OPEN"
 
-        override fun questions(listing: String, count: Int) = "QUESTIONS$count($listing)"
+        override fun question(listing: String, number: Int, total: Int) = "QUESTION$number/$total($listing)"
 
 
         override fun multiSelectMark() = "(多选)"
@@ -468,7 +468,7 @@ class TabPollerTest {
             write(askLine)
             p.waiting("tab", "input needed")
             assertEquals(2, sent.size)
-            assertEquals(true, sent.last().startsWith("QUESTIONS1("))
+            assertEquals(true, sent.last().startsWith("QUESTION1/1("))
         }
 
     @Test

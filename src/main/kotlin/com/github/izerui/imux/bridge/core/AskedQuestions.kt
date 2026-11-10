@@ -15,49 +15,52 @@ data class AskedOption(
 /**
  * 记录里读出的提问在手机上怎么列、手机的回复怎么交给 Claude。纯函数，无 IO。
  *
- * 题目一次全部列出，手机一条回复答完。作答不在提问框里按键：电脑上可能已经把光标移进自定义输入项、打了草稿，
- * 或者多题里已经答了几题，按键就会错位，而不读屏无从得知。按 Claude Code 2.1.308 实测，不论框里是什么状态，
- * Esc 一次都会关掉整个提问框、回到输入框；所以调用方先按 Esc，再把 [answer] 给出的文字作为一条消息发给 Claude。
- * 回复写得规整（只有一题时回 `B`、`2`、`A C`；多题时每行一题）就译成「题目 → 选项原文」，
- * 其余任何说法（「第一题选第二个」「都要推荐的」）原样发出，由 Claude 结合刚才的提问理解。
+ * 和电脑上一样一题一题来：每次只推一题，选项用 1、2、3 编号；手机答一题由插件记下，电脑上同时翻到下一题
+ * （见 [ADVANCE_KEYS]），再推下一题。全部答完后调用方先按 Esc 关掉提问框，再把各题的答案作为一条消息发给 Claude。
+ * 答案本身不在提问框里填：
+ * 电脑上可能已经把光标移进自定义输入项、打了草稿，或已答了几题，按键就会错位，而不读屏无从得知；
+ * 按 Claude Code 2.1.308 实测，不论框里是什么状态，Esc 一次都会关掉整个提问框、回到输入框。
+ * 回复只有选项编号（字母也认，A 即 1）就译成「题目 → 选项原文」，其余任何说法原样作为这道题的回答，
+ * 由 Claude 结合刚才的提问理解。
  */
 object AskedQuestions {
-    /** 题目与选项排成列表；选项用字母编号，[multiSelectMark] 跟在多选题题目后面。 */
+    /** 一道题排成列表：题目一行，选项用编号；[multiSelectMark] 跟在多选题题目后面。 */
     fun render(
-        questions: List<AskedQuestion>,
+        question: AskedQuestion,
         markdown: Boolean,
         multiSelectMark: String,
     ): String {
         val lineBreak = if (markdown) "  \n" else "\n"
-        return questions.withIndex().joinToString("\n\n") { (index, question) ->
-            val title = PhoneMarkdown.inline(question.question.trim(), markdown) + if (question.multiSelect) multiSelectMark else ""
-            val head =
-                when {
-                    questions.size > 1 -> (if (markdown) "**${index + 1}.**" else "${index + 1}.") + " " + title
-                    markdown -> PhoneMarkdown.escapeLineStart(title)
-                    else -> title
-                }
-            val options =
-                question.options.withIndex().map { (i, option) ->
-                    val letter = "${'A' + i}."
-                    val description = option.description?.trim()?.takeIf(String::isNotEmpty)?.let { " · " + PhoneMarkdown.inline(it, markdown) }.orEmpty()
-                    (if (markdown) "**$letter**" else letter) + " " + PhoneMarkdown.inline(option.label.trim(), markdown) + description
-                }
-            (listOf(head) + options).joinToString(lineBreak)
-        }
+        val title = PhoneMarkdown.inline(question.question.trim(), markdown) + if (question.multiSelect) multiSelectMark else ""
+        val head = if (markdown) PhoneMarkdown.escapeLineStart(title) else title
+        val options =
+            question.options.withIndex().map { (i, option) ->
+                val number = "${i + 1}."
+                val description = option.description?.trim()?.takeIf(String::isNotEmpty)?.let { " · " + PhoneMarkdown.inline(it, markdown) }.orEmpty()
+                (if (markdown) "**$number**" else number) + " " + PhoneMarkdown.inline(option.label.trim(), markdown) + description
+            }
+        return (listOf(head) + options).joinToString(lineBreak)
     }
 
-    /** 回复 [reply] 交给 Claude 的文字；空白回复返回 null。 */
+    /**
+     * 一道题的回答：对得上选项就是「题目 → 选项原文」，否则「题目 → 原话」；空白回复返回 null。
+     * 原话有多行时第二行起缩进，几道题的回答拼成一条消息后仍分得清每行属于哪题。
+     */
     fun answer(
-        questions: List<AskedQuestion>,
+        question: AskedQuestion,
         reply: String,
     ): String? {
-        if (reply.isBlank() || questions.isEmpty()) return null
-        val lines = reply.lines().map(String::trim).filter(String::isNotEmpty)
-        if (questions.size == 1) return chosen(questions.single(), reply)?.let { "${questions.single().question.trim()} → $it" } ?: reply.trim()
-        if (lines.size != questions.size) return reply.trim()
-        return questions.zip(lines).joinToString("\n") { (question, line) -> "${question.question.trim()} → ${chosen(question, line) ?: line}" }
+        if (reply.isBlank()) return null
+        val text = chosen(question, reply) ?: reply.trim().lines().joinToString("\n  ")
+        return "${question.question.trim()} → $text"
     }
+
+    /**
+     * 答完一题（不是最后一题）后让电脑上也翻到下一题：只按 →，不按编号。编号依赖框此刻的状态（光标在自定义输入里时
+     * 会写成文字，电脑上已答到确认页时会按下提交），→ 只翻页、不选中不提交，光标在输入里时也只是移动光标，按错无害。
+     * 答案以插件记下的为准，最后一起发给 Claude。
+     */
+    val ADVANCE_KEYS: List<String> = listOf(TerminalKeys.RIGHT)
 
     /** 对得上选项时给出选项原文（多选用顿号连起来），否则 null。 */
     private fun chosen(

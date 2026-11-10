@@ -72,6 +72,9 @@ class BridgeRouter(
         /** 终端停在手机无法作答的框上，这句没有贴进终端。 */
         data object DialogOpen : SubmitPhase
 
+        /** 多题提问答完一题，电脑上已翻到下一题：把当前这题推给手机。 */
+        data class NextQuestion(val binding: Binding) : SubmitPhase
+
     }
 
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
@@ -125,8 +128,27 @@ class BridgeRouter(
                     val (keys, afterKeys) =
                         when (shown.kind) {
                             PromptKind.QUESTION -> {
-                                val asked = tab(tabId) { askedQuestions }
-                                listOf(TerminalKeys.ESC) to (asked?.let { AskedQuestions.answer(it, message.text) } ?: return@withLock SubmitPhase.PromptRejected)
+                                val (questions, index) = tab(tabId) { askedQuestions to questionIndex }
+                                val question = questions?.getOrNull(index) ?: return@withLock SubmitPhase.PromptRejected
+                                // 交原文而不是 trim 过的：自定义回答的换行要原样交给 Claude
+                                val answer = AskedQuestions.answer(question, message.text) ?: return@withLock SubmitPhase.PromptRejected
+                                if (index < questions.size - 1) {
+                                    // 不是最后一题：电脑上也翻到下一题，记下答案，再推下一题
+                                    val result =
+                                        try {
+                                            press(current.target, AskedQuestions.ADVANCE_KEYS)
+                                        } catch (e: CancellationException) {
+                                            unmarkSeen(message.robotId, message.externalMessageId)
+                                            throw e
+                                        } catch (_: Exception) {
+                                            SubmitResult.OFFLINE
+                                        }
+                                    if (result != SubmitResult.SUBMITTED_TO_TERMINAL) return@withLock SubmitPhase.Done(result)
+                                    tab(tabId) { questionAnswered(answer) }
+                                    return@withLock SubmitPhase.NextQuestion(current)
+                                }
+                                // 最后一题：Esc 关掉提问框，再把各题答案作为一条消息发给 Claude
+                                listOf(TerminalKeys.ESC) to tab(tabId) { allAnswers(answer) }
                             }
                             PromptKind.PERMISSION -> PermissionPrompts.reply(message.text).let { it.keys to typed.takeIf { _ -> it.thenSubmit } }
                             PromptKind.PLAN -> PermissionPrompts.planReply(message.text).let { it.keys to typed.takeIf { _ -> it.thenSubmit } }
@@ -198,6 +220,10 @@ class BridgeRouter(
             SubmitPhase.DialogOpen -> {
                 reply(message.robotId, owner, texts.dialogOpen())
                 InboundOutcome.DIALOG_OPEN
+            }
+            is SubmitPhase.NextQuestion -> {
+                tab(phase.binding.target.tabId) { currentQuestionText(phase.binding) }?.let { send(phase.binding, it) }
+                InboundOutcome.SUBMITTED_TO_TERMINAL
             }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
         }
@@ -302,12 +328,12 @@ class BridgeRouter(
         return SubmitResult.SUBMITTED_TO_TERMINAL
     }
 
-    private fun questionText(
-        binding: Binding,
-        questions: List<AskedQuestion>,
-    ): String {
+    /** 手机正在答的这题排成列表，后面附上怎么回；不止一题时标明第几题。在标签锁内调用。 */
+    private fun TabState.currentQuestionText(binding: Binding): String? {
+        val questions = askedQuestions ?: return null
+        val question = questions.getOrNull(questionIndex) ?: return null
         val markdown = channelOf(binding.robotId)?.rendersMarkdown ?: true
-        return texts.questions(AskedQuestions.render(questions, markdown, texts.multiSelectMark()), questions.size)
+        return texts.question(AskedQuestions.render(question, markdown, texts.multiSelectMark()), questionIndex + 1, questions.size)
     }
 
     private fun permissionText(
@@ -581,7 +607,7 @@ class BridgeRouter(
             tab(tabId) {
                 val subject = subjectToPush(binding.epoch) ?: return@tab null
                 when (subject.kind) {
-                    PromptKind.QUESTION -> questionText(binding, subject.questions!!)
+                    PromptKind.QUESTION -> currentQuestionText(binding)
                     PromptKind.PLAN -> fitted(binding, subject.call!!.detail, texts::plan)
                     PromptKind.PERMISSION -> permissionText(binding, subject.call!!)
                 }

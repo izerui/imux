@@ -27,10 +27,15 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun dialogOpen() = ImuxBundle.message("bridge.reply.dialogOpen")
 
-    override fun questions(
+    override fun question(
         listing: String,
-        count: Int,
-    ) = if (count > 1) ImuxBundle.message("bridge.status.question.multi", listing, count) else ImuxBundle.message("bridge.status.question.single", listing)
+        number: Int,
+        total: Int,
+    ) = if (total > 1) {
+        ImuxBundle.message("bridge.status.question.multi", listing, number, total)
+    } else {
+        ImuxBundle.message("bridge.status.question.single", listing)
+    }
 
     override fun multiSelectMark() = ImuxBundle.message("bridge.status.question.multiSelect")
 

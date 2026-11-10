@@ -65,10 +65,11 @@ interface BridgeTexts {
     /** 终端停在手机无法作答的框上，手机发来的话没有贴进终端。 */
     fun dialogOpen(): String
 
-    /** 记录里的提问排成的列表 [listing]，后面附上怎么回；[count] 是题数，不止一题时说明每行答一题。 */
-    fun questions(
+    /** 一道题排成的列表 [listing]，后面附上怎么回；不止一题时标明是第 [number] 题、共 [total] 题。 */
+    fun question(
         listing: String,
-        count: Int,
+        number: Int,
+        total: Int,
     ): String
 
     /** 跟在多选题题目后面的标注。 */

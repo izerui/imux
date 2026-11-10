@@ -4,6 +4,9 @@ package com.github.izerui.imux.bridge.core
 internal object TerminalKeys {
     const val ESC = "\u001b"
 
+    /** 多题提问里翻到下一题，不作答（Claude Code 2.1.308 实测，单选、多选题上都一样）。 */
+    const val RIGHT = "\u001b[C"
+
     /** 手机输入法常给的全角字母数字转成半角，去掉首尾空白与结尾标点，便于认出「Ｂ。」这类选择。 */
     fun normalizeReply(text: String): String = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC).trim().trimEnd(*TRAILING_PUNCTUATION).trim()
 

@@ -215,18 +215,36 @@ internal class TabState {
         private set
     private var askedId: String? = null
 
+    /** 手机正在答第几题（从 0 起），以及已答各题交给 Claude 的文字。 */
+    var questionIndex = 0
+        private set
+    private val questionAnswers = mutableListOf<String>()
+
     fun questionAsked(
         toolUseId: String,
         questions: List<AskedQuestion>,
     ) {
         askedId = toolUseId
         askedQuestions = questions
+        questionIndex = 0
+        questionAnswers.clear()
     }
 
     fun questionClosed() {
         askedId = null
         askedQuestions = null
+        questionIndex = 0
+        questionAnswers.clear()
     }
+
+    /** 手机答完当前这题：记下答案，翻到下一题。 */
+    fun questionAnswered(answer: String) {
+        questionAnswers += answer
+        questionIndex++
+    }
+
+    /** 各题答案连同最后这题的 [last]，一题一行。 */
+    fun allAnswers(last: String): String = (questionAnswers + last).joinToString("\n")
 
     /** 还没有结果的工具调用（不含提问），按发起顺序；结果写进记录时移除。调用失败可能等不到结果，所以限量。 */
     private val pendingTools = boundedMap<String, ToolCall>()
