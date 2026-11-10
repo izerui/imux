@@ -426,6 +426,13 @@ class PeerConversationTest {
     }
 
     @Test
+    fun `反馈来源说明声明非用户要求并要求核实`() {
+        assertTrue(PEER_FEEDBACK_HEADER_ZH.contains("不是用户的要求") && PEER_FEEDBACK_HEADER_ZH.contains("先核实"))
+        assertTrue(PEER_FEEDBACK_HEADER_EN.contains("not a request from the user") && PEER_FEEDBACK_HEADER_EN.contains("Check whether it holds"))
+        assertTrue(peerFeedbackMessage("这里会炸").endsWith("\n\n这里会炸"))
+    }
+
+    @Test
     fun `isContextOverflowError 匹配各种上下文超限模式`() {
         val patterns = listOf(
             "context window exceeded for model",

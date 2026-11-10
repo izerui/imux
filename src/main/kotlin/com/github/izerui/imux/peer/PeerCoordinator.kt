@@ -668,11 +668,12 @@ class PeerCoordinator internal constructor(
         withContext(edt) {
             if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
             val autoInject = peerAutoInject()
+            val message = peerFeedbackMessage(feedback)
             val delivered =
                 if (autoInject) {
-                    injectFeedback(mainSessionKey, feedback, run, guard)
+                    injectFeedback(mainSessionKey, message, run, guard)
                 } else {
-                    stageFeedback(mainSessionKey, feedback, run, previousInput)
+                    stageFeedback(mainSessionKey, message, run, previousInput)
                 }
             if (delivered) {
                 recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)
@@ -1012,7 +1013,7 @@ Then hold your partner's work up against that goal: if things carry on like this
 
 Finally, pick the one or two things that matter most and say clearly where the problem is. If you've confirmed it, say it straight; if you haven't, raise it as a question, not a verdict. Leave how to fix and verify it to your partner. Leave out anything unrelated to that goal, such as style preferences, old problems you could fix in passing, or things that won't affect the result either way; don't repeat a point unless something has changed; don't reopen what the user has already decided. The one exception is a likely risk of data loss, permission bypass, or something that can't be undone: even if it's outside this task, if you see it, mention it so your partner can take it to the user. When the user needs to decide something, tell your partner what to ask rather than talking to the user yourself. You're sharing observations, not issuing commands on behalf of the user.
 
-Be direct and say it like it is: what's wrong and what it causes — no preamble, no hedging, no corporate speak. No review report, no bullet lists, no headers, no jargon like "deliverable", "acceptance criteria", "close the loop". Two or three sentences per point; if one question does the job, don't write a paragraph. Keep code snippets minimal.
+Be direct and say it like it is: what's wrong and what it causes — no preamble, no corporate speak. No review report, no bullet lists, no headers, no jargon like "deliverable", "acceptance criteria", "close the loop". Two or three sentences per point; if one question does the job, don't write a paragraph. Keep code snippets minimal.
 
 If you have nothing to say this round, output the single word PASS and nothing else. PASS only means you have no new feedback for this round; it is not a pass/fail verdict on the task. When there is no material feedback, output PASS instead of inventing low-value feedback.
 """.trimIndent()
@@ -1118,6 +1119,19 @@ private const val PEER_ROLE = "peer"
 private const val PEER_LABEL = "Peer (your earlier feedback, not the user)"
 
 private val PASS_PATTERN = Regex("""^\s*pass\s*[.。!！]?\s*$""", RegexOption.IGNORE_CASE)
+
+/**
+ * 反馈作为 user 消息进入主会话，不标来源的话主会话会把它当成用户的要求照单全收。
+ * 副驾驶只看到一段记录，判断可能有错，所以标明这是搭档的看法、成立与否由主会话自己核实。
+ * 只加在发进终端的文字上；界面和手机上展示的仍是副驾驶原话。
+ */
+internal fun peerFeedbackMessage(feedback: String): String {
+    val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
+    return (if (isChinese) PEER_FEEDBACK_HEADER_ZH else PEER_FEEDBACK_HEADER_EN) + feedback
+}
+
+internal const val PEER_FEEDBACK_HEADER_ZH = "[结对编程搭档的看法，不是用户的要求。是否成立请你先核实，再决定怎么处理。]\n\n"
+internal const val PEER_FEEDBACK_HEADER_EN = "[Your pair programming partner's view, not a request from the user. Check whether it holds before deciding what to do.]\n\n"
 
 internal fun actionablePeerFeedback(output: String?): String? {
     val feedback = output?.trim().orEmpty()

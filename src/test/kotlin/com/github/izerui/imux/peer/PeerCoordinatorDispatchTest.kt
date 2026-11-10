@@ -61,9 +61,9 @@ class PeerCoordinatorDispatchTest {
             coordinator.onTurnCompleted("s-codex")
             coordinator.onTurnCompleted("s-pi")
             assertTrue("三种反馈应完成分派", latch.await(5, TimeUnit.SECONDS))
-            assertTrue("Claude 反馈应被受理", "s-claude: feedback" in accepted)
-            assertTrue("Codex 反馈应被受理", "s-codex: feedback" in accepted)
-            assertTrue("Pi 反馈应被受理", "s-pi: feedback" in accepted)
+            assertTrue("Claude 反馈应被受理", "s-claude: " + peerFeedbackMessage("feedback") in accepted)
+            assertTrue("Codex 反馈应被受理", "s-codex: " + peerFeedbackMessage("feedback") in accepted)
+            assertTrue("Pi 反馈应被受理", "s-pi: " + peerFeedbackMessage("feedback") in accepted)
         } finally {
             coordinator.dispose()
             scope.cancel()
@@ -206,7 +206,7 @@ class PeerCoordinatorDispatchTest {
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
             sendAutoFeedback = { _, feedback ->
-                assertEquals("feedback", feedback)
+                assertEquals(peerFeedbackMessage("feedback"), feedback)
                 if (attempts.incrementAndGet() == 1) {
                     firstAttempt.countDown()
                     false
@@ -270,7 +270,7 @@ class PeerCoordinatorDispatchTest {
             coordinator.bind("s-undeliver", AgentType.CLAUDE)
             coordinator.onTurnCompleted("s-undeliver")
             assertTrue("重试耗尽后应触发兜底", done.await(5, TimeUnit.SECONDS))
-            assertEquals(listOf("s-undeliver: feedback"), undelivered.toList())
+            assertEquals(listOf("s-undeliver: " + peerFeedbackMessage("feedback")), undelivered.toList())
             val review = scope.coroutineContext[Job]!!.children.singleOrNull()
             if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
             // 没送达就不该计入轮次上限，否则用户白白少一轮审查。
@@ -652,7 +652,7 @@ class PeerCoordinatorDispatchTest {
             assertTrue("新轮次反馈应发送", feedbackSent.await(5, TimeUnit.SECONDS))
             runBlocking { withTimeout(5_000) { oldReview.join() } }
 
-            assertEquals("只应注入新轮次反馈", listOf("s1: fresh feedback from new run"), injected.toList())
+            assertEquals("只应注入新轮次反馈", listOf("s1: " + peerFeedbackMessage("fresh feedback from new run")), injected.toList())
             assertEquals(
                 "绑定的 targetAgentType 不应被破坏",
                 AgentType.CLAUDE,
@@ -1063,11 +1063,11 @@ class PeerCoordinatorDispatchTest {
 
             assertFalse(
                 "旧 run 的 stale feedback 不应被注入",
-                injectedFeedback.contains("stale feedback"),
+                injectedFeedback.contains(peerFeedbackMessage("stale feedback")),
             )
             assertTrue(
                 "新 run 的 fresh feedback 应被注入",
-                injectedFeedback.contains("fresh feedback"),
+                injectedFeedback.contains(peerFeedbackMessage("fresh feedback")),
             )
         } finally {
             coordinator.dispose()
@@ -1163,7 +1163,7 @@ class PeerCoordinatorDispatchTest {
             assertTrue("旧进程应被终止", oldProcessDestroyed.get())
             assertTrue(
                 "新 run 的反馈应被注入",
-                injectedFeedback.contains("new-run-feedback"),
+                injectedFeedback.contains(peerFeedbackMessage("new-run-feedback")),
             )
             val status = coordinator.status("s1")
             assertNotNull("绑定应仍存在", status)
@@ -1239,7 +1239,7 @@ class PeerCoordinatorDispatchTest {
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { task, conversation -> "task=$task\nconversation=$conversation" },
             sendAutoFeedback = { _, feedback ->
-                assertEquals("feedback after shrink", feedback)
+                assertEquals(peerFeedbackMessage("feedback after shrink"), feedback)
                 feedbackSent.countDown()
                 true
             },
@@ -1512,7 +1512,7 @@ class PeerCoordinatorDispatchTest {
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { task, conv -> "task=$task\nconv=$conv" },
             sendAutoFeedback = { _, feedback ->
-                assertEquals("feedback after exit0 retry", feedback)
+                assertEquals(peerFeedbackMessage("feedback after exit0 retry"), feedback)
                 feedbackSent.countDown()
                 true
             },
@@ -2070,7 +2070,7 @@ class PeerCoordinatorDispatchTest {
             }
             coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
             assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
-            assertEquals("自动发送开启时反馈应走 sendAutoFeedback", "some actionable feedback", autoInjected.single())
+            assertEquals("自动发送开启时反馈应走 sendAutoFeedback", peerFeedbackMessage("some actionable feedback"), autoInjected.single())
         } finally {
             coordinator.dispose()
             scope.cancel()
@@ -2111,7 +2111,7 @@ class PeerCoordinatorDispatchTest {
             coordinator.reviewOnce("s1", AgentType.CLAUDE, null)
             assertTrue("应自动解绑", unbound.await(5, TimeUnit.SECONDS))
             assertTrue("关闭自动发送时不应调用 sendAutoFeedback", autoInjected.isEmpty())
-            assertEquals("反馈应到达暂存路径", "some actionable feedback", stagedFeedback.single())
+            assertEquals("反馈应到达暂存路径", peerFeedbackMessage("some actionable feedback"), stagedFeedback.single())
             assertTrue("最终不应有绑定", coordinator.boundTarget("s1") == null)
         } finally {
             coordinator.dispose()
@@ -2423,7 +2423,7 @@ class PeerCoordinatorDispatchTest {
             val review = scope.coroutineContext[Job]!!.children.firstOrNull()
             if (review != null) runBlocking { withTimeout(5_000) { review.join() } }
             assertTrue("关闭自动发送后不应调用 sendAutoFeedback", autoInjected.isEmpty())
-            assertEquals("反馈应到达暂存路径", "actionable feedback", stagedFeedback.single())
+            assertEquals("反馈应到达暂存路径", peerFeedbackMessage("actionable feedback"), stagedFeedback.single())
         } finally {
             coordinator.dispose()
             scope.cancel()
@@ -2482,7 +2482,7 @@ class PeerCoordinatorDispatchTest {
             coordinator.onTurnCompleted("s1")
             assertTrue("应触发未送达回调", done.await(5, TimeUnit.SECONDS))
             val feedback = undelivered.single()
-            assertEquals("兜底应收到完整反馈原文", "multi\nline\nfeedback", feedback)
+            assertEquals("兜底应收到完整反馈原文", peerFeedbackMessage("multi\nline\nfeedback"), feedback)
         } finally {
             coordinator.dispose()
             scope.cancel()

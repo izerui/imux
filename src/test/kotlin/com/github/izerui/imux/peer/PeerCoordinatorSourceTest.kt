@@ -210,11 +210,11 @@ class PeerCoordinatorSourceTest {
     }
 
     @Test
-    fun `injectFeedback 和 stageFeedback 直接发送反馈无前缀`() {
-        val injectFun = coordinator.substringAfter("private suspend fun injectFeedback(").substringBefore("private fun ")
-        val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
-        assertFalse("injectFeedback 不应添加前缀", injectFun.contains("feedbackPrefix"))
-        assertFalse("stageFeedback 不应添加前缀", stageFun.contains("feedbackPrefix"))
+    fun `发进主会话的反馈带来源说明，展示用的仍是原话`() {
+        assertTrue("应先加来源说明", coordinator.contains("val message = peerFeedbackMessage(feedback)"))
+        assertTrue("自动发送应使用带说明的文字", coordinator.contains("injectFeedback(mainSessionKey, message, run, guard)"))
+        assertTrue("暂存应使用带说明的文字", coordinator.contains("stageFeedback(mainSessionKey, message, run, previousInput)"))
+        assertTrue("结果记录应保留原话", coordinator.contains("outcome(PeerOutcomeKind.FEEDBACK), feedback, autoInject)"))
     }
 
     @Test
@@ -223,7 +223,7 @@ class PeerCoordinatorSourceTest {
             coordinator.substringAfter("private suspend fun runReviewAndInject(").substringBefore("private fun ")
         val stageFun = coordinator.substringAfter("private fun stageFeedback(").substringBefore("private fun ")
 
-        assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, feedback, run, previousInput)"))
+        assertTrue("关闭自动发送应走暂存分支", reviewFun.contains("stageFeedback(mainSessionKey, message, run, previousInput)"))
         assertTrue("暂存反馈应使用 require 括号粘贴模式", stageFun.contains("tryStagePeerFeedback("))
         assertTrue("终端消失时应走通用兜底", stageFun.contains("notifyFeedbackUndelivered"))
         assertTrue("终端未就绪时应走带复制的通知", stageFun.contains("notifyFeedbackNotReady"))

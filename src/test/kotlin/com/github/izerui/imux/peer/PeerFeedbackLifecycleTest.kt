@@ -38,9 +38,9 @@ class PeerFeedbackLifecycleTest {
     fun `Claude 手动提交反馈后拒绝重复预约且本轮结束后可重新预约`() = runBlocking {
         Fixture(AgentType.CLAUDE).use { f ->
             f.review()
-            assertEquals("反馈已暂存", listOf(f.feedback), f.staged.toList())
+            assertEquals("反馈已暂存", listOf(f.sent), f.staged.toList())
             assertEquals("暂存不能自动提交", 0, f.executions.get())
-            f.input(f.feedback)
+            f.input(f.sent)
             f.coordinator.onTurnStarted("s1")
             assertEquals(PeerScheduleResult.FEEDBACK_TURN, f.schedule())
             assertNull(f.coordinator.scheduledReview("s1"))
@@ -53,7 +53,7 @@ class PeerFeedbackLifecycleTest {
     fun `Codex 手动提交反馈后拒绝重复预约`() = runBlocking {
         Fixture(AgentType.CODEX).use { f ->
             f.review()
-            f.input(f.feedback)
+            f.input(f.sent)
             f.coordinator.onTurnStarted("s1")
             assertEquals(PeerScheduleResult.FEEDBACK_TURN, f.schedule())
         }
@@ -63,7 +63,7 @@ class PeerFeedbackLifecycleTest {
     fun `Pi 手动提交反馈后拒绝重复预约`() = runBlocking {
         Fixture(AgentType.PI).use { f ->
             f.review()
-            f.input(f.feedback)
+            f.input(f.sent)
             f.coordinator.onTurnStarted("s1")
             assertEquals(PeerScheduleResult.FEEDBACK_TURN, f.schedule())
         }
@@ -72,7 +72,7 @@ class PeerFeedbackLifecycleTest {
     @Test
     fun `手动反馈尚未提交时不把历史同文消息当成反馈轮`() = runBlocking {
         Fixture().use { f ->
-            f.input(f.feedback)
+            f.input(f.sent)
             f.review()
             assertFalse(f.coordinator.isHandlingOneShotFeedback("s1"))
             assertEquals(PeerScheduleResult.SCHEDULED, f.schedule())
@@ -94,7 +94,7 @@ class PeerFeedbackLifecycleTest {
     fun `手动反馈只修改空白仍识别为反馈轮`() = runBlocking {
         Fixture().use { f ->
             f.review()
-            f.input(f.feedback.replace(" ", "\n\n"))
+            f.input(f.sent.replace(" ", "\n\n"))
             assertEquals(PeerScheduleResult.FEEDBACK_TURN, f.schedule())
         }
     }
@@ -103,7 +103,7 @@ class PeerFeedbackLifecycleTest {
     fun `暂存失败不留下反馈轮保护`() = runBlocking {
         Fixture(acceptStage = false).use { f ->
             f.review()
-            assertEquals("实际尝试过暂存", listOf(f.feedback), f.staged.toList())
+            assertEquals("实际尝试过暂存", listOf(f.sent), f.staged.toList())
             assertFalse(f.coordinator.isHandlingOneShotFeedback("s1"))
             assertEquals(PeerScheduleResult.SCHEDULED, f.schedule())
         }
@@ -115,7 +115,7 @@ class PeerFeedbackLifecycleTest {
             val decisions = ConcurrentLinkedQueue<PeerScheduleResult>()
             f.coordinator.addReviewListener(f.coordinator) { event ->
                 if (event is PeerReviewEvent.Finished) {
-                    f.input(f.feedback)
+                    f.input(f.sent)
                     f.coordinator.onTurnStarted("s1")
                     decisions += runBlocking { f.schedule() }
                 }
@@ -160,7 +160,7 @@ class PeerFeedbackLifecycleTest {
         Fixture().use { f ->
             f.review()
             f.coordinator.sessionClosed("s1")
-            f.input(f.feedback)
+            f.input(f.sent)
             assertEquals(PeerScheduleResult.SCHEDULED, f.schedule())
         }
     }
@@ -305,7 +305,7 @@ class PeerFeedbackLifecycleTest {
                 assertEquals("取消后旧请求不能重新预约", "skipped_state_changed", result.value["outcome"].asString)
                 assertNull(f.coordinator.scheduledReview("s1"))
                 f.beforeRead = null
-                f.input(f.feedback)
+                f.input(f.sent)
                 assertEquals("取消预约不能解除反馈保护", PeerScheduleResult.FEEDBACK_TURN, f.schedule())
             } finally {
                 release.countDown()
@@ -329,6 +329,7 @@ class PeerFeedbackLifecycleTest {
         acceptStage: Boolean = true,
     ) : AutoCloseable {
         val feedback = "请检查空值 并补充测试"
+        val sent = peerFeedbackMessage(feedback)
         var reply = feedback
         val calls = AtomicInteger()
         val staged = ConcurrentLinkedQueue<String>()
