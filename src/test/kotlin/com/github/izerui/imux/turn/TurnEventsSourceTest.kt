@@ -24,7 +24,7 @@ class TurnEventsSourceTest {
     }
 
     @Test
-    fun `SessionMonitor 只新增两处广播`() {
-        assertEquals(2, Regex("publishTurnEvent\\(").findAll(monitor).count())
+    fun `SessionMonitor 只新增三处广播：完成、进入等待、退出等待`() {
+        assertEquals(3, Regex("publishTurnEvent\\(").findAll(monitor).count())
     }
 }

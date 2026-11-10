@@ -115,6 +115,11 @@ class TerminalBridgeService(
                     val tabId = tabIdOf(sessionId) ?: return
                     scope.launch(Dispatchers.IO) { poller.waiting(tabId, reason) }
                 }
+
+                override fun turnResumed(sessionId: String) {
+                    val tabId = tabIdOf(sessionId) ?: return
+                    scope.launch(Dispatchers.IO) { poller.resumed(tabId) }
+                }
             },
         )
         SessionMonitor.getInstance(project).peerCoordinator.addReviewListener(this) { event -> onPeerReview(event) }

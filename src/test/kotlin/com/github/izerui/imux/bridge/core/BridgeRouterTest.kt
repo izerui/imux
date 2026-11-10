@@ -1,8 +1,11 @@
 package com.github.izerui.imux.bridge.core
 
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
+import com.github.izerui.imux.bridge.transcript.ClaudeTranscriptDecoder
 import com.github.izerui.imux.bridge.transcript.CodexTranscriptDecoder
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.session.ClaudeRuntimeSession
+import com.github.izerui.imux.turn.RuntimeStatusTracker
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -69,7 +72,17 @@ class BridgeRouterTest {
 
         override fun waiting(reason: String?) = "WAIT($reason)"
 
-        override fun prompt(screen: String) = "PROMPT($screen)"
+        override fun permission(listing: String) = "PERMISSION($listing)"
+
+        override fun plan(plan: String) = "PLAN($plan)"
+
+
+        override fun dialogOpen() = "DIALOG_OPEN"
+
+        override fun questions(listing: String, count: Int) = "QUESTIONS$count($listing)"
+
+
+        override fun multiSelectMark() = "(多选)"
 
         override fun promptAnsweredLocally(answer: String?) = "ANSWERED_LOCALLY($answer)"
 
@@ -1555,37 +1568,6 @@ class BridgeRouterTest {
             assertFalse(warnings[0].contains("看看"))
         }
 
-    /** 终端屏幕上的框按脚本逐次读出（读完停在最后一个），并记录提交与按键。 */
-    private class PromptPort(private val screens: List<ScreenPrompt?>) : TerminalSessionPort {
-        val submitted = mutableListOf<String>()
-        val pressed = mutableListOf<String>()
-        private var reads = 0
-
-        override suspend fun submit(
-            target: SessionTarget,
-            text: String,
-        ): SubmitResult {
-            submitted += text
-            return SubmitResult.SUBMITTED_TO_TERMINAL
-        }
-
-        override suspend fun prompt(target: SessionTarget): ScreenPrompt? = screens[minOf(reads++, screens.lastIndex)]
-
-        override suspend fun press(
-            target: SessionTarget,
-            keys: String,
-        ): SubmitResult {
-            pressed += keys
-            return SubmitResult.SUBMITTED_TO_TERMINAL
-        }
-    }
-
-    private val choose = ScreenPrompt("Do you want to proceed?\n❯ 1. Yes\n  2. No", options = setOf(1, 2))
-    private val ask =
-        ScreenPrompts.extract(
-            "你更喜欢哪种宠物？\n❯ 1. cat\n  2. dog\n  3. Type something.\n  4. Chat about this\nEnter to select · Esc to cancel",
-        )!!
-
     private fun promptRouter(
         p: TerminalSessionPort,
         ch: FakeChannel = channel,
@@ -1600,352 +1582,514 @@ class BridgeRouterTest {
         promptSettleMs = 0,
     )
 
-    @Test
-    fun `等待时屏幕上有选择框就排成列表发到手机，渲染 Markdown 的编号加粗，不渲染的发纯文字`() =
-        runBlocking {
-            registry.bind(robot, target)
-            promptRouter(PromptPort(listOf(choose))).onWaiting("tab-1", "permission prompt")
-            assertEquals(listOf("PROMPT(Do you want to proceed?\n\n**1.** Yes  \n**2.** No)"), sentTexts())
-
-            val plain = FakeChannel(robot, rendersMarkdown = false)
-            promptRouter(PromptPort(listOf(choose)), plain).onWaiting("tab-1", "permission prompt")
-            assertEquals(listOf("PROMPT(Do you want to proceed?\n\n1. Yes\n2. No)"), plain.sent.map { it.text })
-        }
-
-    @Test
-    fun `等待时第一次没读到框会再读一次，仍读不到才只报等待原因`() =
-        runBlocking {
-            registry.bind(robot, target)
-            promptRouter(PromptPort(listOf(null, choose))).onWaiting("tab-1", "permission prompt")
-            promptRouter(PromptPort(listOf(null))).onWaiting("tab-1", "permission prompt")
-            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "WAIT(permission prompt)"), sentTexts())
-        }
-
-    @Test
-    fun `推给手机的提问在电脑上答了，先告诉手机答了什么，再发之后的回复`() =
-        runBlocking {
-            registry.bind(robot, target)
-            val r = promptRouter(PromptPort(listOf(ask, null)))
-            r.onWaiting("tab-1", "AskUserQuestion")
-            r.onSessionEvents(
-                "tab-1",
-                listOf(SessionEvent.ToolResult("你更喜欢哪种宠物？\n→ cat"), SessionEvent.AssistantText("好，选猫"), SessionEvent.TurnEnded),
-            )
-            assertEquals(
-                listOf("PROMPT(${ScreenPrompts.render(ask, true)})", "ANSWERED_LOCALLY(你更喜欢哪种宠物？\n→ cat)", "好，选猫"),
-                sentTexts(),
-            )
-        }
-
-    @Test
-    fun `权限框在电脑上批准后工具还在跑：屏幕上连续两次没有框就告诉手机，之后的工具结果不重复提示`() =
-        runBlocking {
-            registry.bind(robot, target)
-            val r = promptRouter(PromptPort(listOf(choose, null)))
-            r.onWaiting("tab-1", "permission prompt")
-            r.onPromptTick("tab-1")
-            assertEquals("只读不到一次可能是重绘，不提示", 1, sentTexts().size)
-            r.onPromptTick("tab-1")
-            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null)))
-            r.onPromptTick("tab-1")
-            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "ANSWERED_LOCALLY(null)"), sentTexts())
-        }
-
-    @Test
-    fun `框还在屏幕上时，别的工具结果或一次重绘读不到都不算电脑上作答`() =
-        runBlocking {
-            registry.bind(robot, target)
-            val r = promptRouter(PromptPort(listOf(choose, choose, null, choose)))
-            r.onWaiting("tab-1", "permission prompt")
-            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null)))
-            r.onPromptTick("tab-1")
-            r.onPromptTick("tab-1")
-            r.onPromptTick("tab-1")
-            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})"), sentTexts())
-        }
-
-    @Test
-    fun `手机作答的框关掉后不提示电脑上作答`() =
-        runBlocking {
-            registry.bind(robot, target)
-            val p = PromptPort(listOf(choose, choose, null))
-            val r = promptRouter(p)
-            r.onWaiting("tab-1", "permission prompt")
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
-            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null)))
-            r.onPromptTick("tab-1")
-            r.onPromptTick("tab-1")
-            assertEquals(listOf("1"), p.pressed)
-            assertEquals(listOf("PROMPT(${ScreenPrompts.render(choose, true)})"), sentTexts())
-        }
-
-    @Test
-    fun `手机作答时按键失败或出错，框还在，之后在电脑上处理照样告诉手机`() =
-        runBlocking {
-            registry.bind(robot, target)
-            for (failure in listOf<suspend () -> SubmitResult>({ SubmitResult.OFFLINE }, { error("终端断开") })) {
-                channel.sent.clear()
-                val port =
-                    object : TerminalSessionPort by PromptPort(listOf(choose, choose, null)) {
-                        override suspend fun press(
-                            target: SessionTarget,
-                            keys: String,
-                        ): SubmitResult = failure()
-                    }
-                val r = promptRouter(port)
-                r.onWaiting("tab-1", "permission prompt")
-                assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("p1", "1")))
-                r.onPromptTick("tab-1")
-                r.onPromptTick("tab-1")
-                assertEquals(
-                    listOf("PROMPT(${ScreenPrompts.render(choose, true)})", "OFFLINE", "ANSWERED_LOCALLY(null)"),
-                    sentTexts(),
-                )
-            }
-        }
-
-    /** 读屏按脚本逐次给出，每一步可以挂起；用来让旧的读屏卡住，期间手机答题。 */
-    private class GatedPort(vararg reads: suspend () -> ScreenPrompt?) : TerminalSessionPort {
-        private val reads = ArrayDeque(reads.toList())
+    /** 记录按键与提交，按键结果可以指定。选择框不看屏幕，端口也不提供读屏。 */
+    private class KeysPort(var pressResult: SubmitResult = SubmitResult.SUBMITTED_TO_TERMINAL) : TerminalSessionPort {
         val pressed = mutableListOf<String>()
+        val submitted = mutableListOf<String>()
 
         override suspend fun submit(
             target: SessionTarget,
             text: String,
-        ) = error("选择框开着时不应走普通提交")
-
-        override suspend fun prompt(target: SessionTarget): ScreenPrompt? = reads.removeFirst()()
+        ): SubmitResult {
+            submitted += text
+            return SubmitResult.SUBMITTED_TO_TERMINAL
+        }
 
         override suspend fun press(
             target: SessionTarget,
             keys: String,
         ): SubmitResult {
             pressed += keys
-            return SubmitResult.SUBMITTED_TO_TERMINAL
+            return pressResult
         }
     }
 
-    private val nextQuestion =
-        ScreenPrompts.extract("颜色？\n❯ 1. 红\n  2. 蓝\n  3. Type something.\nEnter to select · Esc to cancel")!!
+    private val fruit = AskedQuestion("选哪个？", false, listOf(AskedOption("苹果", "红"), AskedOption("香蕉", null)))
+    private val drink = AskedQuestion("喝什么？", false, listOf(AskedOption("茶", null), AskedOption("咖啡", null)))
+
+    private fun asked(vararg questions: AskedQuestion) = SessionEvent.QuestionAsked("q1", questions.toList())
+
+    private val questionsPushed = "QUESTIONS2(${AskedQuestions.render(listOf(fruit, drink), true, "(多选)")})"
+
+    // ---- 提问 ----
 
     @Test
-    fun `轮询读屏期间手机答完第一题并推了第二题：旧的读屏结果作废，不误报，第二题仍在跟踪`() =
+    fun `提问：等待时一次列出全部题目，等待通知重复到达不重发`() =
         runBlocking {
             registry.bind(robot, target)
-            val gate = CompletableDeferred<Unit>()
-            val port =
-                GatedPort(
-                    { ask }, // 等待时推第一题
-                    { gate.await(); null }, // 轮询的旧读屏：卡住，放行时第一题已经不在
-                    { ask }, // 手机作答前读到第一题
-                    { nextQuestion }, // 作答后屏幕换成第二题，推给手机
-                    { null }, // 之后第二题在电脑上答掉
-                    { null },
-                )
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
+            r.onWaiting("tab-1", "input needed")
+            r.onWaiting("tab-1", "input needed")
+            assertEquals(listOf(questionsPushed), sentTexts())
+        }
+
+    @Test
+    fun `提问：等待通知先于记录到达，读到提问后补推`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(KeysPort())
+            r.onWaiting("tab-1", "input needed")
+            r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
+            assertEquals(listOf("WAIT(input needed)", questionsPushed), sentTexts())
+        }
+
+    @Test
+    fun `提问：手机按行作答，Esc 关框后把译成选项原文的回答作为消息发出；随后的拒绝结果、中断与回显不推给手机`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
             val r = promptRouter(port)
-            r.onWaiting("tab-1", "AskUserQuestion")
-            val staleTick = launch(start = CoroutineStart.UNDISPATCHED) { r.onPromptTick("tab-1") }
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
-            gate.complete(Unit)
-            staleTick.join()
-
-            val prompts = listOf("PROMPT(${ScreenPrompts.render(ask, true)})", "PROMPT(${ScreenPrompts.render(nextQuestion, true)})")
-            assertEquals("旧的读屏不关第二题，也不算一次漏读", prompts, sentTexts())
-            r.onPromptTick("tab-1")
-            assertEquals(prompts, sentTexts())
-            r.onPromptTick("tab-1")
-            assertEquals("第二题仍在跟踪：电脑上答掉照样提示", prompts + "ANSWERED_LOCALLY(null)", sentTexts())
+            r.onSessionEvents("tab-1", listOf(asked(fruit, drink)))
+            r.onWaiting("tab-1", "input needed")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "B\nA")))
+            val answer = "选哪个？ → 香蕉\n喝什么？ → 茶"
+            assertEquals(listOf(TerminalKeys.ESC), port.pressed)
+            assertEquals(listOf(answer), port.submitted)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("q1", null), SessionEvent.TurnInterrupted, SessionEvent.UserText(answer)))
+            assertEquals(1, sentTexts().size)
         }
 
     @Test
-    fun `读到记录时读屏期间手机答完第一题并推了第二题：旧的读屏结果不关第二题`() =
+    fun `提问：随口一说原样发出`() =
         runBlocking {
             registry.bind(robot, target)
-            val gate = CompletableDeferred<Unit>()
-            val port =
-                GatedPort(
-                    { ask },
-                    { gate.await(); null },
-                    { ask },
-                    { nextQuestion },
-                    { null },
-                    { null },
-                )
+            val port = KeysPort()
             val r = promptRouter(port)
-            r.onWaiting("tab-1", "AskUserQuestion")
-            val staleEvents = launch(start = CoroutineStart.UNDISPATCHED) { r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult(null))) }
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
-            gate.complete(Unit)
-            staleEvents.join()
-
-            val prompts = listOf("PROMPT(${ScreenPrompts.render(ask, true)})", "PROMPT(${ScreenPrompts.render(nextQuestion, true)})")
-            assertEquals(prompts, sentTexts())
-            r.onPromptTick("tab-1")
-            r.onPromptTick("tab-1")
-            assertEquals("第二题仍在跟踪", prompts + "ANSWERED_LOCALLY(null)", sentTexts())
+            r.onSessionEvents("tab-1", listOf(asked(fruit)))
+            r.onWaiting("tab-1", "input needed")
+            r.onInbound(inbound("1", "第二个吧"))
+            assertEquals(listOf(TerminalKeys.ESC), port.pressed)
+            assertEquals(listOf("第二个吧"), port.submitted)
         }
 
     @Test
-    fun `停在选择框上时明确选择只按键，不当作消息提交`() =
+    fun `提问：在电脑上答了，手机收到答了什么；别的调用的结果不算`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(choose))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 2")))
-            assertEquals(listOf("2"), p.pressed)
-            assertTrue(p.submitted.isEmpty())
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(asked(fruit)))
+            r.onWaiting("tab-1", "input needed")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("other", null)))
+            assertEquals(1, sentTexts().size)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("q1", "选哪个？\n→ 苹果")))
+            assertEquals("ANSWERED_LOCALLY(选哪个？\n→ 苹果)", sentTexts().last())
         }
 
     @Test
-    fun `回复个人要求时移动到输入项并粘贴原文后提交`() =
+    fun `提问：按键失败时仍可作答，再回一次照样作答`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ask, null))
-            promptRouter(p).onInbound(inbound("1", "仓鼠\n小的那种"))
-            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~仓鼠\n小的那种\u001b[201~", ScreenPrompts.ENTER), p.pressed)
-            assertTrue(p.submitted.isEmpty())
+            val port = KeysPort(SubmitResult.OFFLINE)
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(asked(fruit)))
+            r.onWaiting("tab-1", "input needed")
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "A")))
+            port.pressResult = SubmitResult.SUBMITTED_TO_TERMINAL
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "B")))
+            assertEquals(listOf(TerminalKeys.ESC, TerminalKeys.ESC), port.pressed)
+            assertEquals(listOf("选哪个？ → 香蕉"), port.submitted)
         }
 
     @Test
-    fun `没有可填写选项时按 Esc 拒绝这个框，再把这句话照常提交给会话`() =
+    fun `提问已弹出、等待通知还没到时手机发话：不普通提交`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(choose))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "改用 pnpm")))
-            assertEquals(listOf(ScreenPrompts.ESC), p.pressed)
-            assertEquals(listOf("改用 pnpm"), p.submitted)
-            assertFalse(sentTexts().contains("PROMPT_REJECTED"))
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(asked(fruit)))
+            assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("1", "顺便把测试也跑一下")))
+            assertTrue(port.pressed.isEmpty() && port.submitted.isEmpty())
         }
 
-    @Test
-    fun `屏幕上没有框时消息照常提交`() =
-        runBlocking {
-            registry.bind(robot, target)
-            val none = PromptPort(listOf(null))
-            promptRouter(none).onInbound(inbound("1", "2"))
-            assertEquals(listOf("2"), none.submitted)
-            assertTrue(none.pressed.isEmpty())
-
-        }
+    // ---- 权限确认 ----
 
     @Test
-    fun `引用选择框作答时只使用回复正文选择`() =
+    fun `空闲会话关闭弹框后手机消息能提交且不发送完成提示`() =
         runBlocking {
             registry.bind(robot, target)
-            val quoted = PromptPort(listOf(choose))
-            assertEquals(
-                InboundOutcome.SUBMITTED_TO_TERMINAL,
-                promptRouter(quoted).onInbound(InboundMessage(robot, "2", "me", "chat-1", "选 1", quote = "上一段")),
-            )
-            assertTrue(quoted.submitted.isEmpty())
-            assertEquals(listOf("1"), quoted.pressed)
-        }
-
-    @Test
-    fun `选择框打开时附件不提交以免误确认当前选项`() =
-        runBlocking {
-            registry.bind(robot, target)
-            val attached = PromptPort(listOf(choose))
-            val r =
-                BridgeRouter(
-                    registry, { owner }, attached, { channel }, Texts,
-                    attachmentStore = { _, _ -> PlaceResult.Saved("a.png") },
-                    notReadyRetryDelayMs = 0, keyGapMs = 0, promptSettleMs = 0,
+            val port = KeysPort()
+            val r = promptRouter(port)
+            val tracker = RuntimeStatusTracker()
+            suspend fun observe(status: String) {
+                val outcome = tracker.completedSince(
+                    mapOf("s1" to ClaudeRuntimeSession("s1", pid = 1, kind = "interactive", status = status, cwd = "/p")),
                 )
-            assertEquals(InboundOutcome.PROMPT_REJECTED, r.onInbound(inboundWith("3", "1", FakeAttachment())))
-            assertTrue(attached.submitted.isEmpty())
-            assertTrue(attached.pressed.isEmpty())
+                outcome.waiting.forEach { r.onWaiting("tab-1", it.reason) }
+                outcome.resumed.forEach { r.onResumed("tab-1") }
+                outcome.completed.forEach { r.onTurnCompleted("tab-1", r.currentTurn("tab-1")) }
+            }
+            observe("idle")
+            observe("waiting")
+            assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("1", "继续")))
+            observe("idle")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "继续")))
+            r.onQuiet("tab-1")
+            assertEquals(listOf("继续"), port.submitted)
+            assertEquals(listOf("WAIT(null)", "DIALOG_OPEN"), sentTexts())
         }
 
     @Test
-    fun `作答后屏幕换成新框就推给手机，框没变或已关闭都不推`() =
+    fun `权限数字写入失败后电脑作答仍通知手机`() =
         runBlocking {
             registry.bind(robot, target)
-            val next = ScreenPrompt("你喜欢哪些水果？\n❯ 1. [ ] 苹果", options = setOf(1), checkboxOptions = setOf(1))
-            promptRouter(PromptPort(listOf(ask, next))).onInbound(inbound("1", "选 1"))
-            assertEquals(listOf("PROMPT(${ScreenPrompts.render(next, true)})"), sentTexts())
-
-            promptRouter(PromptPort(listOf(ask, ask))).onInbound(inbound("2", "下"))
-            promptRouter(PromptPort(listOf(ask, null))).onInbound(inbound("3", "选 2"))
-            assertEquals(1, channel.sent.size)
+            val r = promptRouter(KeysPort(SubmitResult.OFFLINE))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(InboundOutcome.OFFLINE, r.onInbound(inbound("1", "1")))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("b1", null)))
+            assertEquals("ANSWERED_LOCALLY(null)", sentTexts().last())
         }
 
     @Test
-    fun `单选题回多个编号或不存在的编号时不按编号、不替人答下一题，原话填进自定义输入项`() =
+    fun `权限数字送达后仍等待时可以再次允许再拒绝`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ask, null))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 1 3")))
-            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~选 1 3\u001b[201~", ScreenPrompts.ENTER), p.pressed)
-            assertTrue(p.submitted.isEmpty())
-            assertFalse(sentTexts().contains("PROMPT_REJECTED"))
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(1, sentTexts().size)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "1")))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("3", "拒绝")))
+            assertEquals(listOf("1", "1", TerminalKeys.ESC), port.pressed)
+            assertTrue(port.submitted.isEmpty())
         }
 
     @Test
-    fun `多选题回多个编号勾好后提交这道题`() =
+    fun `计划数字送达后仍等待时可以改选再拒绝`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ScreenPrompts.extract(RealScreens.MULTI_SELECT)))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 1 2")))
-            assertEquals(listOf("1", "2", "\u001b[B", "\u001b[B", "\u001b[B", ScreenPrompts.ENTER), p.pressed)
-            assertTrue(p.submitted.isEmpty())
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("p1", "ExitPlanMode", "# 计划")))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(1, sentTexts().size)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "2")))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("3", "不执行")))
+            assertEquals(listOf("1", "2", TerminalKeys.ESC), port.pressed)
+            assertTrue(port.submitted.isEmpty())
         }
 
     @Test
-    fun `回自定义输入项本身的编号不单独按编号，原话填进输入项提交`() =
+    fun `手机允许后的工具结果不误报电脑作答且退出等待后正常提交`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ask, null))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 3")))
-            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~选 3\u001b[201~", ScreenPrompts.ENTER), p.pressed)
-            assertFalse(sentTexts().contains("PROMPT_REJECTED"))
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onInbound(inbound("1", "1"))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("b1", null)))
+            assertEquals(1, sentTexts().size)
+            r.onResumed("tab-1")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "继续")))
+            assertEquals(listOf("1"), port.pressed)
+            assertEquals(listOf("继续"), port.submitted)
         }
 
     @Test
-    fun `真实多选画面混选离题项时不按编号，原话填进自定义输入项后提交`() =
+    fun `权限：唯一一个没结果的调用推送它的内容；回 1 只按 1，拒绝按 Esc，其他说法按 Esc 后发出原话`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ScreenPrompts.extract(RealScreens.MULTI_SELECT), null))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "选 4 1")))
-            assertEquals(listOf("\u001b[B", "\u001b[B", "\u001b[200~选 4 1\u001b[201~", "\u001b[B", ScreenPrompts.ENTER), p.pressed)
-            assertTrue(p.submitted.isEmpty())
+            for ((reply, keys, submitted) in listOf(
+                Triple("1", listOf("1"), emptyList()),
+                Triple("拒绝", listOf(TerminalKeys.ESC), emptyList()),
+                Triple("3", listOf(TerminalKeys.ESC), emptyList()),
+                Triple("别建文件，改成打印 hello", listOf(TerminalKeys.ESC), listOf("别建文件，改成打印 hello")),
+            )) {
+                channel.sent.clear()
+                val port = KeysPort()
+                val r = promptRouter(port)
+                r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "建文件\ntouch a.txt")))
+                r.onWaiting("tab-1", "permission prompt")
+                assertEquals(listOf("PERMISSION(**Bash**  \n建文件  \ntouch a.txt)"), sentTexts())
+                assertEquals(reply, InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound(reply, reply)))
+                assertEquals(reply, keys, port.pressed)
+                assertEquals(reply, submitted, port.submitted)
+            }
         }
 
     @Test
-    fun `多选框的个人要求填入自定义输入项后提交，不触发取消或普通消息通道`() =
+    fun `权限：在电脑上批准，命令跑完写进结果时告诉手机`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ScreenPrompts.extract(RealScreens.MULTI_SELECT), null))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "苹果，但不要太酸")))
-            assertEquals(
-                listOf("\u001b[B", "\u001b[B", "\u001b[200~苹果，但不要太酸\u001b[201~", "\u001b[B", ScreenPrompts.ENTER),
-                p.pressed,
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("b1", null)))
+            assertEquals("ANSWERED_LOCALLY(null)", sentTexts().last())
+        }
+
+    @Test
+    fun `同步子代理的权限等待不提供手机批准入口，调用结束后主工具可以作答`() =
+        runBlocking {
+            registry.bind(robot, target.copy(agentType = AgentType.CLAUDE))
+            val port = KeysPort()
+            val r = promptRouter(port)
+            val events = ClaudeTranscriptDecoder.decode(
+                """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"a1","name":"Agent","input":{"prompt":"整理文件","run_in_background":false}}]}}""",
             )
-            assertTrue(p.submitted.isEmpty())
+            assertTrue(events.any { it is SessionEvent.ToolCalled && it.name == "Agent" })
+            r.onSessionEvents("tab-1", events)
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(listOf("WAIT(permission prompt)"), sentTexts())
+            assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("1", "1")))
+            assertTrue(port.pressed.isEmpty())
+            assertTrue(port.submitted.isEmpty())
+
+            r.onResumed("tab-1")
+            r.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(
+                """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"a1","content":"完成"}]}}""",
+            ))
+            r.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(
+                """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"touch a.txt"}}]}}""",
+            ))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals("PERMISSION(**Bash**  \ntouch a.txt)", sentTexts().last())
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "1")))
+            assertEquals(listOf("1"), port.pressed)
+            assertTrue(port.submitted.isEmpty())
         }
 
     @Test
-    fun `只回数字时对上选项就按编号，对不上的 8080 原话填进自定义输入项`() =
+    fun `确定不了停着的是哪个框：只提示到 IDE 中处理，手机的话不按键也不提交`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ask, null, ask, null))
-            val r = promptRouter(p)
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "2")))
-            assertEquals(listOf("2"), p.pressed)
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("2", "8080")))
-            assertEquals(listOf("2", "\u001b[B", "\u001b[B", "\u001b[200~8080\u001b[201~", ScreenPrompts.ENTER), p.pressed)
-            assertTrue(p.submitted.isEmpty())
+            for (events in listOf(
+                // 两个没结果的调用：A 可能已获准还在跑，停着的是 B
+                listOf(SessionEvent.ToolCalled("a", "Bash", "sleep 60"), SessionEvent.ToolCalled("b", "Bash", "rm -rf build")),
+                // Read 首次读工作目录外的路径也会弹确认
+                listOf(SessionEvent.ToolCalled("a", "Bash", "sleep 60"), SessionEvent.ToolCalled("b", "Read", "/etc/hosts")),
+                // 提问与别的调用并存
+                listOf(asked(fruit), SessionEvent.ToolCalled("b", "Bash", "rm a")),
+                // 计划与别的调用并存
+                listOf(SessionEvent.ToolCalled("p", "ExitPlanMode", "# 计划"), SessionEvent.ToolCalled("b", "Bash", "rm a")),
+                // 后台子代理在跑：框可能来自它内部
+                listOf(SessionEvent.BackgroundStarted("ag", "t", subagent = true), SessionEvent.ToolCalled("b", "Bash", "rm a")),
+            )) {
+                channel.sent.clear()
+                val port = KeysPort()
+                val r = promptRouter(port)
+                r.onSessionEvents("tab-1", events)
+                r.onWaiting("tab-1", "permission prompt")
+                assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("x${port.hashCode()}", "1")))
+                assertTrue(port.pressed.isEmpty() && port.submitted.isEmpty())
+                assertEquals(listOf("WAIT(permission prompt)", "DIALOG_OPEN"), sentTexts())
+            }
         }
 
     @Test
-    fun `自定义答案保留首尾空格与内部换行`() =
+    fun `等待原因不是权限确认时，唯一在跑的调用不当成等批准`() =
         runBlocking {
             registry.bind(robot, target)
-            val p = PromptPort(listOf(ask, null))
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, promptRouter(p).onInbound(inbound("1", "  猫\n  不要黑色的  ")))
-            assertEquals(
-                listOf("\u001b[B", "\u001b[B", "\u001b[200~  猫\n  不要黑色的  \u001b[201~", ScreenPrompts.ENTER),
-                p.pressed,
-            )
-            assertTrue(p.submitted.isEmpty())
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b", "Bash", "pnpm build")))
+            r.onWaiting("tab-1", "dialog open")
+            assertEquals(listOf("WAIT(dialog open)"), sentTexts())
         }
+
+    @Test
+    fun `先推了 A，又出现 B 而确定不了：撤销 A，手机回 1 不按键`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("a", "Bash", "sleep 60")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b", "Bash", "rm -rf build")))
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("1", "1")))
+            assertTrue(port.pressed.isEmpty() && port.submitted.isEmpty())
+        }
+
+    // ---- 计划确认 ----
+
+    @Test
+    fun `计划：推送计划全文；回 1、2 照按，不执行按 Esc，其他说法按 Esc 后发出意见`() =
+        runBlocking {
+            registry.bind(robot, target)
+            for ((reply, keys, submitted) in listOf(
+                Triple("1", listOf("1"), emptyList()),
+                Triple("2", listOf("2"), emptyList()),
+                Triple("不执行", listOf(TerminalKeys.ESC), emptyList()),
+                Triple("第二步不用读回来", listOf(TerminalKeys.ESC), listOf("第二步不用读回来")),
+            )) {
+                channel.sent.clear()
+                val port = KeysPort()
+                val r = promptRouter(port)
+                r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("p1", "ExitPlanMode", "# 计划\n1. 新建文件")))
+                r.onWaiting("tab-1", "permission prompt")
+                assertEquals(listOf("PLAN(# 计划\n1. 新建文件)"), sentTexts())
+                assertEquals(reply, InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound(reply, reply)))
+                assertEquals(reply, keys, port.pressed)
+                assertEquals(reply, submitted, port.submitted)
+            }
+        }
+
+    @Test
+    fun `长计划、长命令截短到一条消息之内`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val small = FakeChannel(robot, maxTextBytes = 1000, rendersMarkdown = false)
+            for (event in listOf(
+                SessionEvent.ToolCalled("p1", "ExitPlanMode", "步骤".repeat(800)),
+                SessionEvent.ToolCalled("b1", "Bash", "echo " + "x".repeat(3000)),
+            )) {
+                small.sent.clear()
+                val r = promptRouter(KeysPort(), small)
+                r.onSessionEvents("tab-1", listOf(event))
+                r.onWaiting("tab-1", "permission prompt")
+                val text = small.sent.single().text
+                assertTrue(text, text.toByteArray().size <= 1000)
+                assertTrue(text, text.contains("\n…"))
+            }
+        }
+
+    // ---- 等待的开始与结束 ----
+
+    @Test
+    fun `认不出的框：只提示到 IDE 中处理，手机的话不提交；退出等待后照常提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onWaiting("tab-1", "dialog open")
+            assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("1", "继续")))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("x", null), SessionEvent.AssistantText("好的")))
+            assertEquals("记录里的结果与输出都说明不了等待已结束", InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("2", "继续")))
+            r.onResumed("tab-1")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("3", "继续")))
+            assertEquals(listOf("继续"), port.submitted)
+        }
+
+    @Test
+    fun `退出等待后：推过的框不再可作答、之后读到的调用不推送，手机的话照常提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "sleep 60")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onResumed("tab-1")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b2", "Bash", "ls")))
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "1")))
+            assertTrue(port.pressed.isEmpty())
+            assertEquals(listOf("1"), port.submitted)
+            assertEquals(1, sentTexts().size)
+        }
+
+    @Test
+    fun `已获准还在跑的调用，之后再来等待通知也不当成在等批准`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b", "Bash", "sleep 60")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onResumed("tab-1")
+            r.onWaiting("tab-1", "permission prompt")
+            assertEquals(listOf("PERMISSION(**Bash**  \nsleep 60)", "WAIT(permission prompt)"), sentTexts())
+        }
+
+    @Test
+    fun `退出等待后旧提问的结果还没读到：手机的话暂不提交，读到结果后照常提交`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            r.onSessionEvents("tab-1", listOf(asked(fruit)))
+            r.onWaiting("tab-1", "input needed")
+            r.onResumed("tab-1")
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("1", "继续")))
+            assertEquals("退出等待时已登记的旧提问算已过去", listOf("继续"), port.submitted)
+        }
+
+    @Test
+    fun `本轮结束（IDE 完成或结束标记）后：推过、还没结果的框不再可作答`() =
+        runBlocking {
+            registry.bind(robot, target)
+            for (complete in listOf<suspend (BridgeRouter) -> Unit>(
+                { it.onTurnCompleted("tab-1", it.currentTurn("tab-1")) },
+                { it.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded)) },
+            )) {
+                val port = KeysPort()
+                val r = promptRouter(port)
+                r.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.ToolCalled("b1", "Bash", "rm a")))
+                r.onWaiting("tab-1", "permission prompt")
+                complete(r)
+                assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("x${port.hashCode()}", "1")))
+                assertTrue(port.pressed.isEmpty())
+                assertEquals(listOf("1"), port.submitted)
+            }
+        }
+
+    @Test
+    fun `上一轮的完成信号迟到，不清当前轮的等待`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val port = KeysPort()
+            val r = promptRouter(port)
+            val previous = r.currentTurn("tab-1")
+            r.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted))
+            r.onWaiting("tab-1", "dialog open")
+            r.onTurnCompleted("tab-1", previous)
+            assertEquals(InboundOutcome.DIALOG_OPEN, r.onInbound(inbound("1", "1")))
+            assertTrue(port.pressed.isEmpty() && port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `新一轮、中断或记录重启后：推过的框不再可作答`() =
+        runBlocking {
+            registry.bind(robot, target)
+            for (skip in listOf<suspend (BridgeRouter) -> Unit>(
+                { it.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted)) },
+                { it.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted)) },
+                { it.onTranscriptRestarted("tab-1") },
+            )) {
+                val port = KeysPort()
+                val r = promptRouter(port)
+                r.onSessionEvents("tab-1", listOf(asked(fruit)))
+                r.onWaiting("tab-1", "input needed")
+                skip(r)
+                assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("x${port.hashCode()}", "2")))
+                assertEquals(listOf("2"), port.submitted)
+                assertTrue(port.pressed.isEmpty())
+            }
+        }
+
+    // ---- 插件按 Esc 引起的中断 ----
+
+    @Test
+    fun `手机拒绝引起的中断不推给手机；电脑上自己中断照常推`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "rm a")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onInbound(inbound("1", "拒绝"))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("b1", null)))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            assertEquals("结果与中断分两次读到也不推", 1, sentTexts().size)
+            r.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnInterrupted))
+            assertEquals("INTERRUPTED", sentTexts().last())
+        }
+
+    @Test
+    fun `手机 Esc 拒绝后没有中断标记、会话接着做，随后电脑上真的中断：手机仍收到本轮已中断`() =
+        runBlocking {
+            registry.bind(robot, target)
+            val r = promptRouter(KeysPort())
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "rm a")))
+            r.onWaiting("tab-1", "permission prompt")
+            r.onInbound(inbound("1", "拒绝"))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.ToolResult("b1", null)))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("那我换个办法"), SessionEvent.ToolStarted))
+            r.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            assertEquals("INTERRUPTED", sentTexts().last())
+        }
+
 }

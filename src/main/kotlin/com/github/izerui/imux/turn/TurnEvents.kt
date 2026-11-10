@@ -21,6 +21,9 @@ interface TurnEventsListener : EventListener {
         reason: String?,
     )
 
+    /** 会话退出等待，转回忙碌或空闲：停着的框已过去，解除桥接拦截。 */
+    fun turnResumed(sessionId: String) {}
+
     companion object {
         @JvmField
         @Topic.ProjectLevel

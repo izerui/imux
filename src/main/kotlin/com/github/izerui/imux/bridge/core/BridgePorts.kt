@@ -32,9 +32,6 @@ fun interface TerminalSessionPort {
         text: String,
     ): SubmitResult
 
-    /** 终端此刻屏幕上停着的选择框；没有或读不到时为 null。 */
-    suspend fun prompt(target: SessionTarget): ScreenPrompt? = null
-
     /** 原样写入按键：不走括号粘贴、不补回车，与人在终端里按键一致。 */
     suspend fun press(
         target: SessionTarget,
@@ -59,13 +56,28 @@ interface BridgeTexts {
 
     fun waiting(reason: String?): String
 
-    /** 终端停在选择框上：[screen] 是排成列表的框（已按渠道排好版），后面附上怎么在手机上作答。 */
-    fun prompt(screen: String): String
+    /** 权限确认：[listing] 是排好版的工具与要批准的内容，后面附上怎么在手机上回答。 */
+    fun permission(listing: String): String
+
+    /** 计划确认：[plan] 是 Claude 写好的计划全文（Markdown），后面附上怎么在手机上回答。 */
+    fun plan(plan: String): String
+
+    /** 终端停在手机无法作答的框上，手机发来的话没有贴进终端。 */
+    fun dialogOpen(): String
+
+    /** 记录里的提问排成的列表 [listing]，后面附上怎么回；[count] 是题数，不止一题时说明每行答一题。 */
+    fun questions(
+        listing: String,
+        count: Int,
+    ): String
+
+    /** 跟在多选题题目后面的标注。 */
+    fun multiSelectMark(): String
 
     /** 推给手机的框已在电脑上处理；[answer] 是提问的作答（每题「问题 → 答案」），拿不到时为 null。 */
     fun promptAnsweredLocally(answer: String?): String
 
-    /** 回复对不上屏幕上的框（编号不存在、单选题回了多个编号、多选题回了一句话），什么也没按。 */
+    /** 框开着时回复带了附件，什么也没按。 */
     fun promptRejected(): String
 
     fun released(sessionTitle: String): String

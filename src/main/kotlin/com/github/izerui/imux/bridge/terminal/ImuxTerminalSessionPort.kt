@@ -1,7 +1,5 @@
 package com.github.izerui.imux.bridge.terminal
 
-import com.github.izerui.imux.bridge.core.ScreenPrompt
-import com.github.izerui.imux.bridge.core.ScreenPrompts
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.core.SubmitResult
 import com.github.izerui.imux.bridge.core.TerminalSessionPort
@@ -33,12 +31,6 @@ class ImuxTerminalSessionPort(
         text: String,
     ): SubmitResult = withContext(Dispatchers.EDT) { submitOnce(target, text) }
 
-    override suspend fun prompt(target: SessionTarget): ScreenPrompt? =
-        withContext(Dispatchers.EDT) {
-            val view = liveView(target) ?: return@withContext null
-            ScreenPrompts.extract(screenTail(view))
-        }
-
     override suspend fun press(
         target: SessionTarget,
         keys: String,
@@ -63,17 +55,6 @@ class ImuxTerminalSessionPort(
         val sessionKey = host.openTabsByTabId()[target.tabId] ?: return null
         val view = host.terminalViewOf(sessionKey) ?: return null
         return view.takeUnless { it.sessionState.value is TerminalViewSessionState.Terminated }
-    }
-
-    /** 只读屏幕末尾：选择框总画在最下面，不为一次作答读取整段历史。 */
-    private fun screenTail(view: TerminalView): String {
-        val snapshot = ReadAction.computeBlocking<_, RuntimeException> { view.outputModels.active.value.takeSnapshot() }
-        val start = maxOf(snapshot.startOffset, snapshot.endOffset - SCREEN_TAIL_CHARS)
-        return snapshot.getText(start, snapshot.endOffset).toString()
-    }
-
-    private companion object {
-        const val SCREEN_TAIL_CHARS = 16_000L
     }
 }
 

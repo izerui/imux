@@ -5,11 +5,14 @@ import com.github.izerui.imux.bridge.core.BridgeRouter
 import com.github.izerui.imux.bridge.core.BridgeTexts
 import com.github.izerui.imux.bridge.core.ChannelAdapter
 import com.github.izerui.imux.bridge.core.DeliveryResult
+import com.github.izerui.imux.bridge.core.InboundOutcome
+import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.RobotOwner
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.core.SubmitResult
+import com.github.izerui.imux.bridge.core.TerminalSessionPort
 import com.github.izerui.imux.bridge.transcript.SessionFile
 import com.github.izerui.imux.bridge.transcript.TailRegistry
 import com.github.izerui.imux.model.AgentType
@@ -62,7 +65,17 @@ class TabPollerTest {
 
         override fun waiting(reason: String?) = "WAIT($reason)"
 
-        override fun prompt(screen: String) = "PROMPT($screen)"
+        override fun permission(listing: String) = "PERMISSION($listing)"
+
+        override fun plan(plan: String) = "PLAN($plan)"
+
+
+        override fun dialogOpen() = "DIALOG_OPEN"
+
+        override fun questions(listing: String, count: Int) = "QUESTIONS$count($listing)"
+
+
+        override fun multiSelectMark() = "(多选)"
 
         override fun promptAnsweredLocally(answer: String?) = "ANSWERED_LOCALLY($answer)"
 
@@ -380,4 +393,128 @@ class TabPollerTest {
             poller.poll("tab")
             assertEquals(listOf("LOCAL:\n第一句", "RESTARTED"), sent)
         }
+
+    /** 记录按键与提交的终端端口。 */
+    private class RecordingPort : TerminalSessionPort {
+        val pressed = mutableListOf<String>()
+        val submitted = mutableListOf<String>()
+
+        override suspend fun submit(
+            target: SessionTarget,
+            text: String,
+        ): SubmitResult {
+            submitted += text
+            return SubmitResult.SUBMITTED_TO_TERMINAL
+        }
+
+        override suspend fun press(
+            target: SessionTarget,
+            keys: String,
+        ): SubmitResult {
+            pressed += keys
+            return SubmitResult.SUBMITTED_TO_TERMINAL
+        }
+    }
+
+    /** 真实的 Claude 会话文件、尾随器与轮询器，路由器的终端端口换成 [port]。 */
+    private fun claudePoller(
+        port: RecordingPort,
+        through: ChannelAdapter = channel,
+    ): Triple<TabPoller, BridgeRouter, TailRegistry> {
+        val r = BridgeRouter(bindings, { RobotOwner("me", "chat") }, port, { through }, Texts, keyGapMs = 0, promptSettleMs = 0)
+        transcript = temp.newFile("claude-${System.nanoTime()}.jsonl").toPath()
+        val tails = TailRegistry(bindingForTab = bindings::bindingForTab, sessionFile = { SessionFile(transcript, Instant.EPOCH) }, switchGeneration = { 1L })
+        bindings.bind(robot, SessionTarget("/p", "tab", AgentType.CLAUDE, "s1"))
+        return Triple(TabPoller(tails, r) { true }, r, tails)
+    }
+
+    private val askLine =
+        """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":""" +
+            """{"questions":[{"question":"选哪个？","multiSelect":false,"options":[{"label":"苹果"},{"label":"香蕉"}]}]}}]}}"""
+    private val planLine =
+        """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{"plan":"# 计划"}}]}}"""
+
+    @Test
+    fun `退出等待之后才读到的旧提问或计划：不重推，手机的话暂不提交，读到结果后照常提交`() =
+        runBlocking {
+            for ((id, line) in listOf("q1" to askLine, "p1" to planLine)) {
+                sent.clear()
+                bindings.unbind(robot)
+                val port = RecordingPort()
+                val (p, r, _) = claudePoller(port)
+                p.poll("tab")
+                p.waiting("tab", "permission prompt")
+                // 旧调用在退出等待前写下，等待通知时还没读到；框在电脑上答掉了，结果还没写进记录
+                write(line)
+                p.resumed("tab")
+                assertEquals(line, InboundOutcome.DIALOG_OPEN, r.onInbound(InboundMessage(robot, "a${port.hashCode()}", "me", "chat", "继续")))
+                assertEquals(line, listOf("WAIT(permission prompt)", "DIALOG_OPEN"), sent)
+                assertEquals(line, emptyList<String>(), port.pressed)
+                write("""{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"$id","content":"ok"}]}}""")
+                p.poll("tab")
+                assertEquals(line, InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(InboundMessage(robot, "b${port.hashCode()}", "me", "chat", "继续")))
+                assertEquals(line, listOf("继续"), port.submitted)
+            }
+        }
+
+    @Test
+    fun `退出等待之后新发起的提问：它的等待通知到达时照常推送`() =
+        runBlocking {
+            val port = RecordingPort()
+            val (p, _, _) = claudePoller(port)
+            p.poll("tab")
+            p.waiting("tab", "permission prompt")
+            p.resumed("tab")
+            write(askLine)
+            p.waiting("tab", "input needed")
+            assertEquals(2, sent.size)
+            assertEquals(true, sent.last().startsWith("QUESTIONS1("))
+        }
+
+    @Test
+    fun `退出等待经由轮询器：先撤销等待再交出记录，记录里随后执行的 Bash 不补推确认，手机回复不发选择键`() =
+        runBlocking {
+            val pressed = mutableListOf<String>()
+            val submitted = mutableListOf<String>()
+            val port =
+                object : TerminalSessionPort {
+                    override suspend fun submit(
+                        target: SessionTarget,
+                        text: String,
+                    ): SubmitResult {
+                        submitted += text
+                        return SubmitResult.SUBMITTED_TO_TERMINAL
+                    }
+
+                    override suspend fun press(
+                        target: SessionTarget,
+                        keys: String,
+                    ): SubmitResult {
+                        pressed += keys
+                        return SubmitResult.SUBMITTED_TO_TERMINAL
+                    }
+                }
+            val r = BridgeRouter(bindings, { RobotOwner("me", "chat") }, port, { channel }, Texts, keyGapMs = 0, promptSettleMs = 0)
+            transcript = temp.newFile("claude.jsonl").toPath()
+            val tails = TailRegistry(bindingForTab = bindings::bindingForTab, sessionFile = { SessionFile(transcript, Instant.EPOCH) }, switchGeneration = { 1L })
+            val p = TabPoller(tails, r) { true }
+            bindings.bind(robot, SessionTarget("/p", "tab", AgentType.CLAUDE, "s1"))
+            p.poll("tab")
+
+            // 等待通知到达时记录里还对不上停着的是哪个框：进入拦截
+            p.waiting("tab", "permission prompt")
+            assertEquals(listOf("WAIT(permission prompt)"), sent)
+            // 框在电脑上答掉了，会话接着跑：先写下上一条调用的结果，再发起一条正常执行的 Bash
+            write(
+                """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"prev","content":"ok"}]}}""",
+                """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"ls"}}]}}""",
+            )
+            p.resumed("tab")
+            assertEquals("退出等待后跑起来的 Bash 不是在等批准", listOf("WAIT(permission prompt)"), sent)
+
+            r.onInbound(InboundMessage(robot, "m1", "me", "chat", "1"))
+            assertEquals(emptyList<String>(), pressed)
+            assertEquals(listOf("1"), submitted)
+        }
+
 }

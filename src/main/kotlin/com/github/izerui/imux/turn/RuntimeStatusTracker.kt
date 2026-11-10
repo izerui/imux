@@ -16,6 +16,8 @@ data class WaitingSession(val sessionId: String, val reason: String?)
 data class TurnOutcome(
     val completed: List<String>,
     val waiting: List<WaitingSession>,
+    /** 退出等待的会话（转回忙碌或空闲）：用于解除弹框拦截，不依赖本轮是否曾忙碌。 */
+    val resumed: List<String> = emptyList(),
 )
 
 /**
@@ -61,10 +63,12 @@ class RuntimeStatusTracker(private val clock: () -> Instant = { Instant.now() })
     fun completedSince(current: Map<String, ClaudeRuntimeSession>): TurnOutcome {
         val completed = mutableListOf<String>()
         val entered = mutableListOf<WaitingSession>()
+        val resumed = mutableListOf<String>()
 
         for ((sessionId, session) in current) {
             val wasBusy = busySince.containsKey(sessionId)
             val wasWaiting = sessionId in waiting
+            if (wasWaiting && !session.isWaiting) resumed += sessionId
 
             when {
                 session.isBusy -> {
@@ -103,7 +107,7 @@ class RuntimeStatusTracker(private val clock: () -> Instant = { Instant.now() })
         seen.retainAll(current.keys)
         waiting.retainAll(current.keys)
 
-        return TurnOutcome(completed, entered)
+        return TurnOutcome(completed, entered, resumed)
     }
 
     /** 该会话最近一轮跑了多久；起点未知或从未跑完过时为 null。 */

@@ -761,6 +761,9 @@ class SessionMonitor(
                         publishTurnEvent(project) { it.turnCompleted(sessionId) }
                     }
 
+                    // 退出等待（转忙碌或空闲）：手机端据此知道停着的框已过去
+                    outcome.resumed.forEach { sessionId -> publishTurnEvent(project) { it.turnResumed(sessionId) } }
+
                     if (outcome.waiting.isNotEmpty()) {
                         val selected = selectedSessionKeys()
                         outcome.waiting.forEach { waiting ->

@@ -1,5 +1,7 @@
 package com.github.izerui.imux.bridge.transcript
 
+import com.github.izerui.imux.bridge.core.AskedOption
+import com.github.izerui.imux.bridge.core.AskedQuestion
 import com.github.izerui.imux.bridge.core.SessionEvent
 import com.github.izerui.imux.bridge.json.flag
 import com.github.izerui.imux.bridge.json.obj
@@ -86,11 +88,11 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
     ): List<SessionEvent> {
         val result = root.obj("toolUseResult") ?: return emptyList()
         val toolUseId = blocks(content).firstOrNull { it.string("type") == "tool_result" }?.string("tool_use_id")
-        val taskId =
-            result.string("backgroundTaskId")
-                ?: result.string("agentId")?.takeIf { result.string("status") == "async_launched" }
-                ?: return listOfNotNull(result.string("resumedAgentId")?.let { SessionEvent.BackgroundStarted(it, null) })
-        return listOf(SessionEvent.BackgroundStarted(taskId, toolUseId, result.string("description")))
+        result.string("backgroundTaskId")?.let { return listOf(SessionEvent.BackgroundStarted(it, toolUseId, result.string("description"))) }
+        val agentId =
+            result.string("agentId")?.takeIf { result.string("status") == "async_launched" }
+                ?: return listOfNotNull(result.string("resumedAgentId")?.let { SessionEvent.BackgroundStarted(it, null, subagent = true) })
+        return listOf(SessionEvent.BackgroundStarted(agentId, toolUseId, result.string("description"), subagent = true))
     }
 
     /** 工具结果；提问的结果在 `toolUseResult.answers` 里按「问题: 答案」给出作答。 */
@@ -98,14 +100,15 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         root: JsonObject,
         content: JsonElement,
     ): List<SessionEvent> {
-        if (blocks(content).none { it.string("type") == "tool_result" }) return emptyList()
+        val results = blocks(content).filter { it.string("type") == "tool_result" }
+        if (results.isEmpty()) return emptyList()
         val answers = root.obj("toolUseResult")?.obj("answers")
         val answer =
             answers?.entrySet()
                 ?.mapNotNull { (question, value) -> value.takeIf { it.isJsonPrimitive }?.asString?.let { "$question\n→ $it" } }
                 ?.joinToString("\n\n")
                 ?.takeIf(String::isNotEmpty)
-        return listOf(SessionEvent.ToolResult(answer))
+        return results.map { SessionEvent.ToolResult(it.string("tool_use_id"), answer) }
     }
 
     /**
@@ -143,10 +146,46 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         return blocks(content).flatMap { block ->
             when (block.string("type")) {
                 "text" -> listOfNotNull(block.string("text")?.let(::assistantText))
-                "tool_use" -> listOfNotNull(backgroundLaunched(block), SessionEvent.ToolStarted)
+                "tool_use" -> listOfNotNull(backgroundLaunched(block), toolCalled(block), questionAsked(block), SessionEvent.ToolStarted)
                 else -> emptyList()
             }
         }
+    }
+
+    /** 要批准的内容：命令、文件路径、网址、计划全文；认不出的工具给出参数原文，过长截短（计划放得长些）。 */
+    private fun toolCalled(toolUse: JsonObject): SessionEvent? {
+        val id = toolUse.string("id") ?: return null
+        val name = toolUse.string("name") ?: return null
+        if (name == "AskUserQuestion") return null
+        val input = toolUse.obj("input") ?: JsonObject()
+        val detail =
+            when {
+                name == EXIT_PLAN_MODE && input.string("plan") != null -> input.string("plan")!!
+                input.string("command") != null -> listOfNotNull(input.string("description"), input.string("command")).joinToString("\n")
+                else ->
+                    listOf("file_path", "notebook_path", "url", "query").firstNotNullOfOrNull(input::string)
+                        ?: input.toString()
+            }
+        val max = if (name == EXIT_PLAN_MODE) MAX_PLAN_DETAIL else MAX_TOOL_DETAIL
+        val shown = if (detail.length > max) detail.take(max - 1) + "…" else detail
+        return SessionEvent.ToolCalled(id, name, shown)
+    }
+
+    /** 提问的题目与选项；任何一题缺题目或选项都不取，只提示到 IDE 中处理，免得按键与终端里的题对不上。 */
+    private fun questionAsked(toolUse: JsonObject): SessionEvent? {
+        if (toolUse.string("name") != "AskUserQuestion") return null
+        val id = toolUse.string("id") ?: return null
+        val questions =
+            toolUse.obj("input")?.objects("questions")?.map { question ->
+                val text = question.string("question")?.takeIf(String::isNotBlank) ?: return null
+                val options =
+                    question.objects("options").map { option ->
+                        AskedOption(option.string("label")?.takeIf(String::isNotBlank) ?: return null, option.string("description"))
+                    }
+                if (options.isEmpty()) return null
+                AskedQuestion(text, question.flag("multiSelect"), options)
+            }
+        return questions?.takeIf { it.isNotEmpty() }?.let { SessionEvent.QuestionAsked(id, it) }
     }
 
     private fun backgroundLaunched(toolUse: JsonObject): SessionEvent? {
@@ -155,6 +194,10 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val id = toolUse.string("id") ?: return null
         return SessionEvent.BackgroundLaunched(id, input.string("description") ?: input.string("command")?.lineSequence()?.firstOrNull())
     }
+
+    private const val MAX_TOOL_DETAIL = 1500
+    private const val MAX_PLAN_DETAIL = 8000
+    private const val EXIT_PLAN_MODE = "ExitPlanMode"
 
     // 与 SessionTitleRegenerator 中的私有常量同值；那边是标题逻辑的私有细节，不跨包引用
     private const val CLAUDE_INTERRUPTED_PREFIX = "[Request interrupted by user"
@@ -177,7 +220,7 @@ object CodexTranscriptDecoder : TranscriptDecoder {
             type == "message" -> messageEvents(payload)
             type == "function_call" -> listOfNotNull(closedAgent(payload), SessionEvent.ToolStarted)
             type.endsWith("_call") -> listOf(SessionEvent.ToolStarted)
-            type == "function_call_output" -> agentOutput(payload) + SessionEvent.ToolResult(null)
+            type == "function_call_output" -> agentOutput(payload) + SessionEvent.ToolResult(payload.string("call_id"), null)
             else -> emptyList()
         }
     }
@@ -195,7 +238,7 @@ object CodexTranscriptDecoder : TranscriptDecoder {
      */
     private fun agentOutput(output: JsonObject): List<SessionEvent> {
         val result = output.string("output")?.let(::parseObject) ?: return emptyList()
-        result.string("agent_id")?.let { return listOf(SessionEvent.BackgroundStarted(it, null, result.string("nickname"))) }
+        result.string("agent_id")?.let { return listOf(SessionEvent.BackgroundStarted(it, null, result.string("nickname"), subagent = true)) }
         val status = result.obj("status") ?: return emptyList()
         return status.entrySet().filter { (_, value) -> value.isJsonObject && value.asJsonObject.keySet().any { it in AGENT_FINISHED } }.map { SessionEvent.BackgroundEnded(it.key) }
     }

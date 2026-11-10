@@ -15,7 +15,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在本轮结算时作为一条发出，
  * 中间的过程说明不推，避免逐条推送触发平台限频。轮次的划分与结算规则在 [TabState]；
  * 电脑端输入带标签单独转发；远程输入在记录中再次出现时不回显；等待确认立即推送。
- * 终端停在选择框上时，推送屏幕上的框，手机的回复按键作答（见 [ScreenPrompts]），不必回到电脑上操作。
+ * 终端停在提问或权限确认框上时，按记录里的工具调用推送题目或要批准的内容，手机的回复按键作答
+ * （见 [AskedQuestions]、[PermissionPrompts]），不看屏幕；认不出的框只提示到 IDE 中处理。
  * 同一标签的 [onSessionEvents]、[onTurnCompleted] 由调用方串行调用。
  * 只做简单转接：换绑、断开的空档里漏掉的内容不补（见 AGENTS.md 手机桥接约定）。
  */
@@ -65,11 +66,12 @@ class BridgeRouter(
         data object BindingGone : SubmitPhase
         data object BindingChanged : SubmitPhase
 
-        /** 按键作答了屏幕上的框 [before]；之后屏幕变成下一题等新框时要推给手机。 */
-        data class Answered(val result: SubmitResult, val binding: Binding, val before: ScreenPrompt) : SubmitPhase
-
-        /** 回复对不上屏幕上的框，一个键也没按。 */
+        /** 框开着时回复带了附件，一个键也没按。 */
         data object PromptRejected : SubmitPhase
+
+        /** 终端停在手机无法作答的框上，这句没有贴进终端。 */
+        data object DialogOpen : SubmitPhase
+
     }
 
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
@@ -111,43 +113,58 @@ class BridgeRouter(
 
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
-                // 终端停在选择框上：这句是在回答它。此时照常粘贴提交，末尾的回车会确认光标所在的选项，
-                // 所以引用（多半是引用了那条选择框消息）只取正文作答，带附件的不提交
                 var submission = text
-                val prompt = readPrompt(current.target)
-                if (prompt != null) {
-                    if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
-                    // 交原文而不是 trim 过的：自定义答案的换行与空格要原样送到 CLI
-                    val answer = ScreenPrompts.answer(prompt, message.text)
-                    if (answer == PromptAnswer.Invalid) return@withLock SubmitPhase.PromptRejected
-                    // 手机来答这个框：按键前就停止跟踪，否则回车后记录里的作答结果会被并发的轮询当成电脑上答的；
-                    // 按键没成功时框还开着，恢复跟踪，之后在电脑上处理照样告诉手机
-                    val tracked = tab(tabId) { promptClosed() }
-                    var dismissed = false
-                    val keepTracking = { if (tracked != null && !dismissed) tab(tabId) { restorePrompt(tracked) } }
-                    try {
-                        if (answer is PromptAnswer.Keys) {
-                            val pressed = press(current.target, answer.keys)
-                            if (pressed != SubmitResult.SUBMITTED_TO_TERMINAL) keepTracking()
-                            return@withLock SubmitPhase.Answered(pressed, current, prompt)
-                        }
-                        // 框里没有能填写的项：按 Esc 拒绝它，等框关掉，再把这句话照常交给会话
-                        val declined = press(current.target, listOf(ScreenPrompts.ESC))
-                        if (declined != SubmitResult.SUBMITTED_TO_TERMINAL) {
-                            keepTracking()
-                            return@withLock SubmitPhase.Done(declined)
-                        }
-                        dismissed = true
-                        delay(promptSettleMs)
-                    } catch (e: CancellationException) {
-                        keepTracking()
-                        unmarkSeen(message.robotId, message.externalMessageId)
-                        throw e
-                    } catch (_: Exception) {
-                        keepTracking()
-                        return@withLock SubmitPhase.Done(SubmitResult.OFFLINE)
+                // 推给手机的框，作答前再确认它仍是此刻停着的那个：按调用的结构作答，不看屏幕。引用只取正文，带附件的不提交
+                val shown =
+                    tab(tabId) {
+                        shownPrompt?.takeIf { prompt -> waitingSubject()?.toolUseId == prompt.toolUseId }
                     }
-                    submission = typed
+                if (shown != null) {
+                    if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
+                    // 按键之后还要发给会话的文字；提问一律先 Esc 关掉框再把回答作为消息发出，不在框里按键
+                    val (keys, afterKeys) =
+                        when (shown.kind) {
+                            PromptKind.QUESTION -> {
+                                val asked = tab(tabId) { askedQuestions }
+                                listOf(TerminalKeys.ESC) to (asked?.let { AskedQuestions.answer(it, message.text) } ?: return@withLock SubmitPhase.PromptRejected)
+                            }
+                            PromptKind.PERMISSION -> PermissionPrompts.reply(message.text).let { it.keys to typed.takeIf { _ -> it.thenSubmit } }
+                            PromptKind.PLAN -> PermissionPrompts.planReply(message.text).let { it.keys to typed.takeIf { _ -> it.thenSubmit } }
+                        }
+                    val dismissing = TerminalKeys.ESC in keys
+                    // Esc 关框；数字送达不代表框已关闭，保留作答入口，只标记结果不应误报为电脑作答。
+                    val tracked = tab(tabId) { if (dismissing) promptClosed() else promptAnswerStarted() }
+                    if (dismissing) tab(tabId) { expectDismissal(shown.toolUseId) }
+                    val keepTracking = {
+                        tab(tabId) {
+                            if (tracked != null) {
+                                if (dismissing) restorePrompt(tracked) else promptAnswerFailed(tracked)
+                            }
+                            if (dismissing) cancelDismissal()
+                        }
+                    }
+                    val result =
+                        try {
+                            press(current.target, keys)
+                        } catch (e: CancellationException) {
+                            keepTracking()
+                            unmarkSeen(message.robotId, message.externalMessageId)
+                            throw e
+                        } catch (_: Exception) {
+                            SubmitResult.OFFLINE
+                        }
+                    if (result != SubmitResult.SUBMITTED_TO_TERMINAL) {
+                        keepTracking()
+                        return@withLock SubmitPhase.Done(result)
+                    }
+                    if (shown.kind == PromptKind.QUESTION) tab(tabId) { questionClosed() }
+                    if (afterKeys == null) return@withLock SubmitPhase.Done(result)
+                    // 框关掉、回到输入框后，再把这段话照常交给会话
+                    delay(promptSettleMs)
+                    submission = afterKeys
+                } else if (tab(tabId) { waitingActive || hasPendingInteraction() }) {
+                    // 终端停在框上（或提问、计划确认已弹出而等待通知还没到），又确定不了是哪个：不当普通消息贴进终端
+                    return@withLock SubmitPhase.DialogOpen
                 }
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
                 tab(tabId) { expectEcho(submission) }
@@ -165,9 +182,6 @@ class BridgeRouter(
                     SubmitPhase.Done(SubmitResult.OFFLINE)
                 }
             }
-        if (phase is SubmitPhase.Answered && phase.result == SubmitResult.SUBMITTED_TO_TERMINAL) {
-            refreshPrompt(phase.binding, phase.before)
-        }
         return when (phase) {
             SubmitPhase.BindingGone -> {
                 reply(message.robotId, owner, texts.unbound())
@@ -181,8 +195,11 @@ class BridgeRouter(
                 reply(message.robotId, owner, texts.promptRejected())
                 InboundOutcome.PROMPT_REJECTED
             }
+            SubmitPhase.DialogOpen -> {
+                reply(message.robotId, owner, texts.dialogOpen())
+                InboundOutcome.DIALOG_OPEN
+            }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
-            is SubmitPhase.Answered -> outcomeOf(message.robotId, owner, phase.result)
         }
     }
 
@@ -285,35 +302,41 @@ class BridgeRouter(
         return SubmitResult.SUBMITTED_TO_TERMINAL
     }
 
-    /** 作答后屏幕换成了新的框（多题的下一题、答案确认页、勾选变化），推给手机接着答。 */
-    private suspend fun refreshPrompt(
+    private fun questionText(
         binding: Binding,
-        before: ScreenPrompt,
-    ) {
-        delay(promptSettleMs)
-        if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
-        val after = readPrompt(binding.target) ?: return
-        if (after.text != before.text) {
-            tab(binding.target.tabId) { promptShown(binding.epoch) }
-            send(binding, promptText(binding, after))
-        }
+        questions: List<AskedQuestion>,
+    ): String {
+        val markdown = channelOf(binding.robotId)?.rendersMarkdown ?: true
+        return texts.questions(AskedQuestions.render(questions, markdown, texts.multiSelectMark()), questions.size)
     }
 
-    /** 读屏失败按没有框处理：宁可照常提交，也不能让消息卡住。 */
-    private suspend fun readPrompt(target: SessionTarget): ScreenPrompt? =
-        try {
-            sessionPort.prompt(target)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        }
-
-    /** 框排成聊天里的列表（见 [ScreenPrompts.render]），按渠道是否渲染 Markdown 选格式。 */
-    private fun promptText(
+    private fun permissionText(
         binding: Binding,
-        prompt: ScreenPrompt,
-    ): String = texts.prompt(ScreenPrompts.render(prompt, markdown = channelOf(binding.robotId)?.rendersMarkdown ?: true))
+        call: ToolCall,
+    ): String = fitted(binding, PermissionPrompts.render(call, channelOf(binding.robotId)?.rendersMarkdown ?: true), texts::permission)
+
+    /**
+     * 计划、长命令截短到一条消息之内：拆成几条发，微信这类有条数额度的渠道会白白耗掉额度，
+     * 怎么回的说明也会落到最后一条。截掉的部分到电脑上看。署名的长度一并预留。
+     */
+    private fun fitted(
+        binding: Binding,
+        body: String,
+        wrap: (String) -> String,
+    ): String {
+        val channel = channelOf(binding.robotId) ?: return wrap(body)
+        val budget = channel.maxTextBytes - wrap("").toByteArray(Charsets.UTF_8).size - SIGNATURE_RESERVE_BYTES
+        if (body.toByteArray(Charsets.UTF_8).size <= budget) return wrap(body)
+        val cut = StringBuilder()
+        var bytes = 0
+        for (codePoint in body.codePoints()) {
+            val size = String(Character.toChars(codePoint)).toByteArray(Charsets.UTF_8).size
+            if (bytes + size > budget - TRUNCATED.toByteArray(Charsets.UTF_8).size) break
+            cut.appendCodePoint(codePoint)
+            bytes += size
+        }
+        return wrap(cut.toString().trimEnd() + TRUNCATED)
+    }
 
     /** 读取期间换绑的，事件交给当前绑定；攒下的回复按代次作废，发出时只认产生它的那次绑定。 */
     suspend fun onSessionEvents(
@@ -323,6 +346,7 @@ class BridgeRouter(
         val binding = bindings.bindingForTab(tabId) ?: return
         promptAnsweredLocally(tabId, binding, events)
         for (event in events) {
+            val dismissal = tab(tabId) { dismissalInterrupt(event) }
             when (event) {
                 is SessionEvent.AssistantText -> tab(tabId) { appendReply(binding.epoch, event.text) }
                 is SessionEvent.UserText -> {
@@ -346,8 +370,9 @@ class BridgeRouter(
                     sendAfterReply(tabId)
                 }
                 SessionEvent.TurnInterrupted -> {
+                    // 手机作答时插件按 Esc 关框引起的中断，不当作电脑上中断告诉手机
                     tab(tabId) { interrupt() }
-                    send(binding, texts.turnInterrupted())
+                    if (!dismissal) send(binding, texts.turnInterrupted())
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
                 }
@@ -359,11 +384,15 @@ class BridgeRouter(
                     sendAfterReply(tabId)
                 }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
-                is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
+                is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description, event.subagent) }
                 is SessionEvent.BackgroundEnded -> tab(tabId) { backgroundEnded(event.taskId) }
-                is SessionEvent.ToolResult -> Unit
+                is SessionEvent.ToolResult -> tab(tabId) { toolFinished(event.toolUseId) }
+                is SessionEvent.ToolCalled -> tab(tabId) { toolCalled(event.toolUseId, ToolCall(event.name, event.detail)) }
+                is SessionEvent.QuestionAsked -> tab(tabId) { questionAsked(event.toolUseId, event.questions) }
             }
         }
+        // 等待通知先于记录到达时，那时还确定不了停着的框：登记好这批调用后再看一次，能确定、又没推过就补推
+        pushWaitingSubject(tabId, binding)
         // 结算之后才读到的回复（完成信号先到）：立即发；若这一轮正等着它，排着的提示随后发
         val late = tab(tabId) { takeIfSettled() }
         if (late != null) {
@@ -377,33 +406,27 @@ class BridgeRouter(
     }
 
     /**
-     * 推给手机的框在电脑上答掉了：记录里有了新进展，且屏幕上已经没有框，就告诉手机，免得手机以为还停着。
-     * 提问带回了作答时屏幕上可能已是下一个框，也算答掉了。在这批事件之前发，提示排在之后的回复前面。
+     * IDE 报告会话退出等待（转忙碌或空闲）：停着的框已过去。此刻没结果的调用都已过了这次等待，
+     * 之后不再当作停着的框；推过、还没读到结果的框读到结果时照常告诉手机。
+     */
+    suspend fun onResumed(tabId: String) {
+        tab(tabId) { waitingExited() }
+    }
+
+    /**
+     * 推给手机的框在电脑上答掉了：记录里出现了它那次工具调用的结果，就告诉手机，免得手机以为还停着；
+     * 提问带回每题的作答。在这批事件之前发，提示排在之后的回复前面。
      */
     private suspend fun promptAnsweredLocally(
         tabId: String,
         binding: Binding,
         events: List<SessionEvent>,
     ) {
-        if (events.isEmpty()) return
-        // 读屏前取快照：读屏期间手机答了这个框、又推了下一个，旧的读屏结果不能关掉新框
-        val shown = tab(tabId) { shownPrompt } ?: return
-        val answer = events.firstNotNullOfOrNull { (it as? SessionEvent.ToolResult)?.answer }
-        if (answer == null && readPrompt(binding.target) != null) return
-        if (!tab(tabId) { closePrompt(shown) }) return
-        if (shown.epoch == binding.epoch) send(binding, texts.promptAnsweredLocally(answer))
-    }
-
-    /**
-     * 定时轮询时调用：推给手机的框在屏幕上连续读不到，说明已在电脑上处理（例如批准权限后工具还在跑，记录里暂时没有结果）。
-     */
-    suspend fun onPromptTick(tabId: String) {
-        // 读屏前取快照，理由同 promptAnsweredLocally
-        val shown = tab(tabId) { shownPrompt } ?: return
-        val binding = bindings.bindingForTab(tabId) ?: return
-        val onScreen = readPrompt(binding.target) != null
-        if (!tab(tabId) { promptMissed(shown, onScreen) }) return
-        if (shown.epoch == binding.epoch) send(binding, texts.promptAnsweredLocally(null))
+        for (event in events) {
+            if (event !is SessionEvent.ToolResult) continue
+            val shown = tab(tabId) { closePromptFor(event.toolUseId) } ?: continue
+            if (shown.epoch == binding.epoch) send(binding, texts.promptAnsweredLocally(event.answer))
+        }
     }
 
     /**
@@ -434,6 +457,7 @@ class BridgeRouter(
         tabId: String,
         turn: Long,
     ) {
+        // 确认是当前这一轮结束了才清掉框的状态与拦截（见 completeByIde）：上一轮迟到的完成信号不说明此刻的框已经过去
         val completed = tab(tabId) { completeByIde(turn) }
         if (completed) {
             val reply = tab(tabId) { takeReply() }
@@ -539,14 +563,36 @@ class BridgeRouter(
         reason: String?,
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
-        // 等待信号可能先于选择框画完到达，读不到就稍等再读一次；仍读不到才只报等待原因
-        val prompt = readPrompt(binding.target) ?: delay(promptSettleMs).let { readPrompt(binding.target) }
-        if (prompt != null) tab(tabId) { promptShown(binding.epoch) }
-        send(binding, if (prompt != null) promptText(binding, prompt) else texts.waiting(reason))
+        tab(tabId) { waitingStarted(reason) }
+        // 不看屏幕：能确定停着的框就推送可作答的内容（提问的题目、要批准的调用、计划）；确定不了只提示到 IDE 中处理
+        if (pushWaitingSubject(tabId, binding)) return
+        // 同一个框的等待通知重复到达不再提示；确定不了时，之前推过的框已不对应此刻停着的，撤销它
+        val repeated = tab(tabId) { subjectAlreadyPushed().also { if (!it) promptClosed() } }
+        if (repeated) return
+        send(binding, texts.waiting(reason))
+    }
+
+    /** 能确定、又还没推过的停着的框推给手机，推了返回 true。 */
+    private suspend fun pushWaitingSubject(
+        tabId: String,
+        binding: Binding,
+    ): Boolean {
+        val text =
+            tab(tabId) {
+                val subject = subjectToPush(binding.epoch) ?: return@tab null
+                when (subject.kind) {
+                    PromptKind.QUESTION -> questionText(binding, subject.questions!!)
+                    PromptKind.PLAN -> fitted(binding, subject.call!!.detail, texts::plan)
+                    PromptKind.PERMISSION -> permissionText(binding, subject.call!!)
+                }
+            } ?: return false
+        send(binding, text)
+        return true
     }
 
     suspend fun onTranscriptRestarted(tabId: String) {
         resetBackground(tabId)
+        tab(tabId) { forgetPrompts() }
         val binding = bindings.bindingForTab(tabId) ?: return
         send(binding, texts.transcriptRestarted())
     }
@@ -733,6 +779,10 @@ class BridgeRouter(
     }
 
     private companion object {
+        const val TRUNCATED = "\n…"
+
+        /** 署名最多 [MAX_LABEL_CHARS] 字，每字最多 4 字节，再加分隔线。 */
+        const val SIGNATURE_RESERVE_BYTES = 100 * 4 + 32
         val WHITESPACE = Regex("\\s+")
         val ORDERED_MARKER = Regex("^(\\d+)[.)]")
         const val BLOCK_MARKERS = "#>+-*"

@@ -47,6 +47,31 @@ class RuntimeStatusTrackerTest {
         assertEquals(listOf("s1"), tracker.completedSince(snapshot("s1" to "idle")).completed)
     }
 
+    @Test
+    fun `由等待转回忙碌只报一次退出等待，直接空闲同时报告完成和退出等待`() {
+        val tracker = RuntimeStatusTracker()
+        tracker.completedSince(snapshot("s1" to "busy"))
+        tracker.completedSince(waitingSnapshot("s1", "permission prompt"))
+        assertEquals(listOf("s1"), tracker.completedSince(snapshot("s1" to "busy")).resumed)
+        assertTrue("持续忙碌不重复报", tracker.completedSince(snapshot("s1" to "busy")).resumed.isEmpty())
+
+        tracker.completedSince(waitingSnapshot("s1", "permission prompt"))
+        val idle = tracker.completedSince(snapshot("s1" to "idle"))
+        assertEquals(listOf("s1"), idle.resumed)
+        assertEquals(listOf("s1"), idle.completed)
+    }
+
+    @Test
+    fun `空闲打开弹框再关闭会通知退出等待但不伪报完成`() {
+        val tracker = RuntimeStatusTracker()
+        tracker.completedSince(snapshot("s1" to "idle"))
+        tracker.completedSince(waitingSnapshot("s1", "input needed"))
+        val idle = tracker.completedSince(snapshot("s1" to "idle"))
+        assertEquals(listOf("s1"), idle.resumed)
+        assertTrue(idle.completed.isEmpty())
+        assertTrue(tracker.completedSince(snapshot("s1" to "idle")).resumed.isEmpty())
+    }
+
     private fun session(id: String, status: String?, waitingFor: String? = null) =
         ClaudeRuntimeSession(
             id,

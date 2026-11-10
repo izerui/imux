@@ -31,7 +31,6 @@ internal class TabPoller(
             if (enabled()) {
                 deliver(tabId, tails.read(tabId))
                 router.onQuiet(tabId)
-                router.onPromptTick(tabId)
             }
         }
 
@@ -110,6 +109,17 @@ internal class TabPoller(
         deliver(tabId, tails.read(tabId))
         router.onWaiting(tabId, reason)
     }
+
+    /**
+     * IDE 报告会话退出等待（转忙碌或空闲）：先告诉路由器停着的框已过去，再交出记录。顺序不能反：
+     * 记录里可能有框答掉后才读到的旧提问、计划，或接着执行的调用，等待还没撤销时会被当成停着的框推出去。
+     */
+    suspend fun resumed(tabId: String) =
+        lock(tabId).withLock {
+            if (!enabled()) return@withLock
+            router.onResumed(tabId)
+            deliver(tabId, tails.read(tabId))
+        }
 
     private suspend fun deliver(
         tabId: String,
