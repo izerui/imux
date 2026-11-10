@@ -396,7 +396,7 @@ class BridgeRouterTest {
         runBlocking {
             val binding = (registry.bind(robot, target) as BindResult.Bound).binding
             router.onSuspended(binding, "修复登录", "imux · Codex · 修复登录")
-            assertEquals(listOf("RELEASED(修复登录)\n\n---\n> imux · Codex · 修复登录"), sentTexts())
+            assertEquals(listOf("RELEASED(修复登录)\n\n---\n` imux · Codex · 修复登录 `"), sentTexts())
             assertEquals(binding, registry.bindingOf(robot))
             val restored = registry.reattach(robot, "new-tab")!!
             router.onReattached(restored, "imux", "Codex", "修复登录")
@@ -822,7 +822,7 @@ class BridgeRouterTest {
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案\n")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
-            assertEquals(listOf("答案\n\n---\n> imux · Claude Code · 代理商改造"), sentTexts())
+            assertEquals(listOf("答案\n\n---\n` imux · Claude Code · 代理商改造 `"), sentTexts())
         }
 
     @Test
@@ -846,7 +846,7 @@ class BridgeRouterTest {
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
             val texts = small.sent.map { it.text }
             assertTrue("应当分成多段", texts.size > 1)
-            assertTrue(texts.last().endsWith("\n\n---\n> imux · Claude Code · 代理商改造"))
+            assertTrue(texts.last().endsWith("\n\n---\n` imux · Claude Code · 代理商改造 `"))
             assertTrue("前面各段不署名", texts.dropLast(1).none { "代理商改造" in it })
             assertTrue(texts.all { it.toByteArray(Charsets.UTF_8).size <= 120 })
         }
@@ -858,7 +858,7 @@ class BridgeRouterTest {
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
-            val footer = sentTexts().single().substringAfter("\n> ")
+            val footer = sentTexts().single().substringAfter("\n---\n` ").removeSuffix(" `")
             assertTrue(footer.startsWith("第一行 第二行"))
             assertEquals(100, footer.length)
             assertTrue(footer.endsWith("…"))
@@ -870,7 +870,7 @@ class BridgeRouterTest {
             val r = titledRouter(channel)
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.UserText("改一下登录页")))
-            assertEquals(listOf("LOCAL:\n改一下登录页\n\n---\n> imux · Claude Code · 代理商改造"), sentTexts())
+            assertEquals(listOf("LOCAL:\n改一下登录页\n\n---\n` imux · Claude Code · 代理商改造 `"), sentTexts())
         }
 
     @Test
@@ -881,14 +881,14 @@ class BridgeRouterTest {
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
-            val footer = sentTexts().single().substringAfter("\n> ")
+            val footer = sentTexts().single().substringAfter("\n---\n` ").removeSuffix(" `")
             assertEquals("路由没有再截断", label, footer)
             assertTrue("智能体名还在", footer.contains(" · Claude Code · "))
             assertTrue("会话标题还在", footer.endsWith(" · " + "会".repeat(40) + "…"))
         }
 
     @Test
-    fun `标题开头像标题号或列表号时转义，纯文本渠道不转义`() =
+    fun `署名放进行内代码，标题号列表号不用转义，带反引号时加长外层，纯文本渠道不包`() =
         runBlocking {
             registry.bind(robot, target)
             suspend fun footerOf(
@@ -900,14 +900,13 @@ class BridgeRouterTest {
                 r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
                 return ch.sent.single().text.substringAfterLast("\n")
             }
-            assertEquals("> \\# 修复登录", footerOf("# 修复登录"))
-            assertEquals("> \\- 修复登录", footerOf("- 修复登录"))
-            assertEquals("> 12\\. 修复登录", footerOf("12. 修复登录"))
-            assertEquals("> 修复 #12", footerOf("修复 #12"))
+            assertEquals("` # 修复登录 `", footerOf("# 修复登录"))
+            assertEquals("` 12. 修复登录 `", footerOf("12. 修复登录"))
+            assertEquals("``` 修复 `a` 和 ``b`` ```", footerOf("修复 `a` 和 ``b``"))
             assertEquals("# 修复登录", footerOf("# 修复登录", FakeChannel(robot, rendersMarkdown = false)))
         }
 
-    private val label = "\n\n---\n> imux · Claude Code · 代理商改造"
+    private val label = "\n\n---\n` imux · Claude Code · 代理商改造 `"
 
     @Test
     fun `等待确认、没有文字回复与结对状态这类提示都署名`() =

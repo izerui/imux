@@ -66,7 +66,7 @@ internal object BundleBridgeTexts : BridgeTexts {
         project: String,
         agent: String,
         sessionTitle: String,
-    ) = ImuxBundle.message("bridge.status.connected", "$PROJECT_ICON $project", agent, "$TITLE_ICON $sessionTitle")
+    ) = ImuxBundle.message("bridge.status.connected", "$TITLE_ICON $project", agent, sessionTitle)
 
     // 配对回复由机器人管理直接发出，不经过路由器，所以不在 BridgeTexts 接口里
     fun pairingSucceeded() = ImuxBundle.message("bridge.pairing.succeeded")

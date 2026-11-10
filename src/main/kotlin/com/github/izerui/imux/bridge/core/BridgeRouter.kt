@@ -788,20 +788,19 @@ class BridgeRouter(
         seen[robotId]?.remove(externalMessageId)
     }
 
-    /** 分割线下一行引用块写署名，渲染成灰字竖条；不渲染 Markdown 的渠道用字符横线代替。 */
+    /**
+     * 分割线下一行写署名，整行放进行内代码，不用引用块；不渲染 Markdown 的渠道用字符横线代替，也不包反引号。
+     * 行内代码里不解析标题号、列表号，不用再转义；标题里带反引号时，外层反引号比里面最长的一串多一个。
+     */
     private fun footer(
         label: String?,
         markdown: Boolean,
     ): String {
         val line = label?.replace(WHITESPACE, " ")?.trim()?.takeIf(String::isNotEmpty) ?: return ""
         val shown = if (line.length > MAX_LABEL_CHARS) line.take(MAX_LABEL_CHARS - 1) + "…" else line
-        return if (markdown) "\n\n---\n> ${escapeBlockMarker(shown)}" else "\n\n$PLAIN_RULE\n$shown"
-    }
-
-    /** 标题开头像标题号、列表号（例如「1. 修复登录」）时转义，否则在引用块里会渲染成标题或列表。 */
-    private fun escapeBlockMarker(line: String): String {
-        ORDERED_MARKER.find(line)?.let { return it.groupValues[1] + "\\" + line.substring(it.groupValues[1].length) }
-        return if (line.first() in BLOCK_MARKERS) "\\$line" else line
+        if (!markdown) return "\n\n$PLAIN_RULE\n$shown"
+        val fence = "`".repeat((BACKTICKS.findAll(shown).maxOfOrNull { it.value.length } ?: 0) + 1)
+        return "\n\n---\n$fence $shown $fence"
     }
 
     private companion object {
@@ -810,8 +809,7 @@ class BridgeRouter(
         /** 署名最多 [MAX_LABEL_CHARS] 字，每字最多 4 字节，再加分隔线。 */
         const val SIGNATURE_RESERVE_BYTES = 100 * 4 + 32
         val WHITESPACE = Regex("\\s+")
-        val ORDERED_MARKER = Regex("^(\\d+)[.)]")
-        const val BLOCK_MARKERS = "#>+-*"
+        val BACKTICKS = Regex("`+")
         const val PLAIN_RULE = "──────────"
 
         /** 署名只为分辨会话，过长时截短，不挤占正文的分段额度。 */

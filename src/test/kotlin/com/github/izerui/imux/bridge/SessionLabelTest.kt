@@ -1,6 +1,5 @@
 package com.github.izerui.imux.bridge
 
-import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,11 +8,6 @@ class SessionLabelTest {
     @Test
     fun `署名依次是工程、智能体、会话标题，只在最前面带 💬`() {
         assertEquals("💬 imux · Claude Code · 代理商改造", sessionLabel("imux", "Claude Code", "代理商改造"))
-    }
-
-    @Test
-    fun `各智能体有自己的图标`() {
-        assertEquals(listOf("✴️", "⚛️", "🚀"), listOf(AgentType.CLAUDE, AgentType.CODEX, AgentType.PI).map(::agentIcon))
     }
 
     @Test

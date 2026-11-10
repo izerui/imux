@@ -192,7 +192,7 @@ class TerminalBridgeService(
         LOG.info("会话标签恢复，机器人 ${binding.robotId.value} 自动接回")
         SessionTitles.remember(binding)
         val title = SessionTitles.of(binding)
-        notifyConnection { hub.router.onReattached(binding, project.name, agentName(binding.target.agentType), title) }
+        notifyConnection { hub.router.onReattached(binding, project.name, binding.target.agentType.displayName, title) }
     }
 
     /** 手动连接与自动恢复共用项目作用域，关闭后不再补发过期的连接提示。 */

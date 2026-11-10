@@ -15,7 +15,7 @@ internal fun peerReviewText(
     event: PeerReviewEvent,
     message: PairMessages = pluginMessages,
 ): String? {
-    val reviewer = agentName(event.targetAgentType)
+    val reviewer = event.targetAgentType.displayName
     return when (event) {
         is PeerReviewEvent.Started -> message("bridge.peer.started", listOf(reviewer))
         is PeerReviewEvent.Finished -> {

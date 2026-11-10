@@ -2,7 +2,6 @@ package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.core.Binding
-import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.TerminalHost
@@ -34,18 +33,7 @@ internal fun sessionLabel(
     }.joinToString(" · ")
         .let { if (it.isEmpty()) it else "$TITLE_ICON $it" }
 
-/** 智能体在手机提示里的图标。 */
-internal fun agentIcon(type: AgentType): String =
-    when (type) {
-        AgentType.CLAUDE -> "✴️"
-        AgentType.CODEX -> "⚛️"
-        AgentType.PI -> "🚀"
-    }
-
-/** 带图标的智能体名，用于「已连接」等手机提示。 */
-internal fun agentName(type: AgentType): String = "${agentIcon(type)} ${type.displayName}"
-
-internal const val PROJECT_ICON = "📂"
+/** 署名与「已连接」「已断开会话」提示打头的图标。 */
 internal const val TITLE_ICON = "💬"
 private const val MAX_LABEL_PROJECT_CHARS = 30
 private const val MAX_LABEL_AGENT_CHARS = 20

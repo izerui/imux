@@ -38,14 +38,6 @@ class PeerReviewTextsTest {
     }
 
     @Test
-    fun `审查方智能体名带图标`() {
-        for (event in idle.filterNot { it is PeerReviewEvent.Stopped && it.reason == PeerStopReason.MAX_ROUNDS } + started + staged) {
-            val text = zh(event)!!
-            assertTrue(text, text.contains("⚛️ Codex"))
-        }
-    }
-
-    @Test
     fun `每条都按结对编程来说，不说会话忙闲`() {
         for (event in idle + started) {
             val text = zh(event)!!
