@@ -67,9 +67,22 @@ object AskedQuestions {
         question: AskedQuestion,
         answer: String,
     ): String? {
-        val picks = picks(answer, question.options.size) ?: return null
+        val picks = picks(answer, question.options.size) ?: joinedDigits(question, answer)?.let { picks(it, question.options.size) } ?: return null
         if (!question.multiSelect && picks.size != 1) return null
         return picks.joinToString("、") { question.options[it - 1].label.trim() }
+    }
+
+    /**
+     * 多选题里连着写的编号（「123」即 1、2、3）拆成单个数字再认：选项不超过 9 个时编号都是一位，不会有歧义。
+     * 单选题不拆，「12」可能另有所指，原样作为回答。
+     */
+    private fun joinedDigits(
+        question: AskedQuestion,
+        answer: String,
+    ): String? {
+        if (!question.multiSelect || question.options.size > 9) return null
+        val body = TerminalKeys.normalizeReply(answer).removePrefix("选").removePrefix("選").trim()
+        return body.takeIf { it.length > 1 && it.all(Char::isDigit) }?.toList()?.joinToString(" ")
     }
 
     /**

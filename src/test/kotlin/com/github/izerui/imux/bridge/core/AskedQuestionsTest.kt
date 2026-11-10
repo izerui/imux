@@ -38,6 +38,16 @@ class AskedQuestionsTest {
     }
 
     @Test
+    fun `多选题连着写的编号按单个数字拆开；单选题不拆`() {
+        val three = AskedQuestion("哪些正常？", true, listOf(AskedOption("题号", null), AskedOption("编号", null), AskedOption("翻页", null)))
+        assertEquals("哪些正常？ → 题号、编号、翻页", AskedQuestions.answer(three, "123"))
+        assertEquals("哪些正常？ → 题号、翻页", AskedQuestions.answer(three, "13"))
+        assertEquals("有重复或超出选项就不拆", "哪些正常？ → 113", AskedQuestions.answer(three, "113"))
+        assertEquals("哪些正常？ → 14", AskedQuestions.answer(three, "14"))
+        assertEquals("单选题的 12 不拆", "选哪个？ → 12", AskedQuestions.answer(fruit, "12"))
+    }
+
+    @Test
     fun `翻到下一题只按右键，不按编号`() {
         assertEquals(listOf(TerminalKeys.RIGHT), AskedQuestions.ADVANCE_KEYS)
     }
