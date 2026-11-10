@@ -311,7 +311,7 @@ class PeerCoordinator internal constructor(
 
     fun isHandlingOneShotFeedback(sessionKey: String): Boolean = reviewLifecycles[sessionKey]?.isHandlingFeedback == true
 
-    /** 撤销预约并使仍在校验的请求失效；已有可见预约被撤销时返回 true。 */
+    /** 撤销预约；已有预约被撤销时返回 true。 */
     fun cancelScheduledReview(sessionKey: String): Boolean {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
         if (reviewLifecycles[sessionKey]?.cancelScheduled() != true) return false
@@ -709,16 +709,15 @@ class PeerCoordinator internal constructor(
         val customPrompt = ImuxSettings.getInstance().state.peerPromptOverride
         if (customPrompt != null) {
             val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-            // 旧版本可选「填入输入框」时用 ${mode} 切换说法；只剩自动发送后，老的自定义提示词里的占位符换成这一句
+            // 旧版本可选「填入输入框」时用 ${mode} 切换说法；只剩自动发送后，老的自定义提示词里的占位符换成默认提示词的同一句
             var result = customPrompt
                 .replace("\${task}", task)
                 .replace("\${conversation}", conversation)
-                .replace("\${mode}", if (isChinese) LEGACY_MODE_ZH else LEGACY_MODE_EN)
+                .replace("\${mode}", if (isChinese) MODE_ZH else MODE_EN)
             val missingTask = "\${task}" !in customPrompt && task.isNotBlank()
             val missingConversation = "\${conversation}" !in customPrompt && conversation.isNotBlank()
             if (missingTask || missingConversation) {
                 LOG.warn("结对编程：自定义提示词未包含 \${task} 或 \${conversation}，自动追加上下文")
-                val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
                 val appendix = buildString {
                     append("\n\n")
                     if (missingTask) append(task)
@@ -885,11 +884,12 @@ class PeerCoordinator internal constructor(
         /** 等待终端进入括号粘贴的轮询间隔。没有重试次数上限，理由见 injectFeedback。 */
         private const val SEND_READY_RETRY_MILLIS = 100L
 
-        private const val LEGACY_MODE_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
-        private const val LEGACY_MODE_EN = "What you say will be sent to your partner automatically — they'll see it and continue working."
+        /** 默认提示词的第一句；老的自定义提示词里的 `${mode}` 也换成它。 */
+        private const val MODE_ZH = "你说的话会自动发给搭档，搭档会直接看到并继续工作。"
+        private const val MODE_EN = "What you say will be sent to your partner automatically — they'll see it and continue working."
 
         val DEFAULT_PROMPT_ZH = """
-你是结对编程中的搭档。你说的话会自动发给搭档，搭档会直接看到并继续工作。
+你是结对编程中的搭档。$MODE_ZH
 
 你的搭档在帮用户干活，你坐在旁边一起看。你能用项目里的所有工具查代码、做只读的检查，但不要改任何东西——不写文件、不跑会改东西的命令、不做有副作用的事。
 
@@ -912,7 +912,7 @@ ${'$'}{conversation}
 """.trimIndent()
 
         val DEFAULT_PROMPT_EN = """
-You're the pair programming partner. What you say will be sent to your partner automatically — they'll see it and continue working.
+You're the pair programming partner. $MODE_EN
 
 Your partner is doing the user's task, and you're sitting next to them. You have full tool access to the project and can check code or run read-only checks yourself, but don't change anything — no writing files, no running commands that change things, no side effects.
 
