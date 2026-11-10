@@ -18,24 +18,23 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 署名的三段，各自限长后再拼：工程名、智能体名、会话标题都至少留下一部分，
  * 拼出来的整行（含图标）也在路由的署名上限（100 字）之内，不会被整行截断挤掉后面的段。
- * 工程名前加 📂，智能体名前加 [agentIcon]，会话标题前加 💬，手机上一眼分得清各段。
+ * 只在最前面留一个 💬，不给每段都加图标，在手机上读着像一句淡淡的注脚，不跟正文抢眼。
  */
 internal fun sessionLabel(
     project: String,
     agent: String,
     title: String,
-    agentIcon: String = "",
 ): String =
     listOf(
-        Triple(project, MAX_LABEL_PROJECT_CHARS, PROJECT_ICON),
-        Triple(agent, MAX_LABEL_AGENT_CHARS, agentIcon),
-        Triple(title, MAX_LABEL_TITLE_CHARS, TITLE_ICON),
-    ).mapNotNull { (text, max, icon) ->
-        val shown = text.trim().let { if (it.length > max) it.take(max - 1) + "…" else it }
-        shown.takeIf(String::isNotEmpty)?.let { if (icon.isEmpty()) it else "$icon $it" }
+        project to MAX_LABEL_PROJECT_CHARS,
+        agent to MAX_LABEL_AGENT_CHARS,
+        title to MAX_LABEL_TITLE_CHARS,
+    ).mapNotNull { (text, max) ->
+        text.trim().let { if (it.length > max) it.take(max - 1) + "…" else it }.takeIf(String::isNotEmpty)
     }.joinToString(" · ")
+        .let { if (it.isEmpty()) it else "$TITLE_ICON $it" }
 
-/** 智能体在署名里的图标。 */
+/** 智能体在手机提示里的图标。 */
 internal fun agentIcon(type: AgentType): String =
     when (type) {
         AgentType.CLAUDE -> "✴️"
@@ -43,7 +42,7 @@ internal fun agentIcon(type: AgentType): String =
         AgentType.PI -> "🚀"
     }
 
-/** 带图标的智能体名，署名之外的手机提示（如「已连接」）也用它。 */
+/** 带图标的智能体名，用于「已连接」等手机提示。 */
 internal fun agentName(type: AgentType): String = "${agentIcon(type)} ${type.displayName}"
 
 internal const val PROJECT_ICON = "📂"
@@ -51,8 +50,8 @@ internal const val TITLE_ICON = "💬"
 private const val MAX_LABEL_PROJECT_CHARS = 30
 private const val MAX_LABEL_AGENT_CHARS = 20
 
-/** 三个图标各占 3 个字符（含空格），标题让出这部分，整行仍不超过 100。 */
-private const val MAX_LABEL_TITLE_CHARS = 35
+/** 图标 3（含空格）+ 工程 30 + 智能体 20 + 两个分隔点 6，标题取 41，整行正好不超过 100。 */
+private const val MAX_LABEL_TITLE_CHARS = 41
 
 object SessionTitles {
     /** 绑定标签最近一次的名字：标签关闭后取不到标签标题，发断开提示时用它。 */
@@ -70,13 +69,13 @@ object SessionTitles {
     }
 
     /**
-     * 手机回复末尾的署名：工程 · 智能体 · 会话标题，与连接提示的写法一致，同时连着几个会话时据此分辨。
+     * 手机回复末尾的署名：💬 工程 · 智能体 · 会话标题，同时连着几个会话时据此分辨。
      * 工程已关闭时取项目路径的最后一段。
      */
     fun label(binding: Binding): String {
         val project = ProjectManager.getInstance().openProjects.firstOrNull { it.basePath == binding.target.projectPath && !it.isDisposed }
         val projectName = project?.name ?: binding.target.projectPath.substringAfterLast('/').substringAfterLast('\\')
-        return sessionLabel(projectName, binding.target.agentType.displayName, of(binding), agentIcon(binding.target.agentType))
+        return sessionLabel(projectName, binding.target.agentType.displayName, of(binding))
     }
 
     /** 正在显示的终端标签。 */

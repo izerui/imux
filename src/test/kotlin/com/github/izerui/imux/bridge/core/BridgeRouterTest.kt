@@ -876,15 +876,15 @@ class BridgeRouterTest {
     @Test
     fun `真实署名经过路由后，长工程名不会挤掉智能体名和会话标题`() =
         runBlocking {
-            val label = com.github.izerui.imux.bridge.sessionLabel("工".repeat(200), "Claude Code", "会".repeat(200), "✴️")
+            val label = com.github.izerui.imux.bridge.sessionLabel("工".repeat(200), "Claude Code", "会".repeat(200))
             val r = titledRouter(channel, label)
             registry.bind(robot, target)
             r.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("答案")))
             r.onTurnCompleted("tab-1", r.currentTurn("tab-1"))
             val footer = sentTexts().single().substringAfter("\n> ")
             assertEquals("路由没有再截断", label, footer)
-            assertTrue("智能体名还在", footer.contains(" · ✴️ Claude Code · "))
-            assertTrue("会话标题还在", footer.endsWith("💬 " + "会".repeat(34) + "…"))
+            assertTrue("智能体名还在", footer.contains(" · Claude Code · "))
+            assertTrue("会话标题还在", footer.endsWith(" · " + "会".repeat(40) + "…"))
         }
 
     @Test
