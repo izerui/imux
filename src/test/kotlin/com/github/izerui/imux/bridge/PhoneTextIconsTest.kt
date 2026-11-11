@@ -13,8 +13,11 @@ class PhoneTextIconsTest {
     }
 
     @Test
-    fun `已断开提示里会话标题带图标`() {
-        val text = BundleBridgeTexts.released("UAT 临时 API key")
-        assertTrue(text, text.contains("💬 UAT 临时 API key"))
+    fun `已断开、会话已离线提示与已连接同一写法，💬 只出现一次`() {
+        val session = sessionLabel("maas-api", "Claude Code", "UAT 临时 API key")
+        for (text in listOf(BundleBridgeTexts.released(session), BundleBridgeTexts.suspended(session))) {
+            assertTrue(text, text.contains("💬 maas-api · Claude Code · UAT 临时 API key"))
+            assertTrue(text, text.split("💬").size == 2)
+        }
     }
 }

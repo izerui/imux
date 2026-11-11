@@ -81,9 +81,9 @@ class TabPollerTest {
 
         override fun promptRejected() = "PROMPT_REJECTED"
 
-        override fun released(sessionTitle: String) = "RELEASED"
+        override fun released(session: String) = "RELEASED"
 
-        override fun suspended(sessionTitle: String) = "SUSPENDED"
+        override fun suspended(session: String) = "SUSPENDED"
 
         override fun transcriptRestarted() = "RESTARTED"
 

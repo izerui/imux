@@ -57,6 +57,7 @@ class BridgeHub(parentScope: CoroutineScope) {
                 }
             },
             sessionLabelOf = SessionTitles::label,
+            sessionNameOf = { binding, title -> SessionTitles.label(binding, title) },
         )
 
     private val _revision = MutableStateFlow(0L)

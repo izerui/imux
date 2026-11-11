@@ -67,7 +67,7 @@ class TerminalBridgeService(
             .invokeLater({ if (!projectClosing && !project.isDisposed) onSessionsChanged() }, ModalityState.any())
     }
     private val closeNotifier = BridgeCloseNotifier(
-        send = { notice -> hub.router.onSuspended(notice.binding, notice.title, notice.label) },
+        send = { notice -> hub.router.onSuspended(notice.binding, notice.title) },
         onFailure = { LOG.warn("关闭时发送手机断开提示失败", it) },
         onTimeout = { LOG.warn("关闭时发送手机断开提示超时，继续关闭") },
     )
@@ -215,8 +215,8 @@ class TerminalBridgeService(
         // 取消还在等上线或限频重试的连接提示，再发送“已断开”。
         scope.cancel()
         hub.changed()
-        // 先取好标题和署名，发送线程不再访问即将销毁的项目服务。
-        closeNotifier.notifyOnce(bindingsInProject().map { ClosingBinding(it, SessionTitles.of(it), SessionTitles.label(it)) })
+        // 先取好标题，发送线程不再访问即将销毁的项目服务。
+        closeNotifier.notifyOnce(bindingsInProject().map { ClosingBinding(it, SessionTitles.of(it)) })
     }
 
     /**

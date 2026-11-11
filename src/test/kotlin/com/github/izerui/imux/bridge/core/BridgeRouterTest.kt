@@ -87,9 +87,9 @@ class BridgeRouterTest {
 
         override fun promptRejected() = "PROMPT_REJECTED"
 
-        override fun released(sessionTitle: String) = "RELEASED($sessionTitle)"
+        override fun released(session: String) = "RELEASED($session)"
 
-        override fun suspended(sessionTitle: String) = "SUSPENDED($sessionTitle)"
+        override fun suspended(session: String) = "SUSPENDED($session)"
 
         override fun transcriptRestarted() = "RESTARTED"
 
@@ -396,8 +396,8 @@ class BridgeRouterTest {
     fun `关闭提示保留绑定且重新挂接后使用已连接文案`() =
         runBlocking {
             val binding = (registry.bind(robot, target) as BindResult.Bound).binding
-            router.onSuspended(binding, "修复登录", "imux · Codex · 修复登录")
-            assertEquals(listOf("SUSPENDED(修复登录)\n\n---\n` imux · Codex · 修复登录 `"), sentTexts())
+            router.onSuspended(binding, "修复登录")
+            assertEquals(listOf("SUSPENDED(修复登录)"), sentTexts())
             assertEquals(binding, registry.bindingOf(robot))
             val restored = registry.reattach(robot, "new-tab")!!
             router.onReattached(restored, "imux", "Codex", "修复登录")
@@ -410,7 +410,7 @@ class BridgeRouterTest {
         runBlocking {
             val old = (registry.bind(robot, target) as BindResult.Bound).binding
             val replacement = (registry.bind(robot, target.copy(tabId = "other-tab")) as BindResult.Bound).binding
-            router.onSuspended(old, "旧会话", null)
+            router.onSuspended(old, "旧会话")
             assertTrue(sentTexts().isEmpty())
             assertEquals(replacement, registry.bindingOf(robot))
         }
@@ -428,7 +428,7 @@ class BridgeRouterTest {
             val job = launch { r.onReattached(binding, "imux", "Codex", "修复登录") }
             waiting.await()
             job.cancel()
-            r.onSuspended(binding, "修复登录", null)
+            r.onSuspended(binding, "修复登录")
             online.complete(Unit)
             job.join()
             assertEquals(listOf("SUSPENDED(修复登录)"), sentTexts())
@@ -479,7 +479,7 @@ class BridgeRouterTest {
                 val job = projectScope.launch { r.onRebound(emptyList(), binding, "imux", "Codex", "修复登录") }
                 firstAttempt.await()
                 projectScope.cancel()
-                r.onSuspended(binding, "修复登录", null)
+                r.onSuspended(binding, "修复登录")
                 job.join()
                 assertEquals(listOf("SUSPENDED(修复登录)"), delivered)
                 assertEquals("关闭后不能重试已连接提示", 1, connectionAttempts)
@@ -514,7 +514,7 @@ class BridgeRouterTest {
                 val job = projectScope.launch { r.onRebound(listOf(old to "旧会话"), binding, "imux", "Codex", "修复登录") }
                 waiting.await()
                 projectScope.cancel()
-                r.onSuspended(binding, "修复登录", null)
+                r.onSuspended(binding, "修复登录")
                 released.complete(Unit)
                 job.join()
                 assertEquals(listOf("SUSPENDED(修复登录)"), sentTexts())
@@ -909,16 +909,23 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `连接与恢复连接的提示正文已写明会话，不再署名；断开提示署名`() =
+    fun `连接状态提示（连接、恢复连接、离线、断开）正文写明工程 · 智能体 · 标题，都不署名`() =
         runBlocking {
-            val r = titledRouter(channel)
+            val r = BridgeRouter(
+                registry, { owner }, port, { channel }, Texts,
+                sessionLabelOf = { "imux · Claude Code · 代理商改造" },
+                sessionNameOf = { _, title -> "imux · Claude Code · $title" },
+            )
             val binding = (registry.bind(robot, target) as BindResult.Bound).binding
             r.onBound(binding, "imux", "Claude Code", "代理商改造")
             assertEquals("CONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
             r.onReattached(binding, "imux", "Claude Code", "代理商改造")
             assertEquals("CONNECTED(imux/Claude Code/代理商改造)", sentTexts().last())
-            r.onReleased(binding, "代理商改造")
-            assertEquals("RELEASED(代理商改造)$label", sentTexts().last())
+            r.onSuspended(binding, "代理商改造")
+            assertEquals("SUSPENDED(imux · Claude Code · 代理商改造)", sentTexts().last())
+            // 断开时标签可能已关，用调用方记下的标题
+            r.onReleased(binding, "关闭前的标题")
+            assertEquals("RELEASED(imux · Claude Code · 关闭前的标题)", sentTexts().last())
         }
 
     @Test

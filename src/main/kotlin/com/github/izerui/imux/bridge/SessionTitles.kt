@@ -33,7 +33,7 @@ internal fun sessionLabel(
     }.joinToString(" · ")
         .let { if (it.isEmpty()) it else "$TITLE_ICON $it" }
 
-/** 署名与「已连接」「已断开会话」提示打头的图标。 */
+/** 署名与连接状态提示（已连接、已断开会话、会话已离线）打头的图标。 */
 internal const val TITLE_ICON = "💬"
 private const val MAX_LABEL_PROJECT_CHARS = 30
 private const val MAX_LABEL_AGENT_CHARS = 20
@@ -59,7 +59,13 @@ object SessionTitles {
     /**
      * 手机回复末尾的署名：💬 工程 · 智能体 · 会话标题，同时连着几个会话时据此分辨。
      */
-    fun label(binding: Binding): String = sessionLabel(projectName(binding), binding.target.agentType.displayName, of(binding))
+    fun label(binding: Binding): String = label(binding, of(binding))
+
+    /** 同上，标题由调用方给出（标签已关闭时用它还开着时记下的名字）。 */
+    fun label(
+        binding: Binding,
+        title: String,
+    ): String = sessionLabel(projectName(binding), binding.target.agentType.displayName, title)
 
     /** 会话所在工程的名字；工程已关闭时取项目路径的最后一段。 */
     fun projectName(binding: Binding): String {

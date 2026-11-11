@@ -9,7 +9,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 
-internal data class ClosingBinding(val binding: Binding, val title: String, val label: String)
+internal data class ClosingBinding(val binding: Binding, val title: String)
 
 /** 在关闭回调返回、渠道被销毁前完成通知；项目关闭与应用退出可能先后触发，只发送一次。 */
 internal class BridgeCloseNotifier(

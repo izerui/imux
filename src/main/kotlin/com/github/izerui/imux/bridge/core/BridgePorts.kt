@@ -78,10 +78,11 @@ interface BridgeTexts {
     /** 框开着时回复带了附件，什么也没按。 */
     fun promptRejected(): String
 
-    fun released(sessionTitle: String): String
+    /** [session] 是写好的「💬 工程 · 智能体 · 标题」，与连接提示同一写法。 */
+    fun released(session: String): String
 
     /** 工程或 IDE 关闭：绑定还在，重新打开后自动恢复，与解绑的 [released] 区分。 */
-    fun suspended(sessionTitle: String): String
+    fun suspended(session: String): String
 
     fun transcriptRestarted(): String
 

@@ -44,9 +44,14 @@ class BridgeRouter(
     private val awaitOnline: suspend (RobotId) -> Unit = {},
     /**
      * 发到手机的消息末尾的署名（工程 · 智能体 · 会话标题），手机上同时连着多个会话时据此分辨；返回 null 不署名。
-     * 凡能确定所属会话的消息都署名；连接、恢复连接的提示正文已写明这三项，不重复。
+     * 凡能确定所属会话的消息都署名；连接状态提示（连接、恢复连接、断开、离线）正文已写明会话，不署名。
      */
     private val sessionLabelOf: (Binding) -> String? = { null },
+    /**
+     * 断开、离线提示正文里的会话：与连接提示一样写成「💬 工程 · 智能体 · 标题」。
+     * 标题由调用方传入：断开时标签可能已关，只能用它还开着时记下的名字。
+     */
+    private val sessionNameOf: (Binding, String) -> String = { _, title -> title },
     /** 作答时相邻两次按键的间隔：一次写入多个键，CLI 会当成一段粘贴；测试传 0。 */
     private val keyGapMs: Long = 150,
     /** 等选择框画好、或作答后等屏幕刷新的时间；测试传 0。 */
@@ -668,9 +673,8 @@ class BridgeRouter(
     suspend fun onSuspended(
         binding: Binding,
         sessionTitle: String,
-        label: String?,
     ) {
-        send(binding, texts.suspended(sessionTitle), label)
+        send(binding, texts.suspended(sessionNameOf(binding, sessionTitle)), label = null)
     }
 
     /**
@@ -688,7 +692,7 @@ class BridgeRouter(
         }
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
-        deliver(channel, OutboundMessage(binding.robotId, owner.chatId, labeled(texts.released(sessionTitle), sessionLabelOf(binding), channel)))
+        deliver(channel, OutboundMessage(binding.robotId, owner.chatId, texts.released(sessionNameOf(binding, sessionTitle))))
     }
 
     /**

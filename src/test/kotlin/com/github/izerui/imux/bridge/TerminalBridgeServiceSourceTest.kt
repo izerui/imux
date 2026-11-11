@@ -77,8 +77,8 @@ class TerminalBridgeServiceSourceTest {
     fun `关闭通知先取消项目任务并预取署名再同步等待发送`() {
         val closing = code.compact(code.bodyAfter("private fun notifyClosing()", '{'))
         assertTrue(closing.startsWith("{projectClosing=truescope.cancel()"))
-        assertTrue(closing.contains("closeNotifier.notifyOnce(bindingsInProject().map{ClosingBinding(it,SessionTitles.of(it),SessionTitles.label(it))})"))
-        assertTrue(code.normalized.contains("hub.router.onSuspended(notice.binding, notice.title, notice.label)"))
+        assertTrue(closing.contains("closeNotifier.notifyOnce(bindingsInProject().map{ClosingBinding(it,SessionTitles.of(it))})"))
+        assertTrue(code.normalized.contains("hub.router.onSuspended(notice.binding, notice.title)"))
         val reattach = code.compact(code.bodyAfter("private fun reattached(binding: Binding)", '{'))
         assertTrue(reattach.startsWith("{if(projectClosing||project.isDisposed)return"))
         assertTrue(reattach.contains("notifyConnection{hub.router.onReattached("))

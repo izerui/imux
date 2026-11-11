@@ -17,7 +17,7 @@ class BridgeCloseNotifierTest {
     private fun notice(id: String): ClosingBinding {
         val registry = BindingRegistry()
         val binding = (registry.bind(RobotId(id), SessionTarget("/p", id, AgentType.CODEX, id)) as BindResult.Bound).binding
-        return ClosingBinding(binding, id, "project · Codex · $id")
+        return ClosingBinding(binding, id)
     }
 
     @Test(timeout = 5_000)
