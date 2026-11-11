@@ -113,6 +113,33 @@ interface BridgeTexts {
     fun attachmentFailed(): String
 
     fun attachmentTooLarge(): String
+
+    /** hook 送来的权限确认：[listing] 同 [permission]；手机只能允许这一次、拒绝或说要求。 */
+    fun hookPermission(listing: String): String
+
+    /** 推送的确认后面还有 [count] 个在排队。 */
+    fun hookQueued(count: Int): String
+
+    /** 手机允许了权限请求。 */
+    fun hookAllowed(): String
+
+    /** 手机拒绝了权限请求（含说了别的要求）。 */
+    fun hookDenied(): String
+
+    /** 提问的各题答案已一次性交给 Claude。 */
+    fun hookAnswersSubmitted(): String
+
+    /** 手机批准了计划：[auto] 为真切到自动模式，否则改文件时逐个确认。 */
+    fun hookPlanApproved(auto: Boolean): String
+
+    /** 手机没有批准计划，原话已交给 Claude。 */
+    fun hookPlanRevising(): String
+
+    /** 推给手机的权限请求已在电脑上允许。 */
+    fun hookAllowedLocally(): String
+
+    /** 推给手机的确认已在电脑上拒绝或按 Esc 关掉。 */
+    fun hookDeniedLocally(): String
 }
 
 sealed interface PlaceResult {

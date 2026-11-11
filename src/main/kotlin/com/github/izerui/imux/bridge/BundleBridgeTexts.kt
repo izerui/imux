@@ -89,4 +89,23 @@ internal object BundleBridgeTexts : BridgeTexts {
     override fun attachmentFailed() = ImuxBundle.message("bridge.reply.attachmentFailed")
 
     override fun attachmentTooLarge() = ImuxBundle.message("bridge.reply.attachmentTooLarge")
+
+    override fun hookPermission(listing: String) = ImuxBundle.message("bridge.status.hookPermission", listing)
+
+    override fun hookQueued(count: Int) = ImuxBundle.message("bridge.status.hookQueued", count)
+
+    override fun hookAllowed() = ImuxBundle.message("bridge.reply.hookAllowed")
+
+    override fun hookDenied() = ImuxBundle.message("bridge.reply.hookDenied")
+
+    override fun hookAnswersSubmitted() = ImuxBundle.message("bridge.reply.hookAnswersSubmitted")
+
+    override fun hookPlanApproved(auto: Boolean) =
+        if (auto) ImuxBundle.message("bridge.reply.hookPlanApproved.auto") else ImuxBundle.message("bridge.reply.hookPlanApproved.manual")
+
+    override fun hookPlanRevising() = ImuxBundle.message("bridge.reply.hookPlanRevising")
+
+    override fun hookAllowedLocally() = ImuxBundle.message("bridge.status.hookAllowedLocally")
+
+    override fun hookDeniedLocally() = ImuxBundle.message("bridge.status.hookDeniedLocally")
 }

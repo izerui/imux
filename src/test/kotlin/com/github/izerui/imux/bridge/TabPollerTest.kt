@@ -108,6 +108,24 @@ class TabPollerTest {
         override fun attachmentFailed() = "ATT_FAILED"
 
         override fun attachmentTooLarge() = "ATT_TOO_LARGE"
+
+        override fun hookPermission(listing: String) = "HOOK_PERMISSION($listing)"
+
+        override fun hookQueued(count: Int) = "HOOK_QUEUED($count)"
+
+        override fun hookAllowed() = "HOOK_ALLOWED"
+
+        override fun hookDenied() = "HOOK_DENIED"
+
+        override fun hookAnswersSubmitted() = "HOOK_ANSWERS_SUBMITTED"
+
+        override fun hookPlanApproved(auto: Boolean) = "HOOK_PLAN_APPROVED($auto)"
+
+        override fun hookPlanRevising() = "HOOK_PLAN_REVISING"
+
+        override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
+
+        override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"
     }
 
     private val router =

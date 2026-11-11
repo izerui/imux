@@ -17,6 +17,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * 电脑端输入带标签单独转发；远程输入在记录中再次出现时不回显；等待确认立即推送。
  * 终端停在提问或权限确认框上时，按记录里的工具调用推送题目或要批准的内容，手机的回复按键作答
  * （见 [AskedQuestions]、[PermissionPrompts]），不看屏幕；认不出的框只提示到 IDE 中处理。
+ * 启动时注入了 PermissionRequest hook 的 Claude 标签改走 hook：每次确认（含子代理的）由 hook 送来，按标签排队、
+ * 一次只推队首；手机的回复译成 [HookDecision] 回给 hook，不按键。电脑端先答时由 hook 入口告知，先答者生效。
  * 同一标签的 [onSessionEvents]、[onTurnCompleted] 由调用方串行调用。
  * 只做简单转接：换绑、断开的空档里漏掉的内容不补（见 AGENTS.md 手机桥接约定）。
  */
@@ -65,6 +67,12 @@ class BridgeRouter(
     /** 各终端标签的轮次与回显状态，只在 [lock] 内访问。 */
     private val tabs = HashMap<String, TabState>()
 
+    /** 各标签挂起的 hook 请求，只在 [lock] 内访问；与 [tabs] 分开存放，清掉轮次状态时不会漏回还挂着的请求。 */
+    private val hookQueues = HashMap<String, HookPromptQueue>()
+
+    /** Claude 启动时注入了 hook 的标签，只在 [lock] 内访问。这些标签不再按记录推确认框。 */
+    private val hookedTabs = HashSet<String>()
+
     /** 加锁提交阶段的结果。 */
     private sealed interface SubmitPhase {
         data class Done(val result: SubmitResult) : SubmitPhase
@@ -80,6 +88,8 @@ class BridgeRouter(
         /** 多题提问答完一题，电脑上已翻到下一题：把当前这题推给手机。 */
         data class NextQuestion(val binding: Binding) : SubmitPhase
 
+        /** 手机答了 hook 送来的确认：依次发出确认与下一条推送。 */
+        data class Hook(val binding: Binding, val texts: List<String>) : SubmitPhase
     }
 
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
@@ -122,6 +132,12 @@ class BridgeRouter(
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
                 var submission = text
+                // hook 送来的确认优先：译成决定回给 hook，不按任何键，也不看按记录推过的框
+                val hookHead = synchronized(lock) { hookQueues[tabId]?.head() }
+                if (hookHead != null) {
+                    if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
+                    return@withLock answerHook(current, hookHead, message.text)
+                }
                 // 推给手机的框，作答前再确认它仍是此刻停着的那个：按调用的结构作答，不看屏幕。引用只取正文，带附件的不提交
                 val shown =
                     tab(tabId) {
@@ -230,6 +246,10 @@ class BridgeRouter(
                 tab(phase.binding.target.tabId) { currentQuestionText(phase.binding) }?.let { send(phase.binding, it) }
                 InboundOutcome.SUBMITTED_TO_TERMINAL
             }
+            is SubmitPhase.Hook -> {
+                phase.texts.forEach { send(phase.binding, it) }
+                InboundOutcome.SUBMITTED_TO_TERMINAL
+            }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
         }
     }
@@ -253,8 +273,164 @@ class BridgeRouter(
 
     /** 远程控制关闭时调用：丢弃尚未发出的回复与轮次状态，重新开启后不补发关闭前的内容。 */
     fun discardPending() {
-        synchronized(lock) { tabs.clear() }
+        val pending =
+            synchronized(lock) {
+                tabs.clear()
+                hookQueues.values.flatMap { it.drain() }.also { hookQueues.clear() }
+            }
+        pending.forEach { it.respond(HookDecision.Pass) }
     }
+
+    /** 标签的 Claude 启动时注入了 hook（true）或会话结束（false，同时放行它挂起的请求）。 */
+    fun hookAttached(
+        tabId: String,
+        attached: Boolean,
+    ) {
+        synchronized(lock) { if (attached) hookedTabs += tabId else hookedTabs -= tabId }
+        if (!attached) releaseHooks(tabId)
+    }
+
+    /** 未绑定立即 respond(Pass)；否则入队，成为队首时推送。respond 只会被调用一次。 */
+    suspend fun onHookRequest(
+        tabId: String,
+        request: HookRequest,
+        respond: (HookDecision) -> Unit,
+    ) {
+        // 在锁内查绑定再入队：解绑后的放行（onReleased）也在锁内清队，入队与清队不会错过
+        val (binding, text) =
+            synchronized(lock) {
+                val binding = bindings.bindingForTab(tabId) ?: return@synchronized null
+                val queue = hookQueues.getOrPut(tabId) { HookPromptQueue() }
+                queue.add(HookPromptQueue.Entry(request, respond))
+                binding to queue.nextPush(binding)
+            } ?: return respond(HookDecision.Pass)
+        text?.let { send(binding, it) }
+    }
+
+    /** 电脑端允许后工具已跑完：了结 matchKey 相同的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。 */
+    suspend fun onHookToolDone(
+        tabId: String,
+        matchKey: String,
+        answers: String?,
+    ) {
+        settleLocally(tabId, { matchLocal(matchKey) }, respond = true) { request ->
+            when (request.kind) {
+                PromptKind.PERMISSION -> texts.hookAllowedLocally()
+                PromptKind.QUESTION -> texts.promptAnsweredLocally(answers)
+                PromptKind.PLAN -> texts.promptAnsweredLocally(null)
+            }
+        }
+    }
+
+    /** hook 连接被关闭（电脑端拒绝或 Esc）：了结该请求，不再 respond。 */
+    suspend fun onHookClosed(
+        tabId: String,
+        id: Long,
+    ) {
+        settleLocally(tabId, { remove(id) }, respond = false) { texts.hookDeniedLocally() }
+    }
+
+    /**
+     * 电脑端先答掉了一个请求：出队，推给过这台手机的才告诉它（没推过的静默出队），再推下一个。
+     * 手机已经答过、出了队的，这里找不到，什么也不做。
+     */
+    private suspend fun settleLocally(
+        tabId: String,
+        take: HookPromptQueue.() -> HookPromptQueue.Entry?,
+        respond: Boolean,
+        notice: (HookRequest) -> String,
+    ) {
+        val (entry, binding, next) =
+            synchronized(lock) {
+                val queue = hookQueues[tabId] ?: return
+                val entry = queue.take() ?: return
+                val binding = bindings.bindingForTab(tabId)
+                Triple(entry, binding, binding?.let { queue.nextPush(it) })
+            }
+        if (respond) entry.respond(HookDecision.Pass)
+        binding ?: return
+        if (entry.pushedEpoch == binding.epoch) send(binding, notice(entry.request))
+        next?.let { send(binding, it) }
+    }
+
+    /** 放行标签挂起的全部请求，交给电脑处理；不发消息。 */
+    private fun releaseHooks(tabId: String) {
+        val pending = synchronized(lock) { hookQueues.remove(tabId)?.drain().orEmpty() }
+        pending.forEach { it.respond(HookDecision.Pass) }
+    }
+
+    /**
+     * 手机答 hook 队首：译成决定、出队并回给 hook，返回要发的确认与下一条推送。提问不是最后一题时只记下答案、推下一题，
+     * 全部答完才一起回给 hook。须在提交锁内调用；respond 在 [lock] 外调用。
+     */
+    private fun answerHook(
+        binding: Binding,
+        entry: HookPromptQueue.Entry,
+        reply: String,
+    ): SubmitPhase {
+        val tabId = binding.target.tabId
+        val request = entry.request
+        val (decision, sending) =
+            synchronized(lock) {
+                val queue = hookQueues[tabId]
+                // 取队首与作答之间电脑端已了结：这句不再算作答，按带附件那样提示，免得误贴进终端
+                if (queue == null || queue.head() !== entry) return SubmitPhase.PromptRejected
+                val (decision, ack) =
+                    when (request.kind) {
+                        PromptKind.QUESTION -> {
+                            val questions = request.questions.orEmpty()
+                            val question = questions.getOrNull(entry.questionIndex) ?: return SubmitPhase.PromptRejected
+                            val answer = AskedQuestions.hookAnswer(question, reply) ?: return SubmitPhase.PromptRejected
+                            entry.answers += question.question to answer
+                            if (entry.questionIndex < questions.size) {
+                                return SubmitPhase.Hook(binding, listOfNotNull(queue.promptText(binding, entry)))
+                            }
+                            HookDecision.Allow(answers = entry.answers.toMap()) to texts.hookAnswersSubmitted()
+                        }
+                        PromptKind.PERMISSION ->
+                            HookReplies.permission(reply).let { it to if (it is HookDecision.Allow) texts.hookAllowed() else texts.hookDenied() }
+                        PromptKind.PLAN ->
+                            HookReplies.plan(reply).let {
+                                it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.mode == AUTO_MODE) else texts.hookPlanRevising()
+                            }
+                    }
+                queue.remove(request.id)
+                decision to listOfNotNull(ack, queue.nextPush(binding))
+            }
+        entry.respond(decision)
+        return SubmitPhase.Hook(binding, sending)
+    }
+
+    /** 队首还没推给 [binding] 时排好推送内容并记下已推；没有要推的返回 null。在 [lock] 内调用。 */
+    private fun HookPromptQueue.nextPush(binding: Binding): String? {
+        val entry = head() ?: return null
+        if (entry.pushedEpoch == binding.epoch) return null
+        return promptText(binding, entry)?.also { entry.pushedEpoch = binding.epoch }
+    }
+
+    /**
+     * 一个请求推给手机的内容：权限带工具与来源，计划带全文，提问推当前这题；后面还有排队的，末尾标出个数。
+     * 在 [lock] 内调用。
+     */
+    private fun HookPromptQueue.promptText(
+        binding: Binding,
+        entry: HookPromptQueue.Entry,
+    ): String? {
+        val request = entry.request
+        val queued = (size - 1).takeIf { it > 0 }?.let { "\n\n" + texts.hookQueued(it) }.orEmpty()
+        return when (request.kind) {
+            PromptKind.PERMISSION ->
+                fitted(binding, PermissionPrompts.render(ToolCall(request.toolName, request.detail), request.agentType)) { texts.hookPermission(it) + queued }
+            PromptKind.PLAN -> fitted(binding, request.detail) { texts.plan(it) + queued }
+            PromptKind.QUESTION -> {
+                val questions = request.questions.orEmpty()
+                val question = questions.getOrNull(entry.questionIndex) ?: return null
+                texts.question(AskedQuestions.render(question, texts.multiSelectMark()), entry.questionIndex + 1, questions.size) + queued
+            }
+        }
+    }
+
+    private fun hooked(tabId: String): Boolean = synchronized(lock) { tabId in hookedTabs }
 
     /** 引用的文字用 Markdown 引用块放在正文前，Agent 才知道“这里”指的是哪段。 */
     private fun withQuote(
@@ -421,8 +597,9 @@ class BridgeRouter(
                 is SessionEvent.QuestionAsked -> tab(tabId) { questionAsked(event.toolUseId, event.questions) }
             }
         }
-        // 等待通知先于记录到达时，那时还确定不了停着的框：登记好这批调用后再看一次，能确定、又没推过就补推
-        pushWaitingSubject(tabId, binding)
+        // 等待通知先于记录到达时，那时还确定不了停着的框：登记好这批调用后再看一次，能确定、又没推过就补推。
+        // 注入了 hook 的标签由 hook 推确认框，不按记录推
+        if (!hooked(tabId)) pushWaitingSubject(tabId, binding)
         // 结算之后才读到的回复（完成信号先到）：立即发；若这一轮正等着它，排着的提示随后发
         val late = tab(tabId) { takeIfSettled() }
         if (late != null) {
@@ -594,6 +771,11 @@ class BridgeRouter(
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
         tab(tabId) { waitingStarted(reason) }
+        // 注入了 hook 的标签：确认框由 hook 推送，有挂起的请求就不再提示；没有时只提示到 IDE 中处理（如空闲提醒）
+        if (hooked(tabId)) {
+            if (synchronized(lock) { hookQueues[tabId]?.size ?: 0 } == 0) send(binding, texts.waiting(reason))
+            return
+        }
         // 不看屏幕：能确定停着的框就推送可作答的内容（提问的题目、要批准的调用、计划）；确定不了只提示到 IDE 中处理
         if (pushWaitingSubject(tabId, binding)) return
         // 同一个框的等待通知重复到达不再提示；确定不了时，之前推过的框已不对应此刻停着的，撤销它
@@ -621,6 +803,7 @@ class BridgeRouter(
     }
 
     suspend fun onTranscriptRestarted(tabId: String) {
+        releaseHooks(tabId)
         resetBackground(tabId)
         tab(tabId) { forgetPrompts() }
         val binding = bindings.bindingForTab(tabId) ?: return
@@ -690,6 +873,8 @@ class BridgeRouter(
             // 换绑时新绑定先建立、旧绑定的清理后执行：标签已被接管时，它的状态属于新绑定
             if (bindings.bindingForTab(tabId) == null) tabs.remove(tabId)
         }
+        // 挂起的请求推给的是这台手机：一律交还电脑，不留给之后接管的绑定
+        releaseHooks(tabId)
         val owner = ownerOf(binding.robotId) ?: return
         val channel = channelOf(binding.robotId) ?: return
         deliver(channel, OutboundMessage(binding.robotId, owner.chatId, texts.released(sessionNameOf(binding, sessionTitle))))
@@ -815,5 +1000,8 @@ class BridgeRouter(
         const val RATE_LIMIT_RETRIES = 6
         const val SEEN_CAPACITY = 1000
         const val NOT_READY_ATTEMPTS = 3
+
+        /** 计划批准后切到的自动模式，见 [HookReplies.plan]。 */
+        const val AUTO_MODE = "auto"
     }
 }
