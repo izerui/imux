@@ -5,7 +5,6 @@ import com.github.izerui.imux.bridge.json.obj
 import com.github.izerui.imux.bridge.json.string
 import com.github.izerui.imux.mcp.loopbackBearer
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelFutureListener
 import io.netty.channel.ChannelHandlerContext
@@ -57,11 +56,10 @@ class ClaudeHookHandler : HttpRequestHandler() {
         if (!request.headers().get(HttpHeaderNames.CONTENT_TYPE).orEmpty().startsWith("application/json", true)) {
             respond(415); return true
         }
-        // 计划全文可能较长，上限比 MCP 入口的 64 KB 宽
-        if (request.content().readableBytes() > 1024 * 1024) { respond(413); return true }
-        val body = runCatching { JsonParser.parseString(request.content().toString(Charsets.UTF_8)) }.getOrNull()
-            ?.takeIf { it.isJsonObject }?.asJsonObject
-        if (body == null) { respond(400); return true }
+        val body = when (val parsed = ClaudeHookJson.body(request.content().readableBytes()) { request.content().toString(Charsets.UTF_8) }) {
+            is ClaudeHookJson.Body.Parsed -> parsed.json
+            is ClaudeHookJson.Body.Reply -> { respond(parsed.status); return true }
+        }
         val router = BridgeHub.getInstance().router
         when (body.string("hook_event_name")) {
             "PostToolUse", "PostToolUseFailure" -> {
@@ -88,9 +86,16 @@ class ClaudeHookHandler : HttpRequestHandler() {
                         respond(500)
                         throw e
                     } catch (e: Exception) {
-                        // 回 500 让 Claude 只走电脑端确认框
+                        // 回 500 让 Claude 只走电脑端确认框；可能已入队，清掉条目免得卡住队首
                         LOG.warn("Claude hook 请求处理失败", e)
                         respond(500)
+                        try {
+                            router.onHookClosed(tabId, id)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            LOG.warn("Claude hook 失败请求出队失败", e)
+                        }
                     }
                     // 入队之后再监听：连接若在入队前就已关闭，监听会立即触发，不会漏掉
                     if (!responded.get()) channel.closeFuture().addListener(closed)

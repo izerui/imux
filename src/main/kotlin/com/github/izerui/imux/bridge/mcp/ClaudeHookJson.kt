@@ -8,6 +8,7 @@ import com.github.izerui.imux.bridge.transcript.ClaudeToolInputs
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 const val CLAUDE_HOOK_PATH = "/imux/claude-hook"
 
@@ -18,8 +19,31 @@ internal object ClaudeHookJson {
         val toolName = body.string("tool_name") ?: return null
         val input = body.obj("tool_input") ?: JsonObject()
         val questions = if (toolName == ASK_USER_QUESTION) ClaudeToolInputs.questions(input) ?: return null else null
-        return HookRequest(id, toolName, body.string("agent_type"), ClaudeToolInputs.detail(toolName, input), questions, matchKey(body))
+        // 子代理来源以 agent_id 为准：--agent 启动的主会话也带 agent_type，但不是子代理
+        val agentId = body.string("agent_id")
+        val agentType = agentId?.let { body.string("agent_type") }
+        return HookRequest(id, toolName, agentId, agentType, ClaudeToolInputs.detail(toolName, input), questions, matchKey(body))
     }
+
+    /** 请求体的解析结果：解析出的 JSON 对象，或要直接回的状态码。 */
+    sealed interface Body {
+        data class Parsed(val json: JsonObject) : Body
+
+        data class Reply(val status: Int) : Body
+    }
+
+    /**
+     * [size] 超过 [MAX_BODY_BYTES] 时不读请求体，回 200 {}：对 PermissionRequest 等于交给电脑，对 PostToolUse 无影响。
+     * 读出的不是 JSON 对象回 400。
+     */
+    fun body(size: Int, text: () -> String): Body {
+        if (size > MAX_BODY_BYTES) return Body.Reply(200)
+        val json = runCatching { JsonParser.parseString(text()) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+        return json?.let(Body::Parsed) ?: Body.Reply(400)
+    }
+
+    /** 计划全文可能较长，上限比 MCP 入口的 64 KB 宽。 */
+    private const val MAX_BODY_BYTES = 1024 * 1024
 
     /** agent_id + tool_name + 去掉 answers 键、键名递归排序后的 tool_input。 */
     fun matchKey(body: JsonObject): String {

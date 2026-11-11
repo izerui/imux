@@ -101,7 +101,7 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 | 电脑选否 / Esc | hook 连接被关闭 | 无需回 | 「电脑端已拒绝」 |
 | 记录重启、换绑解绑、远程控制关闭、标签关闭、IDE 退出 | 现有对应事件 | `{}` | 不单独提示 |
 
-本轮结束、被中断**不**清队列：后台子代理可能在主会话这一轮结束后才请求权限；电脑上 Esc 中断时连接本就会被关闭（实测 3）。
+本轮结束、中断时只放行主会话（无 `agent_id`）的挂起请求——主会话的确认活不过它所在的一轮，用作电脑端了结漏判（如 PostToolUse 的 tool_input 与请求不一致、提问选 Chat about this、允许后 Esc 中断）的兜底；后台子代理可能在本轮结束后才请求，不受影响。
 
 要点：
 

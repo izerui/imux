@@ -161,11 +161,12 @@ class HookPromptRouterTest {
         id: Long,
         toolName: String = "Bash",
         detail: String = "rm a.txt",
+        agentId: String? = null,
         agentType: String? = null,
         questions: List<AskedQuestion>? = null,
         matchKey: String = "key-$id",
     ): Pending {
-        val pending = Pending(HookRequest(id, toolName, agentType, detail, questions, matchKey))
+        val pending = Pending(HookRequest(id, toolName, agentId, agentType, detail, questions, matchKey))
         router.onHookRequest("tab-1", pending.request) { pending.decisions += it }
         return pending
     }
@@ -384,7 +385,7 @@ class HookPromptRouterTest {
             bind()
             router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
             val before = sentTexts().size
-            val pending = request(1, agentType = "general-purpose")
+            val pending = request(1, agentId = "a1", agentType = "general-purpose")
             assertTrue(sentTexts().last().startsWith("HOOK_PERMISSION("))
             assertEquals(before + 1, sentTexts().size)
             router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
@@ -392,12 +393,58 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `中断不放行挂起的请求`() =
+    fun `本轮结束只放行主会话的挂起请求，子代理的照常保留`() =
+        runBlocking {
+            bind()
+            val main = request(1, detail = "rm a.txt")
+            val agent = request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
+            assertEquals(1, sentTexts().size)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+            assertTrue(agent.decisions.isEmpty())
+            // 主会话的静默出队，子代理的成为队首推给手机，仍可作答
+            assertFalse(sentTexts().joinToString(), sentTexts().any { it.startsWith("HOOK_DENIED_LOCALLY") || it.startsWith("HOOK_ALLOWED_LOCALLY") })
+            val pushed = sentTexts().last()
+            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), agent.decisions)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+        }
+
+    @Test
+    fun `中断也放行主会话的挂起请求`() =
         runBlocking {
             bind()
             val pending = request(1)
             router.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
-            assertTrue(pending.decisions.isEmpty())
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+        }
+
+    @Test
+    fun `出错结束也放行主会话的挂起请求`() =
+        runBlocking {
+            bind()
+            val pending = request(1)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnFailed("boom")))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+        }
+
+    @Test
+    fun `提问答一半时电脑端了结，手机收到答案且队列继续`() =
+        runBlocking {
+            bind()
+            val asked = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors, fruits), matchKey = "k")
+            val next = request(2, detail = "rm b.txt")
+            router.onInbound(inbound("m1", "2"))
+            assertTrue(sentTexts().last().startsWith("QUESTION2/2("))
+            router.onHookToolDone("tab-1", "k", "颜色？ → 红\n水果？ → 苹果")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), asked.decisions)
+            val after = sentTexts().takeLast(2)
+            assertEquals("ANSWERED_LOCALLY(颜色？ → 红\n水果？ → 苹果)", after[0])
+            assertTrue(after[1], after[1].startsWith("HOOK_PERMISSION(") && after[1].contains("rm b.txt"))
+            router.onInbound(inbound("m2", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), next.decisions)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), asked.decisions)
         }
 
     @Test

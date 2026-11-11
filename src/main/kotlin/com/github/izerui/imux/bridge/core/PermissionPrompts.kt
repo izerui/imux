@@ -14,7 +14,7 @@ package com.github.izerui.imux.bridge.core
 object PermissionPrompts {
     /** 工具名一行，要批准的内容逐行跟在后面。有子代理来源时写在工具名后。 */
     internal fun render(call: ToolCall, agentType: String? = null): String {
-        val suffix = if (agentType != null) " · $agentType" else ""
+        val suffix = if (agentType != null) " · ${PhoneMarkdown.inline(agentType)}" else ""
         val name = "**${PhoneMarkdown.inline(call.name)}**$suffix"
         val detail = call.detail.lines().filter(String::isNotBlank).map { PhoneMarkdown.escapeLineStart(PhoneMarkdown.inline(it.trim())) }
         return (listOf(name) + detail).joinToString(PhoneMarkdown.LINE_BREAK)

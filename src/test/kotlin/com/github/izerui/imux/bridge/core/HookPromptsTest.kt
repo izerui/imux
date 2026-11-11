@@ -41,6 +41,20 @@ class HookPromptsTest {
         assertEquals(HookDecision.Deny("文件名换成 a.txt"), HookReplies.plan("文件名换成 a.txt"))
     }
 
+    @Test
+    fun `计划：像选项编号或字母的回复不当作修改意见`() {
+        val expected = HookDecision.Deny("The user does not want to proceed with this plan yet.")
+        assertEquals(expected, HookReplies.plan("3"))
+        assertEquals(expected, HookReplies.plan("c"))
+        assertEquals(expected, HookReplies.plan("1 2"))
+    }
+
+    @Test
+    fun `计划批准切到的自动模式取自同一个常量`() {
+        assertEquals("auto", HookReplies.AUTO_MODE)
+        assertEquals(HookDecision.Allow(mode = HookReplies.AUTO_MODE), HookReplies.plan("a"))
+    }
+
     private val fruitMulti = AskedQuestion(
         "选哪些？", true,
         listOf(AskedOption("苹果", null), AskedOption("香蕉", null), AskedOption("橙子", null)),
@@ -64,9 +78,14 @@ class HookPromptsTest {
     }
 
     @Test
+    fun `单选题回多个编号按原话`() {
+        assertEquals("1 3", AskedQuestions.hookAnswer(colorSingle, "1 3"))
+    }
+
+    @Test
     fun `种类按工具名区分`() {
         fun request(toolName: String) = HookRequest(
-            id = 1, toolName = toolName, agentType = null,
+            id = 1, toolName = toolName, agentId = null, agentType = null,
             detail = "", questions = null, matchKey = "",
         )
         assertEquals(PromptKind.QUESTION, request("AskUserQuestion").kind)
@@ -78,5 +97,11 @@ class HookPromptsTest {
     fun `子代理来源写在工具名后`() {
         val rendered = PermissionPrompts.render(ToolCall("Bash", "ls"), "general-purpose")
         assertEquals("**Bash** · general-purpose  \nls", rendered)
+    }
+
+    @Test
+    fun `子代理来源里的 Markdown 符号被转义`() {
+        val rendered = PermissionPrompts.render(ToolCall("Bash", "ls"), "my*agent`x")
+        assertEquals("**Bash** · my\\*agent\\`x  \nls", rendered)
     }
 }

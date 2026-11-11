@@ -84,10 +84,34 @@ class ClaudeHookJsonTest {
         val request = ClaudeHookJson.request(body, 7)!!
         assertEquals(7L, request.id)
         assertEquals("Bash", request.toolName)
+        assertEquals("a1", request.agentId)
         assertEquals("general-purpose", request.agentType)
         assertEquals("清理\nrm -rf build", request.detail)
         assertEquals(PromptKind.PERMISSION, request.kind)
         assertEquals(ClaudeHookJson.matchKey(body), request.matchKey)
+    }
+
+    @Test fun `没有 agent_id 的请求属于主会话，agent_type 不当作子代理来源`() {
+        val body = json(
+            """{"hook_event_name":"PermissionRequest","agent_type":"reviewer",
+                "tool_name":"Bash","tool_input":{"command":"ls"}}""",
+        )
+        val request = ClaudeHookJson.request(body, 1)!!
+        assertNull(request.agentId)
+        assertNull(request.agentType)
+    }
+
+    @Test fun `请求体超过 1 MB 时不解析，回 200 交给电脑`() {
+        assertEquals(ClaudeHookJson.Body.Reply(200), ClaudeHookJson.body(1024 * 1024 + 1) { error("超限时不应读取请求体") })
+    }
+
+    @Test fun `请求体恰好 1 MB 时照常解析`() {
+        assertEquals(ClaudeHookJson.Body.Parsed(json("{}")), ClaudeHookJson.body(1024 * 1024) { "{}" })
+    }
+
+    @Test fun `请求体不是 JSON 对象时回 400`() {
+        assertEquals(ClaudeHookJson.Body.Reply(400), ClaudeHookJson.body(2) { "[]" })
+        assertEquals(ClaudeHookJson.Body.Reply(400), ClaudeHookJson.body(3) { "{x" })
     }
 
     @Test fun `提问带上题目`() {

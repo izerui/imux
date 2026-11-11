@@ -355,6 +355,25 @@ class BridgeRouter(
         next?.let { send(binding, it) }
     }
 
+    /**
+     * 本轮结束或中断时放行主会话（无 agentId）挂起的请求，静默出队：主会话的确认活不过它所在的一轮，
+     * 用作电脑端了结漏判（PostToolUse 对不上、提问选 Chat about this、允许后 Esc 中断等）的兜底。
+     * 后台子代理可能在本轮结束后才请求，不动。队首变了就推新的队首。
+     */
+    private suspend fun releaseMainSessionHooks(
+        tabId: String,
+        binding: Binding,
+    ) {
+        val (released, next) =
+            synchronized(lock) {
+                val queue = hookQueues[tabId] ?: return
+                val released = queue.drainMainSession().ifEmpty { return }
+                released to queue.nextPush(binding)
+            }
+        released.forEach { it.respond(HookDecision.Pass) }
+        next?.let { send(binding, it) }
+    }
+
     /** 放行标签挂起的全部请求，交给电脑处理；不发消息。 */
     private fun releaseHooks(tabId: String) {
         val pending = synchronized(lock) { hookQueues.remove(tabId)?.drain().orEmpty() }
@@ -393,7 +412,7 @@ class BridgeRouter(
                             HookReplies.permission(reply).let { it to if (it is HookDecision.Allow) texts.hookAllowed() else texts.hookDenied() }
                         PromptKind.PLAN ->
                             HookReplies.plan(reply).let {
-                                it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.mode == AUTO_MODE) else texts.hookPlanRevising()
+                                it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.mode == HookReplies.AUTO_MODE) else texts.hookPlanRevising()
                             }
                     }
                 queue.remove(request.id)
@@ -576,6 +595,7 @@ class BridgeRouter(
                     sendSettledReply(tabId, tab(tabId) { endByMarker() })
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
+                    releaseMainSessionHooks(tabId, binding)
                 }
                 SessionEvent.TurnInterrupted -> {
                     // 手机作答时插件按 Esc 关框引起的中断，不当作电脑上中断告诉手机
@@ -583,6 +603,7 @@ class BridgeRouter(
                     if (!dismissal) send(binding, texts.turnInterrupted())
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
+                    releaseMainSessionHooks(tabId, binding)
                 }
                 is SessionEvent.TurnFailed -> {
                     tab(tabId) { interrupt() }
@@ -590,6 +611,7 @@ class BridgeRouter(
                     send(binding, texts.turnFailed(reason))
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
+                    releaseMainSessionHooks(tabId, binding)
                 }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
                 is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description, event.subagent) }
@@ -1002,8 +1024,5 @@ class BridgeRouter(
         const val RATE_LIMIT_RETRIES = 6
         const val SEEN_CAPACITY = 1000
         const val NOT_READY_ATTEMPTS = 3
-
-        /** 计划批准后切到的自动模式，见 [HookReplies.plan]。 */
-        const val AUTO_MODE = "auto"
     }
 }

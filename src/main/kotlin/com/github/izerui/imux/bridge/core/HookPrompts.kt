@@ -1,9 +1,13 @@
 package com.github.izerui.imux.bridge.core
 
-/** 一次 PermissionRequest。[id] 由入口分配；[matchKey] 用来对上随后的 PostToolUse。 */
+/**
+ * 一次 PermissionRequest。[id] 由入口分配；[matchKey] 用来对上随后的 PostToolUse。
+ * [agentId] 为 null 是主会话的请求，否则来自子代理，[agentType] 是子代理的类型（主会话时为 null）。
+ */
 data class HookRequest(
     val id: Long,
     val toolName: String,
+    val agentId: String?,
     val agentType: String?,
     val detail: String,
     val questions: List<AskedQuestion>?,
@@ -41,6 +45,9 @@ object HookReplies {
     private const val DENIED_AND_SAID = "The user denied this tool call from their phone and said: "
     private const val PLAN_DENIED = "The user does not want to proceed with this plan yet."
 
+    /** 计划选 1 后切到的自动模式。 */
+    const val AUTO_MODE = "auto"
+
     /** 权限确认：允许词 → Allow()；拒绝词或像选项编号/字母 → 通用拒绝；其余 → 拒绝并附原话。 */
     fun permission(reply: String): HookDecision {
         val word = TerminalKeys.normalizeReply(reply).lowercase()
@@ -54,14 +61,20 @@ object HookReplies {
         }
     }
 
-    /** 计划确认：1/a → auto，2/b → default，拒绝词（去掉 2/b 再加「不执行」「不執行」）→ 通用不执行，其他 → Deny(原话)。 */
+    /**
+     * 计划确认：1/a → auto，2/b → default，拒绝词（去掉 2/b 再加「不执行」「不執行」）或其余像选项编号/字母的回复 → 通用不执行，
+     * 其他 → Deny(原话)。「3」之类不当作修改意见转给 Claude。
+     */
     fun plan(reply: String): HookDecision {
         val word = TerminalKeys.normalizeReply(reply).lowercase()
         return when (word) {
-            "1", "a" -> HookDecision.Allow(mode = "auto")
+            "1", "a" -> HookDecision.Allow(mode = AUTO_MODE)
             "2", "b" -> HookDecision.Allow(mode = "default")
             in PermissionPrompts.DENY - setOf("2", "b") + setOf("不执行", "不執行") -> HookDecision.Deny(PLAN_DENIED)
-            else -> HookDecision.Deny(reply.trim())
+            else -> if (PermissionPrompts.OPTION_LIKE.matches(word))
+                HookDecision.Deny(PLAN_DENIED)
+            else
+                HookDecision.Deny(reply.trim())
         }
     }
 }
