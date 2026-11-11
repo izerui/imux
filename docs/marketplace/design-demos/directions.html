@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 复用宣传片的界面重建、字体与素材：相对路径都以 docs/promo-video/ 为根 -->
+<base href="../../promo-video/">
+<title>imux · 插件市场预览图 · 三方向初稿</title>
+<link rel="stylesheet" href="assets/ui/ui.css">
+<script src="assets/ui/ui.js"></script>
+<script src="assets/ui/ui2.js"></script>
+<style>
+@font-face { font-family: "LXGW WenKai"; src: url("assets/fonts/LXGWWenKai-500.woff") format("woff"); font-weight: 500; }
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-500.woff") format("woff"); font-weight: 500; }
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-900.woff") format("woff"); font-weight: 900; }
+@font-face { font-family: "Inter"; src: url("assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; }
+html, body { margin: 0; background: #000; }
+#slide { position: relative; width: 1600px; height: 1000px; overflow: hidden; }
+.hand { font-family: "LXGW WenKai", serif; font-weight: 500; }
+.grain::after { content: ""; position: absolute; inset: 0; background: url("assets/grain.svg"); opacity: .5; mix-blend-mode: multiply; pointer-events: none; }
+
+/* 迷你 IDE：会话面板 + 终端，一个窗口 */
+.ide { position: absolute; display: flex; background: #1e1f22; border: 2px solid #3c3f44; border-radius: 22px; overflow: hidden; box-shadow: 0 40px 100px #0009; }
+.ide .ui-panel { border: 0; border-right: 2px solid #393b40; border-radius: 0; box-shadow: none; width: 640px; flex: none; }
+.ide .ui-term { border: 0; border-radius: 0; box-shadow: none; flex: 1; }
+.ide .ui-iconbar { display: none; }
+.ide .ui-term .tab, .ide .ui-term .foot span { white-space: nowrap; }
+
+/* A · 窗内一景（宣传片内景） */
+.A { background: radial-gradient(1000px 700px at 62% 42%, #ffdca4 0%, #f0b571 42%, #d98d4c 75%, #a85a28 100%); }
+.A .shadow { position: absolute; left: 760px; top: -140px; width: 1000px; height: 900px; background:
+  linear-gradient(90deg, transparent 47%, #5a2c1040 48.5%, #5a2c1040 51.5%, transparent 53%),
+  linear-gradient(180deg, transparent 44%, #5a2c1038 45.5%, #5a2c1038 48.5%, transparent 50%);
+  transform: skewX(-14deg) rotate(4deg); filter: blur(14px); }
+.A .sill { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: linear-gradient(#5a3a26, #3d271a); }
+.A .cap { position: absolute; color: #2a1a10; font-size: 76px; line-height: 1.2; letter-spacing: 3px; }
+.A .cap em { font-style: normal; color: #9a4a12; }
+.A .subt { position: absolute; color: #5a3418; font-size: 30px; line-height: 1.6; letter-spacing: 1px; }
+.scrap { position: absolute; background: #fbf3e2; color: #3a2a1c; font: 500 19px/1.5 "JetBrains Mono", Menlo, monospace; padding: 14px 18px; box-shadow: 0 10px 24px #5a2c1040; }
+
+/* B · 暮色亮窗（宣传片外景） */
+.B { background: radial-gradient(1200px 800px at 50% 30%, #3f6763 0%, #24474a 55%, #15343a 100%); }
+.B .glow { position: absolute; border-radius: 40px; background: radial-gradient(closest-side, #f2b56b66, transparent); filter: blur(30px); }
+.B .city { position: absolute; left: 0; right: 0; bottom: 0; }
+.B .cap { position: absolute; color: #fff6e6; font-size: 64px; letter-spacing: 3px; text-shadow: 0 4px 28px #0007; white-space: nowrap; }
+.B .cap em { font-style: normal; color: #f2c27a; }
+.B .subt { position: absolute; color: #cfe0dc; font-size: 27px; letter-spacing: 1px; white-space: nowrap; }
+
+/* C · 纸条批注（说明页） */
+.C { background: linear-gradient(170deg, #24474a 0%, #3f6763 38%, #c98a55 78%, #f2b56b 100%); }
+.C .note { position: absolute; background: #fbf3e2; color: #2a1a10; box-shadow: 0 24px 50px #0006; padding: 44px 46px; }
+.C .note h1 { margin: 0 0 18px; font-size: 54px; line-height: 1.25; font-weight: 500; letter-spacing: 2px; }
+.C .note p { margin: 0; font-size: 27px; line-height: 1.65; color: #5a3418; }
+.C .tape { position: absolute; width: 150px; height: 40px; background: #f2c27acc; transform: rotate(-6deg); }
+.C .lbl { position: absolute; color: #fff6e6; font-size: 30px; text-shadow: 0 2px 10px #0008; white-space: nowrap; }
+.C svg.arr { position: absolute; overflow: visible; }
+</style>
+</head>
+<body>
+<div id="slide"></div>
+<script>
+const d = new URLSearchParams(location.search).get('d') || 'A1';
+const s = document.getElementById('slide');
+s.className = d[0] + (d[0] === 'A' ? ' grain' : '');
+
+// 会话面板这一张的界面：左边面板，右边正在跑的终端
+const ide = (x, y, w, h, extra = '') => `<div class="ide" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px;${extra}">
+  ${UI.panel('', { tail: 400 })}
+  ${UI.term('', { banner: false, top: 30, barState: 'none' })}</div>`;
+
+const title = '所有 AI 会话，<em>收进一个面板</em>';
+const titleBr = '所有 AI 会话，<br><em>收进一个面板</em>';
+const sub = 'Claude Code、Codex、Pi 的会话按智能体分组。<br>谁在跑、谁有新回复，一眼看清；双击接着聊。';
+
+const html = {
+  // A1：字在左上，窗口靠右下，纸片飘在空隙里
+  A1: `<div class="shadow"></div><div class="sill"></div>
+    <div class="cap hand" style="left:90px;top:96px">${titleBr}</div>
+    <div class="subt hand" style="left:94px;top:318px">${sub}</div>
+    ${ide(560, 470, 1240, 640)}
+    <div class="scrap" style="left:120px;top:560px;transform:rotate(-7deg)">❯ claude --resume</div>
+    <div class="scrap" style="left:250px;top:700px;transform:rotate(5deg)">❯ codex</div>`,
+  // A2：窗口居中偏上占满，字压在窗台上
+  A2: `<div class="shadow"></div><div class="sill"></div>
+    ${ide(150, 60, 1300, 700)}
+    <div class="cap hand" style="left:150px;top:800px;font-size:64px">${title}</div>`,
+  // B1：上方一行字，下面一扇大亮窗，窗下是小城剪影
+  B1: `<div class="glow" style="left:80px;top:170px;width:1440px;height:900px"></div>
+    <div class="cap hand" style="left:0;right:0;top:56px;text-align:center">${title}</div>
+    <div class="subt hand" style="left:0;right:0;top:150px;text-align:center">按智能体分组，谁在跑、谁有新回复，一眼看清</div>
+    ${ide(140, 232, 1320, 690)}
+    <svg class="city" viewBox="0 0 1600 140" width="1600" height="140" style="bottom:-6px;opacity:.95">
+      <path d="M0 140 V90 h70 v-30 h60 v40 h80 v-58 h50 v58 h120 v-24 h90 v24 h0 V140Z M1080 140 V70 h90 v-26 h70 v46 h110 v-36 h80 v36 h170 V140Z" fill="#0b1f22"/>
+      <g fill="#e5c07b"><rect x="92" y="74" width="10" height="12"/><rect x="232" y="54" width="10" height="12"/><rect x="1110" y="84" width="10" height="12"/><rect x="1196" y="58" width="10" height="12"/><rect x="1400" y="74" width="10" height="12"/></g>
+    </svg>`,
+  // B2：窗口斜放，字在左
+  B2: `<div class="glow" style="left:560px;top:120px;width:1100px;height:800px"></div>
+    <div class="cap hand" style="left:80px;top:300px;white-space:normal;width:520px">${titleBr}</div>
+    <div class="subt hand" style="left:84px;top:520px;white-space:normal;width:470px;line-height:1.6">${sub}</div>
+    ${ide(620, 150, 1240, 720, 'transform:perspective(2400px) rotateY(-12deg);transform-origin:left center')}`,
+  // C1：窗口左侧出血，右边一张贴着胶带的纸条，手写箭头指向界面
+  C1: `${ide(60, 140, 1030, 780)}
+    <div class="note hand" style="left:1120px;top:200px;width:440px;box-sizing:border-box;padding:40px 38px;transform:rotate(2deg)"><div class="tape" style="left:140px;top:-18px"></div>
+      <h1 style="font-size:44px">所有 AI 会话，<br>收进一个面板</h1><p>Claude Code、Codex、Pi 按智能体分组；双击任意一条，接着聊。</p></div>
+    <div class="lbl hand" style="left:60px;top:34px">转圈 = 正在跑</div>
+    <div class="lbl hand" style="left:420px;top:34px">加粗 = 有新回复</div>
+    <svg class="arr" style="left:0;top:0" width="1600" height="1000"><g fill="none" stroke="#fff6e6" stroke-width="4" stroke-linecap="round">
+      <path d="M130 84 C 120 170, 150 230, 156 288"/><path d="M156 288 l-14 -20 M156 288 l12 -21"/>
+      <path d="M500 84 C 470 200, 340 330, 292 344"/><path d="M292 344 l22 -14 M292 344 l24 4"/></g></svg>`,
+  // C2：上下分：上面窄条标题，下面界面满宽
+  C2: `<div class="note hand" style="left:0;right:0;top:0;height:170px;padding:36px 80px;box-sizing:border-box;display:flex;align-items:center;gap:40px">
+      <h1 style="margin:0;font-size:56px">所有 AI 会话，收进一个面板</h1></div>
+    ${ide(80, 230, 1440, 740)}`,
+};
+s.innerHTML = html[d];
+</script>
+</body>
+</html>

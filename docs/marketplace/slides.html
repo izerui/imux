@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 插件市场预览图（方向：B 暮色亮窗 + 功能标注，见 direction-approved.md）。
+     复用宣传片的界面重建、字体与素材：相对路径以 docs/promo-video/ 为根。
+     用法：slides.html?s=1 … ?s=7，逻辑尺寸 1600×1000，按 1.6 倍导出 2560×1600。 -->
+<base href="../promo-video/">
+<title>imux · 插件市场预览图</title>
+<link rel="stylesheet" href="assets/ui/ui.css">
+<script src="assets/ui/ui.js"></script>
+<script src="assets/ui/ui2.js"></script>
+<style>
+@font-face { font-family: "LXGW WenKai"; src: url("assets/fonts/LXGWWenKai-500.woff") format("woff"); font-weight: 500; }
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-500.woff") format("woff"); font-weight: 500; }
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-900.woff") format("woff"); font-weight: 900; }
+@font-face { font-family: "Inter"; src: url("assets/fonts/Inter-var.woff") format("woff"); font-weight: 100 900; }
+html, body { margin: 0; background: #000; }
+#slide { position: relative; width: 1600px; height: 1000px; overflow: hidden;
+  background: radial-gradient(1200px 800px at 50% 30%, #3f6763 0%, #24474a 55%, #15343a 100%); }
+.hand { font-family: "LXGW WenKai", serif; font-weight: 500; }
+.glow { position: absolute; left: 120px; top: 190px; width: 1360px; height: 860px; border-radius: 40px;
+  background: radial-gradient(closest-side, #f2b56b55, transparent); filter: blur(30px); }
+.city { position: absolute; left: 0; bottom: -6px; }
+.title { position: absolute; left: 0; right: 0; top: 40px; text-align: center; color: #fff6e6; font-size: 62px; letter-spacing: 3px; text-shadow: 0 4px 28px #0007; white-space: nowrap; }
+.title em { font-style: normal; color: #f2c27a; }
+.subt { position: absolute; left: 0; right: 0; top: 132px; text-align: center; color: #cfe0dc; font-size: 27px; letter-spacing: 1px; white-space: nowrap; }
+.put { position: absolute; transform-origin: 0 0; }
+
+/* 迷你 IDE：会话面板 + 终端 */
+.ide { position: absolute; display: flex; background: #1e1f22; border: 2px solid #3c3f44; border-radius: 22px; overflow: hidden; box-shadow: 0 40px 100px #0009; }
+.ide .ui-panel { border: 0; border-right: 2px solid #393b40; border-radius: 0; box-shadow: none; width: 640px; flex: none; }
+.ide .ui-term { border: 0; border-radius: 0; box-shadow: none; flex: 1; }
+.ui-term .tab, .ui-term .foot span { white-space: nowrap; }
+.solo .ui-term, .ui-term.solo { position: absolute; }
+
+/* 功能标注：手写标签 + 弧线箭头 */
+.lbl { position: absolute; color: #fff6e6; font-size: 29px; line-height: 1.25; white-space: nowrap; text-shadow: 0 2px 12px #000a; }
+.lbl.L { text-align: right; }
+svg.arr { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="slide">
+  <div class="glow"></div>
+  <svg class="city" viewBox="0 0 1600 140" width="1600" height="140">
+    <path d="M0 140 V90 h70 v-30 h60 v40 h80 v-58 h50 v58 h120 v-24 h90 v24 V140Z M1080 140 V70 h90 v-26 h70 v46 h110 v-36 h80 v36 h170 V140Z" fill="#0b1f22"/>
+    <g fill="#e5c07b"><rect x="92" y="74" width="10" height="12"/><rect x="232" y="54" width="10" height="12"/><rect x="1110" y="84" width="10" height="12"/><rect x="1196" y="58" width="10" height="12"/><rect x="1400" y="74" width="10" height="12"/></g>
+  </svg>
+  <div class="title hand" id="title"></div>
+  <div class="subt hand" id="subt"></div>
+  <div id="stage"></div>
+  <svg class="arr" id="arr" width="1600" height="1000"></svg>
+</div>
+<script>
+const $ = (q, r = document) => r.querySelector(q);
+const n = +(new URLSearchParams(location.search).get('s') || 1);
+const put = (x, y, html, scale = 1, extra = '') => `<div class="put" style="left:${x}px;top:${y}px;transform:scale(${scale});${extra}">${html}</div>`;
+const ide = (x, y, w, h, termOpt = {}) => `<div class="ide" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">
+  ${UI.panel('', { tail: 400 })}${UI.term('', Object.assign({ banner: false, bar: false, top: 30 }, termOpt))}</div>`;
+const tool = (name, args) => `<span style="color:#e5c07b">idea · ${name}</span> (MCP)(${args})`;
+
+// 每张：标题、副标题、界面、标注（[文字, 目标选择器, 左右, 'box' 加框]）。
+// 箭头只指到目标的外缘，目标取整行、整块，箭头不压正文。界面收在 x 330–1270，两侧留给标签。
+const S = {
+  1: {
+    t: '所有 AI 会话，<em>收进一个面板</em>',
+    s: 'Claude Code、Codex、Pi 的会话按智能体分组，运行状态一眼看清',
+    ui: () => `<div class="put" style="left:330px;top:215px;transform:scale(.9)">${ide(0, 0, 1045, 820)}</div>`,
+    c: [['按智能体分组', '[data-grp="claude"]', 'L'], ['转圈 = 正在跑', '[data-row="c1"]', 'L'],
+        ['加粗 = 有新回复', '[data-row="c2"]', 'L'], ['双击接着聊', '[data-row="c3"]', 'L'],
+        ['每个会话一个标签页', '.ui-term .tabs', 'R'], ['回复、进度都在终端里', '.ui-term [data-ln="10"]', 'R']],
+  },
+  2: {
+    t: '几百轮对话，<em>捋成一条线</em>',
+    s: '会话轨迹把长对话浓缩成进展时间线，需求变更、回滚、报错都标出来',
+    ui: () => put(330, 215, UI.term('', { w: 560, banner: false, bar: false, top: 30, lines: [
+        ['q', '❯ 给登录接口加上按 IP 的限流'],
+        ['w', '已完成，每分钟 10 次。'],
+        ['q', '❯ 改成按账号 + IP 双维度'],
+        ['w', '已改为双维度计数。'],
+        ['q', '❯ 用 Redis 共享计数试试'],
+        ['w', '本地没有 Redis，先回滚。'],
+        ['q', '❯ 并发测试挂了，看看竞态'],
+        ['w', '改用原子计数，测试通过。'],
+        ['q', '❯ 多实例部署的阈值写进文档'],
+        ['w', '正在补充说明……'],
+      ] })) + put(550, 215, UI.trail()),
+    c: [['有新进展，提示更新', '.ui-trail .stale', 'R'], ['需求变更单独标出', '.ui-trail .nd.chg', 'R'],
+        ['回滚的方案标出来', '.ui-trail > :nth-child(6)', 'R'], ['放弃的旁支变灰', '.ui-trail > :nth-child(7)', 'R'],
+        ['报错标红', '.ui-trail .nd.err', 'R'], ['正在进行的这一步', '.ui-trail .nd.now', 'R'],
+        ['每个会话都有轨迹', '.ui-term .tabs', 'L'], ['对话照常进行', '.ui-term [data-ln="4"]', 'L']],
+  },
+  3: {
+    t: '动手之前，<em>先聊清楚</em>',
+    s: '需求还模糊时，让智能体结合项目代码一题一题问你，再整理成可执行的方案',
+    ui: () => put(330, 230, UI.clarify()),
+    after: () => { $('.ui-dlg').style.width = '940px'; $('.ui-dlg .qtabs').style.padding = '0 40px'; $('.ui-dlg .qtabs').style.gap = '44px'; },
+    c: [['目标写在最上面', '.ui-dlg .goal', 'L'], ['每个问题一个标签', '.ui-dlg .qtabs', 'L'],
+        ['结合项目现状提问', '.ui-dlg .qb b', 'L'], ['选项带推荐和取舍', '.ui-dlg .opt.on', 'R', 'box'],
+        ['也可以选别的', '.ui-dlg .opt:nth-of-type(2)', 'R'], ['选好就交给它', '.ui-dlg .btn', 'R']],
+  },
+  4: {
+    t: '让 AI 用上 <em>IDE 的真本事</em>',
+    s: '自动接入 IDEA MCP，只给 imux 会话用，不改 CLI 的全局配置',
+    ui: () => put(330, 215, UI.term('', { w: 940, banner: false, bar: false, top: 26, lines: [
+        ['q', '❯ 把 getUser 改名为 fetchUser，查查限流为什么没生效'],
+        ['t', tool('rename_refactoring', 'getUser → fetchUser')],
+        ['s', '⎿ <span class="ok">已重命名 23 处引用 · 6 个文件</span>'],
+        ['t', tool('xdebug_set_breakpoint', 'RateLimiter.kt:42')],
+        ['s', '⎿ count = 11 · limit = 10 · <span class="warn">时间窗过期后没有清零</span>'],
+        ['t', tool('execute_sql_query', 'prod-readonly')],
+        ['s', '⎿ 10.2.8.14 · 1,284 次　10.2.8.77 · 913 次'],
+        ['t', tool('lint_files', 'RateLimiter.kt')],
+        ['s', '⎿ <span class="warn">@Transactional 用在 private 方法上不会生效</span>'],
+        ['t', tool('execute_run_configuration', '"LoginControllerTest"')],
+        ['s', '⎿ <span class="ok">14 tests passed</span>'],
+      ] })),
+    c: [['语义重命名', '[data-ln="1"]', 'L'], ['下断点看变量', '[data-ln="3"]', 'L'],
+        ['查 IDE 里的数据库', '[data-ln="5"]', 'L'], ['IDE 级别检查', '[data-ln="7"]', 'L'],
+        ['按运行配置跑测试', '[data-ln="9"]', 'L'],
+        ['同名方法不误改', '[data-ln="2"]', 'R'], ['命中断点，看到变量', '[data-ln="4"]', 'R'],
+        ['发现框架级问题', '[data-ln="8"]', 'R']],
+  },
+  5: {
+    t: '人走开了，<em>会话还在跑</em>',
+    s: '连上飞书、企业微信、钉钉或微信机器人，在手机上接着聊',
+    lx: 245, rx: 1310,
+    ui: () => put(260, 215, UI.term('', { w: 430, banner: false, bar: false, top: 96, lines: [
+        ['q', '❯ 首页改完了吗？截个图发我看看'],
+        ['t', 'Bash(npx lighthouse …)'],
+        ['s', '⎿ <span class="ok">LCP 1.4s</span>'],
+        ['t', 'imux_mobile - send_image'],
+        ['s', '⎿ 已发送到手机'],
+        ['t', 'imux_mobile - send_file'],
+        ['s', '⎿ 已发送到手机'],
+        ['w', '截图和性能报告都发你了。'],
+      ] })) + put(640, 195, UI.phone(), .8),
+    c: [['连着的机器人', '.ui-term .ui-iconbar', 'L'], ['手机消息进终端', '.ui-term [data-ln="0"]', 'L'],
+        ['会话主动发文件', '.ui-term [data-ln="3"]', 'L'],
+        ['手机上直接说', '.ui-phone .me', 'R', 'box'], ['截图、文件发到手机', '.ui-phone .card', 'R'],
+        ['署名分清哪个会话', '.ui-phone .sig', 'R', 'box']],
+    after: () => {
+      // 终端右上角图标组：手机已连接（同宣传片）
+      $('.ui-term').insertAdjacentHTML('beforeend', `<div class="ui-iconbar" style="right:20px;top:84px">
+        <div class="ib"><img src="materials/pair.svg"></div><div class="ib phone"><img src="materials/phone.svg">飞书 · 西门吹雪</div></div>`);
+      $('.ui-phone .sig').textContent = '💬 website · Claude Code · 首页改版';
+      $('.ui-phone .me').textContent = '首页改完了吗？截个图发我看看';
+    },
+  },
+  6: {
+    t: '一个写，<em>一个挑刺</em>',
+    s: '开启结对编程，另一个智能体自动审查每一轮改动，意见直接发回主会话',
+    ui: () => put(330, 215, UI.term('', { w: 940, top: 110, lines: [
+        ['q', '❯ 给登录接口加上按 IP 的限流，每分钟 10 次'],
+        ['t', 'Write(src/main/kotlin/auth/RateLimiter.kt)'],
+        ['s', '⎿ Wrote 64 lines'],
+        ['t', 'Bash(./gradlew test --tests "*Login*")'],
+        ['s', '⎿ <span class="ok">BUILD SUCCESSFUL · 14 tests passed</span>'],
+        ['w', '已完成：登录接口按 IP 限流，超出返回 429。'],
+        ['q', '❯ <span style="color:#e5c07b">[Codex 审查]</span> 计数在并发下不是原子的'],
+        ['w', '收到，改用 AtomicInteger，并补一个并发测试。'],
+      ] })),
+    after: () => {
+      const bar = $('.ui-iconbar'); bar.style.top = '150px'; bar.style.right = '20px';
+      bar.querySelector('.ib.phone')?.remove();
+      $('.ui-term .banner').innerHTML = '<span class="spin"></span>Codex 正在审查第 1 轮 · 读取 RateLimiter.kt · 18 秒<a>取消本轮审查</a>';
+    },
+    c: [['审查进度实时显示', '.ui-term .banner', 'L'], ['审查意见自动发回', '.ui-term [data-ln="6"]', 'L', 'box'],
+        ['主会话接着改', '.ui-term [data-ln="7"]', 'L'],
+        ['随时取消本轮审查', '.ui-term .banner', 'R'], ['任意智能体当副驾驶', '.ui-iconbar', 'R']],
+  },
+  7: {
+    t: '这个活，<em>交给 Codex 接着干</em>',
+    s: '在 Claude Code、Codex、Pi 之间转移会话，新会话自动带上前情提示',
+    ui: () => put(330, 215, UI.term('', { w: 940, banner: false, bar: false, top: 30, lines: [
+        ['q', '❯ 多实例部署时阈值会被放大吗？在文档里写清楚'],
+        ['w', '会。每个实例各自计数，总阈值约等于实例数 × 10。'],
+        ['t', 'Update(docs/deploy.md)'],
+        ['s', '⎿ Updated with <span class="ok">12 additions</span>'],
+        ['w', '正在补充多实例部署的说明……'],
+      ] }))
+      + put(470, 540, UI.menu([{ t: '重命名会话标题' }, { t: '复制会话信息' }, '-', { t: '会话转移', r: '▸', id: 'move' }, '-', { t: '关闭非会话标签页' }]), 1, 'z-index:2')
+      + `<div class="put" id="sub" style="z-index:3">${UI.menu([{ t: 'Codex', img: 'materials/codex@2x_dark.png', id: 'codex' }, { t: 'Pi', img: 'materials/pi@2x_dark.png', id: 'pi' }])}</div>`,
+    c: [['在会话里右键', '.ui-menu', 'L'], ['会话转移', '[data-it="move"]', 'L', 'box'],
+        ['选接手的智能体', '[data-it="codex"]', 'R', 'box'], ['也可以交给 Pi', '[data-it="pi"]', 'R']],
+    after: () => {
+      const mv = $('[data-it="move"]').getBoundingClientRect(), m = $('[data-it="move"]').closest('.ui-menu').getBoundingClientRect();
+      Object.assign($('#sub').style, { left: `${m.right - 6}px`, top: `${mv.top - 10}px` });
+      $('[data-it="move"]').style.background = '#2e436e';
+      $('[data-it="codex"]').style.background = '#2e436e';
+    },
+  },
+};
+
+const cfg = S[n];
+$('#title').innerHTML = cfg.t;
+$('#subt').innerHTML = cfg.s;
+$('#stage').innerHTML = cfg.ui();
+cfg.after?.();
+
+// 标注：标签放在界面左右两侧，按目标的高度排，彼此至少隔开 GAP；箭头从标签画到目标外缘
+const GAP = 64, LX = cfg.lx || 300, RX = cfg.rx || 1300;
+function annotate() {
+  const svg = $('#arr');
+  const ink = '#f2c27a';
+  for (const side of ['L', 'R']) {
+    const items = cfg.c.filter((c) => c[2] === side).map(([text, q, , box]) => {
+      const el = $(q);
+      if (!el) { console.warn('找不到目标', q); return null; }
+      const r = el.getBoundingClientRect();
+      if (box) svg.insertAdjacentHTML('beforeend', `<rect x="${r.left - 6}" y="${r.top - 4}" width="${r.width + 12}" height="${r.height + 8}" rx="10" fill="none" stroke="${ink}" stroke-width="3"/>`);
+      const pad = box ? 10 : 4;
+      return { text, tx: side === 'L' ? r.left - pad : r.right + pad, ty: r.top + r.height / 2 };
+    }).filter(Boolean).sort((a, b) => a.ty - b.ty);
+    let last = -1e9;
+    for (const it of items) {
+      const y = Math.max(it.ty, last + GAP);
+      last = y;
+      const lb = document.createElement('div');
+      lb.className = `lbl hand ${side}`;
+      lb.textContent = it.text;
+      $('#slide').appendChild(lb);
+      const w = lb.offsetWidth, h = lb.offsetHeight;
+      lb.style.left = `${side === 'L' ? LX - 16 - w : RX + 16}px`; lb.style.top = `${y - h / 2}px`;
+      const sx = side === 'L' ? LX - 6 : RX + 6;
+      const dir = side === 'L' ? 1 : -1;
+      const c1x = sx + dir * Math.abs(it.tx - sx) * .5, c2x = it.tx - dir * 26;
+      svg.insertAdjacentHTML('beforeend', `<g fill="none" stroke="${ink}" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M${sx} ${y} C ${c1x} ${y}, ${c2x} ${it.ty}, ${it.tx} ${it.ty}"/>
+        <path d="M${it.tx - dir * 14} ${it.ty - 8} L${it.tx} ${it.ty} L${it.tx - dir * 14} ${it.ty + 8}"/></g>
+        <circle cx="${sx}" cy="${y}" r="5" fill="${ink}"/>`);
+    }
+  }
+}
+document.fonts.ready.then(() => requestAnimationFrame(annotate));
+</script>
+</body>
+</html>
