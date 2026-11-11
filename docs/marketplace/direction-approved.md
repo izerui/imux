@@ -2,7 +2,7 @@
 
 - 日期：2026-11-11
 - 需求原话：「将当前插件，参考视频 做几张宣传图片，我用来上传到 插件时间做预览图宣传用，放到 docs下」「可以用 /huashu-design 制作图片」
-- 规格：16:10，交付 1520×950 PNG（每张约 200 KB，Marketplace 与 README 共用，见 product-facts.md）
+- 规格：16:10，Marketplace 用 2560×1600 原图；README 用 readme/ 下 1520×950 压缩版（见 product-facts.md）
 - 世界观沿用宣传片「风吹过的窗」（docs/promo-video/direction-approved.md），三个方向是同一世界观下的三种构图。
 
 ## 展示的候选（同一主题：会话面板）

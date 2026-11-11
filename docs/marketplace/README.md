@@ -1,6 +1,6 @@
 # JetBrains Marketplace 预览图
 
-上传到插件页 Media 区的 7 张预览图，16:10，1520×950，pngquant 压缩后每张约 200 KB；仓库 README 也直接引用这几张。风格沿用宣传片的暮色外景（方向记录见 `direction-approved.md`，规格核验见 `product-facts.md`）。
+上传到插件页 Media 区的 7 张预览图，16:10，2560×1600。仓库 README 引用的是 `readme/` 下的压缩版（1520×950，pngquant 压缩，每张约 200 KB），只用于 README，不用于上传 Marketplace。风格沿用宣传片的暮色外景（方向记录见 `direction-approved.md`，规格核验见 `product-facts.md`）。
 
 | 文件 | 功能 |
 |---|---|
@@ -14,7 +14,7 @@
 
 ## 重新生成
 
-图由 `slides.html?s=1…7` 渲染，界面复用 `docs/promo-video/assets/ui/` 的重建组件；界面或文案变了，先改那里，再重新导出。先按 1.6 倍渲染 2560×1600 的清晰原图到 `/tmp`，再缩到 1520×950 并压缩成最终文件：
+图由 `slides.html?s=1…7` 渲染，界面复用 `docs/promo-video/assets/ui/` 的重建组件；界面或文案变了，先改那里，再重新导出。按 1.6 倍渲染 2560×1600 的原图（上传 Marketplace 用），再缩到 1520×950 并压缩成 `readme/` 下的 README 版：
 
 ```bash
 cd docs/marketplace
@@ -22,9 +22,9 @@ CH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 for pair in 1:01-sessions 2:02-session-trail 3:03-clarify 4:04-ide-mcp 5:05-phone-bridge 6:06-pair-programming 7:07-session-handoff; do
   "$CH" --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files \
     --force-device-scale-factor=1.6 --window-size=1600,1000 --virtual-time-budget=4000 \
-    --screenshot="/tmp/${pair#*:}.png" "file://$PWD/slides.html?s=${pair%%:*}"
-  ffmpeg -y -loglevel error -i "/tmp/${pair#*:}.png" -vf scale=1520:950:flags=lanczos "/tmp/${pair#*:}-1520.png"
-  pngquant --quality=80-95 --speed 1 --force --output "${pair#*:}.png" "/tmp/${pair#*:}-1520.png"
+    --screenshot="$PWD/${pair#*:}.png" "file://$PWD/slides.html?s=${pair%%:*}"
+  ffmpeg -y -loglevel error -i "${pair#*:}.png" -vf scale=1520:950:flags=lanczos "/tmp/${pair#*:}-1520.png"
+  pngquant --quality=80-95 --speed 1 --force --output "readme/${pair#*:}.png" "/tmp/${pair#*:}-1520.png"
 done
 ```
 
