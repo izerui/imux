@@ -15,12 +15,26 @@ data class HookRequest(
     val input: Map<String, String>,
 ) {
     /**
-     * 电脑端允许后的 PostToolUse 是否就是这个请求：代理、工具相同，且两边都有的每个顶层字段值相等。
-     * 一边没有的字段不比较：PostToolUse 里计划的输入为空、提问多出 answers 与 annotations（实测 26）。
+     * 电脑端允许后的 PostToolUse 是否就是这个请求。前提：
+     *
+     * - 代理、工具必须相同。
+     * - 双方都为空（无参工具）→ 匹配。
+     * - 电脑那边（[HookToolDone.input]）为空、请求不为空 → 仅当 [kind] == [PromptKind.PLAN] 时匹配
+     *   （实测 ExitPlanMode 的 PostToolUse 输入为空对象）。
+     * - 双方都有字段、但没有共有字段 → 不匹配。
+     * - 有共有字段 → 共有字段都相等才匹配（提问多出 answers 与 annotations，实测 26）。
      */
-    fun matches(done: HookToolDone): Boolean =
-        agentId == done.agentId && toolName == done.toolName &&
-            input.all { (key, value) -> done.input[key]?.let { it == value } ?: true }
+    fun matches(done: HookToolDone): Boolean {
+        if (agentId != done.agentId || toolName != done.toolName) return false
+        val reqEmpty = input.isEmpty()
+        val doneEmpty = done.input.isEmpty()
+        if (reqEmpty && doneEmpty) return true
+        if (doneEmpty) return kind == PromptKind.PLAN
+        if (reqEmpty) return true // 请求无字段，电脑有额外字段，不比较
+        val hasCommon = input.keys.any { it in done.input }
+        if (!hasCommon) return false
+        return input.all { (key, value) -> done.input[key]?.let { it == value } ?: true }
+    }
 
     /** AskUserQuestion → QUESTION，ExitPlanMode → PLAN，其余 → PERMISSION。 */
     val kind: PromptKind

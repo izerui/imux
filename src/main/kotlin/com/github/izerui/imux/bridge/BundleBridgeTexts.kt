@@ -98,8 +98,8 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun hookAnswersSubmitted() = ImuxBundle.message("bridge.reply.hookAnswersSubmitted")
 
-    override fun hookPlanApproved(auto: Boolean) =
-        if (auto) ImuxBundle.message("bridge.reply.hookPlanApproved.auto") else ImuxBundle.message("bridge.reply.hookPlanApproved.manual")
+    override fun hookPlanApproved(firstOption: Boolean) =
+        if (firstOption) ImuxBundle.message("bridge.reply.hookPlanApproved.auto") else ImuxBundle.message("bridge.reply.hookPlanApproved.manual")
 
     override fun hookPlanRevising() = ImuxBundle.message("bridge.reply.hookPlanRevising")
 

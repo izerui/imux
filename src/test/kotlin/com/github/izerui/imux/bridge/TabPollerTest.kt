@@ -118,7 +118,7 @@ class TabPollerTest {
 
         override fun hookAnswersSubmitted() = "HOOK_ANSWERS_SUBMITTED"
 
-        override fun hookPlanApproved(auto: Boolean) = "HOOK_PLAN_APPROVED($auto)"
+        override fun hookPlanApproved(firstOption: Boolean) = "HOOK_PLAN_APPROVED($firstOption)"
 
         override fun hookPlanRevising() = "HOOK_PLAN_REVISING"
 

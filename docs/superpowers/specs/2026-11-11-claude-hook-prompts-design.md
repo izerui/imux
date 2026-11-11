@@ -110,7 +110,7 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 | 了结来源 | 判定 | 回给 hook | 告诉手机 |
 |---|---|---|---|
 | 手机作答 | §5 | 对应 decision | 一句确认（已允许 / 已拒绝 / 已提交答案 / 已批准计划），**不再推电脑作答提示** |
-| 电脑选是 | 收到 `PostToolUse`/`PostToolUseFailure`，`agent_id`、`tool_name` 与队中某请求相同，且 `tool_input` 两边都有的每个顶层字段值相等（一边没有的不比较：计划的为空对象、提问多出 `answers` 与 `annotations`，实测 26） | `{}`（结束挂着的请求） | 权限：「电脑端已允许」；提问：带上 `tool_response` 里每题答案（沿用 `promptAnsweredLocally` 文案）；计划：「电脑端已批准计划」 |
+| 电脑选是 | 收到 `PostToolUse`/`PostToolUseFailure`，`agent_id`、`tool_name` 与队中某请求相同，且 `tool_input` 满足匹配前提：双方都为空→匹配；电脑端为空、请求不为空→仅计划匹配（ExitPlanMode 的 PostToolUse 输入为空对象）；双方都有字段但没有共有字段→不匹配；有共有字段→每个共有字段值相等（提问多出 `answers` 与 `annotations`，实测 26） | `{}`（结束挂着的请求） | 权限：「电脑端已允许」；提问：带上 `tool_response` 里每题答案（沿用 `promptAnsweredLocally` 文案）；计划：`promptHandledLocally`（「选择已在电脑端完成。」） |
 | 电脑选否 / Esc | hook 连接被关闭 | 无需回 | 「电脑端已拒绝」 |
 | 同代理新计划 / 提问让旧的作废 | 收到 `ExitPlanMode` 或 `AskUserQuestion` 请求，队中有同一 `agent_id`、同一 `tool_name` 的旧请求（实测 28：电脑上计划选 3 后旧请求不关闭，改稿后发来新的）；权限请求不适用，同一代理可能并行请求多个权限 | 旧的回 `{}` | 旧的推给过这台手机时先发「选择已在电脑端完成」，再推新的队首 |
 | 记录重启、换绑解绑、远程控制关闭、标签关闭、IDE 退出 | 现有对应事件 | `{}` | 不单独提示 |

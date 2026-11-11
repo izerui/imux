@@ -1,7 +1,9 @@
 package com.github.izerui.imux.bridge.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** hook 路径的请求构建、手机回复到决定的翻译、提问回答。 */
@@ -93,6 +95,47 @@ class HookPromptsTest {
         assertEquals(PromptKind.QUESTION, request("AskUserQuestion").kind)
         assertEquals(PromptKind.PLAN, request("ExitPlanMode").kind)
         assertEquals(PromptKind.PERMISSION, request("Bash").kind)
+    }
+
+    // ---------- matches ----------
+
+    private fun request(
+        toolName: String = "Bash",
+        input: Map<String, String> = emptyMap(),
+    ) = HookRequest(
+        id = 1, toolName = toolName, agentId = null, agentType = null,
+        detail = "", questions = null, input = input,
+    )
+
+    private fun done(
+        toolName: String = "Bash",
+        input: Map<String, String> = emptyMap(),
+    ) = HookToolDone(agentId = null, toolName = toolName, input = input)
+
+    @Test
+    fun `电脑端输入为空时只有计划能对上`() {
+        val planReq = request(toolName = "ExitPlanMode", input = mapOf("plan" to "\"# 计划\""))
+        val permReq = request(toolName = "Bash", input = mapOf("command" to "\"ls\""))
+        val emptyDone = done(toolName = "ExitPlanMode")
+        val emptyBashDone = done(toolName = "Bash")
+        // PLAN 匹配
+        assertTrue(planReq.matches(emptyDone))
+        // PERMISSION（如 Bash）不匹配
+        assertFalse(permReq.matches(emptyBashDone))
+    }
+
+    @Test
+    fun `双方都有字段但没有共有字段时不匹配`() {
+        val req = request(input = mapOf("command" to "\"ls\""))
+        val d = done(input = mapOf("description" to "\"列出文件\""))
+        assertFalse(req.matches(d))
+    }
+
+    @Test
+    fun `双方都为空时能对上`() {
+        val req = request(input = emptyMap())
+        val d = done(input = emptyMap())
+        assertTrue(req.matches(d))
     }
 
     @Test
