@@ -16,7 +16,7 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 - 电脑上作答后告诉手机结果；手机作答后不重复推送。
 - **不改任何配置文件**：不写 `~/.claude/settings.json`、项目 `.claude/settings*.json`，hook 只对 imux 启动的这一次会话生效，与配置文件里的设置合并。
 - 子代理（同步、后台、并行）里的确认一样能在手机上作答。
-- Codex、Pi 和改造前已启动的 Claude 会话保持现有按键方案。
+- 旧的按键方案（按会话记录推送 + 模拟按键作答）已删除，见 §6。Codex、Pi 与没能注入 hook 的 Claude 会话停在框上时，手机只提示到 IDE 中处理。
 
 ## 实测结论（Claude Code 2.1.308，2026-11-11）
 
@@ -138,11 +138,14 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 | 不执行 / 拒绝 | `deny` + `message: "The user does not want to proceed with this plan yet."` |
 | 其他文字 | `deny` + `message: <原话>`，Claude 按它修改计划（实测 13） |
 
-### 6. 与现有按键方案并存
+### 6. 旧按键方案已删除
 
-- `MobileCaller` 记一个 `hooks: Boolean`（启动时注入了 hook 才为真），经端口暴露给 `BridgeRouter`。
-- hook 生效的标签：`waitingSubject()` 的推送、`onWaiting` 的「请到 IDE 中处理」在有 hook 挂起请求时不再发；`DialogOpen` 拦截改为「有 hook 队首则作答，否则照旧」。等待原因不是确认框（如空闲提醒）时仍按现有逻辑提示。
-- 未注入 hook 的 Claude 标签、Codex、Pi：完全走现有代码，不改。
+上线初期 hook 与旧的按键方案（按会话记录推送确认框、手机回复后模拟按键作答，即 `TabState.waitingSubject`、`PermissionPrompts.reply`、`AskedQuestions.answer` 等）并存，未注入 hook 的 Claude 标签走旧方案。现已整体删除，`BridgeRouter` 只剩 hook 一条作答路径：
+
+- `onWaiting`：该标签 hook 队列非空时什么也不发（确认框已由 hook 推过）；否则发「<原因>，请到 IDE 中处理」。
+- 手机消息：有 hook 队首先译成决定回给 hook；否则运行态正停着等人（`waitingActive`）时回 `DialogOpen`，不贴进终端；都不是才照常提交。
+- 没能注入 hook 的 Claude 标签（启动贡献准备失败时会弹「手机媒体工具未能接入」警告，或插件更新后未重启 IDE 时已在跑的进程）与 Codex、Pi 一样：停在框上只提示到 IDE 中处理，等待期间手机的话被拦下。
+- 会话记录解码不再产出工具调用、提问、工具结果事件，终端端口也不再提供按键写入。
 
 ### 7. 文案
 
