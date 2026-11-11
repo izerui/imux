@@ -227,13 +227,13 @@ class BridgeRouter(
         text?.let { send(binding, it) }
     }
 
-    /** 电脑端允许后工具已跑完：了结 matchKey 相同的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。 */
+    /** 电脑端允许后工具已跑完：了结与 [done] 匹配的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。 */
     suspend fun onHookToolDone(
         tabId: String,
-        matchKey: String,
+        done: HookToolDone,
         answers: String?,
     ) {
-        settleLocally(tabId, { matchLocal(matchKey) }, respond = true) { request ->
+        settleLocally(tabId, { matchLocal(done) }, respond = true) { request ->
             when (request.kind) {
                 PromptKind.PERMISSION -> texts.hookAllowedLocally()
                 PromptKind.QUESTION -> texts.promptAnsweredLocally(answers)

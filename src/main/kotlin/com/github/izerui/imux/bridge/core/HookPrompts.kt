@@ -1,7 +1,8 @@
 package com.github.izerui.imux.bridge.core
 
 /**
- * 一次 PermissionRequest。[id] 由入口分配；[matchKey] 用来对上随后的 PostToolUse。
+ * 一次 PermissionRequest。[id] 由入口分配；[input] 是 tool_input 的顶层字段 → 规范化 JSON（键名递归排序），
+ * 与 [agentId]、[toolName] 一起用来对上随后的 PostToolUse（见 [matches]）。
  * [agentId] 为 null 是主会话的请求，否则来自子代理，[agentType] 是子代理的类型（主会话时为 null）。
  */
 data class HookRequest(
@@ -11,8 +12,16 @@ data class HookRequest(
     val agentType: String?,
     val detail: String,
     val questions: List<AskedQuestion>?,
-    val matchKey: String,
+    val input: Map<String, String>,
 ) {
+    /**
+     * 电脑端允许后的 PostToolUse 是否就是这个请求：代理、工具相同，且两边都有的每个顶层字段值相等。
+     * 一边没有的字段不比较：PostToolUse 里计划的输入为空、提问多出 answers 与 annotations（实测 26）。
+     */
+    fun matches(done: HookToolDone): Boolean =
+        agentId == done.agentId && toolName == done.toolName &&
+            input.all { (key, value) -> done.input[key]?.let { it == value } ?: true }
+
     /** AskUserQuestion → QUESTION，ExitPlanMode → PLAN，其余 → PERMISSION。 */
     val kind: PromptKind
         get() = when (toolName) {
@@ -21,6 +30,13 @@ data class HookRequest(
             else -> PromptKind.PERMISSION
         }
 }
+
+/** 一次 PostToolUse / PostToolUseFailure：电脑端允许后工具跑完。[input] 同 [HookRequest.input]。 */
+data class HookToolDone(
+    val agentId: String?,
+    val toolName: String,
+    val input: Map<String, String>,
+)
 
 /** hook 路径的决定：交给电脑、允许、拒绝。 */
 sealed interface HookDecision {

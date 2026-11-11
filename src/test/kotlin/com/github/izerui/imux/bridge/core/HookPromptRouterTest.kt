@@ -152,12 +152,21 @@ class HookPromptRouterTest {
         agentId: String? = null,
         agentType: String? = null,
         questions: List<AskedQuestion>? = null,
-        matchKey: String = "key-$id",
+        input: Map<String, String> = mapOf("command" to "\"key-$id\""),
     ): Pending {
-        val pending = Pending(HookRequest(id, toolName, agentId, agentType, detail, questions, matchKey))
+        val pending = Pending(HookRequest(id, toolName, agentId, agentType, detail, questions, input))
         router.onHookRequest("tab-1", pending.request) { pending.decisions += it }
         return pending
     }
+
+    /** 测试里电脑端允许的那条 Bash 的输入。 */
+    private val k = mapOf("command" to "\"k\"")
+
+    private fun done(
+        toolName: String = "Bash",
+        agentId: String? = null,
+        input: Map<String, String> = k,
+    ) = HookToolDone(agentId, toolName, input)
 
     private val colors = AskedQuestion("颜色？", false, listOf(AskedOption("红", null), AskedOption("绿", null)))
     private val fruits = AskedQuestion("水果？", true, listOf(AskedOption("苹果", null), AskedOption("香蕉", null), AskedOption("橙子", null)))
@@ -294,8 +303,8 @@ class HookPromptRouterTest {
     fun `电脑端允许后告诉手机且不重复`() =
         runBlocking {
             bind()
-            val pending = request(1, matchKey = "k")
-            router.onHookToolDone("tab-1", "k", null)
+            val pending = request(1, input = k)
+            router.onHookToolDone("tab-1", done(), null)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
             assertEquals("HOOK_ALLOWED_LOCALLY", sentTexts().last())
             assertEquals(2, sentTexts().size)
@@ -306,22 +315,61 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `提问在电脑端答完，手机收到答了什么`() =
+    fun `提问在电脑端作答后能对上`() =
         runBlocking {
             bind()
-            val pending = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors), matchKey = "k")
-            router.onHookToolDone("tab-1", "k", "颜色？ → 红")
+            val questions = mapOf("questions" to "[\"颜色？\"]")
+            val pending = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors), input = questions)
+            val next = request(2, detail = "rm b.txt")
+            router.onHookToolDone(
+                "tab-1",
+                done("AskUserQuestion", input = questions + mapOf("answers" to "{\"颜色？\":\"红\"}", "annotations" to "{}")),
+                "颜色？ → 红",
+            )
             assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
-            assertEquals("ANSWERED_LOCALLY(颜色？ → 红)", sentTexts().last())
+            val after = sentTexts().takeLast(2)
+            assertEquals("ANSWERED_LOCALLY(颜色？ → 红)", after[0])
+            assertTrue(after[1], after[1].startsWith("HOOK_PERMISSION(") && after[1].contains("rm b.txt"))
+            assertTrue(next.decisions.isEmpty())
         }
 
     @Test
-    fun `计划在电脑端批准，手机收到已处理`() =
+    fun `计划在电脑端批准后能对上`() =
         runBlocking {
             bind()
-            request(1, toolName = "ExitPlanMode", detail = "# 计划", matchKey = "k")
-            router.onHookToolDone("tab-1", "k", null)
-            assertEquals("ANSWERED_LOCALLY(null)", sentTexts().last())
+            val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划", input = mapOf("plan" to "\"# 计划\"", "planFilePath" to "\"/tmp/p.md\""))
+            val next = request(2, detail = "rm b.txt")
+            router.onHookToolDone("tab-1", done("ExitPlanMode", input = emptyMap()), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+            val after = sentTexts().takeLast(2)
+            assertEquals("ANSWERED_LOCALLY(null)", after[0])
+            assertTrue(after[1], after[1].startsWith("HOOK_PERMISSION(") && after[1].contains("rm b.txt"))
+            assertTrue(next.decisions.isEmpty())
+        }
+
+    @Test
+    fun `共有字段不同则不匹配`() =
+        runBlocking {
+            bind()
+            val first = request(1, detail = "rm a.txt", input = mapOf("command" to "\"rm a.txt\"", "description" to "\"删\""))
+            val second = request(2, detail = "rm b.txt", input = mapOf("command" to "\"rm b.txt\"", "description" to "\"删\""))
+            router.onHookToolDone("tab-1", done(input = mapOf("command" to "\"rm b.txt\"")), null)
+            assertTrue(first.decisions.isEmpty())
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), second.decisions)
+            // 了结的不是推过的队首，静默出队
+            assertEquals(1, sentTexts().size)
+        }
+
+    @Test
+    fun `不同代理的请求互不了结`() =
+        runBlocking {
+            bind()
+            val pending = request(1, agentId = "a1", agentType = "general-purpose", input = k)
+            router.onHookToolDone("tab-1", done(agentId = "a2"), null)
+            router.onHookToolDone("tab-1", done(agentId = null), null)
+            assertTrue(pending.decisions.isEmpty())
+            router.onHookToolDone("tab-1", done(agentId = "a1"), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
         }
 
     @Test
@@ -342,9 +390,9 @@ class HookPromptRouterTest {
         runBlocking {
             bind()
             request(1)
-            val queued = request(2, matchKey = "k")
+            val queued = request(2, input = k)
             val closed = request(3)
-            router.onHookToolDone("tab-1", "k", null)
+            router.onHookToolDone("tab-1", done(), null)
             router.onHookClosed("tab-1", 3)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), queued.decisions)
             assertTrue(closed.decisions.isEmpty())
@@ -355,9 +403,9 @@ class HookPromptRouterTest {
     fun `手机作答后电脑端结果到达不再通知`() =
         runBlocking {
             bind()
-            val pending = request(1, matchKey = "k")
+            val pending = request(1, input = k)
             router.onInbound(inbound("m1", "1"))
-            router.onHookToolDone("tab-1", "k", null)
+            router.onHookToolDone("tab-1", done(), null)
             assertEquals(2, sentTexts().size)
             assertEquals("HOOK_ALLOWED", sentTexts().last())
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
@@ -367,9 +415,9 @@ class HookPromptRouterTest {
     fun `参数相同的两个请求只了结最早的一个`() =
         runBlocking {
             bind()
-            val first = request(1, detail = "rm a.txt", matchKey = "k")
-            val second = request(2, detail = "rm a.txt", matchKey = "k")
-            router.onHookToolDone("tab-1", "k", null)
+            val first = request(1, detail = "rm a.txt", input = k)
+            val second = request(2, detail = "rm a.txt", input = k)
+            router.onHookToolDone("tab-1", done(), null)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), first.decisions)
             assertTrue(second.decisions.isEmpty())
             assertEquals("HOOK_ALLOWED_LOCALLY", sentTexts()[1])
@@ -431,11 +479,11 @@ class HookPromptRouterTest {
     fun `提问答一半时电脑端了结，手机收到答案且队列继续`() =
         runBlocking {
             bind()
-            val asked = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors, fruits), matchKey = "k")
+            val asked = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors, fruits), input = k)
             val next = request(2, detail = "rm b.txt")
             router.onInbound(inbound("m1", "2"))
             assertTrue(sentTexts().last().startsWith("QUESTION2/2("))
-            router.onHookToolDone("tab-1", "k", "颜色？ → 红\n水果？ → 苹果")
+            router.onHookToolDone("tab-1", done("AskUserQuestion"), "颜色？ → 红\n水果？ → 苹果")
             assertEquals(listOf<HookDecision>(HookDecision.Pass), asked.decisions)
             val after = sentTexts().takeLast(2)
             assertEquals("ANSWERED_LOCALLY(颜色？ → 红\n水果？ → 苹果)", after[0])
@@ -549,7 +597,7 @@ class HookPromptRouterTest {
             for ((tool, detail) in listOf("ExitPlanMode" to "步骤".repeat(800), "Bash" to "echo " + "x".repeat(3000))) {
                 val small = FakeChannel(robot, maxTextBytes = 1000)
                 val r = BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) small else null }, Texts)
-                r.onHookRequest("tab-1", HookRequest(1, tool, null, null, detail, null, "k")) {}
+                r.onHookRequest("tab-1", HookRequest(1, tool, null, null, detail, null, emptyMap())) {}
                 val text = small.sent.single().text
                 assertTrue(tool, text.toByteArray().size <= 1000)
                 assertTrue(tool, text.contains("\n…"))

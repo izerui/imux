@@ -32,8 +32,8 @@ internal class HookPromptQueue {
     /** 按 id 出队，不在队中返回 null。 */
     fun remove(id: Long): Entry? = entries.firstOrNull { it.request.id == id }?.also { entries.remove(it) }
 
-    /** 电脑端允许后对上的请求：[matchKey] 相同的取最早一个出队。 */
-    fun matchLocal(matchKey: String): Entry? = entries.firstOrNull { it.request.matchKey == matchKey }?.also { entries.remove(it) }
+    /** 电脑端允许后对上的请求：与 [done] 匹配（[HookRequest.matches]）的取最早一个出队。 */
+    fun matchLocal(done: HookToolDone): Entry? = entries.firstOrNull { it.request.matches(done) }?.also { entries.remove(it) }
 
     /** 主会话（无 agentId）的条目全部出队，按到达顺序返回；子代理的留在队中。 */
     fun drainMainSession(): List<Entry> = entries.filter { it.request.agentId == null }.also { entries.removeAll(it.toSet()) }

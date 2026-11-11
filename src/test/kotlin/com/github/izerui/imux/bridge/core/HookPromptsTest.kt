@@ -88,7 +88,7 @@ class HookPromptsTest {
     fun `种类按工具名区分`() {
         fun request(toolName: String) = HookRequest(
             id = 1, toolName = toolName, agentId = null, agentType = null,
-            detail = "", questions = null, matchKey = "",
+            detail = "", questions = null, input = emptyMap(),
         )
         assertEquals(PromptKind.QUESTION, request("AskUserQuestion").kind)
         assertEquals(PromptKind.PLAN, request("ExitPlanMode").kind)

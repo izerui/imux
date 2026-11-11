@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge.mcp
 
 import com.github.izerui.imux.bridge.core.HookDecision
 import com.github.izerui.imux.bridge.core.HookRequest
+import com.github.izerui.imux.bridge.core.HookToolDone
 import com.github.izerui.imux.bridge.json.obj
 import com.github.izerui.imux.bridge.json.string
 import com.github.izerui.imux.bridge.transcript.ClaudeToolInputs
@@ -22,7 +23,7 @@ internal object ClaudeHookJson {
         // 子代理来源以 agent_id 为准：--agent 启动的主会话也带 agent_type，但不是子代理
         val agentId = body.string("agent_id")
         val agentType = agentId?.let { body.string("agent_type") }
-        return HookRequest(id, toolName, agentId, agentType, ClaudeToolInputs.detail(toolName, input), questions, matchKey(body))
+        return HookRequest(id, toolName, agentId, agentType, ClaudeToolInputs.detail(toolName, input), questions, topLevel(input))
     }
 
     /** 请求体的解析结果：解析出的 JSON 对象，或要直接回的状态码。 */
@@ -45,15 +46,15 @@ internal object ClaudeHookJson {
     /** 计划全文可能较长，上限比 MCP 入口的 64 KB 宽。 */
     private const val MAX_BODY_BYTES = 1024 * 1024
 
-    /** agent_id + tool_name + 去掉 answers 键、键名递归排序后的 tool_input。 */
-    fun matchKey(body: JsonObject): String {
-        val input = body.obj("tool_input")?.deepCopy()?.apply { remove("answers") } ?: JsonObject()
-        return JsonArray().apply {
-            add(body.string("agent_id"))
-            add(body.string("tool_name"))
-            add(sorted(input))
-        }.toString()
+    /** PostToolUse / PostToolUseFailure 解析成 [HookToolDone]；缺 tool_name 返回 null。 */
+    fun toolDone(body: JsonObject): HookToolDone? {
+        val toolName = body.string("tool_name") ?: return null
+        return HookToolDone(body.string("agent_id"), toolName, topLevel(body.obj("tool_input") ?: JsonObject()))
     }
+
+    /** tool_input 的顶层字段 → 键名递归排序后的 JSON 字符串。 */
+    private fun topLevel(input: JsonObject): Map<String, String> =
+        input.entrySet().associate { (key, value) -> key to sorted(value).toString() }
 
     /** Pass → {}；Allow → updatedInput 为原 tool_input（提问加 answers）、modes 非空时按顺序各加一条 setMode；Deny → message。不带 interrupt（实测 5）。 */
     fun response(decision: HookDecision, toolInput: JsonObject): JsonObject {

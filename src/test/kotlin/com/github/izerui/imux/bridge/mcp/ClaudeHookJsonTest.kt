@@ -2,6 +2,7 @@ package com.github.izerui.imux.bridge.mcp
 
 import com.github.izerui.imux.bridge.core.HookDecision
 import com.github.izerui.imux.bridge.core.HookReplies
+import com.github.izerui.imux.bridge.core.HookToolDone
 import com.github.izerui.imux.bridge.core.PromptKind
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -69,24 +70,62 @@ class ClaudeHookJsonTest {
         assertEquals(json("""{"behavior":"deny","message":"不行"}"""), decision)
     }
 
-    @Test fun `matchKey 含代理 id`() {
-        val main = json("""{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}""")
-        val agent = json("""{"hook_event_name":"PostToolUse","agent_id":"a1","tool_name":"Bash","tool_input":{"command":"ls"}}""")
-        val other = json("""{"hook_event_name":"PostToolUse","agent_id":"a2","tool_name":"Bash","tool_input":{"command":"ls"}}""")
-        assertNotEquals(ClaudeHookJson.matchKey(main), ClaudeHookJson.matchKey(agent))
-        assertNotEquals(ClaudeHookJson.matchKey(agent), ClaudeHookJson.matchKey(other))
+    @Test fun `不同代理不匹配`() {
+        val request = ClaudeHookJson.request(
+            json("""{"hook_event_name":"PermissionRequest","agent_id":"a1","tool_name":"Bash","tool_input":{"command":"ls"}}"""), 1,
+        )!!
+        fun done(agentId: String?) = ClaudeHookJson.toolDone(
+            json("""{"hook_event_name":"PostToolUse",${agentId?.let { "\"agent_id\":\"$it\"," }.orEmpty()}"tool_name":"Bash","tool_input":{"command":"ls"}}"""),
+        )!!
+        assertTrue(request.matches(done("a1")))
+        assertFalse(request.matches(done("a2")))
+        assertFalse(request.matches(done(null)))
     }
 
-    @Test fun `matchKey 忽略 answers 与键顺序`() {
-        val asked = json(
-            """{"tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"颜色？","multiSelect":false,
-                "options":[{"label":"红","description":"暖色"}]}]}}""",
+    @Test fun `PostToolUse 解析出代理、工具与按键名递归排序的顶层字段`() {
+        val done = ClaudeHookJson.toolDone(
+            json("""{"hook_event_name":"PostToolUse","agent_id":"a1","tool_name":"Write",
+                "tool_input":{"file_path":"/a","meta":{"b":1,"a":[{"y":2,"x":1}]}}}"""),
         )
-        val done = json(
-            """{"tool_input":{"answers":{"颜色？":"红"},"questions":[{"options":[{"description":"暖色","label":"红"}],
-                "multiSelect":false,"question":"颜色？"}]},"tool_name":"AskUserQuestion"}""",
+        assertEquals(
+            HookToolDone("a1", "Write", mapOf("file_path" to "\"/a\"", "meta" to """{"a":[{"x":1,"y":2}],"b":1}""")),
+            done,
         )
-        assertEquals(ClaudeHookJson.matchKey(asked), ClaudeHookJson.matchKey(done))
+        assertNull(ClaudeHookJson.toolDone(json("""{"hook_event_name":"PostToolUse"}""")))
+    }
+
+    @Test fun `计划在电脑端批准后能对上：PostToolUse 的输入为空对象`() {
+        val request = ClaudeHookJson.request(
+            json("""{"hook_event_name":"PermissionRequest","tool_name":"ExitPlanMode","tool_input":{"plan":"# 计划","planFilePath":"/tmp/p.md"}}"""), 1,
+        )!!
+        val done = ClaudeHookJson.toolDone(json("""{"hook_event_name":"PostToolUse","tool_name":"ExitPlanMode","tool_input":{}}"""))!!
+        assertTrue(request.matches(done))
+    }
+
+    @Test fun `提问在电脑端作答后能对上：多出 answers 与 annotations、键顺序不同`() {
+        val request = ClaudeHookJson.request(
+            json("""{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":$question}"""), 1,
+        )!!
+        val done = ClaudeHookJson.toolDone(
+            json(
+                """{"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion","tool_input":{
+                    "answers":{"颜色？":"红"},"annotations":{"颜色？":{"notes":"x"}},
+                    "questions":[{"options":[{"description":"暖色","label":"红"},{"description":"冷色","label":"蓝"}],
+                    "multiSelect":false,"header":"颜色","question":"颜色？"}]}}""",
+            ),
+        )!!
+        assertTrue(request.matches(done))
+    }
+
+    @Test fun `共有字段不同则不匹配`() {
+        val request = ClaudeHookJson.request(
+            json("""{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm a.txt","description":"删"}}"""), 1,
+        )!!
+        fun done(command: String) = ClaudeHookJson.toolDone(
+            json("""{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"$command"}}"""),
+        )!!
+        assertTrue(request.matches(done("rm a.txt")))
+        assertFalse(request.matches(done("rm b.txt")))
     }
 
     @Test fun `子代理请求带来源与要批准的内容`() {
@@ -101,7 +140,7 @@ class ClaudeHookJsonTest {
         assertEquals("general-purpose", request.agentType)
         assertEquals("清理\nrm -rf build", request.detail)
         assertEquals(PromptKind.PERMISSION, request.kind)
-        assertEquals(ClaudeHookJson.matchKey(body), request.matchKey)
+        assertEquals(mapOf("command" to "\"rm -rf build\"", "description" to "\"清理\""), request.input)
     }
 
     @Test fun `没有 agent_id 的请求属于主会话，agent_type 不当作子代理来源`() {

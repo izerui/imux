@@ -64,9 +64,9 @@ class ClaudeHookHandler : HttpRequestHandler() {
         when (body.string("hook_event_name")) {
             "PostToolUse", "PostToolUseFailure" -> {
                 respond(200)
-                val matchKey = ClaudeHookJson.matchKey(body)
+                val done = ClaudeHookJson.toolDone(body) ?: return true
                 val answers = ClaudeHookJson.localAnswers(body["tool_response"])
-                service.scope.launch { router.onHookToolDone(tabId, matchKey, answers) }
+                service.scope.launch { router.onHookToolDone(tabId, done, answers) }
             }
             "PermissionRequest" -> {
                 val id = ids.incrementAndGet()
