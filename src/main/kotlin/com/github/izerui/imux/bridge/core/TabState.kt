@@ -1,7 +1,7 @@
 package com.github.izerui.imux.bridge.core
 
 /** 停着等人的框是哪种：提问、权限确认、计划确认。 */
-internal enum class PromptKind { QUESTION, PERMISSION, PLAN }
+enum class PromptKind { QUESTION, PERMISSION, PLAN }
 
 /**
  * 推给手机、等着手机作答的框：[epoch] 是当时的绑定代次，[toolUseId] 是它对应的调用，

@@ -60,6 +60,21 @@ object AskedQuestions {
      */
     val ADVANCE_KEYS: List<String> = listOf(TerminalKeys.RIGHT)
 
+    /**
+     * 回给 hook 的这题答案：编号对得上选项给 label（多选以 ", " 连接），否则原话；空白返回 null。
+     * 单选题选多个时按原话处理（与现有 [chosen] 一致）。
+     */
+    fun hookAnswer(question: AskedQuestion, reply: String): String? {
+        if (reply.isBlank()) return null
+        val matched = picks(reply, question.options.size)
+            ?: joinedDigits(question, reply)?.let { picks(it, question.options.size) }
+        if (matched != null) {
+            if (!question.multiSelect && matched.size != 1) return reply.trim()
+            return matched.joinToString(", ") { question.options[it - 1].label.trim() }
+        }
+        return reply.trim()
+    }
+
     /** 对得上选项时给出选项原文（多选用顿号连起来），否则 null。 */
     private fun chosen(
         question: AskedQuestion,
@@ -74,7 +89,7 @@ object AskedQuestions {
      * 多选题里连着写的编号（「123」即 1、2、3）拆成单个数字再认：选项不超过 9 个时编号都是一位，不会有歧义。
      * 单选题不拆，「12」可能另有所指，原样作为回答。
      */
-    private fun joinedDigits(
+    internal fun joinedDigits(
         question: AskedQuestion,
         answer: String,
     ): String? {
@@ -87,7 +102,7 @@ object AskedQuestions {
      * 只有选项字母或编号（可带「选」前缀，空格、逗号、顿号、「和」隔开，全角也认，结尾的句号等标点忽略）时给出选中的编号；
      * 混着别的字、对不上选项、重复时为 null。
      */
-    private fun picks(
+    internal fun picks(
         answer: String,
         optionCount: Int,
     ): List<Int>? {

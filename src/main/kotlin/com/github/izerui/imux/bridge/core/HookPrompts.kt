@@ -1,0 +1,67 @@
+package com.github.izerui.imux.bridge.core
+
+/** 一次 PermissionRequest。[id] 由入口分配；[matchKey] 用来对上随后的 PostToolUse。 */
+data class HookRequest(
+    val id: Long,
+    val toolName: String,
+    val agentType: String?,
+    val detail: String,
+    val questions: List<AskedQuestion>?,
+    val matchKey: String,
+) {
+    /** AskUserQuestion → QUESTION，ExitPlanMode → PLAN，其余 → PERMISSION。 */
+    val kind: PromptKind
+        get() = when (toolName) {
+            "AskUserQuestion" -> PromptKind.QUESTION
+            PermissionPrompts.EXIT_PLAN_MODE -> PromptKind.PLAN
+            else -> PromptKind.PERMISSION
+        }
+}
+
+/** hook 路径的决定：交给电脑、允许、拒绝。 */
+sealed interface HookDecision {
+    /** 回 {}：交给电脑。 */
+    data object Pass : HookDecision
+
+    /** 允许，可附答案（提问）或模式（计划）。 */
+    data class Allow(val answers: Map<String, String>? = null, val mode: String? = null) : HookDecision
+
+    /** 拒绝，附原因。 */
+    data class Deny(val message: String) : HookDecision
+}
+
+/**
+ * 手机回复译成 hook 决定。纯函数，无 IO。
+ *
+ * 词表复用 [PermissionPrompts] 的 [PermissionPrompts.ALLOW]、[PermissionPrompts.DENY]、[PermissionPrompts.OPTION_LIKE]，
+ * 判定顺序与既有 [PermissionPrompts.reply]、[PermissionPrompts.planReply] 一致。
+ */
+object HookReplies {
+    private const val DENIED = "The user denied this tool call from their phone."
+    private const val DENIED_AND_SAID = "The user denied this tool call from their phone and said: "
+    private const val PLAN_DENIED = "The user does not want to proceed with this plan yet."
+
+    /** 权限确认：允许词 → Allow()；拒绝词或像选项编号/字母 → 通用拒绝；其余 → 拒绝并附原话。 */
+    fun permission(reply: String): HookDecision {
+        val word = TerminalKeys.normalizeReply(reply).lowercase()
+        return when (word) {
+            in PermissionPrompts.ALLOW -> HookDecision.Allow()
+            in PermissionPrompts.DENY -> HookDecision.Deny(DENIED)
+            else -> if (PermissionPrompts.OPTION_LIKE.matches(word))
+                HookDecision.Deny(DENIED)
+            else
+                HookDecision.Deny(DENIED_AND_SAID + reply.trim())
+        }
+    }
+
+    /** 计划确认：1/a → auto，2/b → default，拒绝词（去掉 2/b 再加「不执行」「不執行」）→ 通用不执行，其他 → Deny(原话)。 */
+    fun plan(reply: String): HookDecision {
+        val word = TerminalKeys.normalizeReply(reply).lowercase()
+        return when (word) {
+            "1", "a" -> HookDecision.Allow(mode = "auto")
+            "2", "b" -> HookDecision.Allow(mode = "default")
+            in PermissionPrompts.DENY - setOf("2", "b") + setOf("不执行", "不執行") -> HookDecision.Deny(PLAN_DENIED)
+            else -> HookDecision.Deny(reply.trim())
+        }
+    }
+}

@@ -12,9 +12,10 @@ package com.github.izerui.imux.bridge.core
  * 回到电脑上处理或再回一次即可；这样按错时无害，也不依赖各种确认框最后一项是不是输入框。
  */
 object PermissionPrompts {
-    /** 工具名一行，要批准的内容逐行跟在后面。 */
-    internal fun render(call: ToolCall): String {
-        val name = "**${PhoneMarkdown.inline(call.name)}**"
+    /** 工具名一行，要批准的内容逐行跟在后面。有子代理来源时写在工具名后。 */
+    internal fun render(call: ToolCall, agentType: String? = null): String {
+        val suffix = if (agentType != null) " · $agentType" else ""
+        val name = "**${PhoneMarkdown.inline(call.name)}**$suffix"
         val detail = call.detail.lines().filter(String::isNotBlank).map { PhoneMarkdown.escapeLineStart(PhoneMarkdown.inline(it.trim())) }
         return (listOf(name) + detail).joinToString(PhoneMarkdown.LINE_BREAK)
     }
@@ -60,7 +61,7 @@ object PermissionPrompts {
 
     /** 权限框第 1 项「Yes」（只允许这一次）的编号；手机上不按其它编号，不会永久授权或切换模式。 */
     private const val YES = "1"
-    private val OPTION_LIKE = Regex("""(?:\d{1,2}|[a-z])(?:[\s,，、]+(?:\d{1,2}|[a-z]))*""")
-    private val ALLOW = setOf("1", "a", "允许", "允許", "許可", "同意", "可以", "好", "好的", "行", "yes", "y", "ok", "allow")
-    private val DENY = setOf("2", "b", "拒绝", "拒絕", "拒否", "不", "不行", "不要", "no", "n", "deny")
+    internal val OPTION_LIKE = Regex("""(?:\d{1,2}|[a-z])(?:[\s,，、]+(?:\d{1,2}|[a-z]))*""")
+    internal val ALLOW = setOf("1", "a", "允许", "允許", "許可", "同意", "可以", "好", "好的", "行", "yes", "y", "ok", "allow")
+    internal val DENY = setOf("2", "b", "拒绝", "拒絕", "拒否", "不", "不行", "不要", "no", "n", "deny")
 }
