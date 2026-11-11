@@ -8,5 +8,5 @@
 - 主题插件另有 1280×800（16:10）的建议，可作为比例参考。（https://plugins.jetbrains.com/docs/marketplace/jetbrains-marketplace-approval-guidelines.html）
 
 ## 本次决定
-- 统一 16:10，出图 2560×1600（1280×800 的两倍），缩到 800px 宽时正文仍可读。
+- 统一 16:10。先按 2560×1600 渲染，再缩到 1520×950 并用 pngquant 压缩（每张约 200 KB），Marketplace 与仓库 README 共用；仍高于最小建议 1200×760，缩到 800px 宽时正文仍可读。
 - 界面一律复用 docs/promo-video/assets/ui/ 的真实界面重建，文案取 ImuxBundle_zh_CN.properties。

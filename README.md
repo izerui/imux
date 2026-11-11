@@ -10,6 +10,7 @@
 - **手机桥接**：用飞书、企业微信、钉钉或微信继续对话，截图和文件也能发到手机
 - **会话轨迹**：把几百轮对话浓缩成一条进展时间线
 - **先聊再做**：动手前先把需求聊清楚
+- **会话转移**：把手上的活交给另一个智能体接着干
 
 https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 
@@ -23,7 +24,7 @@ https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 
 ## 会话面板
 
-<img src="docs/images/tool-window.png" width="340" alt="AI 智能体面板：按 Claude Code、Codex、Pi 分组，运行中的会话转圈，未读的标题加粗并带圆点">
+<img src="docs/marketplace/01-sessions.png" width="760" alt="所有 AI 会话收进一个面板：按智能体分组，转圈表示正在跑，加粗表示有新回复，双击接着聊，会话在标签页里打开">
 
 会话按智能体分组、最近的在上面。转圈表示正在跑，圆点加粗表示有新结果没看，灰点表示已在标签页里开着。
 
@@ -31,13 +32,15 @@ https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 
 ## AI 用上 IDE 的能力
 
+<img src="docs/marketplace/04-ide-mcp.png" width="760" alt="会话通过 IDEA MCP 调用语义重命名、断点调试、数据库查询、IDE 检查和运行配置">
+
 imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义重命名、调试器、inspections、运行配置、已保存的数据库连接和项目 Code Style，而不是全局文本替换、加 print 调试。
 
 只对 imux 启动的会话生效，不改 CLI 的全局配置。可在 **Settings → Tools → Imux → IDEA MCP** 关闭或调整。
 
 ## 结对编程
 
-<img src="docs/images/pair-review.png" width="760" alt="Codex 正在审查这一轮：顶部提示条显示进度，右上角结对按钮显示「审查中」">
+<img src="docs/marketplace/06-pair-programming.png" width="760" alt="结对编程：顶部提示条显示 Codex 的审查进度，审查意见自动发回主会话，主会话接着改">
 
 点会话右上角图标组里的 **结对编程** 按钮，选一个副驾驶（比如 Claude Code 写、Codex 审）。主会话每完成一轮，副驾驶自动审查并把意见发回来；只想审一次就在同一个菜单里选 **审查一次**。
 
@@ -49,7 +52,7 @@ imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义�
 
 ## 手机桥接
 
-<img src="docs/images/phone-chat.png" width="320" alt="手机上让会话发截图和报告：先收到图片和文件，再收到这一轮的回复，末尾分割线下是工程 · 智能体 · 会话标题">
+<img src="docs/marketplace/05-phone-bridge.png" width="760" alt="手机桥接：终端显示连着的机器人，手机发的消息进终端，会话把截图和文件发到手机，回复末尾署名分清是哪个会话">
 
 1. **Settings → Tools → Imux → 通讯机器人** 添加机器人，用手机扫码。
 2. 在会话右上角点 **手机** 按钮，选这个机器人。
@@ -60,15 +63,21 @@ imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义�
 
 ## 会话轨迹
 
-<img src="docs/images/session-trail.png" width="760" alt="会话轨迹卡片：左列时间，主线、需求变更、回滚（灰显并标已回滚）、报错、旁支和进行中各有标记">
+<img src="docs/marketplace/02-session-trail.png" width="760" alt="会话轨迹：把长对话浓缩成时间线，标出摘要过期、需求变更、回滚、放弃的旁支、报错和进行中的一步">
 
 点会话右上角的轨迹图标，imux 让智能体读完整段会话，浓缩成一条时间线：主线进展、需求变更、报错、回滚过的尝试都单独标出来。会话有新进展后点「更新轨迹」，只读新增的部分。
 
 ## 先聊再做
 
-<img src="docs/images/clarify.png" width="560" alt="先聊再做对话框：顶部是目标，每个问题一个标签，选项带推荐和说明，也可以填其他">
+<img src="docs/marketplace/03-clarify.png" width="760" alt="先聊再做：目标写在最上面，每个问题一个标签，结合项目现状提问，选项带推荐和取舍">
 
 需求还模糊时，点右上角图标组里的 **先聊再做** 按钮。Agent 结合项目代码一批批地问你关键问题，每题给出带推荐的选项；聊完整理成方案，点 **发给 Agent** 就在这个终端开始执行。
+
+## 会话转移
+
+<img src="docs/marketplace/07-session-handoff.png" width="760" alt="在会话里右键，选「会话转移」，再选 Codex 或 Pi 接手">
+
+在会话终端里右键 → **会话转移**，选 Codex 或 Pi：新开一个标签页，自动填入一段提示词，帮新会话接上之前的工作。Claude Code、Codex、Pi 之间都能互相转移。
 
 ## 直接对会话说
 
