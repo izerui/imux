@@ -208,22 +208,31 @@ class BridgeRouter(
         if (!attached) releaseHooks(tabId)
     }
 
-    /** 未绑定立即 respond(Pass)；否则入队，成为队首时推送。respond 只会被调用一次。 */
+    /**
+     * 未绑定立即 respond(Pass)；否则入队，成为队首时推送。respond 只会被调用一次。
+     *
+     * 计划、提问请求到达时，同一代理、同一工具的旧请求视为已在电脑端处理（实测 28：电脑上计划选 3 后旧请求不关闭，
+     * Claude 改稿后发来新的）：出队并 respond(Pass)，推给过这台手机的先告诉它已在电脑端完成。权限请求不适用，
+     * 同一代理可能并行请求多个权限。
+     */
     suspend fun onHookRequest(
         tabId: String,
         request: HookRequest,
         respond: (HookDecision) -> Unit,
     ) {
         // 在锁内查绑定再入队：解绑后的放行（onReleased）也在锁内清队，入队与清队不会错过
-        val (binding, text) =
+        val (binding, superseded, text) =
             synchronized(lock) {
                 val binding = bindings.bindingForTab(tabId) ?: return@synchronized null
                 // 没有题目的提问推不出去、手机也答不了，入队会卡住整个队列：直接交给电脑
                 if (request.kind == PromptKind.QUESTION && request.questions.isNullOrEmpty()) return@synchronized null
                 val queue = hookQueues.getOrPut(tabId) { HookPromptQueue() }
+                val superseded = if (request.kind == PromptKind.PERMISSION) emptyList() else queue.supersededBy(request)
                 queue.add(HookPromptQueue.Entry(request, respond))
-                binding to queue.nextPush(binding)
+                Triple(binding, superseded, queue.nextPush(binding))
             } ?: return respond(HookDecision.Pass)
+        superseded.forEach { it.respond(HookDecision.Pass) }
+        if (superseded.any { it.pushedEpoch == binding.epoch }) send(binding, texts.promptAnsweredLocally(null))
         text?.let { send(binding, it) }
     }
 

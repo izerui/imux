@@ -373,6 +373,78 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `计划改稿后旧请求作废，新计划推到手机`() =
+        runBlocking {
+            bind()
+            val old = request(1, toolName = "ExitPlanMode", detail = "# 旧计划")
+            val revised = request(2, toolName = "ExitPlanMode", detail = "# 新计划")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), old.decisions)
+            assertEquals(listOf("PLAN(# 旧计划)", "ANSWERED_LOCALLY(null)", "PLAN(# 新计划)"), sentTexts())
+            assertTrue(revised.decisions.isEmpty())
+            router.onInbound(inbound("m1", "2"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("default"))), revised.decisions)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), old.decisions)
+        }
+
+    @Test
+    fun `同代理的新提问让旧提问作废`() =
+        runBlocking {
+            bind()
+            val old = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors), agentId = "a1", agentType = "general-purpose")
+            val asked = request(2, toolName = "AskUserQuestion", detail = "", questions = listOf(fruits), agentId = "a1", agentType = "general-purpose")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), old.decisions)
+            assertTrue(asked.decisions.isEmpty())
+            val texts = sentTexts()
+            assertEquals(3, texts.size)
+            assertTrue(texts[0], texts[0].startsWith("QUESTION1/1(") && texts[0].contains("颜色？"))
+            assertEquals("ANSWERED_LOCALLY(null)", texts[1])
+            assertTrue(texts[2], texts[2].startsWith("QUESTION1/1(") && texts[2].contains("水果？"))
+        }
+
+    @Test
+    fun `没推过的旧计划静默作废`() =
+        runBlocking {
+            bind()
+            val head = request(1, detail = "rm a.txt")
+            val old = request(2, toolName = "ExitPlanMode", detail = "# 旧计划")
+            val revised = request(3, toolName = "ExitPlanMode", detail = "# 新计划")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), old.decisions)
+            assertTrue(head.decisions.isEmpty())
+            assertTrue(revised.decisions.isEmpty())
+            assertEquals(1, sentTexts().size)
+            router.onInbound(inbound("m1", "1"))
+            assertEquals("PLAN(# 新计划)", sentTexts().last())
+        }
+
+    @Test
+    fun `不同代理的计划互不作废`() =
+        runBlocking {
+            bind()
+            val main = request(1, toolName = "ExitPlanMode", detail = "# 主会话计划")
+            val agent = request(2, toolName = "ExitPlanMode", detail = "# 子代理计划", agentId = "a1", agentType = "Plan")
+            val other = request(3, toolName = "ExitPlanMode", detail = "# 另一子代理计划", agentId = "a2", agentType = "Plan")
+            assertTrue(main.decisions.isEmpty())
+            assertTrue(agent.decisions.isEmpty())
+            assertTrue(other.decisions.isEmpty())
+            assertEquals(listOf("PLAN(# 主会话计划)"), sentTexts())
+        }
+
+    @Test
+    fun `权限请求不因同代理新请求作废`() =
+        runBlocking {
+            bind()
+            val first = request(1, detail = "rm a.txt", agentId = "a1", agentType = "general-purpose")
+            val second = request(2, detail = "rm a.txt", agentId = "a1", agentType = "general-purpose")
+            assertTrue(first.decisions.isEmpty())
+            assertTrue(second.decisions.isEmpty())
+            assertEquals(1, sentTexts().size)
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), first.decisions)
+            assertTrue(second.decisions.isEmpty())
+            assertTrue(sentTexts().last(), sentTexts().last().startsWith("HOOK_PERMISSION("))
+        }
+
+    @Test
     fun `电脑端拒绝后告诉手机，不再回写`() =
         runBlocking {
             bind()
