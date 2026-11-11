@@ -513,7 +513,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `注入 hook 的标签不再按记录推权限框`() =
+    fun `读到记录里的工具调用也不推权限框`() =
         runBlocking {
             bind()
             router.hookAttached("tab-1", true)
@@ -523,7 +523,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `注入 hook 的标签等待通知先到时读到记录也不补推权限框`() =
+    fun `等待通知先到时读到记录里的工具调用也不补推权限框`() =
         runBlocking {
             bind()
             router.hookAttached("tab-1", true)

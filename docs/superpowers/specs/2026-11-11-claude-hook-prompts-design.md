@@ -2,7 +2,7 @@
 
 ## 背景
 
-手机桥接现在按会话记录推送 Claude 的确认框（权限确认、提问、计划确认），手机回复后由插件模拟按键作答（`PermissionPrompts`、`AskedQuestions`、`TabState.waitingSubject`）。有三个缺口：
+手机桥接改造前按会话记录推送 Claude 的确认框（权限确认、提问、计划确认），手机回复后由插件模拟按键作答（`PermissionPrompts`、`AskedQuestions`、`TabState.waitingSubject`）。有三个缺口：
 
 1. **子代理里的确认推不过来。** 子代理的工具调用写在它自己的记录里，主记录只有一条没返回的 `Agent` 调用；有后台子代理在跑时也确定不了屏幕上停着的是谁的框。`waitingSubject()` 遇到这两种情况都返回 null，手机只收到「请到 IDE 中处理」。
 2. **按键作答绕且脆。** 提问只能逐题翻页、最后 Esc 关框再把答案当普通消息发出；权限框拒绝只能 Esc 结束整轮；电脑上光标位置不对时按键会写进输入框。
