@@ -18,12 +18,15 @@ data class RobotRow(
     val id: RobotId,
     val name: String,
     val channel: String,
+    /** 只说机器人与平台之间的手机连接；会话那一侧看 [session] 与 [sessionOffline]。 */
     val status: String,
     val session: String?,
     val health: RobotHealth = RobotHealth.NONE,
     /** 连着的会话所在工程与智能体，空闲时为空。 */
     val project: String? = null,
     val agent: AgentType? = null,
+    /** 绑定还在，但终端没在运行（工程关闭、IDE 退出、恢复的标签还没打开）：手机消息一律不送达，打开后自动接回。 */
+    val sessionOffline: Boolean = false,
 )
 
 interface RowLabels {
@@ -32,7 +35,6 @@ interface RowLabels {
     fun status(
         status: ConnectionStatus?,
         paired: Boolean,
-        bound: Boolean,
     ): String
 }
 
@@ -48,6 +50,12 @@ fun robotHealth(
         else -> RobotHealth.ATTENTION
     }
 
+/**
+ * 设置页的「重新连接」只在重连能解决问题时可用：在线不需要；收发受阻要到平台处理，凭据丢失要重新添加，重连都解决不了。
+ */
+fun canReconnect(status: ConnectionStatus?): Boolean =
+    status != ConnectionStatus.Online && status != ConnectionStatus.NoCredentials && status !is ConnectionStatus.SendFailing
+
 /** 连着会话的机器人是否需要处理（横幅、状态栏用）：与设置页的黄点同一判断。 */
 fun needsAttention(status: ConnectionStatus?): Boolean = robotHealth(status, paired = true, bridgeEnabled = true) == RobotHealth.ATTENTION
 
@@ -55,6 +63,7 @@ fun robotRows(
     robots: List<RobotRecord>,
     statusOf: (RobotId) -> ConnectionStatus?,
     bindingOf: (RobotId) -> Binding?,
+    sessionAvailable: (Binding) -> Boolean,
     titleOf: (Binding) -> String,
     projectOf: (Binding) -> String,
     labels: RowLabels,
@@ -64,15 +73,17 @@ fun robotRows(
         val status = statusOf(robot.id)
         val paired = robot.owner() != null
         val binding = bindingOf(robot.id)
+        // 状态列与圆点只看手机连接，会话离线放在会话列，两者互不遮盖
         RobotRow(
             id = robot.id,
             name = robot.name,
             channel = labels.channel(robot.kind),
-            status = labels.status(status, paired, bound = binding != null),
+            status = labels.status(status, paired),
             session = binding?.let(titleOf),
             health = robotHealth(status, paired, bridgeEnabled),
             project = binding?.let(projectOf),
             agent = binding?.target?.agentType,
+            sessionOffline = binding != null && !sessionAvailable(binding),
         )
     }
 
@@ -104,14 +115,8 @@ fun statusLabel(
 object BundleRowLabels : RowLabels {
     override fun channel(kind: ChannelKind) = channelLabel(kind)
 
-    // 列表比横幅多区分“在线 · 空闲”与“已连接会话”（原型的状态列）
     override fun status(
         status: ConnectionStatus?,
         paired: Boolean,
-        bound: Boolean,
-    ) = when {
-        status == ConnectionStatus.Online && paired && bound -> ImuxBundle.message("bridge.robot.status.bound")
-        status == ConnectionStatus.Online && paired -> ImuxBundle.message("bridge.robot.status.idle")
-        else -> statusLabel(status, paired)
-    }
+    ) = statusLabel(status, paired)
 }

@@ -46,6 +46,8 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun released(sessionTitle: String) = ImuxBundle.message("bridge.status.released", "$TITLE_ICON $sessionTitle")
 
+    override fun suspended(sessionTitle: String) = ImuxBundle.message("bridge.status.suspended", "$TITLE_ICON $sessionTitle")
+
     override fun transcriptRestarted() = ImuxBundle.message("bridge.status.transcriptRestarted")
 
     override fun turnWithoutReply() = ImuxBundle.message("bridge.status.turnWithoutReply")

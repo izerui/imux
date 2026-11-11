@@ -20,14 +20,21 @@ class PhoneMenuTest {
                 session: String,
             ) = "$name/bound:$session"
 
+            override fun boundOffline(
+                name: String,
+                session: String,
+            ) = "$name/boundOffline:$session"
+
             override fun unpaired(name: String) = "$name/unpaired"
 
             override fun current(name: String) = "$name/current"
 
-            override fun offline(
+            override fun currentOffline(name: String) = "$name/currentOffline"
+
+            override fun problem(
                 name: String,
                 status: ConnectionStatus?,
-            ) = "$name/offline:$status"
+            ) = "$name/problem:$status"
         }
 
     private fun robot(
@@ -47,6 +54,7 @@ class PhoneMenuTest {
             phoneMenuModel(
                 listOf(robot("a"), robot("b"), robot("c"), robot("d", paired = false)),
                 bindingOf = { bindings[it.value] },
+                sessionAvailable = { true },
                 statusOf = { ConnectionStatus.Online },
                 thisTabId = "this",
                 titleOf = { "T:" + it.target.tabId },
@@ -72,6 +80,7 @@ class PhoneMenuTest {
             phoneMenuModel(
                 listOf(robot("a"), robot("b")),
                 bindingOf = { bindings[it.value] },
+                sessionAvailable = { true },
                 statusOf = { ConnectionStatus.Online },
                 thisTabId = "this",
                 titleOf = { "T" },
@@ -98,7 +107,7 @@ class PhoneMenuTest {
     fun `没有机器人`() {
         assertEquals(
             listOf(PhoneMenuEntry.NoRobots, PhoneMenuEntry.AddRobot),
-            phoneMenuModel(emptyList(), bindingOf = { null }, statusOf = { null }, thisTabId = "t", titleOf = { "" }, labels = labels),
+            phoneMenuModel(emptyList(), bindingOf = { null }, sessionAvailable = { true }, statusOf = { null }, thisTabId = "t", titleOf = { "" }, labels = labels),
         )
     }
 
@@ -109,6 +118,7 @@ class PhoneMenuTest {
             phoneMenuModel(
                 listOf(robot("a"), robot("b"), robot("c")),
                 bindingOf = { null },
+                sessionAvailable = { true },
                 statusOf = { statuses[it.value] },
                 thisTabId = "this",
                 titleOf = { "" },
@@ -116,12 +126,57 @@ class PhoneMenuTest {
             )
         assertEquals(
             listOf(
-                PhoneMenuEntry.Robot(RobotId("a"), "bot-a/offline:Kicked", true),
+                PhoneMenuEntry.Robot(RobotId("a"), "bot-a/problem:Kicked", true),
                 PhoneMenuEntry.Robot(RobotId("b"), "bot-b/idle", true),
-                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/offline:null", true),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/problem:null", true),
                 PhoneMenuEntry.AddRobot,
             ),
             entries,
         )
+    }
+
+    @Test
+    fun `保留绑定但会话离线时菜单显示离线的会话且允许重新选择`() {
+        val entries = phoneMenuModel(
+            listOf(robot("a"), robot("b")),
+            bindingOf = { binding(it.value, if (it.value == "a") "closed" else "live") },
+            sessionAvailable = { it.target.tabId == "live" },
+            statusOf = { ConnectionStatus.Online },
+            thisTabId = "this",
+            titleOf = { it.target.tabId },
+            labels = labels,
+        )
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a/boundOffline:closed", true), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b/bound:live", true), entries[1])
+    }
+
+    @Test
+    fun `旧工程离线时菜单仍显示机器人失败或被接管的原因`() {
+        val entries = phoneMenuModel(
+            listOf(robot("a"), robot("b")),
+            bindingOf = { binding(it.value, "closed-${it.value}") },
+            sessionAvailable = { false },
+            statusOf = { if (it.value == "a") ConnectionStatus.Failed("auth") else ConnectionStatus.Kicked },
+            thisTabId = "this",
+            titleOf = { "closed" },
+            labels = labels,
+        )
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a/problem:Failed(reason=auth)", true), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b/problem:Kicked", true), entries[1])
+    }
+
+    @Test
+    fun `本标签尚未运行时不允许重复绑定自己但保留断开入口`() {
+        val entries = phoneMenuModel(
+            listOf(robot("a")),
+            bindingOf = { binding("a", "this") },
+            sessionAvailable = { false },
+            statusOf = { ConnectionStatus.Online },
+            thisTabId = "this",
+            titleOf = { "title" },
+            labels = labels,
+        )
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a/currentOffline", false, current = true), entries[0])
+        assertEquals(PhoneMenuEntry.Disconnect(RobotId("a")), entries.last())
     }
 }

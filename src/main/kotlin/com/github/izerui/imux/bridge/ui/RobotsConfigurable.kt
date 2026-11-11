@@ -4,8 +4,8 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BindingService
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.RobotManager
-import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.SessionTitles
+import com.github.izerui.imux.bridge.terminal.bindingSessionAvailable
 import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.BannerColors
@@ -21,7 +21,9 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.ColoredTableCellRenderer
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.ToolbarDecorator
 import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.panel
@@ -65,6 +67,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 emptyText.text = ImuxBundle.message("bridge.settings.empty")
                 columnModel.getColumn(STATUS_COLUMN).cellRenderer = StatusRenderer()
                 columnModel.getColumn(AGENT_COLUMN).cellRenderer = AgentRenderer()
+                columnModel.getColumn(SESSION_COLUMN).cellRenderer = SessionRenderer()
             }.also { this.table = it }
         val decorated =
             ToolbarDecorator.createDecorator(table)
@@ -78,7 +81,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                     object : com.intellij.openapi.project.DumbAwareAction(
                         ImuxBundle.message("bridge.settings.unbind"),
                         null,
-                        AllIcons.Actions.Cancel
+                        // 不用 ×：紧挨着移除的 −，容易看成删除机器人
+                        AllIcons.Actions.Exit
                     ) {
                         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
@@ -97,9 +101,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                         override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
                         override fun update(e: AnActionEvent) {
-                            // 收发受阻（SendFailing）重连解决不了，禁用重新连接
                             e.presentation.isEnabled = selected(table)?.let { row ->
-                                RobotManager.getInstance().statusOf(row.id) !is ConnectionStatus.SendFailing
+                                canReconnect(RobotManager.getInstance().statusOf(row.id))
                             } == true
                         }
 
@@ -158,6 +161,7 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 manager.robots(),
                 statusOf = manager::statusOf,
                 bindingOf = { hub.bindings.bindingOf(it) },
+                sessionAvailable = ::bindingSessionAvailable,
                 titleOf = SessionTitles::of,
                 projectOf = SessionTitles::projectName,
                 labels = BundleRowLabels,
@@ -239,6 +243,8 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                     else -> null
                 }
             append(value?.toString().orEmpty())
+            // 失败、重试的原因常被列宽截断，悬停看全文
+            toolTipText = value?.toString()
         }
     }
 
@@ -260,6 +266,34 @@ class RobotsConfigurable : BoundConfigurable(ImuxBundle.message("bridge.settings
                 return
             }
             icon = AgentIcons.forAgent(agent)
+        }
+    }
+
+    /** 会话离线时标题后跟灰字「（离线）」：绑定还在，恢复后自动接回。 */
+    private inner class SessionRenderer : ColoredTableCellRenderer() {
+        override fun customizeCellRenderer(
+            table: JTable,
+            value: Any?,
+            selected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int,
+        ) {
+            append(value?.toString().orEmpty())
+            val data = model.rows.getOrNull(row)
+            if (data?.sessionOffline == true) {
+                append(ImuxBundle.message("bridge.settings.session.offline"), SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            }
+            // 悬停给出工程 · 智能体 · 完整标题，离线时说明怎么恢复
+            toolTipText = data?.session?.let { title ->
+                val full = listOfNotNull(data.project, data.agent?.displayName, title).joinToString(" · ")
+                if (!data.sessionOffline) {
+                    full
+                } else {
+                    "<html>" + StringUtil.escapeXmlEntities(full) + "<br>" +
+                        StringUtil.escapeXmlEntities(ImuxBundle.message("bridge.settings.session.offline.tooltip")) + "</html>"
+                }
+            }
         }
     }
 

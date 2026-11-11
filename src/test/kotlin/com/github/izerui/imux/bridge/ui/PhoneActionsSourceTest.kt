@@ -10,6 +10,13 @@ class PhoneActionsSourceTest {
     private val pluginXml = File("src/main/resources/META-INF/plugin.xml").readText()
 
     @Test
+    fun `连接菜单使用实际会话可用性查询`() {
+        val source = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneActions.kt")
+        val menu = source.compactArgs(source.bodyAfter("internal fun phoneMenuFor(tabId: String)", '{'))
+        assertTrue(menu.contains("phoneMenuModel(manager.robots(),hub.bindings::bindingOf,::bindingSessionAvailable,"))
+    }
+
+    @Test
     fun `界面的连接、断开都经绑定服务，不直接改绑定表`() {
         assertTrue(actions.contains("BindingService.bind(project, robotId, target, title)"))
         assertTrue(actions.contains("BindingService.unbind(robotId)"))

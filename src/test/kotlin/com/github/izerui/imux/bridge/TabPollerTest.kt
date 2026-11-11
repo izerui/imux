@@ -83,6 +83,8 @@ class TabPollerTest {
 
         override fun released(sessionTitle: String) = "RELEASED"
 
+        override fun suspended(sessionTitle: String) = "SUSPENDED"
+
         override fun transcriptRestarted() = "RESTARTED"
 
         override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"

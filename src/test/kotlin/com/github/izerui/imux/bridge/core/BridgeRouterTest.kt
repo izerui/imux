@@ -89,6 +89,8 @@ class BridgeRouterTest {
 
         override fun released(sessionTitle: String) = "RELEASED($sessionTitle)"
 
+        override fun suspended(sessionTitle: String) = "SUSPENDED($sessionTitle)"
+
         override fun transcriptRestarted() = "RESTARTED"
 
         override fun backgroundRunning(tasks: List<String?>) = "BG(${tasks.joinToString(",")})"
@@ -395,7 +397,7 @@ class BridgeRouterTest {
         runBlocking {
             val binding = (registry.bind(robot, target) as BindResult.Bound).binding
             router.onSuspended(binding, "修复登录", "imux · Codex · 修复登录")
-            assertEquals(listOf("RELEASED(修复登录)\n\n---\n` imux · Codex · 修复登录 `"), sentTexts())
+            assertEquals(listOf("SUSPENDED(修复登录)\n\n---\n` imux · Codex · 修复登录 `"), sentTexts())
             assertEquals(binding, registry.bindingOf(robot))
             val restored = registry.reattach(robot, "new-tab")!!
             router.onReattached(restored, "imux", "Codex", "修复登录")
@@ -429,7 +431,7 @@ class BridgeRouterTest {
             r.onSuspended(binding, "修复登录", null)
             online.complete(Unit)
             job.join()
-            assertEquals(listOf("RELEASED(修复登录)"), sentTexts())
+            assertEquals(listOf("SUSPENDED(修复登录)"), sentTexts())
             assertEquals(binding, registry.bindingOf(robot))
         }
 
@@ -479,7 +481,7 @@ class BridgeRouterTest {
                 projectScope.cancel()
                 r.onSuspended(binding, "修复登录", null)
                 job.join()
-                assertEquals(listOf("RELEASED(修复登录)"), delivered)
+                assertEquals(listOf("SUSPENDED(修复登录)"), delivered)
                 assertEquals("关闭后不能重试已连接提示", 1, connectionAttempts)
                 assertEquals("关闭项目保留绑定供恢复", binding, registry.bindingOf(robot))
             } finally {
@@ -515,7 +517,7 @@ class BridgeRouterTest {
                 r.onSuspended(binding, "修复登录", null)
                 released.complete(Unit)
                 job.join()
-                assertEquals(listOf("RELEASED(修复登录)"), sentTexts())
+                assertEquals(listOf("SUSPENDED(修复登录)"), sentTexts())
                 assertEquals(binding, registry.bindingOf(robot))
             } finally {
                 projectScope.cancel()

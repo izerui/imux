@@ -46,7 +46,11 @@ class TerminalBridgeServiceSourceTest {
             "等待后关闭中或已销毁就不释放绑定",
             schedule.contains("if (projectClosing || project.isDisposed) return@withContext")
         )
-        assertTrue("保存前就记下项目在关闭", code.contains("override fun projectClosingBeforeSave(project: Project)"))
+        assertFalse("保存前仍可能取消关闭，不能留下关闭标记", code.contains("override fun projectClosingBeforeSave(project: Project)"))
+        assertTrue(
+            "标签释放须等保存弹窗结束再复核，避免正常关闭工程时丢失绑定",
+            source.compact(schedule).contains("withContext(Dispatchers.EDT+ModalityState.nonModal().asContextElement())"),
+        )
         assertTrue(
             "确定退出时记下，不用可被取消的 appClosing",
             code.contains("override fun appWillBeClosed(isRestart: Boolean)") && !code.contains("override fun appClosing()")
@@ -62,12 +66,11 @@ class TerminalBridgeServiceSourceTest {
 
     @Test
     fun `确定关闭项目和退出应用分别调用同一个关闭通知入口`() {
-        val projectClose = code.compact(code.bodyAfter("override fun projectClosing(project: Project)", '{'))
-        assertTrue(projectClose.contains("if(project===this@TerminalBridgeService.project)notifyClosing()"))
+        val start = code.compactArgs(code.bodyAfter("fun start()", '{'))
+        assertTrue(start.contains("subscribe(ProjectCloseListener.TOPIC,bridgeProjectCloseListener(project,::notifyClosing))"))
         val appClose = code.compact(code.bodyAfter("override fun appWillBeClosed(isRestart: Boolean)", '{'))
         assertTrue(appClose.contains("notifyClosing()"))
-        val beforeSave = code.bodyAfter("override fun projectClosingBeforeSave(project: Project)", '{')
-        assertFalse("保存前只标记，不提前发出断开提示", beforeSave.contains("notifyClosing()"))
+        assertFalse("可取消的保存前阶段不修改桥接状态", code.normalized.contains("override fun projectClosingBeforeSave("))
     }
 
     @Test
@@ -84,5 +87,33 @@ class TerminalBridgeServiceSourceTest {
         assertTrue(notify.contains("scope.launch{block()}"))
         val selected = code.compact(code.normalized)
         assertTrue(selected.contains("hub.bindings.snapshot().filter{it.target.projectPath==projectPath}"))
+    }
+
+    @Test
+    fun `工程关闭后即使保留绑定也发出界面刷新信号`() {
+        val closing = code.compact(code.bodyAfter("private fun notifyClosing()", '{'))
+        val mark = closing.indexOf("projectClosing=true")
+        val refresh = closing.indexOf("hub.changed()")
+        assertTrue("刷新前必须先使会话不可用", mark >= 0 && refresh > mark)
+        assertTrue("断开提示可能等待网络，界面刷新不能排在它后面", refresh < closing.indexOf("closeNotifier.notifyOnce("))
+        code.assertSameCode(
+            "可用性查询应读取实际停止状态，而不是可被取消的保存前标记",
+            "internal fun isClosing(): Boolean = !scope.isActive",
+            code.normalized.substringAfter("private var projectClosing = false")
+                .substringBefore("private val started").trim(),
+        )
+    }
+
+    @Test
+    fun `标签恢复或关闭时刷新会话可用状态`() {
+        val changed = code.compact(code.bodyAfter("private fun onSessionsChanged()", '{'))
+        assertTrue("绑定不变时也必须刷新界面", changed.endsWith("hub.changed()}"))
+        assertTrue("必须观察真实终端的启动状态", changed.contains("sessionStates.update(open.mapNotNull"))
+        assertTrue(changed.contains("host.terminalViewOf(key)?.sessionState"))
+        assertTrue(
+            "终端状态变化（含 CLI 退出）回到 EDT 重新对账，对账结束会刷新界面",
+            code.compact(code.normalized).contains("if(!projectClosing&&!project.isDisposed)onSessionsChanged()"),
+        )
+        assertTrue("CLI 退出的标签参与解绑判断", changed.contains("tabChangeFor(binding,open,seenTabs,projectClosing||project.isDisposed,terminated)"))
     }
 }

@@ -80,6 +80,9 @@ interface BridgeTexts {
 
     fun released(sessionTitle: String): String
 
+    /** 工程或 IDE 关闭：绑定还在，重新打开后自动恢复，与解绑的 [released] 区分。 */
+    fun suspended(sessionTitle: String): String
+
     fun transcriptRestarted(): String
 
     /** 一轮结束了，但没有文字回复（只调了工具、只执行了命令）。 */

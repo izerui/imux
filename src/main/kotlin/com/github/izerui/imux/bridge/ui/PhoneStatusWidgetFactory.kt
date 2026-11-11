@@ -3,6 +3,7 @@ package com.github.izerui.imux.bridge.ui
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.RobotManager
+import com.github.izerui.imux.bridge.terminal.bindingSessionAvailable
 import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.openapi.application.ApplicationManager
@@ -62,7 +63,8 @@ private class PhoneStatusWidget(
     override fun getText(): String {
         val openTabIds = TerminalHost.getInstance(project).openTabsByTabId().keys
         val manager = RobotManager.getInstance()
-        val bound = BridgeHub.getInstance().bindings.snapshot().filter { it.target.tabId in openTabIds }
+        // 标签开着但 CLI 已退出的会话离线，不算已连接
+        val bound = BridgeHub.getInstance().bindings.snapshot().filter { it.target.tabId in openTabIds && bindingSessionAvailable(it) }
         // 与横幅、设置页同一判断
         val attentionCount = bound.count { needsAttention(manager.statusOf(it.robotId)) }
         return statusBarText(

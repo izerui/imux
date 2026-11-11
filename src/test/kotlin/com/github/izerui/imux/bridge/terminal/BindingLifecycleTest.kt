@@ -54,4 +54,12 @@ class BindingLifecycleTest {
             tabChangeFor(restored, mapOf("tab-new" to "s1"), emptySet(), projectClosing = false),
         )
     }
+
+    @Test
+    fun `标签还开着但 CLI 已退出时解绑，项目关闭时进程结束不算`() {
+        val open = mapOf("tab-1" to "s1")
+        assertEquals(TabChange.Release, tabChangeFor(binding, open, setOf("tab-1"), projectClosing = false, terminatedTabs = setOf("tab-1")))
+        assertEquals(TabChange.Keep, tabChangeFor(binding, open, setOf("tab-1"), projectClosing = true, terminatedTabs = setOf("tab-1")))
+        assertEquals(TabChange.Keep, tabChangeFor(binding, open, setOf("tab-1"), projectClosing = false, terminatedTabs = setOf("tab-2")))
+    }
 }

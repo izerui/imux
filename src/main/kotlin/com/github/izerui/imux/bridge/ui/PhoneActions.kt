@@ -5,6 +5,7 @@ import com.github.izerui.imux.bridge.BindingService
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.RobotManager
 import com.github.izerui.imux.bridge.SessionTitles
+import com.github.izerui.imux.bridge.terminal.bindingSessionAvailable
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
@@ -57,14 +58,14 @@ internal object PhoneOperations {
             file.sessionId
         )
         BindingService.bind(project, robotId, target, title) ?: return
-        // 机器人不在线时如实说明：会话已连上，但要等机器人恢复在线才能收发
+        // 机器人手机连接异常时如实说明：会话已连上，但要等连接恢复才能收发
         val status = RobotManager.getInstance().statusOf(robotId)
         val notice =
             if (status == ConnectionStatus.Online) {
                 ImuxBundle.message("bridge.notify.connected", title, robot.name)
             } else {
                 ImuxBundle.message(
-                    "bridge.notify.connected.offline",
+                    "bridge.notify.connected.robotProblem",
                     title,
                     robot.name,
                     statusLabel(status, paired = true)
@@ -132,6 +133,7 @@ internal fun phoneMenuFor(tabId: String): List<PhoneMenuEntry> {
     return phoneMenuModel(
         manager.robots(),
         hub.bindings::bindingOf,
+        ::bindingSessionAvailable,
         manager::statusOf,
         tabId,
         SessionTitles::of,

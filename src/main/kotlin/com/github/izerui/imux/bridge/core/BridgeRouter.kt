@@ -664,13 +664,13 @@ class BridgeRouter(
         sessionTitle: String,
     ) = onBound(binding, project, agent, sessionTitle)
 
-    /** 项目或 IDE 关闭：通知手机断开，但保留绑定供重新打开后接回；旧代次不得误报。 */
+    /** 项目或 IDE 关闭：通知手机会话离线，但保留绑定供重新打开后接回；旧代次不得误报。 */
     suspend fun onSuspended(
         binding: Binding,
         sessionTitle: String,
         label: String?,
     ) {
-        send(binding, texts.released(sessionTitle), label)
+        send(binding, texts.suspended(sessionTitle), label)
     }
 
     /**
