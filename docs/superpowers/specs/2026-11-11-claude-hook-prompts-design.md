@@ -43,6 +43,8 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 17 | 两个 `--settings` | **不合并**，后一个整体覆盖前一个 |
 | 18 | `--settings` + 两个 `--plugin-dir` | 三处 hook 全部触发；用户 `--settings` 的 `env` 保留；插件 http hook 的 `allowedEnvVars` 生效；交互启动无额外提示 |
 | 19 | 项目 `.claude/settings.json` + `--settings` | 两处 hook 都触发，配置文件里的 `env` 保留：与配置文件是合并的 |
+| 20 | http hook 请求头 | 含 `Content-Type: application/json`、`Host: 127.0.0.1:<port>`，无 `Origin`（2026-11-11 实测），入口校验可通过 |
+| 21 | 内置服务空闲超时 | IDEA 2026.2 的 `intellij.platform.builtInServer.impl.jar` 未使用 `IdleStateHandler` / `ReadTimeoutHandler`，长时间挂起的请求不会被服务端按空闲断开（静态检查，端到端待确认） |
 
 ## 方案
 
