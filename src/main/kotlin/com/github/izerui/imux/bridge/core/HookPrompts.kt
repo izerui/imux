@@ -27,8 +27,8 @@ sealed interface HookDecision {
     /** 回 {}：交给电脑。 */
     data object Pass : HookDecision
 
-    /** 允许，可附答案（提问）或模式（计划）。 */
-    data class Allow(val answers: Map<String, String>? = null, val mode: String? = null) : HookDecision
+    /** 允许，可附答案（提问）或依次切换的模式（计划，按顺序各下发一条 setMode）。 */
+    data class Allow(val answers: Map<String, String>? = null, val modes: List<String> = emptyList()) : HookDecision
 
     /** 拒绝，附原因。 */
     data class Deny(val message: String) : HookDecision
@@ -44,8 +44,11 @@ object HookReplies {
     private const val DENIED_AND_SAID = "The user denied this tool call from their phone and said: "
     private const val PLAN_DENIED = "The user does not want to proceed with this plan yet."
 
-    /** 计划选 1 后切到的自动模式。 */
-    const val AUTO_MODE = "auto"
+    /**
+     * 计划回 1：与电脑上的第 1 项一致，先切 auto 再切 bypassPermissions（实测 23、24）。
+     * 以跳过权限方式启动的会话最终为 bypass；其余会话里 bypass 是空操作，停在 auto。顺序不能反。
+     */
+    val PLAN_FIRST_MODES = listOf("auto", "bypassPermissions")
 
     /** 权限确认：允许词 → Allow()；拒绝词或像选项编号/字母 → 通用拒绝；其余 → 拒绝并附原话。 */
     fun permission(reply: String): HookDecision {
@@ -61,14 +64,14 @@ object HookReplies {
     }
 
     /**
-     * 计划确认：1/a → auto，2/b → default，拒绝词（去掉 2/b 再加「不执行」「不執行」）或其余像选项编号/字母的回复 → 通用不执行，
+     * 计划确认：1/a → [PLAN_FIRST_MODES]，2/b → default，拒绝词（去掉 2/b 再加「不执行」「不執行」）或其余像选项编号/字母的回复 → 通用不执行，
      * 其他 → Deny(原话)。「3」之类不当作修改意见转给 Claude。
      */
     fun plan(reply: String): HookDecision {
         val word = TerminalKeys.normalizeReply(reply).lowercase()
         return when (word) {
-            "1", "a" -> HookDecision.Allow(mode = AUTO_MODE)
-            "2", "b" -> HookDecision.Allow(mode = "default")
+            "1", "a" -> HookDecision.Allow(modes = PLAN_FIRST_MODES)
+            "2", "b" -> HookDecision.Allow(modes = listOf("default"))
             in PermissionPrompts.DENY - setOf("2", "b") + setOf("不执行", "不執行") -> HookDecision.Deny(PLAN_DENIED)
             else -> if (PermissionPrompts.OPTION_LIKE.matches(word))
                 HookDecision.Deny(PLAN_DENIED)

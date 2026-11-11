@@ -120,7 +120,7 @@ interface BridgeTexts {
     /** 提问的各题答案已一次性交给 Claude。 */
     fun hookAnswersSubmitted(): String
 
-    /** 手机批准了计划：[auto] 为真切到自动模式，否则改文件时逐个确认。 */
+    /** 手机批准了计划：[auto] 为真按电脑上的第 1 项切换模式（自动模式，跳过权限启动的会话恢复跳过权限），否则改文件时逐个确认。 */
     fun hookPlanApproved(auto: Boolean): String
 
     /** 手机没有批准计划，原话已交给 Claude。 */

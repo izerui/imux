@@ -55,7 +55,7 @@ internal object ClaudeHookJson {
         }.toString()
     }
 
-    /** Pass → {}；Allow → updatedInput 为原 tool_input（提问加 answers）、mode 非空时加 setMode；Deny → message。不带 interrupt（实测 5）。 */
+    /** Pass → {}；Allow → updatedInput 为原 tool_input（提问加 answers）、modes 非空时按顺序各加一条 setMode；Deny → message。不带 interrupt（实测 5）。 */
     fun response(decision: HookDecision, toolInput: JsonObject): JsonObject {
         val result = when (decision) {
             HookDecision.Pass -> return JsonObject()
@@ -66,13 +66,15 @@ internal object ClaudeHookJson {
                         add("answers", JsonObject().apply { answers.forEach { (question, answer) -> addProperty(question, answer) } })
                     }
                 })
-                decision.mode?.let { mode ->
+                if (decision.modes.isNotEmpty()) {
                     add("updatedPermissions", JsonArray().apply {
-                        add(JsonObject().apply {
-                            addProperty("type", "setMode")
-                            addProperty("mode", mode)
-                            addProperty("destination", "session")
-                        })
+                        decision.modes.forEach { mode ->
+                            add(JsonObject().apply {
+                                addProperty("type", "setMode")
+                                addProperty("mode", mode)
+                                addProperty("destination", "session")
+                            })
+                        }
                     })
                 }
             }

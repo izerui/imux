@@ -260,13 +260,23 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `计划回 1 按电脑第 1 项批准`() =
+        runBlocking {
+            bind()
+            val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("auto", "bypassPermissions"))), pending.decisions)
+            assertEquals("HOOK_PLAN_APPROVED(true)", sentTexts().last())
+        }
+
+    @Test
     fun `计划回 2 批准并切手动模式`() =
         runBlocking {
             bind()
             val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
             assertEquals(listOf("PLAN(# 计划)"), sentTexts())
             router.onInbound(inbound("m1", "2"))
-            assertEquals(listOf<HookDecision>(HookDecision.Allow(mode = "default")), pending.decisions)
+            assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("default"))), pending.decisions)
             assertEquals("HOOK_PLAN_APPROVED(false)", sentTexts().last())
         }
 

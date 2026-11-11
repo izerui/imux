@@ -28,8 +28,9 @@ class HookPromptsTest {
 
     @Test
     fun `计划：1 与 2 各切到对应模式`() {
-        assertEquals(HookDecision.Allow(mode = "auto"), HookReplies.plan("1"))
-        assertEquals(HookDecision.Allow(mode = "default"), HookReplies.plan("b"))
+        assertEquals(HookDecision.Allow(modes = listOf("auto", "bypassPermissions")), HookReplies.plan("1"))
+        assertEquals(HookDecision.Allow(modes = listOf("default")), HookReplies.plan("2"))
+        assertEquals(HookDecision.Allow(modes = listOf("default")), HookReplies.plan("b"))
     }
 
     @Test
@@ -50,9 +51,10 @@ class HookPromptsTest {
     }
 
     @Test
-    fun `计划批准切到的自动模式取自同一个常量`() {
-        assertEquals("auto", HookReplies.AUTO_MODE)
-        assertEquals(HookDecision.Allow(mode = HookReplies.AUTO_MODE), HookReplies.plan("a"))
+    fun `计划回 1 与 a 都是电脑上的第 1 项：先 auto 再 bypassPermissions`() {
+        assertEquals(listOf("auto", "bypassPermissions"), HookReplies.PLAN_FIRST_MODES)
+        assertEquals(HookDecision.Allow(modes = HookReplies.PLAN_FIRST_MODES), HookReplies.plan("1"))
+        assertEquals(HookDecision.Allow(modes = HookReplies.PLAN_FIRST_MODES), HookReplies.plan("a"))
     }
 
     private val fruitMulti = AskedQuestion(

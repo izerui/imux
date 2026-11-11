@@ -46,6 +46,19 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 20 | http hook 请求头 | 含 `Content-Type: application/json`、`Host: 127.0.0.1:<port>`，无 `Origin`（2026-11-11 实测），入口校验可通过 |
 | 21 | 内置服务空闲超时 | IDEA 2026.2 的 `intellij.platform.builtInServer.impl.jar` 未使用 `IdleStateHandler` / `ReadTimeoutHandler`，长时间挂起的请求不会被服务端按空闲断开（静态检查，端到端待确认） |
 
+以下 22–29 于 2026-11-12 用 tmux + 本地 http hook 补测（Claude Code 2.1.308）：
+
+| # | 场景 | 结果 |
+|---|---|---|
+| 22 | hook 服务不可达 | 电脑照常弹框、照常执行；每次工具调用后终端多一行 `connect ECONNREFUSED`（PostToolUse hook 连不上）。IDE 退出时终端会话随之结束，实际少见 |
+| 23 | 从 bypass 切进计划模式 | 计划框第 1 项是「Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session」，不是 auto；请求里 `permission_mode` 为 `plan`、`permission_suggestions` 为 null，看不出原模式 |
+| 24 | `updatedPermissions` 依次 `setMode auto`、`setMode bypassPermissions` | bypass 会话批准后为 bypass，普通会话为 auto（bypass 在未开启的会话里是空操作），与电脑第 1 项一致 |
+| 25 | 电脑已作答后晚到的 allow（含 `updatedInput`、`setMode`） | 被忽略：提问取电脑的答案，计划电脑选 2 后晚到的 setMode auto 不改变模式 |
+| 26 | PostToolUse 的 `tool_input` 与 PermissionRequest 不同 | `ExitPlanMode` 的为空对象；`AskUserQuestion` 的多出 `answers`、`annotations`；Bash、Write 的相同 |
+| 27 | 电脑上提问选「Chat about this」 | hook 连接不关闭、无 PostToolUse，本轮随即结束（由本轮结束放行主会话请求兜住） |
+| 28 | 电脑上计划选 3 写修改意见 | 旧请求连接不关闭、无 PostToolUse；本轮不结束，Claude 改稿后同一代理发来新的 ExitPlanMode 请求 |
+| 29 | `allowedHttpHookUrls` 不含 hook 地址 | hook 不发出，电脑照常弹框执行，无报错 |
+
 ## 方案
 
 ### 1. 启动注入：`--settings` 内联 JSON
@@ -133,7 +146,7 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 
 | 手机回复 | hook 返回 |
 |---|---|
-| 1 / a | `allow` + `updatedInput` 原样 + `setMode: auto`（实测 11） |
+| 1 / a | `allow` + `updatedInput` 原样 + `updatedPermissions` 依次两条 `setMode: auto`、`setMode: bypassPermissions`（顺序不能反；实测 11、23、24），与电脑上的第 1 项一致：以跳过权限方式启动的会话恢复为 bypass，其余会话停在 auto |
 | 2 / b | `allow` + `updatedInput` 原样 + `setMode: default`（实测 12） |
 | 不执行 / 拒绝 | `deny` + `message: "The user does not want to proceed with this plan yet."` |
 | 其他文字 | `deny` + `message: <原话>`，Claude 按它修改计划（实测 13） |
@@ -161,8 +174,8 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 ## 实现前需再验证
 
 1. ~~用户 alias 里已有 `--settings` 时是否合并~~：已测，不合并，以 imux 注入的为准（§1）。
-2. **IDE 内置服务不可达时**（端口变化、IDE 卡住）http hook 失败，确认 Claude Code 只记一条非阻塞错误、照常弹框。
-3. **bypass / auto 模式下的计划确认**选项与 2.1.308 default 模式下不同时，§5 计划翻译的 `setMode` 取值是否需跟随 `permission_suggestions` 或当前 `permission_mode`。
-4. **电脑已作答后晚到的 `allow` + `updatedInput`**（提问、计划）确认无副作用（只测过晚到的 `deny` 与 `{}`）。
-5. **电脑上提问框选「Chat about this」、计划框选 3** 时 hook 连接是否也被关闭，以便正确通知手机。
-6. 用户或组织设置了 `allowedHttpHookUrls` / `httpHookAllowedEnvVars` 时 hook 被拦，确认降级为只走电脑、不报错。
+2. ~~**IDE 内置服务不可达时**（端口变化、IDE 卡住）http hook 失败，确认 Claude Code 只记一条非阻塞错误、照常弹框。~~已验证（实测 22）。
+3. ~~**bypass / auto 模式下的计划确认**选项与 2.1.308 default 模式下不同时，§5 计划翻译的 `setMode` 取值是否需跟随 `permission_suggestions` 或当前 `permission_mode`。~~已验证（实测 23、24）：两者都看不出原模式，回 1 改为依次下发 auto、bypassPermissions（§5）。
+4. ~~**电脑已作答后晚到的 `allow` + `updatedInput`**（提问、计划）确认无副作用（只测过晚到的 `deny` 与 `{}`）。~~已验证（实测 25）。
+5. ~~**电脑上提问框选「Chat about this」、计划框选 3** 时 hook 连接是否也被关闭，以便正确通知手机。~~已验证（实测 26–28）：都不关闭；提问由本轮结束兜住，计划由同代理新请求作废旧请求（§4）。
+6. ~~用户或组织设置了 `allowedHttpHookUrls` / `httpHookAllowedEnvVars` 时 hook 被拦，确认降级为只走电脑、不报错。~~已验证（实测 29）。

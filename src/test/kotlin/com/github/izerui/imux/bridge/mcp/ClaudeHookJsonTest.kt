@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge.mcp
 
 import com.github.izerui.imux.bridge.core.HookDecision
+import com.github.izerui.imux.bridge.core.HookReplies
 import com.github.izerui.imux.bridge.core.PromptKind
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -22,7 +23,7 @@ class ClaudeHookJsonTest {
         assertFalse(ClaudeHookJson.response(HookDecision.Pass, input).toString().contains("interrupt"))
         assertFalse(ClaudeHookJson.response(HookDecision.Allow(), input).toString().contains("interrupt"))
         assertFalse(ClaudeHookJson.response(HookDecision.Allow(answers = mapOf("颜色？" to "红")), question).toString().contains("interrupt"))
-        assertFalse(ClaudeHookJson.response(HookDecision.Allow(mode = "auto"), json("""{"plan":"p"}""")).toString().contains("interrupt"))
+        assertFalse(ClaudeHookJson.response(HookDecision.Allow(modes = HookReplies.PLAN_FIRST_MODES), json("""{"plan":"p"}""")).toString().contains("interrupt"))
         assertFalse(ClaudeHookJson.response(HookDecision.Deny("no"), input).toString().contains("interrupt"))
     }
 
@@ -43,12 +44,24 @@ class ClaudeHookJsonTest {
         assertFalse(question.has("answers"))
     }
 
-    @Test fun `计划批准带 setMode 且只作用于本会话`() {
+    @Test fun `计划回 1 依次下发 auto 与 bypassPermissions 两条 setMode，只作用于本会话`() {
         val input = json("""{"plan":"第一步","planFilePath":"/tmp/p.md"}""")
-        val decision = decision(ClaudeHookJson.response(HookDecision.Allow(mode = "auto"), input))
+        val decision = decision(ClaudeHookJson.response(HookReplies.plan("1"), input))
         assertEquals("allow", decision["behavior"].asString)
-        assertEquals(JsonParser.parseString("""[{"type":"setMode","mode":"auto","destination":"session"}]"""), decision["updatedPermissions"])
+        assertEquals(
+            JsonParser.parseString(
+                """[{"type":"setMode","mode":"auto","destination":"session"},
+                    {"type":"setMode","mode":"bypassPermissions","destination":"session"}]""",
+            ),
+            decision["updatedPermissions"],
+        )
         assertEquals(input, decision["updatedInput"])
+    }
+
+    @Test fun `计划回 2 只下发 default 一条 setMode`() {
+        val input = json("""{"plan":"第一步"}""")
+        val decision = decision(ClaudeHookJson.response(HookReplies.plan("2"), input))
+        assertEquals(JsonParser.parseString("""[{"type":"setMode","mode":"default","destination":"session"}]"""), decision["updatedPermissions"])
     }
 
     @Test fun `拒绝只带 behavior 与 message`() {

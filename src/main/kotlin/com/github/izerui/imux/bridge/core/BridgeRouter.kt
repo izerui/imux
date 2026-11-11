@@ -330,7 +330,7 @@ class BridgeRouter(
                             HookReplies.permission(reply).let { it to if (it is HookDecision.Allow) texts.hookAllowed() else texts.hookDenied() }
                         PromptKind.PLAN ->
                             HookReplies.plan(reply).let {
-                                it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.mode == HookReplies.AUTO_MODE) else texts.hookPlanRevising()
+                                it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.modes == HookReplies.PLAN_FIRST_MODES) else texts.hookPlanRevising()
                             }
                     }
                 queue.remove(request.id)
