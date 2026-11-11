@@ -29,6 +29,17 @@ internal fun localOriginAllowed(host: String?, origin: String?, port: Int): Bool
     return host != null && allowed(host, true) && (origin == null || allowed(origin, false))
 }
 
+/** 本机、本端口、Origin 合法时返回 Bearer 令牌，否则 null。 */
+internal fun loopbackBearer(request: FullHttpRequest, context: ChannelHandlerContext): String? {
+    val remote = context.channel().remoteAddress() as? InetSocketAddress
+    val local = context.channel().localAddress() as? InetSocketAddress
+    if (remote?.address?.isLoopbackAddress != true ||
+        !localOriginAllowed(request.headers().get(HttpHeaderNames.HOST), request.headers().get(HttpHeaderNames.ORIGIN), local?.port ?: -1)
+    ) return null
+    val auth = request.headers().get(HttpHeaderNames.AUTHORIZATION).orEmpty()
+    return if (auth.startsWith("Bearer ")) auth.removePrefix("Bearer ") else null
+}
+
 /** 内置 HTTP 服务上按终端凭证鉴权的 MCP 入口：只接受本机、本端口、持有效 Bearer 的 JSON POST。 */
 abstract class LocalMcpHandler(private val path: String) : HttpRequestHandler() {
     /** 凭证对应的 RPC 接收者；凭证无效或已撤销时返回 null。 */
@@ -49,13 +60,7 @@ abstract class LocalMcpHandler(private val path: String) : HttpRequestHandler() 
             if (status == 405) response.headers().set(HttpHeaderNames.ALLOW, "POST")
             response.send(context.channel(), keepAlive)
         }
-        val remote = context.channel().remoteAddress() as? InetSocketAddress
-        val local = context.channel().localAddress() as? InetSocketAddress
-        if (remote?.address?.isLoopbackAddress != true ||
-            !localOriginAllowed(request.headers().get(HttpHeaderNames.HOST), request.headers().get(HttpHeaderNames.ORIGIN), local?.port ?: -1)
-        ) { respond(403); return true }
-        val auth = request.headers().get(HttpHeaderNames.AUTHORIZATION).orEmpty()
-        val receive = if (auth.startsWith("Bearer ")) receiver(auth.removePrefix("Bearer ")) else null
+        val receive = loopbackBearer(request, context)?.let(::receiver)
         if (receive == null) { respond(403); return true }
         if (request.method() != HttpMethod.POST) { respond(405); return true }
         if (!request.headers().get(HttpHeaderNames.CONTENT_TYPE).orEmpty().startsWith("application/json", true)) {

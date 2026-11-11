@@ -185,6 +185,7 @@
         -->
         <httpRequestHandler implementation="com.github.izerui.imux.session.PiSessionReportHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.MobileMcpHandler"/>
+        <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.ClaudeHookHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.peer.mcp.PeerMcpHandler"/>
 
         <statusBarWidgetFactory
