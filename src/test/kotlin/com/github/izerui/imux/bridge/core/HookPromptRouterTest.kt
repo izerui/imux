@@ -184,6 +184,19 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `没有题目的提问不入队直接交给电脑，null 与空列表各自放行`() =
+        runBlocking {
+            bind()
+            val missing = request(1, toolName = "AskUserQuestion", detail = "", questions = null)
+            val empty = request(2, toolName = "AskUserQuestion", detail = "", questions = emptyList())
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), missing.decisions)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), empty.decisions)
+            assertTrue(channel.sent.isEmpty())
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "继续")))
+            assertEquals(listOf("继续"), port.submitted)
+        }
+
+    @Test
     fun `权限请求推送内容与来源，回 1 后允许并确认`() =
         runBlocking {
             bind()

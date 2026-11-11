@@ -300,6 +300,8 @@ class BridgeRouter(
         val (binding, text) =
             synchronized(lock) {
                 val binding = bindings.bindingForTab(tabId) ?: return@synchronized null
+                // 没有题目的提问推不出去、手机也答不了，入队会卡住整个队列：直接交给电脑
+                if (request.kind == PromptKind.QUESTION && request.questions.isNullOrEmpty()) return@synchronized null
                 val queue = hookQueues.getOrPut(tabId) { HookPromptQueue() }
                 queue.add(HookPromptQueue.Entry(request, respond))
                 binding to queue.nextPush(binding)
