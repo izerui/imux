@@ -1,7 +1,5 @@
 package com.github.izerui.imux.bridge.transcript
 
-import com.github.izerui.imux.bridge.core.AskedOption
-import com.github.izerui.imux.bridge.core.AskedQuestion
 import com.github.izerui.imux.bridge.core.SessionEvent
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
@@ -33,7 +31,7 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `Claude 区分用户文本、助手文本、工具调用与结果且保留换行`() {
+    fun `Claude 区分用户文本、助手文本与工具调用且保留换行，工具结果不产生事件`() {
         val user = """{"type":"user","uuid":"u1","origin":{"kind":"human"},"message":{"role":"user","content":"第一行\n第二行"}}"""
         val assistant =
             """{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[""" +
@@ -46,10 +44,10 @@ class TranscriptDecodersTest {
 
         assertEquals(listOf(SessionEvent.UserText("第一行\n第二行")), ClaudeTranscriptDecoder.decode(user))
         assertEquals(
-            listOf(SessionEvent.AssistantText("```kt\nval a = 1\n```"), SessionEvent.ToolCalled("t1", "Read", "{}"), SessionEvent.ToolStarted),
+            listOf(SessionEvent.AssistantText("```kt\nval a = 1\n```"), SessionEvent.ToolStarted),
             ClaudeTranscriptDecoder.decode(assistant),
         )
-        assertEquals("工具结果标明是哪次调用的", listOf(SessionEvent.ToolResult("t1", null)), ClaudeTranscriptDecoder.decode(result))
+        assertTrue("工具结果不产生事件", ClaudeTranscriptDecoder.decode(result).isEmpty())
     }
 
     @Test
@@ -203,7 +201,7 @@ class TranscriptDecodersTest {
         assertEquals("子代理通知等注入开启的一轮也有 task_started", listOf(SessionEvent.TurnStarted), CodexTranscriptDecoder.decode(started))
         assertEquals(listOf(SessionEvent.AssistantText("好的")), CodexTranscriptDecoder.decode(assistant))
         assertEquals(listOf(SessionEvent.ToolStarted), CodexTranscriptDecoder.decode(call))
-        assertEquals("工具结果标明是哪次调用的", listOf(SessionEvent.ToolResult("c1", null)), CodexTranscriptDecoder.decode(output))
+        assertTrue("工具结果不产生事件", CodexTranscriptDecoder.decode(output).isEmpty())
         assertTrue("助手消息的镜像不能重复转发", CodexTranscriptDecoder.decode(mirror).isEmpty())
         assertTrue(CodexTranscriptDecoder.decode(otherItem).isEmpty())
     }
@@ -251,12 +249,12 @@ class TranscriptDecodersTest {
         val agent =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":[]}]},""" +
                 """"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a7","description":"评审"}}"""
-        assertEquals("后台子代理带上类型", listOf(SessionEvent.BackgroundStarted("a7", "t2", "评审", subagent = true)), claudeEvents(agent))
+        assertEquals("后台子代理带上说明", listOf(SessionEvent.BackgroundStarted("a7", "t2", "评审")), claudeEvents(agent))
 
         val resumed =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","content":[]}]},""" +
                 """"toolUseResult":{"success":true,"resumedAgentId":"a7"}}"""
-        assertEquals("续跑的也是子代理", listOf(SessionEvent.BackgroundStarted("a7", null, subagent = true)), claudeEvents(resumed))
+        assertEquals("续跑的子代理沿用任务 id", listOf(SessionEvent.BackgroundStarted("a7", null)), claudeEvents(resumed))
 
         val finishedAgent =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"done"}]},""" +
@@ -293,7 +291,7 @@ class TranscriptDecodersTest {
     fun `Codex 子代理：spawn 开始，结束通知、wait 结果或 close 结束`() {
         val spawn =
             """{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"agent_id\":\"ag1\",\"nickname\":\"Boyle\"}"}}"""
-        assertEquals(listOf(SessionEvent.BackgroundStarted("ag1", null, "Boyle", subagent = true)), codexEvents(spawn))
+        assertEquals(listOf(SessionEvent.BackgroundStarted("ag1", null, "Boyle")), codexEvents(spawn))
 
         val notification =
             """{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text",""" +
@@ -315,66 +313,7 @@ class TranscriptDecodersTest {
         assertTrue("普通命令输出不产生事件", codexEvents(plainOutput).isEmpty())
     }
 
-    @Test
-    fun `Claude 提问的结果带回每题的作答`() {
-        val answered =
-            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"The user answered: ..."}]},""" +
-                """"toolUseResult":{"questions":[],"answers":{"你更喜欢哪种宠物？":"cat","颜色？":"蓝色"}}}"""
-        assertEquals(
-            listOf(SessionEvent.ToolResult("t1", "你更喜欢哪种宠物？\n→ cat\n\n颜色？\n→ 蓝色")),
-            ClaudeTranscriptDecoder.decode(answered),
-        )
+    private fun claudeEvents(line: String) = ClaudeTranscriptDecoder.decode(line)
 
-        val empty =
-            """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"x"}]},"toolUseResult":{"answers":{}}}"""
-        assertEquals("没有作答就不带内容", listOf(SessionEvent.ToolResult("t2", null)), ClaudeTranscriptDecoder.decode(empty))
-    }
-
-    @Test
-    fun `Claude 的提问调用带出题目与选项，任何一题不完整就不带`() {
-        val ask =
-            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":""" +
-                """{"questions":[{"question":"选哪个？","header":"水果","multiSelect":false,"options":[{"label":"苹果","description":"红"},{"label":"香蕉"}]},""" +
-                """{"question":"配料？","header":"配料","multiSelect":true,"options":[{"label":"糖","description":"甜"}]}]}}]}}"""
-        assertEquals(
-            listOf(
-                SessionEvent.QuestionAsked(
-                    "t1",
-                    listOf(
-                        AskedQuestion("选哪个？", false, listOf(AskedOption("苹果", "红"), AskedOption("香蕉", null))),
-                        AskedQuestion("配料？", true, listOf(AskedOption("糖", "甜"))),
-                    ),
-                ),
-                SessionEvent.ToolStarted,
-            ),
-            ClaudeTranscriptDecoder.decode(ask),
-        )
-
-        val broken =
-            """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"AskUserQuestion","input":""" +
-                """{"questions":[{"question":"选哪个？","options":[]}]}}]}}"""
-        assertEquals("交给读屏", listOf(SessionEvent.ToolStarted), ClaudeTranscriptDecoder.decode(broken))
-    }
-
-    @Test
-    fun `工具调用带出要批准的内容：命令连同说明、文件路径、网址，认不出的给参数原文，过长截短`() {
-        fun call(name: String, input: String) =
-            ClaudeTranscriptDecoder.decode(
-                """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"$name","input":$input}]}}""",
-            ).filterIsInstance<SessionEvent.ToolCalled>().single()
-        assertEquals(SessionEvent.ToolCalled("t1", "Bash", "建文件\ntouch a.txt"), call("Bash", """{"command":"touch a.txt","description":"建文件"}"""))
-        assertEquals("/p/a.kt", call("Edit", """{"file_path":"/p/a.kt","old_string":"a","new_string":"b"}""").detail)
-        assertEquals("https://x.dev", call("WebFetch", """{"url":"https://x.dev","prompt":"读"}""").detail)
-        assertEquals("""{"k":1}""", call("mcp__x__y", """{"k":1}""").detail)
-        assertEquals("计划确认带出计划全文", "# 计划\n1. 新建", call("ExitPlanMode", """{"plan":"# 计划\n1. 新建","planFilePath":"/p.md"}""").detail)
-        assertEquals("计划放得长些", 5000, call("ExitPlanMode", """{"plan":"${"x".repeat(5000)}"}""").detail.length)
-        val long = call("Bash", """{"command":"${"x".repeat(3000)}"}""").detail
-        assertEquals(1500, long.length)
-        assertTrue(long.endsWith("…"))
-    }
-
-    /** 后台任务的用例只看后台事件；工具结果另有用例。 */
-    private fun claudeEvents(line: String) = ClaudeTranscriptDecoder.decode(line).filterNot { it is SessionEvent.ToolResult || it is SessionEvent.ToolCalled }
-
-    private fun codexEvents(line: String) = CodexTranscriptDecoder.decode(line).filterNot { it is SessionEvent.ToolResult }
+    private fun codexEvents(line: String) = CodexTranscriptDecoder.decode(line)
 }

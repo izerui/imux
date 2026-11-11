@@ -33,6 +33,14 @@ class ClaudeToolInputsTest {
     }
 
     @Test
+    fun `长命令按 1500 截短，未超长的计划不截`() {
+        val long = ClaudeToolInputs.detail("Bash", parse("""{"command":"${"x".repeat(3000)}"}"""))
+        assertEquals(1500, long.length)
+        assertEquals("…", long.last().toString())
+        assertEquals(5000, ClaudeToolInputs.detail("ExitPlanMode", parse("""{"plan":"${"x".repeat(5000)}"}""")).length)
+    }
+
+    @Test
     fun `缺选项的提问返回 null`() {
         // 一题有选项、一题 options 为空数组 → null
         val input = parse(

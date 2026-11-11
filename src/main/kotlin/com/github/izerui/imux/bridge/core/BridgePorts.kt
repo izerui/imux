@@ -28,12 +28,6 @@ fun interface TerminalSessionPort {
         target: SessionTarget,
         text: String,
     ): SubmitResult
-
-    /** 原样写入按键：不走括号粘贴、不补回车，与人在终端里按键一致。 */
-    suspend fun press(
-        target: SessionTarget,
-        keys: String,
-    ): SubmitResult = SubmitResult.OFFLINE
 }
 
 /** 发往手机的提示文案，由资源包实现，测试用假实现。 */
@@ -53,9 +47,6 @@ interface BridgeTexts {
 
     fun waiting(reason: String?): String
 
-    /** 权限确认：[listing] 是排好版的工具与要批准的内容，后面附上怎么在手机上回答。 */
-    fun permission(listing: String): String
-
     /** 计划确认：[plan] 是 Claude 写好的计划全文（Markdown），后面附上怎么在手机上回答。 */
     fun plan(plan: String): String
 
@@ -72,10 +63,10 @@ interface BridgeTexts {
     /** 跟在多选题题目后面的标注。 */
     fun multiSelectMark(): String
 
-    /** 推给手机的框已在电脑上处理；[answer] 是提问的作答（每题「问题 → 答案」），拿不到时为 null。 */
+    /** 推给手机的提问、计划已在电脑上处理；[answer] 是提问的作答（每题「问题 → 答案」），拿不到时为 null。 */
     fun promptAnsweredLocally(answer: String?): String
 
-    /** 框开着时回复带了附件，什么也没按。 */
+    /** 推给手机的确认还挂着时回复带了附件，没有作答。 */
     fun promptRejected(): String
 
     /** [session] 是写好的「💬 工程 · 智能体 · 标题」，与连接提示同一写法。 */
@@ -114,7 +105,7 @@ interface BridgeTexts {
 
     fun attachmentTooLarge(): String
 
-    /** hook 送来的权限确认：[listing] 同 [permission]；手机只能允许这一次、拒绝或说要求。 */
+    /** hook 送来的权限确认：[listing] 是排好版的工具与要批准的内容；手机只能允许这一次、拒绝或说要求。 */
     fun hookPermission(listing: String): String
 
     /** 推送的确认后面还有 [count] 个在排队。 */

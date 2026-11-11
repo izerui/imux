@@ -8,10 +8,10 @@ import com.github.izerui.imux.bridge.json.string
 import com.google.gson.JsonObject
 
 /**
- * Claude 工具调用参数的共用解析：记录解码与 hook 入口对同一份 tool_input 要得出同样的「要批准的内容」与题目。
+ * Claude 工具调用参数的解析：hook 入口从 tool_input 得出「要批准的内容」与题目。
  */
 object ClaudeToolInputs {
-    /** 要批准的内容，规则与截短长度同原 toolCalled：计划 8000，其它 1500。 */
+    /** 要批准的内容：计划取全文，命令连同说明，其余取文件路径、网址、查询或参数原文；计划按 8000 截短，其它 1500。 */
     fun detail(name: String, input: JsonObject): String {
         val detail =
             when {

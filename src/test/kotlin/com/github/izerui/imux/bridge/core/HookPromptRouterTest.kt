@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.core
 
+import com.github.izerui.imux.bridge.transcript.ClaudeTranscriptDecoder
 import com.github.izerui.imux.model.AgentType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -13,24 +14,15 @@ class HookPromptRouterTest {
     private val owner = RobotOwner(senderId = "me", chatId = "chat-1")
     private val target = SessionTarget("/p", "tab-1", AgentType.CLAUDE, "s1")
 
-    /** 记录提交与按键：hook 作答不应按任何键。 */
+    /** 记录提交：hook 作答不应贴进终端。 */
     private class FakePort : TerminalSessionPort {
         val submitted = mutableListOf<String>()
-        val pressed = mutableListOf<String>()
 
         override suspend fun submit(
             target: SessionTarget,
             text: String,
         ): SubmitResult {
             submitted += text
-            return SubmitResult.SUBMITTED_TO_TERMINAL
-        }
-
-        override suspend fun press(
-            target: SessionTarget,
-            keys: String,
-        ): SubmitResult {
-            pressed += keys
             return SubmitResult.SUBMITTED_TO_TERMINAL
         }
     }
@@ -61,8 +53,6 @@ class HookPromptRouterTest {
         override fun localInputLabel() = "LOCAL:"
 
         override fun waiting(reason: String?) = "WAIT($reason)"
-
-        override fun permission(listing: String) = "PERMISSION($listing)"
 
         override fun plan(plan: String) = "PLAN($plan)"
 
@@ -141,8 +131,6 @@ class HookPromptRouterTest {
             Texts,
             attachmentStore = { _, _ -> PlaceResult.Saved(".imux/a.png") },
             notReadyRetryDelayMs = 0,
-            keyGapMs = 0,
-            promptSettleMs = 0,
         )
 
     private fun inbound(
@@ -173,6 +161,9 @@ class HookPromptRouterTest {
 
     private val colors = AskedQuestion("颜色？", false, listOf(AskedOption("红", null), AskedOption("绿", null)))
     private val fruits = AskedQuestion("水果？", true, listOf(AskedOption("苹果", null), AskedOption("香蕉", null), AskedOption("橙子", null)))
+
+    private val bashToolUse =
+        """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"touch a.txt"}}]}}"""
 
     private fun bind(): Binding = (registry.bind(robot, target) as BindResult.Bound).binding
 
@@ -209,7 +200,6 @@ class HookPromptRouterTest {
             assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "1")))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
             assertEquals("HOOK_ALLOWED", sentTexts().last())
-            assertTrue(port.pressed.isEmpty())
             assertTrue(port.submitted.isEmpty())
         }
 
@@ -225,7 +215,6 @@ class HookPromptRouterTest {
             )
             assertEquals("HOOK_DENIED", sentTexts().last())
             assertTrue(port.submitted.isEmpty())
-            assertTrue(port.pressed.isEmpty())
         }
 
     @Test
@@ -267,7 +256,6 @@ class HookPromptRouterTest {
                 pending.decisions,
             )
             assertEquals("HOOK_ANSWERS_SUBMITTED", sentTexts().last())
-            assertTrue(port.pressed.isEmpty())
             assertTrue(port.submitted.isEmpty())
         }
 
@@ -529,7 +517,7 @@ class HookPromptRouterTest {
         runBlocking {
             bind()
             router.hookAttached("tab-1", true)
-            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(bashToolUse))
             router.onWaiting("tab-1", "permission prompt")
             assertEquals(listOf("WAIT(permission prompt)"), sentTexts())
         }
@@ -540,16 +528,21 @@ class HookPromptRouterTest {
             bind()
             router.hookAttached("tab-1", true)
             router.onWaiting("tab-1", "permission prompt")
-            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(bashToolUse))
             assertEquals(listOf("WAIT(permission prompt)"), sentTexts())
         }
 
     @Test
-    fun `未注入 hook 的标签照旧按记录推送`() =
+    fun `长计划、长命令截短到一条消息之内`() =
         runBlocking {
             bind()
-            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("b1", "Bash", "touch a.txt")))
-            router.onWaiting("tab-1", "permission prompt")
-            assertTrue(sentTexts().joinToString(), sentTexts().single().startsWith("PERMISSION("))
+            for ((tool, detail) in listOf("ExitPlanMode" to "步骤".repeat(800), "Bash" to "echo " + "x".repeat(3000))) {
+                val small = FakeChannel(robot, maxTextBytes = 1000)
+                val r = BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) small else null }, Texts)
+                r.onHookRequest("tab-1", HookRequest(1, tool, null, null, detail, null, "k")) {}
+                val text = small.sent.single().text
+                assertTrue(tool, text.toByteArray().size <= 1000)
+                assertTrue(tool, text.contains("\n…"))
+            }
         }
 }

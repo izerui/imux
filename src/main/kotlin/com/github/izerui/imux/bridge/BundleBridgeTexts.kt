@@ -21,8 +21,6 @@ internal object BundleBridgeTexts : BridgeTexts {
     // CLI 给的是 `input needed` 这类英文原因，译成与 IDE 提醒一致的说法
     override fun waiting(reason: String?) = ImuxBundle.message("bridge.status.waiting", waitingReason(reason))
 
-    override fun permission(listing: String) = ImuxBundle.message("bridge.status.permission", listing)
-
     override fun plan(plan: String) = ImuxBundle.message("bridge.status.plan", plan)
 
     override fun dialogOpen() = ImuxBundle.message("bridge.reply.dialogOpen")

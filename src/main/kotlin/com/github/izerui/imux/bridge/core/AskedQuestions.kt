@@ -1,6 +1,6 @@
 package com.github.izerui.imux.bridge.core
 
-/** Claude 的 AskUserQuestion 调用里的一道题，取自会话记录里的调用参数，不看屏幕。 */
+/** Claude 的 AskUserQuestion 调用里的一道题，取自 hook 请求里的调用参数，不看屏幕。 */
 data class AskedQuestion(
     val question: String,
     val multiSelect: Boolean,
@@ -13,15 +13,10 @@ data class AskedOption(
 )
 
 /**
- * 记录里读出的提问在手机上怎么列、手机的回复怎么交给 Claude。纯函数，无 IO。
+ * hook 送来的提问在手机上怎么列、手机的回复怎么译成这题的答案。纯函数，无 IO。
  *
- * 和电脑上一样一题一题来：每次只推一题，选项用 1、2、3 编号；手机答一题由插件记下，电脑上同时翻到下一题
- * （见 [ADVANCE_KEYS]），再推下一题。全部答完后调用方先按 Esc 关掉提问框，再把各题的答案作为一条消息发给 Claude。
- * 答案本身不在提问框里填：
- * 电脑上可能已经把光标移进自定义输入项、打了草稿，或已答了几题，按键就会错位，而不读屏无从得知；
- * 按 Claude Code 2.1.308 实测，不论框里是什么状态，Esc 一次都会关掉整个提问框、回到输入框。
- * 回复只有选项编号（字母也认，A 即 1）就译成「题目 → 选项原文」，其余任何说法原样作为这道题的回答，
- * 由 Claude 结合刚才的提问理解。
+ * 和电脑上一样一题一题来：每次只推一题，选项用 1、2、3 编号；全部答完后由路由器一次性回给 hook。
+ * 回复只有选项编号（字母也认，A 即 1）就译成选项原文，其余任何说法原样作为这道题的回答。
  */
 object AskedQuestions {
     /** 一道题排成列表：题目一行，选项用编号；[multiSelectMark] 跟在多选题题目后面。 */
@@ -41,28 +36,8 @@ object AskedQuestions {
     }
 
     /**
-     * 一道题的回答：对得上选项就是「题目 → 选项原文」，否则「题目 → 原话」；空白回复返回 null。
-     * 原话有多行时第二行起缩进，几道题的回答拼成一条消息后仍分得清每行属于哪题。
-     */
-    fun answer(
-        question: AskedQuestion,
-        reply: String,
-    ): String? {
-        if (reply.isBlank()) return null
-        val text = chosen(question, reply) ?: reply.trim().lines().joinToString("\n  ")
-        return "${question.question.trim()} → $text"
-    }
-
-    /**
-     * 答完一题（不是最后一题）后让电脑上也翻到下一题：只按 →，不按编号。编号依赖框此刻的状态（光标在自定义输入里时
-     * 会写成文字，电脑上已答到确认页时会按下提交），→ 只翻页、不选中不提交，光标在输入里时也只是移动光标，按错无害。
-     * 答案以插件记下的为准，最后一起发给 Claude。
-     */
-    val ADVANCE_KEYS: List<String> = listOf(TerminalKeys.RIGHT)
-
-    /**
      * 回给 hook 的这题答案：编号对得上选项给 label（多选以 ", " 连接），否则原话；空白返回 null。
-     * 单选题选多个时按原话处理（与现有 [chosen] 一致）。
+     * 单选题选多个时按原话处理。
      */
     fun hookAnswer(question: AskedQuestion, reply: String): String? {
         if (reply.isBlank()) return null
@@ -73,16 +48,6 @@ object AskedQuestions {
             return matched.joinToString(", ") { question.options[it - 1].label.trim() }
         }
         return reply.trim()
-    }
-
-    /** 对得上选项时给出选项原文（多选用顿号连起来），否则 null。 */
-    private fun chosen(
-        question: AskedQuestion,
-        answer: String,
-    ): String? {
-        val picks = picks(answer, question.options.size) ?: joinedDigits(question, answer)?.let { picks(it, question.options.size) } ?: return null
-        if (!question.multiSelect && picks.size != 1) return null
-        return picks.joinToString("、") { question.options[it - 1].label.trim() }
     }
 
     /**

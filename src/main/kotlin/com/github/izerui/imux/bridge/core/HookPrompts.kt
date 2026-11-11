@@ -37,8 +37,7 @@ sealed interface HookDecision {
 /**
  * 手机回复译成 hook 决定。纯函数，无 IO。
  *
- * 词表复用 [PermissionPrompts] 的 [PermissionPrompts.ALLOW]、[PermissionPrompts.DENY]、[PermissionPrompts.OPTION_LIKE]，
- * 判定顺序与既有 [PermissionPrompts.reply]、[PermissionPrompts.planReply] 一致。
+ * 词表用 [PermissionPrompts] 的 [PermissionPrompts.ALLOW]、[PermissionPrompts.DENY]、[PermissionPrompts.OPTION_LIKE]。
  */
 object HookReplies {
     private const val DENIED = "The user denied this tool call from their phone."

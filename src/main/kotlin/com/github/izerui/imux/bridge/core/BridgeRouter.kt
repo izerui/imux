@@ -15,10 +15,10 @@ import kotlin.coroutines.cancellation.CancellationException
  * 出站：每轮只推最终回复——最后一次工具调用之后的助手文本，在本轮结算时作为一条发出，
  * 中间的过程说明不推，避免逐条推送触发平台限频。轮次的划分与结算规则在 [TabState]；
  * 电脑端输入带标签单独转发；远程输入在记录中再次出现时不回显；等待确认立即推送。
- * 终端停在提问或权限确认框上时，按记录里的工具调用推送题目或要批准的内容，手机的回复按键作答
- * （见 [AskedQuestions]、[PermissionPrompts]），不看屏幕；认不出的框只提示到 IDE 中处理。
- * 启动时注入了 PermissionRequest hook 的 Claude 标签改走 hook：每次确认（含子代理的）由 hook 送来，按标签排队、
- * 一次只推队首；手机的回复译成 [HookDecision] 回给 hook，不按键。电脑端先答时由 hook 入口告知，先答者生效。
+ * Claude 的确认框（权限、提问、计划）经 PermissionRequest hook 送来（含子代理的），按标签排队、一次只推队首；
+ * 手机的回复译成 [HookDecision] 回给 hook，不按键。电脑端先答时由 hook 入口告知，先答者生效。
+ * 没有 hook 请求挂着时（Codex、Pi，或没能注入 hook 的 Claude 标签）停在框上只提示到 IDE 中处理，
+ * 等待期间手机的话不贴进终端。
  * 同一标签的 [onSessionEvents]、[onTurnCompleted] 由调用方串行调用。
  * 只做简单转接：换绑、断开的空档里漏掉的内容不补（见 AGENTS.md 手机桥接约定）。
  */
@@ -54,10 +54,6 @@ class BridgeRouter(
      * 标题由调用方传入：断开时标签可能已关，只能用它还开着时记下的名字。
      */
     private val sessionNameOf: (Binding, String) -> String = { _, title -> title },
-    /** 作答时相邻两次按键的间隔：一次写入多个键，CLI 会当成一段粘贴；测试传 0。 */
-    private val keyGapMs: Long = 150,
-    /** 等选择框画好、或作答后等屏幕刷新的时间；测试传 0。 */
-    private val promptSettleMs: Long = 500,
 ) {
     /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
     private val submitLocks = HashMap<RobotId, Mutex>()
@@ -70,23 +66,17 @@ class BridgeRouter(
     /** 各标签挂起的 hook 请求，只在 [lock] 内访问；与 [tabs] 分开存放，清掉轮次状态时不会漏回还挂着的请求。 */
     private val hookQueues = HashMap<String, HookPromptQueue>()
 
-    /** Claude 启动时注入了 hook 的标签，只在 [lock] 内访问。这些标签不再按记录推确认框。 */
-    private val hookedTabs = HashSet<String>()
-
     /** 加锁提交阶段的结果。 */
     private sealed interface SubmitPhase {
         data class Done(val result: SubmitResult) : SubmitPhase
         data object BindingGone : SubmitPhase
         data object BindingChanged : SubmitPhase
 
-        /** 框开着时回复带了附件，一个键也没按。 */
+        /** hook 请求挂着时回复带了附件（或请求刚被电脑端了结），没有作答。 */
         data object PromptRejected : SubmitPhase
 
         /** 终端停在手机无法作答的框上，这句没有贴进终端。 */
         data object DialogOpen : SubmitPhase
-
-        /** 多题提问答完一题，电脑上已翻到下一题：把当前这题推给手机。 */
-        data class NextQuestion(val binding: Binding) : SubmitPhase
 
         /** 手机答了 hook 送来的确认：依次发出确认与下一条推送。 */
         data class Hook(val binding: Binding, val texts: List<String>) : SubmitPhase
@@ -131,97 +121,27 @@ class BridgeRouter(
 
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
-                var submission = text
-                // hook 送来的确认优先：译成决定回给 hook，不按任何键，也不看按记录推过的框
+                // hook 送来的确认优先：译成决定回给 hook，不按任何键
                 val hookHead = synchronized(lock) { hookQueues[tabId]?.head() }
                 if (hookHead != null) {
                     if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
                     return@withLock answerHook(current, hookHead, message.text)
                 }
-                // 推给手机的框，作答前再确认它仍是此刻停着的那个：按调用的结构作答，不看屏幕。引用只取正文，带附件的不提交
-                val shown =
-                    tab(tabId) {
-                        shownPrompt?.takeIf { prompt -> waitingSubject()?.toolUseId == prompt.toolUseId }
-                    }
-                if (shown != null) {
-                    if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
-                    // 按键之后还要发给会话的文字；提问一律先 Esc 关掉框再把回答作为消息发出，不在框里按键
-                    val (keys, afterKeys) =
-                        when (shown.kind) {
-                            PromptKind.QUESTION -> {
-                                val (questions, index) = tab(tabId) { askedQuestions to questionIndex }
-                                val question = questions?.getOrNull(index) ?: return@withLock SubmitPhase.PromptRejected
-                                // 交原文而不是 trim 过的：自定义回答的换行要原样交给 Claude
-                                val answer = AskedQuestions.answer(question, message.text) ?: return@withLock SubmitPhase.PromptRejected
-                                if (index < questions.size - 1) {
-                                    // 不是最后一题：电脑上也翻到下一题，记下答案，再推下一题
-                                    val result =
-                                        try {
-                                            press(current.target, AskedQuestions.ADVANCE_KEYS)
-                                        } catch (e: CancellationException) {
-                                            unmarkSeen(message.robotId, message.externalMessageId)
-                                            throw e
-                                        } catch (_: Exception) {
-                                            SubmitResult.OFFLINE
-                                        }
-                                    if (result != SubmitResult.SUBMITTED_TO_TERMINAL) return@withLock SubmitPhase.Done(result)
-                                    tab(tabId) { questionAnswered(answer) }
-                                    return@withLock SubmitPhase.NextQuestion(current)
-                                }
-                                // 最后一题：Esc 关掉提问框，再把各题答案作为一条消息发给 Claude
-                                listOf(TerminalKeys.ESC) to tab(tabId) { allAnswers(answer) }
-                            }
-                            PromptKind.PERMISSION -> PermissionPrompts.reply(message.text).let { it.keys to typed.takeIf { _ -> it.thenSubmit } }
-                            PromptKind.PLAN -> PermissionPrompts.planReply(message.text).let { it.keys to typed.takeIf { _ -> it.thenSubmit } }
-                        }
-                    val dismissing = TerminalKeys.ESC in keys
-                    // Esc 关框；数字送达不代表框已关闭，保留作答入口，只标记结果不应误报为电脑作答。
-                    val tracked = tab(tabId) { if (dismissing) promptClosed() else promptAnswerStarted() }
-                    if (dismissing) tab(tabId) { expectDismissal(shown.toolUseId) }
-                    val keepTracking = {
-                        tab(tabId) {
-                            if (tracked != null) {
-                                if (dismissing) restorePrompt(tracked) else promptAnswerFailed(tracked)
-                            }
-                            if (dismissing) cancelDismissal()
-                        }
-                    }
-                    val result =
-                        try {
-                            press(current.target, keys)
-                        } catch (e: CancellationException) {
-                            keepTracking()
-                            unmarkSeen(message.robotId, message.externalMessageId)
-                            throw e
-                        } catch (_: Exception) {
-                            SubmitResult.OFFLINE
-                        }
-                    if (result != SubmitResult.SUBMITTED_TO_TERMINAL) {
-                        keepTracking()
-                        return@withLock SubmitPhase.Done(result)
-                    }
-                    if (shown.kind == PromptKind.QUESTION) tab(tabId) { questionClosed() }
-                    if (afterKeys == null) return@withLock SubmitPhase.Done(result)
-                    // 框关掉、回到输入框后，再把这段话照常交给会话
-                    delay(promptSettleMs)
-                    submission = afterKeys
-                } else if (tab(tabId) { waitingActive || hasPendingInteraction() }) {
-                    // 终端停在框上（或提问、计划确认已弹出而等待通知还没到），又确定不了是哪个：不当普通消息贴进终端
-                    return@withLock SubmitPhase.DialogOpen
-                }
+                // 运行态正停着等人，又没有挂着的 hook 请求：手机答不了这个框，不当普通消息贴进终端
+                if (tab(tabId) { waitingActive }) return@withLock SubmitPhase.DialogOpen
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
-                tab(tabId) { expectEcho(submission) }
+                tab(tabId) { expectEcho(text) }
                 try {
-                    val phase = submitWithRetry(message.robotId, current, submission)
+                    val phase = submitWithRetry(message.robotId, current, text)
                     // 未提交成功，清除回显登记
-                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) tab(tabId) { forgetEcho(submission) }
+                    if (phase != SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)) tab(tabId) { forgetEcho(text) }
                     phase
                 } catch (e: CancellationException) {
-                    tab(tabId) { forgetEcho(submission) }
+                    tab(tabId) { forgetEcho(text) }
                     unmarkSeen(message.robotId, message.externalMessageId)
                     throw e
                 } catch (_: Exception) {
-                    tab(tabId) { forgetEcho(submission) }
+                    tab(tabId) { forgetEcho(text) }
                     SubmitPhase.Done(SubmitResult.OFFLINE)
                 }
             }
@@ -241,10 +161,6 @@ class BridgeRouter(
             SubmitPhase.DialogOpen -> {
                 reply(message.robotId, owner, texts.dialogOpen())
                 InboundOutcome.DIALOG_OPEN
-            }
-            is SubmitPhase.NextQuestion -> {
-                tab(phase.binding.target.tabId) { currentQuestionText(phase.binding) }?.let { send(phase.binding, it) }
-                InboundOutcome.SUBMITTED_TO_TERMINAL
             }
             is SubmitPhase.Hook -> {
                 phase.texts.forEach { send(phase.binding, it) }
@@ -281,12 +197,14 @@ class BridgeRouter(
         pending.forEach { it.respond(HookDecision.Pass) }
     }
 
-    /** 标签的 Claude 启动时注入了 hook（true）或会话结束（false，同时放行它挂起的请求）。 */
+    /**
+     * 标签的 Claude 启动时注入了 hook（true）或会话结束（false）。注入时无需记录：hook 请求自带标签，
+     * 有没有挂着的请求就决定了等待时推不推；会话结束时放行它挂起的请求。
+     */
     fun hookAttached(
         tabId: String,
         attached: Boolean,
     ) {
-        synchronized(lock) { if (attached) hookedTabs += tabId else hookedTabs -= tabId }
         if (!attached) releaseHooks(tabId)
     }
 
@@ -441,7 +359,7 @@ class BridgeRouter(
         val queued = (size - 1).takeIf { it > 0 }?.let { "\n\n" + texts.hookQueued(it) }.orEmpty()
         return when (request.kind) {
             PromptKind.PERMISSION ->
-                fitted(binding, PermissionPrompts.render(ToolCall(request.toolName, request.detail), request.agentType)) { texts.hookPermission(it) + queued }
+                fitted(binding, PermissionPrompts.render(request.toolName, request.detail, request.agentType)) { texts.hookPermission(it) + queued }
             PromptKind.PLAN -> fitted(binding, request.detail) { texts.plan(it) + queued }
             PromptKind.QUESTION -> {
                 val questions = request.questions.orEmpty()
@@ -450,8 +368,6 @@ class BridgeRouter(
             }
         }
     }
-
-    private fun hooked(tabId: String): Boolean = synchronized(lock) { tabId in hookedTabs }
 
     /** 引用的文字用 Markdown 引用块放在正文前，Agent 才知道“这里”指的是哪段。 */
     private fun withQuote(
@@ -518,30 +434,6 @@ class BridgeRouter(
         return SubmitPhase.Done(SubmitResult.NOT_READY)
     }
 
-    private suspend fun press(
-        target: SessionTarget,
-        keys: List<String>,
-    ): SubmitResult {
-        for ((index, key) in keys.withIndex()) {
-            if (index > 0) delay(keyGapMs)
-            val result = sessionPort.press(target, key)
-            if (result != SubmitResult.SUBMITTED_TO_TERMINAL) return result
-        }
-        return SubmitResult.SUBMITTED_TO_TERMINAL
-    }
-
-    /** 手机正在答的这题排成列表，后面附上怎么回；不止一题时标明第几题。在标签锁内调用。 */
-    private fun TabState.currentQuestionText(binding: Binding): String? {
-        val questions = askedQuestions ?: return null
-        val question = questions.getOrNull(questionIndex) ?: return null
-        return texts.question(AskedQuestions.render(question, texts.multiSelectMark()), questionIndex + 1, questions.size)
-    }
-
-    private fun permissionText(
-        binding: Binding,
-        call: ToolCall,
-    ): String = fitted(binding, PermissionPrompts.render(call), texts::permission)
-
     /**
      * 计划、长命令截短到一条消息之内：拆成几条发，微信这类有条数额度的渠道会白白耗掉额度，
      * 怎么回的说明也会落到最后一条。截掉的部分到电脑上看。署名的长度一并预留。
@@ -571,9 +463,7 @@ class BridgeRouter(
         events: List<SessionEvent>,
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
-        promptAnsweredLocally(tabId, binding, events)
         for (event in events) {
-            val dismissal = tab(tabId) { dismissalInterrupt(event) }
             when (event) {
                 is SessionEvent.AssistantText -> tab(tabId) { appendReply(binding.epoch, event.text) }
                 is SessionEvent.UserText -> {
@@ -598,9 +488,8 @@ class BridgeRouter(
                     releaseMainSessionHooks(tabId, binding)
                 }
                 SessionEvent.TurnInterrupted -> {
-                    // 手机作答时插件按 Esc 关框引起的中断，不当作电脑上中断告诉手机
                     tab(tabId) { interrupt() }
-                    if (!dismissal) send(binding, texts.turnInterrupted())
+                    send(binding, texts.turnInterrupted())
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
                     releaseMainSessionHooks(tabId, binding)
@@ -614,16 +503,10 @@ class BridgeRouter(
                     releaseMainSessionHooks(tabId, binding)
                 }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
-                is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description, event.subagent) }
+                is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
                 is SessionEvent.BackgroundEnded -> tab(tabId) { backgroundEnded(event.taskId) }
-                is SessionEvent.ToolResult -> tab(tabId) { toolFinished(event.toolUseId) }
-                is SessionEvent.ToolCalled -> tab(tabId) { toolCalled(event.toolUseId, ToolCall(event.name, event.detail)) }
-                is SessionEvent.QuestionAsked -> tab(tabId) { questionAsked(event.toolUseId, event.questions) }
             }
         }
-        // 等待通知先于记录到达时，那时还确定不了停着的框：登记好这批调用后再看一次，能确定、又没推过就补推。
-        // 注入了 hook 的标签由 hook 推确认框，不按记录推
-        if (!hooked(tabId)) pushWaitingSubject(tabId, binding)
         // 结算之后才读到的回复（完成信号先到）：立即发；若这一轮正等着它，排着的提示随后发
         val late = tab(tabId) { takeIfSettled() }
         if (late != null) {
@@ -636,28 +519,9 @@ class BridgeRouter(
         }
     }
 
-    /**
-     * IDE 报告会话退出等待（转忙碌或空闲）：停着的框已过去。此刻没结果的调用都已过了这次等待，
-     * 之后不再当作停着的框；推过、还没读到结果的框读到结果时照常告诉手机。
-     */
+    /** IDE 报告会话退出等待（转忙碌或空闲）：停着的框已过去，手机的话照常提交。 */
     suspend fun onResumed(tabId: String) {
         tab(tabId) { waitingExited() }
-    }
-
-    /**
-     * 推给手机的框在电脑上答掉了：记录里出现了它那次工具调用的结果，就告诉手机，免得手机以为还停着；
-     * 提问带回每题的作答。在这批事件之前发，提示排在之后的回复前面。
-     */
-    private suspend fun promptAnsweredLocally(
-        tabId: String,
-        binding: Binding,
-        events: List<SessionEvent>,
-    ) {
-        for (event in events) {
-            if (event !is SessionEvent.ToolResult) continue
-            val shown = tab(tabId) { closePromptFor(event.toolUseId) } ?: continue
-            if (shown.epoch == binding.epoch) send(binding, texts.promptAnsweredLocally(event.answer))
-        }
     }
 
     /**
@@ -789,47 +653,23 @@ class BridgeRouter(
         send(binding, text)
     }
 
+    /**
+     * 运行态停下等人：有挂着的 hook 请求时确认框已由 hook 推过，不再提示；否则只提示到 IDE 中处理
+     * （Codex、Pi，没能注入 hook 的 Claude 标签，以及空闲提醒这类不是确认框的等待）。
+     */
     suspend fun onWaiting(
         tabId: String,
         reason: String?,
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
-        tab(tabId) { waitingStarted(reason) }
-        // 注入了 hook 的标签：确认框由 hook 推送，有挂起的请求就不再提示；没有时只提示到 IDE 中处理（如空闲提醒）
-        if (hooked(tabId)) {
-            if (synchronized(lock) { hookQueues[tabId]?.size ?: 0 } == 0) send(binding, texts.waiting(reason))
-            return
-        }
-        // 不看屏幕：能确定停着的框就推送可作答的内容（提问的题目、要批准的调用、计划）；确定不了只提示到 IDE 中处理
-        if (pushWaitingSubject(tabId, binding)) return
-        // 同一个框的等待通知重复到达不再提示；确定不了时，之前推过的框已不对应此刻停着的，撤销它
-        val repeated = tab(tabId) { subjectAlreadyPushed().also { if (!it) promptClosed() } }
-        if (repeated) return
-        send(binding, texts.waiting(reason))
-    }
-
-    /** 能确定、又还没推过的停着的框推给手机，推了返回 true。 */
-    private suspend fun pushWaitingSubject(
-        tabId: String,
-        binding: Binding,
-    ): Boolean {
-        val text =
-            tab(tabId) {
-                val subject = subjectToPush(binding.epoch) ?: return@tab null
-                when (subject.kind) {
-                    PromptKind.QUESTION -> currentQuestionText(binding)
-                    PromptKind.PLAN -> fitted(binding, subject.call!!.detail, texts::plan)
-                    PromptKind.PERMISSION -> permissionText(binding, subject.call!!)
-                }
-            } ?: return false
-        send(binding, text)
-        return true
+        tab(tabId) { waitingStarted() }
+        if (synchronized(lock) { hookQueues[tabId]?.size ?: 0 } == 0) send(binding, texts.waiting(reason))
     }
 
     suspend fun onTranscriptRestarted(tabId: String) {
         releaseHooks(tabId)
         resetBackground(tabId)
-        tab(tabId) { forgetPrompts() }
+        tab(tabId) { waitingExited() }
         val binding = bindings.bindingForTab(tabId) ?: return
         send(binding, texts.transcriptRestarted())
     }

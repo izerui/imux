@@ -34,16 +34,6 @@ class ImuxTerminalSessionPort(
         text: String,
     ): SubmitResult = withContext(Dispatchers.EDT) { submitOnce(target, text) }
 
-    override suspend fun press(
-        target: SessionTarget,
-        keys: String,
-    ): SubmitResult =
-        withContext(Dispatchers.EDT) {
-            val view = liveView(target) ?: return@withContext SubmitResult.OFFLINE
-            view.createSendTextBuilder().send(keys)
-            SubmitResult.SUBMITTED_TO_TERMINAL
-        }
-
     /** 界面与提交消息使用同一个存活判据；保留的恢复绑定不代表终端在线。 */
     internal fun isAvailable(target: SessionTarget): Boolean = liveView(target) != null
 

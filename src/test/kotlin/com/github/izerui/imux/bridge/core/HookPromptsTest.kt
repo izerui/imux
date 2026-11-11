@@ -95,13 +95,13 @@ class HookPromptsTest {
 
     @Test
     fun `子代理来源写在工具名后`() {
-        val rendered = PermissionPrompts.render(ToolCall("Bash", "ls"), "general-purpose")
+        val rendered = PermissionPrompts.render("Bash", "ls", "general-purpose")
         assertEquals("**Bash** · general-purpose  \nls", rendered)
     }
 
     @Test
     fun `子代理来源里的 Markdown 符号被转义`() {
-        val rendered = PermissionPrompts.render(ToolCall("Bash", "ls"), "my*agent`x")
+        val rendered = PermissionPrompts.render("Bash", "ls", "my*agent`x")
         assertEquals("**Bash** · my\\*agent\\`x  \nls", rendered)
     }
 }

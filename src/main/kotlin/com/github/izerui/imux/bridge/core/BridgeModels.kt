@@ -101,8 +101,6 @@ sealed interface SessionEvent {
         val taskId: String,
         val toolUseId: String?,
         val description: String? = null,
-        /** 是后台子代理（不是后台命令）：它内部的工具也会弹确认框，却不写在主记录里。 */
-        val subagent: Boolean = false,
     ) : SessionEvent
 
     /** CLI 报告后台任务结束（完成、失败或被停止）。 */
@@ -110,28 +108,6 @@ sealed interface SessionEvent {
 
     /** 这一轮在电脑上被中断（Esc）：不会再有结论，也没有结束标记。 */
     data object TurnInterrupted : SessionEvent
-
-    /**
-     * 工具调用 [toolUseId] 的结果写进了记录：为它停着的框（权限确认、提问）已经结束。
-     * [answer] 是提问（Claude 的 AskUserQuestion）的作答，每题一段「问题 → 答案」；其它工具为 null。
-     */
-    data class ToolResult(
-        val toolUseId: String?,
-        val answer: String?,
-    ) : SessionEvent
-
-    /** Claude 发起了工具调用 [toolUseId]：要批准时推给手机的就是它。[detail] 是命令、文件路径等要批准的内容。 */
-    data class ToolCalled(
-        val toolUseId: String,
-        val name: String,
-        val detail: String,
-    ) : SessionEvent
-
-    /** Claude 用 AskUserQuestion 提问：题目与选项取自调用参数，推给手机与作答都按它，不看屏幕。 */
-    data class QuestionAsked(
-        val toolUseId: String,
-        val questions: List<AskedQuestion>,
-    ) : SessionEvent
 }
 
 enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }
@@ -166,7 +142,7 @@ enum class InboundOutcome {
     /** 提交前发现已换绑：不提交到新终端，已提示本人重新发送。 */
     REBOUND,
 
-    /** 框开着时回复带了附件：没有按键，已提示怎么回。 */
+    /** hook 请求挂着时回复带了附件：没有作答，已提示怎么回。 */
     PROMPT_REJECTED,
 
     /** 终端停在手机无法作答的框上：没有贴进终端，已提示到 IDE 中处理。 */
