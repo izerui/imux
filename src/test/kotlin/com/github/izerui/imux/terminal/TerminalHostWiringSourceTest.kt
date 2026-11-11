@@ -88,6 +88,7 @@ class TerminalHostWiringSourceTest {
                     initialPrompt = initialPrompt,
                     pidFile = tabPidFileFor(tabId),
                     additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
+                    claudeSettings = launchContributions[tabId]?.claudeSettings,
                 )
             }
             """,
@@ -130,6 +131,7 @@ class TerminalHostWiringSourceTest {
                     ideaMcpGuidance = ideaMcpGuidance,
                     pidFile = tabPidFileFor(tabId),
                     additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
+                    claudeSettings = launchContributions[tabId]?.claudeSettings,
                 )
             }
             """,

@@ -15,6 +15,7 @@ class TerminalLaunchContribution(
     val servers: List<TerminalMcpServer> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
     val piExtensions: List<Path> = emptyList(),
+    val claudeSettings: String? = null,
     private val release: () -> Unit = {},
 ) : AutoCloseable {
     private val closed = AtomicBoolean()
@@ -39,7 +40,7 @@ object TerminalLaunchContributions {
                 parts += part
             }
             return TerminalLaunchContribution(parts.flatMap { it.servers }, parts.flatMap { it.environment.entries }.associate { it.toPair() },
-                parts.flatMap { it.piExtensions }.distinct()) { parts.forEach { it.close() } }
+                parts.flatMap { it.piExtensions }.distinct(), parts.firstNotNullOfOrNull { it.claudeSettings }) { parts.forEach { it.close() } }
         } catch (e: Exception) {
             parts.forEach { it.close() }
             if (e is CancellationException) throw e

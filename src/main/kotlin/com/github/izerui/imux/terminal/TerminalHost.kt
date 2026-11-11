@@ -765,6 +765,7 @@ class TerminalHost(
             initialPrompt = initialPrompt,
             pidFile = tabPidFileFor(tabId),
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
+            claudeSettings = launchContributions[tabId]?.claudeSettings,
         )
     }
 
@@ -788,6 +789,7 @@ class TerminalHost(
             ideaMcpGuidance = ideaMcpGuidance,
             pidFile = tabPidFileFor(tabId),
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
+            claudeSettings = launchContributions[tabId]?.claudeSettings,
         )
     }
 

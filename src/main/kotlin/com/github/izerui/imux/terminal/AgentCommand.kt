@@ -38,6 +38,7 @@ internal fun launchCommand(
     initialPrompt: String? = null,
     pidFile: String? = null,
     additionalMcpServers: List<TerminalMcpServer> = emptyList(),
+    claudeSettings: String? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = agentType.cli
@@ -48,10 +49,15 @@ internal fun launchCommand(
     // 两种 agent 都要带 IDEA_MCP_PROJECT_HEADER：不带它，多项目窗口下任何没写
     // projectPath 实参的工具调用都会被服务端拒绝，模型只能反过来问用户选哪个项目。
     val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance, additionalMcpServers)
+    // --settings 只给 Claude：Codex、Pi 不支持这个参数，一个字不加。
+    // 值内部含双引号（JSON），走 quoteEmbeddingDoubleQuotes 保证 Windows 不丢引号。
+    val settingsArgument = claudeSettings
+        ?.takeIf { agentType == AgentType.CLAUDE }
+        ?.let { "--settings ${quoteEmbeddingDoubleQuotes(dialect, it)}" }
     val script =
         when {
             resumeId == null -> {
-                listOfNotNull(cli, ideaMcpArgument).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, settingsArgument).joinToString(" ")
             }
 
             // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
@@ -70,7 +76,7 @@ internal fun launchCommand(
             }
 
             else -> {
-                listOfNotNull(cli, ideaMcpArgument, "--resume", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, settingsArgument, "--resume", quote(dialect, resumeId)).joinToString(" ")
             }
         }
     // 初始 prompt 是**位置参数**，前面必须有 `--` 把选项解析截断。
@@ -154,6 +160,39 @@ internal fun ideaMcpCliArgument(
             AgentType.PI -> null
         }
     }
+}
+
+/**
+ * 生成 `--settings` 需要的 hook 配置 JSON。
+ *
+ * 三种事件（`PermissionRequest`、`PostToolUse`、`PostToolUseFailure`）都指向同一个
+ * [url]，通过 `Authorization: Bearer $<tokenEnvironment>` 鉴权。`$<tokenEnvironment>`
+ * 是 Claude Code 自行展开的占位符，必须**原样**出现在 JSON 里——POSIX 单引号和
+ * PowerShell 的 `[char]34` 拼接都不会展开它。
+ *
+ * 用 Gson 生成 JSON，避免手拼时 Windows 反斜杠或控制字符破坏格式。
+ */
+internal fun claudeHookSettings(url: String, tokenEnvironment: String): String {
+    fun hookEntry(timeout: Int): JsonObject = JsonObject().apply {
+        addProperty("type", "http")
+        addProperty("url", url)
+        add("headers", JsonObject().apply { addProperty("Authorization", "Bearer \$$tokenEnvironment") })
+        add("allowedEnvVars", com.google.gson.JsonArray().apply { add(tokenEnvironment) })
+        addProperty("timeout", timeout)
+    }
+    fun eventRule(timeout: Int) = com.google.gson.JsonArray().apply {
+        add(JsonObject().apply {
+            addProperty("matcher", "*")
+            add("hooks", com.google.gson.JsonArray().apply { add(hookEntry(timeout)) })
+        })
+    }
+    return JsonObject().apply {
+        add("hooks", JsonObject().apply {
+            add("PermissionRequest", eventRule(86400))
+            add("PostToolUse", eventRule(5))
+            add("PostToolUseFailure", eventRule(5))
+        })
+    }.toString()
 }
 
 /** 用 Gson 生成配置，避免 Windows 反斜杠、引号和控制字符破坏 JSON。 */
