@@ -1,7 +1,5 @@
 package com.github.izerui.imux.bridge.transcript
 
-import com.github.izerui.imux.bridge.core.AskedOption
-import com.github.izerui.imux.bridge.core.AskedQuestion
 import com.github.izerui.imux.bridge.core.SessionEvent
 import com.github.izerui.imux.bridge.json.flag
 import com.github.izerui.imux.bridge.json.obj
@@ -158,34 +156,15 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val name = toolUse.string("name") ?: return null
         if (name == "AskUserQuestion") return null
         val input = toolUse.obj("input") ?: JsonObject()
-        val detail =
-            when {
-                name == EXIT_PLAN_MODE && input.string("plan") != null -> input.string("plan")!!
-                input.string("command") != null -> listOfNotNull(input.string("description"), input.string("command")).joinToString("\n")
-                else ->
-                    listOf("file_path", "notebook_path", "url", "query").firstNotNullOfOrNull(input::string)
-                        ?: input.toString()
-            }
-        val max = if (name == EXIT_PLAN_MODE) MAX_PLAN_DETAIL else MAX_TOOL_DETAIL
-        val shown = if (detail.length > max) detail.take(max - 1) + "…" else detail
-        return SessionEvent.ToolCalled(id, name, shown)
+        return SessionEvent.ToolCalled(id, name, ClaudeToolInputs.detail(name, input))
     }
 
     /** 提问的题目与选项；任何一题缺题目或选项都不取，只提示到 IDE 中处理，免得按键与终端里的题对不上。 */
     private fun questionAsked(toolUse: JsonObject): SessionEvent? {
         if (toolUse.string("name") != "AskUserQuestion") return null
         val id = toolUse.string("id") ?: return null
-        val questions =
-            toolUse.obj("input")?.objects("questions")?.map { question ->
-                val text = question.string("question")?.takeIf(String::isNotBlank) ?: return null
-                val options =
-                    question.objects("options").map { option ->
-                        AskedOption(option.string("label")?.takeIf(String::isNotBlank) ?: return null, option.string("description"))
-                    }
-                if (options.isEmpty()) return null
-                AskedQuestion(text, question.flag("multiSelect"), options)
-            }
-        return questions?.takeIf { it.isNotEmpty() }?.let { SessionEvent.QuestionAsked(id, it) }
+        val input = toolUse.obj("input") ?: return null
+        return ClaudeToolInputs.questions(input)?.let { SessionEvent.QuestionAsked(id, it) }
     }
 
     private fun backgroundLaunched(toolUse: JsonObject): SessionEvent? {
@@ -194,10 +173,6 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val id = toolUse.string("id") ?: return null
         return SessionEvent.BackgroundLaunched(id, input.string("description") ?: input.string("command")?.lineSequence()?.firstOrNull())
     }
-
-    private const val MAX_TOOL_DETAIL = 1500
-    private const val MAX_PLAN_DETAIL = 8000
-    private const val EXIT_PLAN_MODE = "ExitPlanMode"
 
     // 与 SessionTitleRegenerator 中的私有常量同值；那边是标题逻辑的私有细节，不跨包引用
     private const val CLAUDE_INTERRUPTED_PREFIX = "[Request interrupted by user"
