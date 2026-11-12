@@ -126,6 +126,9 @@ interface BridgeTexts {
     /** 手机没有批准计划，原话已交给 Claude。 */
     fun hookPlanRevising(): String
 
+    /** 计划确认回了「好」「ok」这类允许词：没有作答，提示回 1 或 2 选择怎么执行。 */
+    fun hookPlanChoose(): String
+
     /** 推给手机的权限请求已在电脑上允许。 */
     fun hookAllowedLocally(): String
 

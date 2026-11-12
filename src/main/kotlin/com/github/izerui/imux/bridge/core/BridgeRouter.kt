@@ -351,7 +351,8 @@ class BridgeRouter(
                         PromptKind.PERMISSION ->
                             HookReplies.permission(reply).let { it to if (it is HookDecision.Allow) texts.hookAllowed() else texts.hookDenied() }
                         PromptKind.PLAN ->
-                            HookReplies.plan(reply).let {
+                            // 允许词不作答：条目留在队首，提示回 1 或 2
+                            (HookReplies.plan(reply) ?: return SubmitPhase.Hook(binding, listOf(texts.hookPlanChoose()))).let {
                                 it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.modes == HookReplies.PLAN_FIRST_MODES) else texts.hookPlanRevising()
                             }
                     }

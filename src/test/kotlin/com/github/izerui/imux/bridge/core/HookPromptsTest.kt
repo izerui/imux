@@ -53,6 +53,15 @@ class HookPromptsTest {
     }
 
     @Test
+    fun `计划回「好」「可以」「ok」「yes」「允许」都不作答，留给手机再选`() {
+        assertNull(HookReplies.plan("好"))
+        assertNull(HookReplies.plan("可以"))
+        assertNull(HookReplies.plan("OK"))
+        assertNull(HookReplies.plan("yes"))
+        assertNull(HookReplies.plan("允许"))
+    }
+
+    @Test
     fun `计划回 1 与 a 都是电脑上的第 1 项：先 auto 再 bypassPermissions`() {
         assertEquals(listOf("auto", "bypassPermissions"), HookReplies.PLAN_FIRST_MODES)
         assertEquals(HookDecision.Allow(modes = HookReplies.PLAN_FIRST_MODES), HookReplies.plan("1"))

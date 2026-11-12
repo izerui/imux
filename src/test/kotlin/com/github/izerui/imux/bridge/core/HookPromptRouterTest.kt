@@ -113,6 +113,8 @@ class HookPromptRouterTest {
 
         override fun hookPlanRevising() = "HOOK_PLAN_REVISING"
 
+        override fun hookPlanChoose() = "HOOK_PLAN_CHOOSE"
+
         override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
 
         override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"
@@ -382,6 +384,19 @@ class HookPromptRouterTest {
             router.onInbound(inbound("m1", "2"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("default"))), pending.decisions)
             assertEquals("HOOK_PLAN_APPROVED(false)", sentTexts().last())
+        }
+
+    @Test
+    fun `计划回允许词时不回应 hook，提示回 1 或 2 后仍可作答`() =
+        runBlocking {
+            bind()
+            val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
+            router.onInbound(inbound("m1", "好的"))
+            assertTrue(pending.decisions.isEmpty())
+            assertEquals("HOOK_PLAN_CHOOSE", sentTexts().last())
+            assertTrue(port.submitted.isEmpty())
+            router.onInbound(inbound("m2", "2"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("default"))), pending.decisions)
         }
 
     @Test

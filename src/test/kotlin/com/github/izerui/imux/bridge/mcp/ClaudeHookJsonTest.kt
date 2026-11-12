@@ -47,7 +47,7 @@ class ClaudeHookJsonTest {
 
     @Test fun `计划回 1 依次下发 auto 与 bypassPermissions 两条 setMode，只作用于本会话`() {
         val input = json("""{"plan":"第一步","planFilePath":"/tmp/p.md"}""")
-        val decision = decision(ClaudeHookJson.response(HookReplies.plan("1"), input))
+        val decision = decision(ClaudeHookJson.response(HookReplies.plan("1")!!, input))
         assertEquals("allow", decision["behavior"].asString)
         assertEquals(
             JsonParser.parseString(
@@ -61,7 +61,7 @@ class ClaudeHookJsonTest {
 
     @Test fun `计划回 2 只下发 default 一条 setMode`() {
         val input = json("""{"plan":"第一步"}""")
-        val decision = decision(ClaudeHookJson.response(HookReplies.plan("2"), input))
+        val decision = decision(ClaudeHookJson.response(HookReplies.plan("2")!!, input))
         assertEquals(JsonParser.parseString("""[{"type":"setMode","mode":"default","destination":"session"}]"""), decision["updatedPermissions"])
     }
 

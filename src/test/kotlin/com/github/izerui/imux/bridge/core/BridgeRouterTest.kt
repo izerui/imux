@@ -130,6 +130,8 @@ class BridgeRouterTest {
 
         override fun hookPlanRevising() = "HOOK_PLAN_REVISING"
 
+        override fun hookPlanChoose() = "HOOK_PLAN_CHOOSE"
+
         override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
 
         override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"

@@ -103,6 +103,8 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun hookPlanRevising() = ImuxBundle.message("bridge.reply.hookPlanRevising")
 
+    override fun hookPlanChoose() = ImuxBundle.message("bridge.reply.hookPlanChoose")
+
     override fun hookAllowedLocally() = ImuxBundle.message("bridge.status.hookAllowedLocally")
 
     override fun hookDeniedLocally() = ImuxBundle.message("bridge.status.hookDeniedLocally")

@@ -96,12 +96,14 @@ object HookReplies {
     /**
      * 计划确认：1/a → [PLAN_FIRST_MODES]，2/b → default，拒绝词（去掉 2/b 再加「不执行」「不執行」）或其余像选项编号/字母的回复 → 通用不执行，
      * 其他 → Deny(原话)。「3」之类不当作修改意见转给 Claude。
+     * 允许词（「好」「ok」等）返回 null：不作答，由手机再选 1 或 2。不映射到第 1 项——那会切到跳过权限，权限升级不能由随口一句触发。
      */
-    fun plan(reply: String): HookDecision {
+    fun plan(reply: String): HookDecision? {
         val word = TerminalKeys.normalizeReply(reply).lowercase()
         return when (word) {
             "1", "a" -> HookDecision.Allow(modes = PLAN_FIRST_MODES)
             "2", "b" -> HookDecision.Allow(modes = listOf("default"))
+            in PermissionPrompts.ALLOW -> null
             in PermissionPrompts.DENY - setOf("2", "b") + setOf("不执行", "不執行") -> HookDecision.Deny(PLAN_DENIED)
             else -> if (PermissionPrompts.OPTION_LIKE.matches(word))
                 HookDecision.Deny(PLAN_DENIED)
