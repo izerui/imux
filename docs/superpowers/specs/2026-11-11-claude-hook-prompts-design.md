@@ -77,12 +77,14 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 - 与配置文件**合并**：`~/.claude/settings.json`、项目 `.claude/settings*.json` 里的 hook 与其它键照常生效（实测 19）。
 - 命令行上多个 `--settings` **不合并，后者整体覆盖前者**（实测 17）。imux 的参数拼在 `claude` 之后，alias 展开的参数在前，所以以 imux 注入的为准；用户 alias 里若带 `--settings`，那一份整体失效。这是有意的取舍：alias 带 `--settings` 很少见，会话以 imux 注入为主。备选方案 `--plugin-dir` 可与之共存（实测 18），需要时再换。
 - 令牌复用 `MobileLaunchContributor` 已注册的 `IMUX_MOBILE_TOKEN`，经 `allowedEnvVars` 插入请求头，不写进命令行。
-- `TerminalLaunchContribution` 增加一个 Claude 设置片段字段（如 `claudeSettings: JsonObject?`），由 `MobileLaunchContributor` 在 `agentType == CLAUDE` 时提供；`launchCommand` 拼接时合并成一个 `--settings`。Codex、Pi 不加。
+- `TerminalLaunchContribution.claudeSettings: String?`：`claudeHookSettings(url, tokenEnvironment)` 生成的 JSON 文本，由 `MobileLaunchContributor` 在 `agentType == CLAUDE` 时提供。多个启动贡献合并时取第一个非空的（`firstNotNullOfOrNull`，不做 JSON 合并）；`launchCommand` 只在 Claude 时拼成一个 `--settings`。Codex、Pi 不加。
 - 新建会话与 `--resume` 都加。改造前已开着的标签没有 hook，走旧方案（见 §6）。
 
 ### 2. 入口：`/imux/claude-hook`
 
-在 IDE 内置 HTTP 服务上新增 `ClaudeHookHandler`。复用 `LocalMcpHandler` 的本机、端口、Origin、Bearer 校验（抽出公共部分），但不走 MCP 的 Accept / JSON-RPC 约束。按令牌找到 `MobileCaller`（工程路径 + 标签 id），按 `hook_event_name` 分派：
+在 IDE 内置 HTTP 服务上新增 `ClaudeHookHandler`（处理逻辑在可注入 `Channel`、协程作用域与路由函数的 `handleClaudeHook`，用 `EmbeddedChannel` 测）。复用 `LocalMcpHandler.kt` 的 `loopbackAllowed`（本机、端口、Host/Origin）与 `bearerToken`，但不走 MCP 的 Accept / JSON-RPC 约束：本机校验不通过回 403；校验通过但令牌缺失、无效或已撤销（插件热更新后没重启 IDE，旧 Claude 进程每次工具调用都会打过来）回 200 `{}`，不做任何决定，免得终端每次工具调用都冒 hook 错误。按令牌找到 `MobileCaller`（工程路径 + 标签 id），按 `hook_event_name` 分派：
+
+- 请求体：1 MB 以内整份解析；超过 1 MB 时只有 `PostToolUse` / `PostToolUseFailure` 还读（Edit、Write 的 `tool_response` 带整份文件），32 MB 以内流式只取 `hook_event_name`、`tool_name`、`agent_id`、`tool_input`、`tool_response.answers`；其余事件（含 `PermissionRequest`）超过 1 MB、或任何事件超过 32 MB，回 200 `{}`。平台内置服务的聚合上限是 180 MB（`ide.netty.max.frame.size.in.mb`），处理函数收到的已是聚合后的 `FullHttpRequest`。
 
 - `PostToolUse` / `PostToolUseFailure`：立即回 `{}`，把 `(agent_id, tool_name, tool_input, tool_response)` 交给 §4 判断是否为电脑作答。
 - `PermissionRequest`：
@@ -91,17 +93,21 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 
 ### 3. 挂起请求与手机推送
 
-每个标签维护一个按到达顺序的挂起队列（新类 `HookPrompts`，纯状态，放在 `bridge/core`，由 `BridgeRouter` 在 `lock` 内访问，与 `TabState` 并列）：
+每个标签维护一个按到达顺序的挂起队列（`HookPromptQueue`，纯状态，放在 `bridge/core`，由 `BridgeRouter` 在 `lock` 内访问，与 `TabState` 并列；`bridge/core` 不依赖 Gson）：
 
 ```
-HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolName, toolInput,
-           answers: 已答题目（提问用）, respond: (JsonObject) -> Unit)
+HookRequest(id, toolName, agentId?, agentType?, detail, questions?, input: 顶层字段 → 规范化 JSON)   // kind 由 toolName 推出
+HookPromptQueue.Entry(request, respond: (HookDecision) -> Boolean,   // 返回是否真的写出（连接已关闭为 false）
+                      pushedEpoch: 已送达的绑定代次, pushingEpoch: 正在推的代次, answers: 已答题目（提问用）)
 ```
+
+出队的一方负责在锁外调用 `respond`，每个请求只调一次。
 
 - 种类：`AskUserQuestion` → QUESTION，`ExitPlanMode` → PLAN，其余 → PERMISSION。
 - **一次只推队首**，与终端一次只显示一个框一致；队首了结后推下一个。并行子代理同时请求时，手机消息末尾附「还有 N 个确认在排队」。
 - 推送内容沿用现有渲染：`PermissionPrompts.render`、`AskedQuestions.render`、`texts.plan`、`fitted` 截断。子代理的请求在标题行注明来源（`agent_type`），对应终端的 `from the general-purpose agent`。
-- 手机消息到达时，若该标签有 hook 队首，按 §5 译成 hook 响应，**不按任何键**。
+- **送达才算推过**：渠道确认接收（`DeliveryResult.Accepted`）后才把队首记为已推给这个绑定代次；推送失败或还在路上（限频重试）的不算。
+- 手机消息到达时，若该标签的 hook 队首已送达这台手机，按 §5 译成 hook 响应，**不按任何键**；队首还没送达时手机没看到它，这句不算作答：先补推队首，再把这句照常按普通消息处理（运行态正停着等人时按 §6 回 `DialogOpen`）。机器人接回（`onBound`、`onReattached`）时也补推没送达的队首。
 
 ### 4. 了结与通知
 
@@ -109,19 +115,20 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 
 | 了结来源 | 判定 | 回给 hook | 告诉手机 |
 |---|---|---|---|
-| 手机作答 | §5 | 对应 decision | 一句确认（已允许 / 已拒绝 / 已提交答案 / 已批准计划），**不再推电脑作答提示** |
-| 电脑选是 | 收到 `PostToolUse`/`PostToolUseFailure`，`agent_id`、`tool_name` 与队中某请求相同，且 `tool_input` 满足匹配前提：双方都为空→匹配；电脑端为空、请求不为空→仅计划匹配（ExitPlanMode 的 PostToolUse 输入为空对象）；双方都有字段但没有共有字段→不匹配；有共有字段→每个共有字段值相等（提问多出 `answers` 与 `annotations`，实测 26） | `{}`（结束挂着的请求） | 权限：「电脑端已允许」；提问：带上 `tool_response` 里每题答案（沿用 `promptAnsweredLocally` 文案）；计划：`promptHandledLocally`（「选择已在电脑端完成。」） |
+| 手机作答 | §5（只认已送达这台手机的队首） | 对应 decision；允许的同时记进「手机已允许、待 PostToolUse」小表（按标签，只存代理、工具、参数，最多 32 条，本轮结束清主会话的、子代理结束清它的、记录重启与解绑全清） | 一句确认（已允许 / 已拒绝 / 已提交答案 / 已批准计划），**不再推电脑作答提示**；回写失败（电脑端已按 Esc 断开）时撤销小表记录，改发「电脑端已拒绝」 |
+| 电脑选是 | 收到 `PostToolUse`/`PostToolUseFailure`：先在「手机已允许」小表里找匹配并抵消（那是手机允许过的请求跑完了，什么也不做）；找不到才去队列，`agent_id`、`tool_name` 与队中某请求相同，且 `tool_input` 满足匹配前提：双方都为空→匹配；电脑端为空、请求不为空→仅计划匹配（ExitPlanMode 的 PostToolUse 输入为空对象）；双方都有字段但没有共有字段→不匹配；有共有字段→每个共有字段值相等（提问多出 `answers` 与 `annotations`，实测 26） | `{}`（结束挂着的请求） | 权限：「电脑端已允许」；提问：带上 `tool_response` 里每题答案（沿用 `promptAnsweredLocally` 文案）；计划：`promptHandledLocally`（「选择已在电脑端完成。」） |
 | 电脑选否 / Esc | hook 连接被关闭 | 无需回 | 「电脑端已拒绝」 |
 | 同代理新计划 / 提问让旧的作废 | 收到 `ExitPlanMode` 或 `AskUserQuestion` 请求，队中有同一 `agent_id`、同一 `tool_name` 的旧请求（实测 28：电脑上计划选 3 后旧请求不关闭，改稿后发来新的）；权限请求不适用，同一代理可能并行请求多个权限 | 旧的回 `{}` | 旧的推给过这台手机时先发「选择已在电脑端完成」，再推新的队首 |
+| 后台子代理结束 | 记录里的 `BackgroundEnded(taskId)`：后台子代理的任务 id（`toolUseResult.agentId`、`<task-id>`）与 hook 的 `agent_id` 是同一个值（两边都对应子代理记录 `subagents/agent-<id>.jsonl`） | 该代理的条目 `{}` | 不单独提示 |
 | 记录重启、换绑解绑、标签关闭（会话结束）、IDE 退出 | 现有对应事件 | `{}` | 不单独提示 |
 
-本轮结束、中断时只放行主会话（无 `agent_id`）的挂起请求——主会话的确认活不过它所在的一轮，用作电脑端了结漏判（如提问选 Chat about this（实测 27）、允许后 Esc 中断）的兜底；后台子代理可能在本轮结束后才请求，不受影响。
+本轮结束、中断时只放行主会话（无 `agent_id`）的挂起请求——主会话的确认活不过它所在的一轮，用作电脑端了结漏判（如提问选 Chat about this（实测 27）、允许后 Esc 中断）的兜底；后台子代理可能在本轮结束后才请求，不受影响。记录里的结束标记与 IDE 的完成信号（`onTurnCompleted` 结算当前轮时，以及读取边界不可靠的 `flushAfterReply`）都算本轮结束。
 
 要点：
 
 - **任何 decision 都不带 `interrupt`**（实测 5：晚到的 interrupt 会打断下一步）。手机晚于电脑作答时最多是一个无副作用的晚到 decision（实测 6）。
-- 电脑选是的通知要等工具**执行完**才到。长命令期间手机仍显示该请求，此时手机再回复会按正常作答回给 hook；这是一个晚到的 decision，不带 `interrupt` 时无副作用（实测 6），不做额外拦截。不用「会话已退出等待」拦截：hook 请求通常先于等待通知到达，用等待状态判断会误拦刚到的请求。
-- 同一 `tool_input` 可能在并行调用里重复出现；匹配取队中最早的一个，影响仅是通知顺序。
+- 电脑选是的通知要等工具**执行完**才到。长命令期间手机仍显示该请求，此时手机再回复会按正常作答回给 hook；这是一个晚到的 decision，不带 `interrupt` 时无副作用（实测 6），不做额外拦截。插件无从得知电脑已选是，手机照常收到回执——两边都答时以先到的为准，手机的回执只代表手机发出的选择（见用户指南）。不用「会话已退出等待」拦截：hook 请求通常先于等待通知到达，用等待状态判断会误拦刚到的请求。
+- 同一 `tool_input` 可能在并行调用里重复出现：手机允许的请求跑完后的 PostToolUse 由「手机已允许」小表抵消，不会对上队中同参数的下一个；电脑端允许的取队中最早的一个，影响仅是通知顺序。
 
 ### 5. 手机回复的翻译
 
@@ -149,6 +156,7 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 |---|---|
 | 1 / a | `allow` + `updatedInput` 原样 + `updatedPermissions` 依次两条 `setMode: auto`、`setMode: bypassPermissions`（顺序不能反；实测 11、23、24），与电脑上的第 1 项一致：以跳过权限方式启动的会话恢复为 bypass，其余会话停在 auto |
 | 2 / b | `allow` + `updatedInput` 原样 + `setMode: default`（实测 12） |
+| 好 / 可以 / ok / yes / 允许 等允许词 | 不回应，条目留在队首，提示手机回「1」或「2」（`hookPlanChoose`）。不映射到第 1 项：那会切到跳过权限，权限升级不应由随口一句触发 |
 | 不执行 / 拒绝 | `deny` + `message: "The user does not want to proceed with this plan yet."` |
 | 其他文字 | `deny` + `message: <原话>`，Claude 按它修改计划（实测 13） |
 
@@ -158,7 +166,7 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 
 - `onWaiting`：该标签 hook 队列非空时什么也不发（确认框已由 hook 推过）；否则发「<原因>，请到 IDE 中处理」。
 - 手机消息：有 hook 队首先译成决定回给 hook；否则运行态正停着等人（`waitingActive`）时回 `DialogOpen`，不贴进终端；都不是才照常提交。
-- 没能注入 hook 的 Claude 标签（启动贡献准备失败时会弹「手机媒体工具未能接入」警告，或插件更新后未重启 IDE 时已在跑的进程）：收到 Claude 的等待通知后只提示到 IDE 中处理，等待期间手机的话被拦下，不贴进终端。这与 Codex、Pi 不同：桥接没有接入它们的确认框状态，不能识别或拦截，框打开期间手机的话仍可能按普通消息发进终端（见用户指南）。
+- 没能注入 hook 的 Claude 标签（启动贡献准备失败时会弹「手机媒体工具未能接入」警告，或插件更新后未重启 IDE 时已在跑的进程——令牌已失效，hook 入口回 `{}`，不弹警告也不报 hook 错误）：收到 Claude 的等待通知后只提示到 IDE 中处理，等待期间手机的话被拦下，不贴进终端。这与 Codex、Pi 不同：桥接没有接入它们的确认框状态，不能识别或拦截，框打开期间手机的话仍可能按普通消息发进终端（见用户指南）。
 - 会话记录解码不再产出工具调用、提问、工具结果事件，终端端口也不再提供按键写入。
 
 ### 7. 文案
@@ -169,7 +177,7 @@ HookPrompt(id, kind: PERMISSION | QUESTION | PLAN, agentId?, agentType?, toolNam
 
 - 纯函数：§5 三类翻译（含多选拼接、自定义文字、编号越界）、hook 响应 JSON 结构、`--settings` 片段生成与参数拼接（POSIX 与 Windows 引号各一条断言）。
 - `BridgeRouter`：用假 hook 端口覆盖 §4 表中每一行的「回给 hook」与「告诉手机」两列各一条断言；并行两个请求的推送顺序与排队数；有 hook 时不发「请到 IDE 中处理」、无 hook 时照旧。
-- `ClaudeHookHandler`：令牌无效 403、未绑定立即回 `{}`、连接关闭触发了结。
+- `ClaudeHookHandler`（`EmbeddedChannel`）：本机校验失败 403、令牌无效 200 `{}`、未绑定立即回 `{}`、挂起期间连接关闭触发了结、回写后关闭不触发、只回写一次、超过 1 MB 的 `PermissionRequest` 回 `{}`。
 - 端到端：按本文实测方法（tmux + 交互式 claude）各跑一遍主会话权限、子代理权限、提问、计划确认，手机端与电脑端先答各一次。
 
 ## 实现前需再验证
