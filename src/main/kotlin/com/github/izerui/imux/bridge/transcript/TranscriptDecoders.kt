@@ -79,6 +79,8 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
     /**
      * 后台调用的结果：后台命令给出 `backgroundTaskId`，后台子代理给出 `agentId`（状态 `async_launched`），
      * 用 SendMessage 续跑已结束的子代理给出 `resumedAgentId`。
+     * 前台（同步）子代理跑完给出 `agentId` 与 `status: completed`，解成 [SessionEvent.SubagentEnded]；
+     * 前台子代理中途转后台（Ctrl+B）时结果是 `async_launched`，按后台子代理处理（见 hooks 文档 Agent 一节）。
      */
     private fun backgroundStarted(
         root: JsonObject,
@@ -87,6 +89,7 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val result = root.obj("toolUseResult") ?: return emptyList()
         val toolUseId = blocks(content).firstOrNull { it.string("type") == "tool_result" }?.string("tool_use_id")
         result.string("backgroundTaskId")?.let { return listOf(SessionEvent.BackgroundStarted(it, toolUseId, result.string("description"))) }
+        if (result.string("status") == "completed") result.string("agentId")?.let { return listOf(SessionEvent.SubagentEnded(it)) }
         val agentId =
             result.string("agentId")?.takeIf { result.string("status") == "async_launched" }
                 ?: return listOfNotNull(result.string("resumedAgentId")?.let { SessionEvent.BackgroundStarted(it, null) })

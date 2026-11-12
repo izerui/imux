@@ -103,6 +103,12 @@ sealed interface SessionEvent {
         val description: String? = null,
     ) : SessionEvent
 
+    /**
+     * 前台（同步）子代理跑完：Claude 的 Agent 工具结果 `status` 为 `completed`、带 `agentId`（中途转后台的是 `async_launched`，
+     * 见 [BackgroundStarted]）。[agentId] 与 hook 请求的 `agent_id` 是同一个值。
+     */
+    data class SubagentEnded(val agentId: String) : SessionEvent
+
     /** CLI 报告后台任务结束（完成、失败或被停止）。 */
     data class BackgroundEnded(val taskId: String) : SessionEvent
 

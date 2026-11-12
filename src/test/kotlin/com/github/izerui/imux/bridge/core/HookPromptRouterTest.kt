@@ -23,12 +23,15 @@ class HookPromptRouterTest {
     private class FakePort : TerminalSessionPort {
         val submitted = mutableListOf<String>()
 
+        /** 每次提交的结果；默认提交成功。 */
+        var result: suspend (attempt: Int) -> SubmitResult = { SubmitResult.SUBMITTED_TO_TERMINAL }
+
         override suspend fun submit(
             target: SessionTarget,
             text: String,
         ): SubmitResult {
             submitted += text
-            return SubmitResult.SUBMITTED_TO_TERMINAL
+            return result(submitted.size)
         }
     }
 
@@ -199,6 +202,11 @@ class HookPromptRouterTest {
     private val colors = AskedQuestion("颜色？", false, listOf(AskedOption("红", null), AskedOption("绿", null)))
     private val fruits = AskedQuestion("水果？", true, listOf(AskedOption("苹果", null), AskedOption("香蕉", null), AskedOption("橙子", null)))
 
+    /** 前台子代理 a8 跑完时主会话记录里的 Agent 工具结果。 */
+    private val finishedAgent =
+        """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"done"}]},""" +
+            """"toolUseResult":{"status":"completed","agentId":"a8"}}"""
+
     private val bashToolUse =
         """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"touch a.txt"}}]}}"""
 
@@ -349,6 +357,43 @@ class HookPromptRouterTest {
             channel.hang = { false }
             router.onWaiting("tab-1", "plan")
             assertEquals("PLAN(# 新计划)", sentTexts().last())
+        }
+
+    @Test
+    fun `终端未就绪重试期间来了确认请求，不再提交并提示先回答它`() =
+        runBlocking {
+            bind()
+            lateinit var pending: Pending
+            port.result = { attempt ->
+                if (attempt == 1) pending = request(1)
+                SubmitResult.NOT_READY
+            }
+            assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("m1", "继续")))
+            assertEquals(1, port.submitted.size)
+            assertTrue(pending.decisions.isEmpty())
+            assertEquals("HOOK_ANSWER_FIRST", sentTexts().last())
+        }
+
+    @Test
+    fun `终端未就绪重试期间停到了框上，不再提交并回框已打开`() =
+        runBlocking {
+            bind()
+            port.result = { attempt ->
+                if (attempt == 1) router.onWaiting("tab-1", "permission prompt")
+                SubmitResult.NOT_READY
+            }
+            assertEquals(InboundOutcome.DIALOG_OPEN, router.onInbound(inbound("m1", "继续")))
+            assertEquals(1, port.submitted.size)
+            assertEquals("DIALOG_OPEN", sentTexts().last())
+        }
+
+    @Test
+    fun `终端未就绪重试期间没有新情况，照常重试到提交`() =
+        runBlocking {
+            bind()
+            port.result = { attempt -> if (attempt == 1) SubmitResult.NOT_READY else SubmitResult.SUBMITTED_TO_TERMINAL }
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "继续")))
+            assertEquals(listOf("继续", "继续"), port.submitted)
         }
 
     @Test
@@ -781,30 +826,31 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `本轮结束放行前台子代理的挂起请求，后台子代理的保留`() =
+    fun `先开后台子代理再绑定手机，本轮结束时它的请求保留`() =
         runBlocking {
+            // 后台子代理在绑定之前就已启动：记录里的启动结果没读到，路由器不知道它在后台
             bind()
-            background("bg")
-            val foreground = request(1, detail = "rm a.txt", agentId = "fg", agentType = "general-purpose")
-            val back = request(2, detail = "rm b.txt", agentId = "bg", agentType = "general-purpose")
+            val back = request(1, detail = "rm b.txt", agentId = "bg", agentType = "general-purpose")
             router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
-            assertEquals(listOf<HookDecision>(HookDecision.Pass), foreground.decisions)
+            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
             assertTrue(back.decisions.isEmpty())
-            val pushed = sentTexts().last()
-            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), back.decisions)
         }
 
     @Test
-    fun `中断与 IDE 完成信号也放行前台子代理的挂起请求`() =
+    fun `前台子代理跑完时放行它的挂起请求，其它代理与主会话的保留`() =
         runBlocking {
             bind()
-            val interrupted = request(1, agentId = "fg1", agentType = "general-purpose")
-            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
-            assertEquals(listOf<HookDecision>(HookDecision.Pass), interrupted.decisions)
-            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("下一轮")))
-            val completed = request(2, agentId = "fg2", agentType = "general-purpose")
-            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
-            assertEquals(listOf<HookDecision>(HookDecision.Pass), completed.decisions)
+            val foreground = request(1, detail = "rm a.txt", agentId = "a8", agentType = "general-purpose")
+            val other = request(2, detail = "rm b.txt", agentId = "a9", agentType = "general-purpose")
+            val main = request(3, detail = "rm c.txt")
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(finishedAgent))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), foreground.decisions)
+            assertTrue(other.decisions.isEmpty())
+            assertTrue(main.decisions.isEmpty())
+            val pushed = sentTexts().last()
+            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
         }
 
     @Test

@@ -126,22 +126,14 @@ class BridgeRouter(
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
                 // hook 送来的确认优先：已送达这台手机的队首，译成决定回给 hook，不按任何键
-                val (hookHead, delivered) =
-                    synchronized(lock) { hookQueues[tabId]?.head().let { it to (it?.pushedEpoch == current.epoch) } }
-                if (hookHead != null && delivered) {
-                    if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
-                    return@withLock answerHook(current, hookHead, message.text)
+                when (val gate = gate(current)) {
+                    is Gate.Answer -> {
+                        if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
+                        return@withLock answerHook(current, gate.head, message.text)
+                    }
+                    is Gate.Blocked -> return@withLock gate.phase
+                    Gate.Open -> Unit
                 }
-                // 队首还没送达（推送失败或还在路上）：手机没看到它，这句不算作答，也绝不贴进终端——
-                // 电脑上正开着确认框，贴进去的回车可能直接选中默认项，等于随口一句批准了工具调用。
-                // 补推队首（已在路上的不重复推），送达或在路上就请手机先回答它；补推也失败就请到 IDE 中处理
-                if (hookHead != null) {
-                    val next = synchronized(lock) { hookQueues[tabId]?.nextPush(current) }
-                    val reachable = if (next != null) push(current, next) else true
-                    return@withLock if (reachable) SubmitPhase.AnswerFirst else SubmitPhase.DialogOpen
-                }
-                // 运行态正停着等人，又没有挂着的 hook 请求：手机答不了这个框，不当普通消息贴进终端
-                if (tab(tabId) { waitingActive }) return@withLock SubmitPhase.DialogOpen
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
                 tab(tabId) { expectEcho(text) }
                 try {
@@ -295,18 +287,16 @@ class BridgeRouter(
     }
 
     /**
-     * 本轮结束或中断时放行主会话（无 agentId）挂起的请求，静默出队：主会话的确认活不过它所在的一轮，
+     * 本轮结束或中断时只放行主会话（无 agentId）挂起的请求，静默出队：主会话的确认活不过它所在的一轮，
      * 用作电脑端了结漏判（PostToolUse 对不上、提问选 Chat about this、允许后 Esc 中断等）的兜底。
      * 记录里的结束标记与 IDE 的完成信号（含读取边界不可靠时）都走这里。
-     * 后台子代理可能在本轮结束后才请求，不动。队首变了就推新的队首。
+     * 子代理的请求一律不动：后台的可能在本轮结束后才请求，前台的由它跑完的结果（[SessionEvent.SubagentEnded]）放行。
+     * 不用「不在后台任务里」推断前台：绑定前就已启动的后台子代理不在记下的后台任务里。队首变了就推新的队首。
      */
-    private suspend fun releaseMainSessionHooks(tabId: String) {
-        val background = tab(tabId) { runningBackground() }
-        releaseQuietly(tabId) { drainTurn(background) }
-    }
+    private suspend fun releaseMainSessionHooks(tabId: String) = releaseQuietly(tabId) { drainMainSession() }
 
     /**
-     * 后台子代理结束：它挂起的请求不会再有人答，静默放行。记录里后台子代理的任务 id（`toolUseResult.agentId`、
+     * 子代理结束（后台的任务结束通知、前台的 Agent 工具结果）：它挂起的请求不会再有人答，静默放行。记录里后台子代理的任务 id（`toolUseResult.agentId`、
      * `<task-id>`）与 hook 请求的 `agent_id` 是同一个值（子代理记录文件名 `subagents/agent-<id>.jsonl` 两边一致）；
      * 后台命令的任务 id 对不上任何请求，不受影响。
      */
@@ -508,6 +498,42 @@ class BridgeRouter(
         }
     }
 
+    /** 手机的话能不能贴进终端。 */
+    private sealed interface Gate {
+        /** 没有挂着的确认、也没停在框上：照常提交。 */
+        data object Open : Gate
+
+        /** 队首已送达这台手机：这句是对它的回答。 */
+        data class Answer(val head: HookPromptQueue.Entry) : Gate
+
+        /** 不提交，按 [phase] 回复。 */
+        data class Blocked(val phase: SubmitPhase) : Gate
+    }
+
+    /**
+     * 有 hook 队首时手机的话绝不贴进终端：电脑上正开着确认框，贴进去的回车可能直接选中默认项，等于随口一句批准了工具调用。
+     * 队首已送达 → [Gate.Answer]；没送达（推送失败或还在路上）就补推（在路上的不重复推），送达或在路上请手机先回答它，
+     * 补推也失败回框已打开。没有队首而运行态正停着等人时手机答不了这个框，回框已打开。
+     * 取队首与领推送在同一次加锁里，中间不会被别人了结掉。须在提交锁内调用。
+     */
+    private suspend fun gate(binding: Binding): Gate {
+        val tabId = binding.target.tabId
+        var waiting = false
+        val (head, delivered, next) =
+            synchronized(lock) {
+                val queue = hookQueues[tabId]
+                val head = queue?.head()
+                val delivered = head?.pushedEpoch == binding.epoch
+                waiting = tabs[tabId]?.waitingActive == true
+                Triple(head, delivered, if (head != null && !delivered) queue.nextPush(binding) else null)
+            }
+        if (head == null) return if (waiting) Gate.Blocked(SubmitPhase.DialogOpen) else Gate.Open
+        if (delivered) return Gate.Answer(head)
+        // 队首在锁内没送达：next 为 null 表示已在路上（或题目越界推不出），不重复推
+        val reachable = if (next != null) push(binding, next) else true
+        return Gate.Blocked(if (reachable) SubmitPhase.AnswerFirst else SubmitPhase.DialogOpen)
+    }
+
     /**
      * 须在这个机器人的提交锁内调用。终端未就绪时最多尝试 [NOT_READY_ATTEMPTS] 次；
      * 每次尝试前复核绑定代次，等待期间换绑或解绑则不再提交，按绑定已变处理。
@@ -518,7 +544,15 @@ class BridgeRouter(
         text: String,
     ): SubmitPhase {
         repeat(NOT_READY_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(notReadyRetryDelayMs)
+            if (attempt > 0) {
+                delay(notReadyRetryDelayMs)
+                // 等待期间来了确认请求或停到了框上：不再提交。这句是在确认出现之前发的，不当作答，请手机先回答它
+                when (val gate = gate(binding)) {
+                    is Gate.Answer -> return SubmitPhase.AnswerFirst
+                    is Gate.Blocked -> return gate.phase
+                    Gate.Open -> Unit
+                }
+            }
             if (!bindings.isCurrent(robotId, binding.epoch)) return SubmitPhase.BindingChanged
             val result = sessionPort.submit(binding.target, text)
             if (result != SubmitResult.NOT_READY) return SubmitPhase.Done(result)
@@ -596,6 +630,7 @@ class BridgeRouter(
                 }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
                 is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
+                is SessionEvent.SubagentEnded -> releaseAgentHooks(tabId, event.agentId)
                 is SessionEvent.BackgroundEnded -> {
                     tab(tabId) { backgroundEnded(event.taskId) }
                     releaseAgentHooks(tabId, event.taskId)

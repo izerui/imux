@@ -78,17 +78,13 @@ internal class HookPromptQueue {
         return true
     }
 
-    /**
-     * 本轮结束：主会话（无 agentId）与前台子代理（agentId 不在仍在运行的后台任务 [background] 里）的条目全部出队，
-     * 按到达顺序返回，它们的手机已允许记录一并清掉；后台子代理的留着。前台子代理活不过主会话的这一轮。
-     */
-    fun drainTurn(background: Set<String>): List<Entry> {
-        fun endsWithTurn(agentId: String?) = agentId == null || agentId !in background
-        answeredRemotely.removeAll { endsWithTurn(it.agentId) }
-        return entries.filter { endsWithTurn(it.request.agentId) }.also { entries.removeAll(it.toSet()) }
+    /** 本轮结束：主会话（无 agentId）的条目全部出队，按到达顺序返回，手机已允许的主会话记录一并清掉；子代理的留着。 */
+    fun drainMainSession(): List<Entry> {
+        answeredRemotely.removeAll { it.agentId == null }
+        return entries.filter { it.request.agentId == null }.also { entries.removeAll(it.toSet()) }
     }
 
-    /** 子代理 [agentId] 结束：它的条目全部出队，按到达顺序返回，它的手机已允许记录一并清掉。 */
+    /** 子代理 [agentId] 结束（后台或前台）：它的条目全部出队，按到达顺序返回，它的手机已允许记录一并清掉。 */
     fun drainAgent(agentId: String): List<Entry> {
         answeredRemotely.removeAll { it.agentId == agentId }
         return entries.filter { it.request.agentId == agentId }.also { entries.removeAll(it.toSet()) }

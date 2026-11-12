@@ -259,7 +259,7 @@ class TranscriptDecodersTest {
         val finishedAgent =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4","content":"done"}]},""" +
                 """"toolUseResult":{"status":"completed","agentId":"a8"}}"""
-        assertTrue("同步跑完的子代理不算后台任务", claudeEvents(finishedAgent).isEmpty())
+        assertEquals("同步跑完的子代理不算后台任务，报它跑完了", listOf(SessionEvent.SubagentEnded("a8")), claudeEvents(finishedAgent))
 
         val notification =
             """{"type":"user","origin":{"kind":"task-notification"},"message":{"role":"user","content":""" +
