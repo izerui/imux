@@ -43,6 +43,9 @@ internal class HookPromptQueue {
     /** 主会话（无 agentId）的条目全部出队，按到达顺序返回；子代理的留在队中。 */
     fun drainMainSession(): List<Entry> = entries.filter { it.request.agentId == null }.also { entries.removeAll(it.toSet()) }
 
+    /** 子代理 [agentId] 的条目全部出队，按到达顺序返回。 */
+    fun drainAgent(agentId: String): List<Entry> = entries.filter { it.request.agentId == agentId }.also { entries.removeAll(it.toSet()) }
+
     /** 全部出队，按到达顺序返回。 */
     fun drain(): List<Entry> = entries.toList().also { entries.clear() }
 }

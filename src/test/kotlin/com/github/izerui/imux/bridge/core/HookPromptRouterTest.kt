@@ -548,6 +548,71 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `只由 IDE 完成信号结束的一轮放行主会话请求，子代理的保留`() =
+        runBlocking {
+            bind()
+            val main = request(1, detail = "rm a.txt")
+            val agent = request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
+            // 记录里没有结束标记、也还没读到回复：只有 IDE 的完成信号
+            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+            assertTrue(agent.decisions.isEmpty())
+            val pushed = sentTexts().last()
+            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
+        }
+
+    @Test
+    fun `IDE 完成信号结算出回复时也放行主会话请求`() =
+        runBlocking {
+            bind()
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("做"), SessionEvent.AssistantText("好了")))
+            val main = request(1)
+            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+            assertTrue(sentTexts().contains("好了"))
+        }
+
+    @Test
+    fun `上一轮迟到的 IDE 完成信号不放行主会话请求`() =
+        runBlocking {
+            bind()
+            val previous = router.currentTurn("tab-1")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("下一轮")))
+            val main = request(1)
+            router.onTurnCompleted("tab-1", previous)
+            assertTrue(main.decisions.isEmpty())
+        }
+
+    @Test
+    fun `读取边界不可靠的完成信号放行主会话请求，子代理的保留`() =
+        runBlocking {
+            bind()
+            val main = request(1, detail = "rm a.txt")
+            val agent = request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
+            router.flushAfterReply("tab-1")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+            assertTrue(agent.decisions.isEmpty())
+        }
+
+    @Test
+    fun `后台子代理结束时静默放行它挂起的请求，其它代理与主会话的保留`() =
+        runBlocking {
+            bind()
+            val ended = request(1, detail = "rm a.txt", agentId = "a1", agentType = "general-purpose")
+            val other = request(2, detail = "rm b.txt", agentId = "a2", agentType = "general-purpose")
+            val main = request(3, detail = "rm c.txt")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("a1")))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), ended.decisions)
+            assertTrue(other.decisions.isEmpty())
+            assertTrue(main.decisions.isEmpty())
+            assertFalse(sentTexts().joinToString(), sentTexts().any { it.startsWith("HOOK_DENIED_LOCALLY") || it.startsWith("HOOK_ALLOWED_LOCALLY") })
+            val pushed = sentTexts().last()
+            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), other.decisions)
+        }
+
+    @Test
     fun `提问答一半时电脑端了结，手机收到答案且队列继续`() =
         runBlocking {
             bind()

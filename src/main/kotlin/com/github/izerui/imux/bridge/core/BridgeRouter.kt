@@ -267,20 +267,35 @@ class BridgeRouter(
     /**
      * 本轮结束或中断时放行主会话（无 agentId）挂起的请求，静默出队：主会话的确认活不过它所在的一轮，
      * 用作电脑端了结漏判（PostToolUse 对不上、提问选 Chat about this、允许后 Esc 中断等）的兜底。
+     * 记录里的结束标记与 IDE 的完成信号（含读取边界不可靠时）都走这里。
      * 后台子代理可能在本轮结束后才请求，不动。队首变了就推新的队首。
      */
-    private suspend fun releaseMainSessionHooks(
+    private suspend fun releaseMainSessionHooks(tabId: String) = releaseQuietly(tabId) { drainMainSession() }
+
+    /**
+     * 后台子代理结束：它挂起的请求不会再有人答，静默放行。记录里后台子代理的任务 id（`toolUseResult.agentId`、
+     * `<task-id>`）与 hook 请求的 `agent_id` 是同一个值（子代理记录文件名 `subagents/agent-<id>.jsonl` 两边一致）；
+     * 后台命令的任务 id 对不上任何请求，不受影响。
+     */
+    private suspend fun releaseAgentHooks(
         tabId: String,
-        binding: Binding,
+        agentId: String,
+    ) = releaseQuietly(tabId) { drainAgent(agentId) }
+
+    /** 按 [take] 静默出队并 respond(Pass)；队首变了就推新的队首。 */
+    private suspend fun releaseQuietly(
+        tabId: String,
+        take: HookPromptQueue.() -> List<HookPromptQueue.Entry>,
     ) {
-        val (released, next) =
+        val (released, binding, next) =
             synchronized(lock) {
                 val queue = hookQueues[tabId] ?: return
-                val released = queue.drainMainSession().ifEmpty { return }
-                released to queue.nextPush(binding)
+                val released = queue.take().ifEmpty { return }
+                val binding = bindings.bindingForTab(tabId)
+                Triple(released, binding, binding?.let { queue.nextPush(it) })
             }
         released.forEach { it.respond(HookDecision.Pass) }
-        next?.let { send(binding, it) }
+        if (binding != null && next != null) send(binding, next)
     }
 
     /** 放行标签挂起的全部请求，交给电脑处理；不发消息。 */
@@ -476,14 +491,14 @@ class BridgeRouter(
                     sendSettledReply(tabId, tab(tabId) { endByMarker() })
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
-                    releaseMainSessionHooks(tabId, binding)
+                    releaseMainSessionHooks(tabId)
                 }
                 SessionEvent.TurnInterrupted -> {
                     tab(tabId) { interrupt() }
                     send(binding, texts.turnInterrupted())
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
-                    releaseMainSessionHooks(tabId, binding)
+                    releaseMainSessionHooks(tabId)
                 }
                 is SessionEvent.TurnFailed -> {
                     tab(tabId) { interrupt() }
@@ -491,11 +506,14 @@ class BridgeRouter(
                     send(binding, texts.turnFailed(reason))
                     sendBackgroundRunning(tabId)
                     sendAfterReply(tabId)
-                    releaseMainSessionHooks(tabId, binding)
+                    releaseMainSessionHooks(tabId)
                 }
                 is SessionEvent.BackgroundLaunched -> tab(tabId) { backgroundLaunched(event.toolUseId, event.description) }
                 is SessionEvent.BackgroundStarted -> tab(tabId) { backgroundStarted(event.taskId, event.toolUseId, event.description) }
-                is SessionEvent.BackgroundEnded -> tab(tabId) { backgroundEnded(event.taskId) }
+                is SessionEvent.BackgroundEnded -> {
+                    tab(tabId) { backgroundEnded(event.taskId) }
+                    releaseAgentHooks(tabId, event.taskId)
+                }
             }
         }
         // 结算之后才读到的回复（完成信号先到）：立即发；若这一轮正等着它，排着的提示随后发
@@ -550,10 +568,13 @@ class BridgeRouter(
             if (reply == null) {
                 // 完成信号可能先于最终回复写进记录：先等，见 onQuiet
                 tab(tabId) { awaitReply(now()) }
+                // 记录里没有结束标记的一轮同样要兜住主会话的挂起请求
+                releaseMainSessionHooks(tabId)
                 return
             }
             sendReply(tabId, reply)
             sendBackgroundRunning(tabId)
+            releaseMainSessionHooks(tabId)
         }
         sendAfterReply(tabId)
     }
@@ -580,9 +601,11 @@ class BridgeRouter(
     }
 
     /**
-     * 完成信号到了但没能结算（读取边界不可靠）：后台任务提示照常补，排着的状态也不能一直压着。
+     * 完成信号到了但没能结算（读取边界不可靠）：后台任务提示照常补，排着的状态也不能一直压着；
+     * 这一轮已经结束，主会话的挂起请求照样放行。
      */
     suspend fun flushAfterReply(tabId: String) {
+        releaseMainSessionHooks(tabId)
         sendBackgroundRunning(tabId)
         sendAfterReply(tabId)
     }
