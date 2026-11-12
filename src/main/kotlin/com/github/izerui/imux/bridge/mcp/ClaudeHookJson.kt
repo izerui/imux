@@ -56,7 +56,7 @@ internal object ClaudeHookJson {
     /** 计划全文可能较长，上限比 MCP 入口的 64 KB 宽。 */
     private const val MAX_BODY_BYTES = 1024 * 1024
 
-    /** PostToolUse / PostToolUseFailure 的上限。 */
+    /** PostToolUse / PostToolUseFailure / SubagentStop 的上限。 */
     private const val MAX_TOOL_DONE_BYTES = 32 * 1024 * 1024
 
     /** 超过 1 MB 仍要读的事件：SubagentStop 带子代理最后一条回复，也可能很长，只需 agent_id。 */

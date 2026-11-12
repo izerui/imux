@@ -165,7 +165,7 @@ internal fun ideaMcpCliArgument(
 /**
  * 生成 `--settings` 需要的 hook 配置 JSON。
  *
- * 三种事件（`PermissionRequest`、`PostToolUse`、`PostToolUseFailure`）都指向同一个
+ * 四种事件（`PermissionRequest`、`PostToolUse`、`PostToolUseFailure`、`SubagentStop`）都指向同一个
  * [url]，通过 `Authorization: Bearer $<tokenEnvironment>` 鉴权。`$<tokenEnvironment>`
  * 是 Claude Code 自行展开的占位符，必须**原样**出现在 JSON 里——POSIX 单引号和
  * PowerShell 的 `[char]34` 拼接都不会展开它。

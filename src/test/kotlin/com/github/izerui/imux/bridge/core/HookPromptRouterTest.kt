@@ -854,6 +854,53 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `记录侧的跑完结果与后台结束通知先到、SubagentStop 后到，三路都到也只放行一次`() =
+        runBlocking {
+            bind()
+            val finished = request(1, agentId = "a8", agentType = "general-purpose")
+            val background = request(2, agentId = "bg", agentType = "general-purpose")
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(finishedAgent))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), finished.decisions)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("bg")))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), background.decisions)
+            router.onHookSubagentStopped("tab-1", "a8")
+            router.onHookSubagentStopped("tab-1", "bg")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("a8")))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), finished.decisions)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), background.decisions)
+        }
+
+    @Test
+    fun `主会话中断与出错结束时子代理的请求都保留`() =
+        runBlocking {
+            bind()
+            val agent = request(1, agentId = "a1", agentType = "general-purpose")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            assertTrue(agent.decisions.isEmpty())
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnFailed("boom")))
+            assertTrue(agent.decisions.isEmpty())
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), agent.decisions)
+        }
+
+    @Test
+    fun `终端未就绪重试等待期间换绑，回绑定已变而不是框已打开`() =
+        runBlocking {
+            bind()
+            port.result = { attempt ->
+                if (attempt == 1) {
+                    router.onWaiting("tab-1", "permission prompt")
+                    registry.unbind(robot)
+                    registry.bind(robot, target)
+                }
+                SubmitResult.NOT_READY
+            }
+            assertEquals(InboundOutcome.REBOUND, router.onInbound(inbound("m1", "继续")))
+            assertEquals(1, port.submitted.size)
+            assertEquals("REBOUND", sentTexts().last())
+        }
+
+    @Test
     fun `子代理结束时它的手机已允许记录一并清掉`() {
         val queue = HookPromptQueue()
         val allowed = HookRequest(1, "Bash", "a1", "general-purpose", "ls", null, k)

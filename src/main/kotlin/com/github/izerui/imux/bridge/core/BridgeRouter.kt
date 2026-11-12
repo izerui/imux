@@ -554,8 +554,10 @@ class BridgeRouter(
         text: String,
     ): SubmitPhase {
         repeat(NOT_READY_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(notReadyRetryDelayMs)
+            // 先复核绑定：换绑后旧标签的确认、框都与这句无关，按绑定已变回复
+            if (!bindings.isCurrent(robotId, binding.epoch)) return SubmitPhase.BindingChanged
             if (attempt > 0) {
-                delay(notReadyRetryDelayMs)
                 // 等待期间来了确认请求或停到了框上：不再提交。这句是在确认出现之前发的，不当作答，请手机先回答它
                 when (val gate = gate(binding)) {
                     is Gate.Answer -> return SubmitPhase.AnswerFirst
@@ -563,7 +565,6 @@ class BridgeRouter(
                     Gate.Open -> Unit
                 }
             }
-            if (!bindings.isCurrent(robotId, binding.epoch)) return SubmitPhase.BindingChanged
             val result = sessionPort.submit(binding.target, text)
             if (result != SubmitResult.NOT_READY) return SubmitPhase.Done(result)
         }
