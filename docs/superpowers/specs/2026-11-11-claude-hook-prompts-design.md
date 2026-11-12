@@ -61,6 +61,7 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 30 | 危险操作确认约 2 分钟无人处理被自动拒绝（bypass 会话，2026-11-12） | hook 连接**不关闭**，也没有 PostToolUse / PostToolUseFailure；Claude 随后结束本轮。主会话请求由本轮结束放行兜住（手机上的确认静默撤回，不提示「已自动拒绝」）；子代理请求靠子代理结束时放行（SubagentStop，见实测 32） |
 | 31 | 明确要求子代理前台同步运行（`run_in_background: false`，2.1.308） | 主会话记录里 Agent 结果仍是 `{"status":"async_launched","agentId":…,"isAsync":true}`：当前版本几乎不出现前台的 `completed` 结果，记录侧的「前台子代理跑完」信号很少触发 |
 | 32 | 注入 `SubagentStop` http hook（2.1.308） | 子代理结束时到达，请求体带 `agent_id`（与 PermissionRequest 的 `agent_id` 相同），约在它最后一次 PostToolUse 之后 3 秒。子代理的权限框不显示在主界面，主界面按 Esc 不影响它，hook 连接不关闭，会话结束时才关闭 |
+| 33 | 后台子代理被 TaskStop 停掉（2026-11-12） | **不发** SubagentStop（只有开头的 SubagentStart）；会话记录写入 `queue-operation` / `attachment` 类型的 `<task-notification>`（`<status>killed</status>`），解码器的 queue-operation 分支解出后台任务结束，挂起请求照常放行 |
 
 ## 方案
 
