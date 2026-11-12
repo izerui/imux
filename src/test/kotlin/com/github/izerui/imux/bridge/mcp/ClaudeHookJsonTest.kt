@@ -153,17 +153,51 @@ class ClaudeHookJsonTest {
         assertNull(request.agentType)
     }
 
-    @Test fun `请求体超过 1 MB 时不解析，回 200 交给电脑`() {
-        assertEquals(ClaudeHookJson.Body.Reply(200), ClaudeHookJson.body(1024 * 1024 + 1) { error("超限时不应读取请求体") })
+    /** 按真实字节数调用 [ClaudeHookJson.body]。 */
+    private fun body(text: String) = ClaudeHookJson.body(text.toByteArray().size) { text.reader() }
+
+    /** tool_response 里带一整份大文件（Edit、Write 实际如此），把请求体撑过 1 MB。 */
+    private val bigFile = "x".repeat(1024 * 1024 + 10)
+
+    @Test fun `超过 1 MB 的 PostToolUse 照常解析出对号所需的字段`() {
+        val text = """{"session_id":"s","hook_event_name":"PostToolUse","tool_name":"Write","agent_id":"a1",
+            "tool_input":{"file_path":"/p/a.txt","content":"hi"},
+            "tool_response":{"filePath":"/p/a.txt","content":"$bigFile","answers":{"颜色？":"红"}},"tool_use_id":"t1"}"""
+        assertTrue(text.toByteArray().size > 1024 * 1024)
+        val parsed = body(text) as ClaudeHookJson.Body.Parsed
+        assertEquals("PostToolUse", parsed.json["hook_event_name"].asString)
+        assertEquals(
+            HookToolDone("a1", "Write", mapOf("file_path" to "\"/p/a.txt\"", "content" to "\"hi\"")),
+            ClaudeHookJson.toolDone(parsed.json),
+        )
+        assertEquals("颜色？ → 红", ClaudeHookJson.localAnswers(parsed.json["tool_response"]))
+        // 用不到的大字段不留
+        assertFalse(parsed.json.toString().contains(bigFile))
+    }
+
+    @Test fun `超过 1 MB 的 PostToolUseFailure 也照常解析`() {
+        val text = """{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"ls"},"error":"$bigFile"}"""
+        val parsed = body(text) as ClaudeHookJson.Body.Parsed
+        assertEquals(HookToolDone(null, "Bash", mapOf("command" to "\"ls\"")), ClaudeHookJson.toolDone(parsed.json))
+    }
+
+    @Test fun `超过 1 MB 的 PermissionRequest 回 200 交给电脑`() {
+        val text = """{"hook_event_name":"PermissionRequest","tool_name":"Write","tool_input":{"file_path":"/p/a.txt","content":"$bigFile"}}"""
+        assertEquals(ClaudeHookJson.Body.Reply(200), body(text))
+    }
+
+    @Test fun `请求体超过 32 MB 时不读，回 200`() {
+        assertEquals(ClaudeHookJson.Body.Reply(200), ClaudeHookJson.body(32 * 1024 * 1024 + 1) { error("超限时不应读取请求体") })
     }
 
     @Test fun `请求体恰好 1 MB 时照常解析`() {
-        assertEquals(ClaudeHookJson.Body.Parsed(json("{}")), ClaudeHookJson.body(1024 * 1024) { "{}" })
+        assertEquals(ClaudeHookJson.Body.Parsed(json("{}")), ClaudeHookJson.body(1024 * 1024) { "{}".reader() })
     }
 
-    @Test fun `请求体不是 JSON 对象时回 400`() {
-        assertEquals(ClaudeHookJson.Body.Reply(400), ClaudeHookJson.body(2) { "[]" })
-        assertEquals(ClaudeHookJson.Body.Reply(400), ClaudeHookJson.body(3) { "{x" })
+    @Test fun `请求体不是 JSON 对象时回 400，1 MB 以内与以上各一条`() {
+        assertEquals(ClaudeHookJson.Body.Reply(400), body("[]"))
+        assertEquals(ClaudeHookJson.Body.Reply(400), body("{x"))
+        assertEquals(ClaudeHookJson.Body.Reply(400), ClaudeHookJson.body(1024 * 1024 + 1) { "[\"$bigFile\"]".reader() })
     }
 
     @Test fun `提问带上题目`() {

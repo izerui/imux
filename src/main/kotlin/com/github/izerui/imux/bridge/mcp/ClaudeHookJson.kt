@@ -10,6 +10,9 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import java.io.Reader
 
 const val CLAUDE_HOOK_PATH = "/imux/claude-hook"
 
@@ -34,17 +37,59 @@ internal object ClaudeHookJson {
     }
 
     /**
-     * [size] 超过 [MAX_BODY_BYTES] 时不读请求体，回 200 {}：对 PermissionRequest 等于交给电脑，对 PostToolUse 无影响。
-     * 读出的不是 JSON 对象回 400。
+     * 解析请求体。不超过 [MAX_BODY_BYTES]（1 MB）时整份解析；读出的不是 JSON 对象回 400。
+     *
+     * 超过 1 MB 时只有 PostToolUse / PostToolUseFailure 还要读（Edit、Write 的 tool_response 带整份文件，丢掉会让电脑端允许对不上）：
+     * 不超过 [MAX_TOOL_DONE_BYTES]（32 MB）就流式只取对号用到的字段（见 [slim]）；其余事件（PermissionRequest 等）回 200 {}，等于交给电脑。
+     * 超过 32 MB 不读，回 200 {}。平台内置服务的聚合上限是 180 MB（`ide.netty.max.frame.size.in.mb`），32 MB 以内都能收到。
      */
-    fun body(size: Int, text: () -> String): Body {
-        if (size > MAX_BODY_BYTES) return Body.Reply(200)
-        val json = runCatching { JsonParser.parseString(text()) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
-        return json?.let(Body::Parsed) ?: Body.Reply(400)
+    fun body(size: Int, open: () -> Reader): Body {
+        if (size > MAX_TOOL_DONE_BYTES) return Body.Reply(200)
+        if (size <= MAX_BODY_BYTES) {
+            val json = runCatching { JsonParser.parseReader(open()) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+            return json?.let(Body::Parsed) ?: Body.Reply(400)
+        }
+        val json = runCatching { open().use(::slim) }.getOrNull() ?: return Body.Reply(400)
+        return if (json.string("hook_event_name") in TOOL_DONE_EVENTS) Body.Parsed(json) else Body.Reply(200)
     }
 
     /** 计划全文可能较长，上限比 MCP 入口的 64 KB 宽。 */
     private const val MAX_BODY_BYTES = 1024 * 1024
+
+    /** PostToolUse / PostToolUseFailure 的上限。 */
+    private const val MAX_TOOL_DONE_BYTES = 32 * 1024 * 1024
+
+    private val TOOL_DONE_EVENTS = setOf("PostToolUse", "PostToolUseFailure")
+
+    /**
+     * 流式读顶层对象，只留 `hook_event_name`、`tool_name`、`agent_id`、`tool_input`、`tool_response.answers`，
+     * 其余字段跳过不建树。顶层不是对象时抛出。
+     */
+    private fun slim(reader: Reader): JsonObject {
+        val json = JsonReader(reader)
+        val result = JsonObject()
+        json.beginObject()
+        while (json.hasNext()) {
+            when (val name = json.nextName()) {
+                "hook_event_name", "tool_name", "agent_id" ->
+                    if (json.peek() == JsonToken.STRING) result.addProperty(name, json.nextString()) else json.skipValue()
+                "tool_input" -> result.add(name, JsonParser.parseReader(json))
+                "tool_response" -> {
+                    if (json.peek() != JsonToken.BEGIN_OBJECT) { json.skipValue(); continue }
+                    val response = JsonObject()
+                    json.beginObject()
+                    while (json.hasNext()) {
+                        if (json.nextName() == "answers") response.add("answers", JsonParser.parseReader(json)) else json.skipValue()
+                    }
+                    json.endObject()
+                    result.add(name, response)
+                }
+                else -> json.skipValue()
+            }
+        }
+        json.endObject()
+        return result
+    }
 
     /** PostToolUse / PostToolUseFailure 解析成 [HookToolDone]；缺 tool_name 返回 null。 */
     fun toolDone(body: JsonObject): HookToolDone? {
