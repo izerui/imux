@@ -9,8 +9,14 @@ internal class HookPromptQueue {
         val request: HookRequest,
         val respond: (HookDecision) -> Unit,
     ) {
-        /** 推给手机时的绑定代次；没推过为 null。换绑后旧代次推过的不再告诉新手机。 */
+        /** 已送达手机时的绑定代次；没送达过为 null。只有送达给当前代次的，手机的回复才算作答。 */
         var pushedEpoch: Long? = null
+
+        /** 正在推给这个代次（发送中、限频重试中），送达或失败后清除；防止同一队首被并发重复推送。 */
+        var pushingEpoch: Long? = null
+
+        /** 手机可能已经看到（已送达或还在路上）：电脑端了结、作废时据此决定要不要告诉手机。 */
+        fun mayHaveReached(epoch: Long): Boolean = pushedEpoch == epoch || pushingEpoch == epoch
 
         /** 提问已答的题：题目原文 → 答案，按题目顺序。 */
         val answers = ArrayList<Pair<String, String>>()

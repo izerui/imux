@@ -16,7 +16,8 @@ import kotlin.coroutines.cancellation.CancellationException
  * 中间的过程说明不推，避免逐条推送触发平台限频。轮次的划分与结算规则在 [TabState]；
  * 电脑端输入带标签单独转发；远程输入在记录中再次出现时不回显；等待确认立即推送。
  * Claude 的确认框（权限、提问、计划）经 PermissionRequest hook 送来（含子代理的），按标签排队、一次只推队首；
- * 手机的回复译成 [HookDecision] 回给 hook，不按键。电脑端先答时由 hook 入口告知，先答者生效。
+ * 手机的回复译成 [HookDecision] 回给 hook，不按键；只有已送达这台手机的队首才把回复当作答，没送达的在手机发话、
+ * 机器人接回时补推。电脑端先答时由 hook 入口告知，先答者生效。
  * 没有 hook 请求挂着时（Codex、Pi，或没能注入 hook 的 Claude 标签）停在框上只提示到 IDE 中处理，
  * 等待期间手机的话不贴进终端。
  * 同一标签的 [onSessionEvents]、[onTurnCompleted] 由调用方串行调用。
@@ -78,9 +79,12 @@ class BridgeRouter(
         /** 终端停在手机无法作答的框上，这句没有贴进终端。 */
         data object DialogOpen : SubmitPhase
 
-        /** 手机答了 hook 送来的确认：依次发出确认与下一条推送。 */
-        data class Hook(val binding: Binding, val texts: List<String>) : SubmitPhase
+        /** 手机答了 hook 送来的确认：依次发出确认 [texts] 与下一条推送 [push]。 */
+        data class Hook(val binding: Binding, val texts: List<String>, val push: Push? = null) : SubmitPhase
     }
+
+    /** 要推给手机的 hook 队首：送达后才记为已推给 [epoch]（见 [push]）。 */
+    private class Push(val entry: HookPromptQueue.Entry, val epoch: Long, val text: String)
 
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
         val owner = ownerOf(message.robotId) ?: return InboundOutcome.NOT_PAIRED
@@ -121,12 +125,15 @@ class BridgeRouter(
 
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
-                // hook 送来的确认优先：译成决定回给 hook，不按任何键
-                val hookHead = synchronized(lock) { hookQueues[tabId]?.head() }
-                if (hookHead != null) {
+                // hook 送来的确认优先：已送达这台手机的队首，译成决定回给 hook，不按任何键
+                val (hookHead, delivered) =
+                    synchronized(lock) { hookQueues[tabId]?.head().let { it to (it?.pushedEpoch == current.epoch) } }
+                if (hookHead != null && delivered) {
                     if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
                     return@withLock answerHook(current, hookHead, message.text)
                 }
+                // 队首还没送达（推送失败或还在路上）：手机没看到它，这句不算作答。先补推，再照常处理这句
+                if (hookHead != null) push(current, synchronized(lock) { hookQueues[tabId]?.nextPush(current) })
                 // 运行态正停着等人，又没有挂着的 hook 请求：手机答不了这个框，不当普通消息贴进终端
                 if (tab(tabId) { waitingActive }) return@withLock SubmitPhase.DialogOpen
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
@@ -164,6 +171,7 @@ class BridgeRouter(
             }
             is SubmitPhase.Hook -> {
                 phase.texts.forEach { send(phase.binding, it) }
+                push(phase.binding, phase.push)
                 InboundOutcome.SUBMITTED_TO_TERMINAL
             }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
@@ -214,8 +222,8 @@ class BridgeRouter(
                 Triple(binding, superseded, queue.nextPush(binding))
             } ?: return respond(HookDecision.Pass)
         superseded.forEach { it.respond(HookDecision.Pass) }
-        if (superseded.any { it.pushedEpoch == binding.epoch }) send(binding, texts.promptAnsweredLocally(null))
-        text?.let { send(binding, it) }
+        if (superseded.any { it.mayHaveReached(binding.epoch) }) send(binding, texts.promptAnsweredLocally(null))
+        push(binding, text)
     }
 
     /** 电脑端允许后工具已跑完：了结与 [done] 匹配的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。 */
@@ -260,8 +268,8 @@ class BridgeRouter(
             }
         if (respond) entry.respond(HookDecision.Pass)
         binding ?: return
-        if (entry.pushedEpoch == binding.epoch) send(binding, notice(entry.request))
-        next?.let { send(binding, it) }
+        if (entry.mayHaveReached(binding.epoch)) send(binding, notice(entry.request))
+        push(binding, next)
     }
 
     /**
@@ -295,7 +303,7 @@ class BridgeRouter(
                 Triple(released, binding, binding?.let { queue.nextPush(it) })
             }
         released.forEach { it.respond(HookDecision.Pass) }
-        if (binding != null && next != null) send(binding, next)
+        if (binding != null) push(binding, next)
     }
 
     /** 放行标签挂起的全部请求，交给电脑处理；不发消息。 */
@@ -315,7 +323,7 @@ class BridgeRouter(
     ): SubmitPhase {
         val tabId = binding.target.tabId
         val request = entry.request
-        val (decision, sending) =
+        val (decision, ack, next) =
             synchronized(lock) {
                 val queue = hookQueues[tabId]
                 // 取队首与作答之间电脑端已了结：这句不再算作答，按带附件那样提示，免得误贴进终端
@@ -340,17 +348,43 @@ class BridgeRouter(
                             }
                     }
                 queue.remove(request.id)
-                decision to listOfNotNull(ack, queue.nextPush(binding))
+                Triple(decision, ack, queue.nextPush(binding))
             }
         entry.respond(decision)
-        return SubmitPhase.Hook(binding, sending)
+        return SubmitPhase.Hook(binding, listOf(ack), next)
     }
 
-    /** 队首还没推给 [binding] 时排好推送内容并记下已推；没有要推的返回 null。在 [lock] 内调用。 */
-    private fun HookPromptQueue.nextPush(binding: Binding): String? {
+    /**
+     * 队首还没送达、也不在推给 [binding] 的路上时排好推送内容，记下正在推；没有要推的返回 null。在 [lock] 内调用。
+     * 送达与否由 [push] 记下。
+     */
+    private fun HookPromptQueue.nextPush(binding: Binding): Push? {
         val entry = head() ?: return null
-        if (entry.pushedEpoch == binding.epoch) return null
-        return promptText(binding, entry)?.also { entry.pushedEpoch = binding.epoch }
+        if (entry.mayHaveReached(binding.epoch)) return null
+        val text = promptText(binding, entry) ?: return null
+        entry.pushingEpoch = binding.epoch
+        return Push(entry, binding.epoch, text)
+    }
+
+    /**
+     * 发出 [push]：送达（渠道确认接收）才记为已推给这个代次，手机之后的回复才算作答；
+     * 没送达就清掉「正在推」，留给之后手机发话或机器人接回时补推。返回是否送达。
+     */
+    private suspend fun push(
+        binding: Binding,
+        push: Push?,
+    ): Boolean {
+        push ?: return false
+        var delivered = false
+        try {
+            delivered = send(binding, push.text)
+        } finally {
+            synchronized(lock) {
+                if (push.entry.pushingEpoch == push.epoch) push.entry.pushingEpoch = null
+                if (delivered) push.entry.pushedEpoch = push.epoch
+            }
+        }
+        return delivered
     }
 
     /**
@@ -717,6 +751,8 @@ class BridgeRouter(
             return
         }
         send(binding, texts.connected(project, agent, sessionTitle), label = null)
+        // 之前没送达（机器人离线、推送失败）的确认，连上后补推
+        push(binding, synchronized(lock) { hookQueues[binding.target.tabId]?.nextPush(binding) })
     }
 
     /**
@@ -766,18 +802,21 @@ class BridgeRouter(
         binding: Binding,
         text: String,
         label: String? = sessionLabelOf(binding),
-    ) {
-        val owner = ownerOf(binding.robotId) ?: return
-        val channel = channelOf(binding.robotId) ?: return
+    ): Boolean {
+        val owner = ownerOf(binding.robotId) ?: return false
+        val channel = channelOf(binding.robotId) ?: return false
         val footer = footer(label)
         val budget = (channel.maxTextBytes - footer.toByteArray(Charsets.UTF_8).size).coerceAtLeast(TextSegmenter.MIN_SEGMENT_BYTES)
         val segments = TextSegmenter.split(if (footer.isEmpty()) text else text.trimEnd(), budget)
         for ((index, part) in segments.withIndex()) {
             val segment = if (index == segments.lastIndex) part + footer else part
             // 每段发送前都核对：分段途中被换绑，剩余内容不能落到新目标的聊天里
-            if (!bindings.isCurrent(binding.robotId, binding.epoch)) return
-            deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment)) { bindings.isCurrent(binding.robotId, binding.epoch) }
+            if (!bindings.isCurrent(binding.robotId, binding.epoch)) return false
+            if (!deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment)) { bindings.isCurrent(binding.robotId, binding.epoch) }) {
+                return false
+            }
         }
+        return true
     }
 
     /** 回应手机发来的消息；此刻连着会话时同样署名，没连会话就不署名。 */
@@ -806,17 +845,18 @@ class BridgeRouter(
      * 丢掉的若是一轮的最终回复，手机上会一直以为还在跑。重发期间同一标签后面的消息排在后面，顺序不乱；
      * [stillCurrent] 为 false（已换绑或断开）就不再重发。结果不明（网络异常）不重发，以免重复。
      * 渠道已发送部分正文时，后续尝试只带未发送的尾部，沿用本次发送的重试次数上限。
+     * 返回是否送达：只有渠道确认接收（[DeliveryResult.Accepted]）才算，结果不明不算。
      */
     private suspend fun deliver(
         channel: ChannelAdapter,
         message: OutboundMessage,
         stillCurrent: () -> Boolean = { true },
-    ) {
+    ): Boolean {
         var pending = message
         repeat(RATE_LIMIT_RETRIES + 1) { attempt ->
             if (attempt > 0) {
                 delay(rateLimitRetryDelayMs)
-                if (!stillCurrent()) return
+                if (!stillCurrent()) return false
             }
             val result =
                 try {
@@ -831,9 +871,10 @@ class BridgeRouter(
             when {
                 result is DeliveryResult.RetryRemaining -> pending = pending.copy(text = result.text)
                 result == DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED) -> Unit
-                else -> return
+                else -> return result == DeliveryResult.Accepted
             }
         }
+        return false
     }
 
     private fun markSeen(

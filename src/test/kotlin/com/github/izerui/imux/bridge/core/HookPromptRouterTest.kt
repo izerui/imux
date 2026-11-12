@@ -31,9 +31,14 @@ class HookPromptRouterTest {
         override val robotId: RobotId,
         override val maxTextBytes: Int = 1000,
     ) : ChannelAdapter {
+        /** 只记送达的。 */
         val sent = mutableListOf<OutboundMessage>()
 
+        /** 为 true 时渠道拒发（非限频），消息没有送达。 */
+        var down = false
+
         override suspend fun send(message: OutboundMessage): DeliveryResult {
+            if (down) return DeliveryResult.Rejected("down")
             sent += message
             return DeliveryResult.Accepted
         }
@@ -224,6 +229,90 @@ class HookPromptRouterTest {
             )
             assertEquals("HOOK_DENIED", sentTexts().last())
             assertTrue(port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `确认没推送到手机时手机的普通消息照常提交，不回应 hook`() =
+        runBlocking {
+            bind()
+            channel.down = true
+            val pending = request(1)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "继续")))
+            assertEquals(listOf("继续"), port.submitted)
+            assertTrue(pending.decisions.isEmpty())
+        }
+
+    @Test
+    fun `确认没推送到手机时手机发话先补推，补推送达后作答生效`() =
+        runBlocking {
+            bind()
+            channel.down = true
+            val pending = request(1)
+            channel.down = false
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "继续")))
+            // 补推的确认先到，这句照常提交，不当作答
+            assertTrue(sentTexts().joinToString(), sentTexts().single().startsWith("HOOK_PERMISSION("))
+            assertEquals(listOf("继续"), port.submitted)
+            assertTrue(pending.decisions.isEmpty())
+            router.onInbound(inbound("m2", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
+            assertEquals("HOOK_ALLOWED", sentTexts().last())
+            assertEquals(listOf("继续"), port.submitted)
+        }
+
+    @Test
+    fun `确认没推送到手机且终端停在框上时，补推后按框已打开回复`() =
+        runBlocking {
+            bind()
+            channel.down = true
+            val pending = request(1)
+            router.onWaiting("tab-1", "permission prompt")
+            channel.down = false
+            assertEquals(InboundOutcome.DIALOG_OPEN, router.onInbound(inbound("m1", "1")))
+            assertTrue(pending.decisions.isEmpty())
+            assertTrue(port.submitted.isEmpty())
+            val texts = sentTexts()
+            assertEquals(2, texts.size)
+            assertTrue(texts[0], texts[0].startsWith("HOOK_PERMISSION("))
+            assertEquals("DIALOG_OPEN", texts[1])
+        }
+
+    @Test
+    fun `机器人接回后补推没送达的确认，送达后作答生效`() =
+        runBlocking {
+            val binding = bind()
+            channel.down = true
+            val pending = request(1)
+            channel.down = false
+            router.onReattached(binding, "p", "Claude", "t")
+            val texts = sentTexts()
+            assertEquals(2, texts.size)
+            assertEquals("CONNECTED(p/Claude/t)", texts[0])
+            assertTrue(texts[1], texts[1].startsWith("HOOK_PERMISSION("))
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
+        }
+
+    @Test
+    fun `已送达的确认在重新连接时不重复推送`() =
+        runBlocking {
+            val binding = bind()
+            request(1)
+            router.onBound(binding, "p", "Claude", "t")
+            assertEquals(2, sentTexts().size)
+            assertEquals("CONNECTED(p/Claude/t)", sentTexts().last())
+        }
+
+    @Test
+    fun `没送达的确认在电脑端了结时不通知手机`() =
+        runBlocking {
+            bind()
+            channel.down = true
+            val pending = request(1, input = k)
+            channel.down = false
+            router.onHookToolDone("tab-1", done(), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+            assertTrue(sentTexts().joinToString(), sentTexts().isEmpty())
         }
 
     @Test
