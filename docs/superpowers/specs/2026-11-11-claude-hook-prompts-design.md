@@ -53,7 +53,7 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 22 | hook 服务不可达 | 电脑照常弹框、照常执行；每次工具调用后终端多一行 `connect ECONNREFUSED`（PostToolUse hook 连不上）。IDE 退出时终端会话随之结束，实际少见 |
 | 23 | 从 bypass 切进计划模式 | 计划框第 1 项是「Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session」，不是 auto；请求里 `permission_mode` 为 `plan`、`permission_suggestions` 为 null，看不出原模式 |
 | 24 | `updatedPermissions` 依次 `setMode auto`、`setMode bypassPermissions` | bypass 会话批准后为 bypass，普通会话为 auto（bypass 在未开启的会话里是空操作），与电脑第 1 项一致 |
-| 25 | 电脑已作答后晚到的 allow（含 `updatedInput`、`setMode`） | 被忽略：提问取电脑的答案，计划电脑选 2 后晚到的 setMode auto 不改变模式 |
+| 25 | 电脑已作答后晚到的 allow（含 `updatedInput`、`setMode`） | 被忽略（2026-11-12 对照实验，测试服务只对目标工具回复，答案按真实题目现算）：计划——对照组及时回 `setMode auto→bypassPermissions` 后为 auto；实验组电脑先选 2，晚到的同一回复在本轮已结束时、以及本轮仍在执行 `sleep 30` 时到达，模式都保持 manual。提问——对照组及时回第 2 项，Claude 收到「绿」；实验组电脑先选「红」，13 秒后晚到「绿」，Claude 收到「红」 |
 | 26 | PostToolUse 的 `tool_input` 与 PermissionRequest 不同 | `ExitPlanMode` 的为空对象；`AskUserQuestion` 的多出 `answers`、`annotations`；Bash、Write 的相同 |
 | 27 | 电脑上提问选「Chat about this」 | hook 连接不关闭、无 PostToolUse，本轮随即结束（由本轮结束放行主会话请求兜住） |
 | 28 | 电脑上计划选 3 写修改意见 | 旧请求连接不关闭、无 PostToolUse；本轮不结束，Claude 改稿后同一代理发来新的 ExitPlanMode 请求 |
