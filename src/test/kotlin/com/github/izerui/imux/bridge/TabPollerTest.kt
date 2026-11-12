@@ -65,14 +65,11 @@ class TabPollerTest {
 
         override fun waiting(reason: String?) = "WAIT($reason)"
 
-
         override fun plan(plan: String) = "PLAN($plan)"
-
 
         override fun dialogOpen() = "DIALOG_OPEN"
 
         override fun question(listing: String, number: Int, total: Int) = "QUESTION$number/$total($listing)"
-
 
         override fun multiSelectMark() = "(多选)"
 

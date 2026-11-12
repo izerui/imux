@@ -23,14 +23,13 @@ class MobileLaunchContributor : TerminalLaunchContributor {
         // Claude 经 --settings 注入 PermissionRequest 等 hook，令牌同样从环境变量带进请求头
         val hooked = agentType == AgentType.CLAUDE
         val router = BridgeHub.getInstance().router
-        if (hooked) router.hookAttached(tabId, true)
         return TerminalLaunchContribution(
             listOf(TerminalMcpServer("imux_mobile", url, "IMUX_MOBILE_TOKEN")),
             mapOf("IMUX_MOBILE_URL" to url, "IMUX_MOBILE_TOKEN" to token),
             listOfNotNull(script),
             if (hooked) claudeHookSettings("http://127.0.0.1:$port$CLAUDE_HOOK_PATH", "IMUX_MOBILE_TOKEN") else null,
         ) {
-            if (hooked) router.hookAttached(tabId, false)
+            if (hooked) router.hookDetached(tabId)
             service.revoke(token)
         }
     }

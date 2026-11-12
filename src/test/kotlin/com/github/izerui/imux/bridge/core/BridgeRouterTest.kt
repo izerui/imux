@@ -1190,17 +1190,6 @@ class BridgeRouterTest {
             assertEquals("二", sentTexts().last())
         }
 
-    @Test
-    fun `关闭远程控制后，IDE 完成信号重新生效`() =
-        runBlocking {
-            registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("一"), SessionEvent.TurnEnded))
-            router.discardPending()
-            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("再来"), SessionEvent.AssistantText("二")))
-            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
-            assertEquals("二", sentTexts().last())
-        }
-
     private val robotB = RobotId("r2")
     private val ownerB = RobotOwner(senderId = "me-b", chatId = "chat-b")
     private val channelB = FakeChannel(robotB)
@@ -1287,16 +1276,6 @@ class BridgeRouterTest {
             switchRouter.onTurnCompleted("tab-1", switchRouter.currentTurn("tab-1"))
             assertEquals(listOf("RELEASED(修复滚动)"), channel.sent.map { it.text })
             assertEquals(listOf("结论"), channelB.sent.map { it.text })
-        }
-
-    @Test
-    fun `关闭远程控制时丢弃未发出的回复`() =
-        runBlocking {
-            registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent.AssistantText("关闭前的回复")))
-            router.discardPending()
-            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
-            assertTrue(channel.sent.isEmpty())
         }
 
     @Test

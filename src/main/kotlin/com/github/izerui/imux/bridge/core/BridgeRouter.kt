@@ -187,26 +187,8 @@ class BridgeRouter(
             }
         }
 
-    /** 远程控制关闭时调用：丢弃尚未发出的回复与轮次状态，重新开启后不补发关闭前的内容。 */
-    fun discardPending() {
-        val pending =
-            synchronized(lock) {
-                tabs.clear()
-                hookQueues.values.flatMap { it.drain() }.also { hookQueues.clear() }
-            }
-        pending.forEach { it.respond(HookDecision.Pass) }
-    }
-
-    /**
-     * 标签的 Claude 启动时注入了 hook（true）或会话结束（false）。注入时无需记录：hook 请求自带标签，
-     * 有没有挂着的请求就决定了等待时推不推；会话结束时放行它挂起的请求。
-     */
-    fun hookAttached(
-        tabId: String,
-        attached: Boolean,
-    ) {
-        if (!attached) releaseHooks(tabId)
-    }
+    /** 标签的 Claude 会话结束（启动贡献释放）：放行它挂起的请求，交给电脑；不发消息。 */
+    fun hookDetached(tabId: String) = releaseHooks(tabId)
 
     /**
      * 未绑定立即 respond(Pass)；否则入队，成为队首时推送。respond 只会被调用一次。

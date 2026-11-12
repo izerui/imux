@@ -600,21 +600,11 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `远程控制关闭时挂起的请求放行给电脑`() =
-        runBlocking {
-            bind()
-            val pending = request(1)
-            router.discardPending()
-            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
-        }
-
-    @Test
     fun `会话结束时挂起的请求放行给电脑且不发消息`() =
         runBlocking {
             bind()
-            router.hookAttached("tab-1", true)
             val pending = request(1)
-            router.hookAttached("tab-1", false)
+            router.hookDetached("tab-1")
             assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
             assertEquals(1, sentTexts().size)
         }
@@ -636,7 +626,6 @@ class HookPromptRouterTest {
     fun `注入 hook 的标签有挂起请求时等待通知不提示`() =
         runBlocking {
             bind()
-            router.hookAttached("tab-1", true)
             request(1)
             router.onWaiting("tab-1", "permission prompt")
             assertEquals(1, sentTexts().size)
@@ -646,7 +635,6 @@ class HookPromptRouterTest {
     fun `读到记录里的工具调用也不推权限框`() =
         runBlocking {
             bind()
-            router.hookAttached("tab-1", true)
             router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(bashToolUse))
             router.onWaiting("tab-1", "permission prompt")
             assertEquals(listOf("WAIT(permission prompt)"), sentTexts())
@@ -656,7 +644,6 @@ class HookPromptRouterTest {
     fun `等待通知先到时读到记录里的工具调用也不补推权限框`() =
         runBlocking {
             bind()
-            router.hookAttached("tab-1", true)
             router.onWaiting("tab-1", "permission prompt")
             router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(bashToolUse))
             assertEquals(listOf("WAIT(permission prompt)"), sentTexts())
