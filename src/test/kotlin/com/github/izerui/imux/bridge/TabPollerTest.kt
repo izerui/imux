@@ -121,6 +121,8 @@ class TabPollerTest {
 
         override fun hookPlanChoose() = "HOOK_PLAN_CHOOSE"
 
+        override fun hookAnswerFirst() = "HOOK_ANSWER_FIRST"
+
         override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
 
         override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"

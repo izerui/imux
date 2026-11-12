@@ -16,11 +16,14 @@ internal class HookPromptQueue {
         /** 已送达手机时的绑定代次；没送达过为 null。只有送达给当前代次的，手机的回复才算作答。 */
         var pushedEpoch: Long? = null
 
-        /** 正在推给这个代次（发送中、限频重试中），送达或失败后清除；防止同一队首被并发重复推送。 */
-        var pushingEpoch: Long? = null
+        /**
+         * 正在进行的推送（发送中、限频重试中），送达、失败或被取消后由发起者清除；防止同一队首被并发重复推送。
+         * 清除时按对象比对，只清自己发起的那次。
+         */
+        var pushing: Push? = null
 
         /** 手机可能已经看到（已送达或还在路上）：电脑端了结、作废时据此决定要不要告诉手机。 */
-        fun mayHaveReached(epoch: Long): Boolean = pushedEpoch == epoch || pushingEpoch == epoch
+        fun mayHaveReached(epoch: Long): Boolean = pushedEpoch == epoch || pushing?.epoch == epoch
 
         /** 提问已答的题：题目原文 → 答案，按题目顺序。 */
         val answers = ArrayList<Pair<String, String>>()
@@ -28,6 +31,9 @@ internal class HookPromptQueue {
         /** 提问下一道要答的题。 */
         val questionIndex: Int get() = answers.size
     }
+
+    /** 一次把 [entry] 推给绑定代次 [epoch] 的推送，正文 [text]。 */
+    class Push(val entry: Entry, val epoch: Long, val text: String)
 
     private val entries = ArrayList<Entry>()
 
@@ -72,10 +78,14 @@ internal class HookPromptQueue {
         return true
     }
 
-    /** 本轮结束：主会话（无 agentId）的条目全部出队，按到达顺序返回，手机已允许的主会话记录一并清掉；子代理的留着。 */
-    fun drainMainSession(): List<Entry> {
-        answeredRemotely.removeAll { it.agentId == null }
-        return entries.filter { it.request.agentId == null }.also { entries.removeAll(it.toSet()) }
+    /**
+     * 本轮结束：主会话（无 agentId）与前台子代理（agentId 不在仍在运行的后台任务 [background] 里）的条目全部出队，
+     * 按到达顺序返回，它们的手机已允许记录一并清掉；后台子代理的留着。前台子代理活不过主会话的这一轮。
+     */
+    fun drainTurn(background: Set<String>): List<Entry> {
+        fun endsWithTurn(agentId: String?) = agentId == null || agentId !in background
+        answeredRemotely.removeAll { endsWithTurn(it.agentId) }
+        return entries.filter { endsWithTurn(it.request.agentId) }.also { entries.removeAll(it.toSet()) }
     }
 
     /** 子代理 [agentId] 结束：它的条目全部出队，按到达顺序返回，它的手机已允许记录一并清掉。 */

@@ -59,6 +59,9 @@ internal class TabState {
         running += taskId
     }
 
+    /** 仍在运行的后台任务 id（后台命令与后台子代理）。 */
+    fun runningBackground(): Set<String> = running.toSet()
+
     fun backgroundEnded(taskId: String) {
         running -= taskId
     }

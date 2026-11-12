@@ -2,6 +2,11 @@ package com.github.izerui.imux.bridge.core
 
 import com.github.izerui.imux.bridge.transcript.ClaudeTranscriptDecoder
 import com.github.izerui.imux.model.AgentType
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,7 +42,15 @@ class HookPromptRouterTest {
         /** 为 true 时渠道拒发（非限频），消息没有送达。 */
         var down = false
 
+        /** 每次发送尝试，送达与否都记。 */
+        val attempts = mutableListOf<String>()
+
+        /** 正文满足条件的消息挂起不返回（模拟限频重试、网络慢），直到协程被取消。 */
+        var hang: (String) -> Boolean = { false }
+
         override suspend fun send(message: OutboundMessage): DeliveryResult {
+            attempts += message.text
+            if (hang(message.text)) awaitCancellation()
             if (down) return DeliveryResult.Rejected("down")
             sent += message
             return DeliveryResult.Accepted
@@ -115,6 +128,8 @@ class HookPromptRouterTest {
 
         override fun hookPlanChoose() = "HOOK_PLAN_CHOOSE"
 
+        override fun hookAnswerFirst() = "HOOK_ANSWER_FIRST"
+
         override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
 
         override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"
@@ -189,6 +204,9 @@ class HookPromptRouterTest {
 
     private fun bind(): Binding = (registry.bind(robot, target) as BindResult.Bound).binding
 
+    /** 记录里读到后台任务 [id] 开始运行（后台子代理的任务 id 就是它的 agent_id）。 */
+    private suspend fun background(id: String) = router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundStarted(id, null, "后台")))
+
     @Test
     fun `未绑定的标签立即放行`() =
         runBlocking {
@@ -240,49 +258,97 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `确认没推送到手机时手机的普通消息照常提交，不回应 hook`() =
-        runBlocking {
-            bind()
-            channel.down = true
-            val pending = request(1)
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "继续")))
-            assertEquals(listOf("继续"), port.submitted)
-            assertTrue(pending.decisions.isEmpty())
-        }
-
-    @Test
-    fun `确认没推送到手机时手机发话先补推，补推送达后作答生效`() =
+    fun `确认没推送到手机时手机发的话不提交到终端，补推确认后提示先回答它`() =
         runBlocking {
             bind()
             channel.down = true
             val pending = request(1)
             channel.down = false
-            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "继续")))
-            // 补推的确认先到，这句照常提交，不当作答
-            assertTrue(sentTexts().joinToString(), sentTexts().single().startsWith("HOOK_PERMISSION("))
-            assertEquals(listOf("继续"), port.submitted)
+            assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("m1", "继续")))
+            assertTrue(port.submitted.isEmpty())
             assertTrue(pending.decisions.isEmpty())
+            val texts = sentTexts()
+            assertEquals(2, texts.size)
+            assertTrue(texts[0], texts[0].startsWith("HOOK_PERMISSION("))
+            assertEquals("HOOK_ANSWER_FIRST", texts[1])
+            // 补推送达后，下一句才是作答
             router.onInbound(inbound("m2", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
             assertEquals("HOOK_ALLOWED", sentTexts().last())
-            assertEquals(listOf("继续"), port.submitted)
+            assertTrue(port.submitted.isEmpty())
         }
 
     @Test
-    fun `确认没推送到手机且终端停在框上时，补推后按框已打开回复`() =
+    fun `补推仍没送达时手机发的话也不提交到终端，提示到 IDE 中处理`() =
+        runBlocking {
+            bind()
+            channel.down = true
+            val pending = request(1)
+            assertEquals(InboundOutcome.DIALOG_OPEN, router.onInbound(inbound("m1", "继续")))
+            assertTrue(port.submitted.isEmpty())
+            assertTrue(pending.decisions.isEmpty())
+            val tried = channel.attempts.drop(1)
+            assertTrue(tried.joinToString(), tried[0].startsWith("HOOK_PERMISSION("))
+            assertEquals("DIALOG_OPEN", tried.last())
+        }
+
+    @Test
+    fun `确认没推送到手机且终端停在框上时，手机发话同样补推并提示先回答，不回框已打开`() =
         runBlocking {
             bind()
             channel.down = true
             val pending = request(1)
             router.onWaiting("tab-1", "permission prompt")
             channel.down = false
-            assertEquals(InboundOutcome.DIALOG_OPEN, router.onInbound(inbound("m1", "1")))
+            assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("m1", "1")))
             assertTrue(pending.decisions.isEmpty())
             assertTrue(port.submitted.isEmpty())
             val texts = sentTexts()
             assertEquals(2, texts.size)
             assertTrue(texts[0], texts[0].startsWith("HOOK_PERMISSION("))
-            assertEquals("DIALOG_OPEN", texts[1])
+            assertEquals("HOOK_ANSWER_FIRST", texts[1])
+        }
+
+    @Test
+    fun `推送还在路上时手机发的话不提交到终端，也不重复补推`() =
+        runBlocking {
+            bind()
+            channel.hang = { it.startsWith("HOOK_PERMISSION(") }
+            val inFlight = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { request(1) }
+            assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("m1", "继续")))
+            assertTrue(port.submitted.isEmpty())
+            assertEquals(1, channel.attempts.count { it.startsWith("HOOK_PERMISSION(") })
+            assertEquals("HOOK_ANSWER_FIRST", sentTexts().last())
+            inFlight.cancelAndJoin()
+        }
+
+    @Test
+    fun `等待通知到达时补推没送达的确认，不发请到 IDE 中处理`() =
+        runBlocking {
+            bind()
+            channel.down = true
+            val pending = request(1)
+            channel.down = false
+            router.onWaiting("tab-1", "permission prompt")
+            assertTrue(sentTexts().joinToString(), sentTexts().single().startsWith("HOOK_PERMISSION("))
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
+        }
+
+    @Test
+    fun `推送中途被取消后正在推的标记清掉，之后能补推`() =
+        runBlocking {
+            bind()
+            request(1, toolName = "ExitPlanMode", detail = "# 旧计划")
+            // 新计划作废旧计划时先告诉手机，这条挂住；协程在推新计划之前被取消
+            channel.hang = { it.startsWith("ANSWERED_LOCALLY") }
+            val job = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+                request(2, toolName = "ExitPlanMode", detail = "# 新计划")
+            }
+            job.cancelAndJoin()
+            channel.hang = { false }
+            router.onWaiting("tab-1", "plan")
+            assertEquals("PLAN(# 新计划)", sentTexts().last())
         }
 
     @Test
@@ -684,6 +750,7 @@ class HookPromptRouterTest {
     fun `本轮结束后后台子代理的权限请求照常推送`() =
         runBlocking {
             bind()
+            background("a1")
             router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
             val before = sentTexts().size
             val pending = request(1, agentId = "a1", agentType = "general-purpose")
@@ -694,9 +761,10 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `本轮结束只放行主会话的挂起请求，子代理的照常保留`() =
+    fun `本轮结束放行主会话的挂起请求，后台子代理的照常保留`() =
         runBlocking {
             bind()
+            background("a1")
             val main = request(1, detail = "rm a.txt")
             val agent = request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
             assertEquals(1, sentTexts().size)
@@ -710,6 +778,33 @@ class HookPromptRouterTest {
             router.onInbound(inbound("m1", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), agent.decisions)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+        }
+
+    @Test
+    fun `本轮结束放行前台子代理的挂起请求，后台子代理的保留`() =
+        runBlocking {
+            bind()
+            background("bg")
+            val foreground = request(1, detail = "rm a.txt", agentId = "fg", agentType = "general-purpose")
+            val back = request(2, detail = "rm b.txt", agentId = "bg", agentType = "general-purpose")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), foreground.decisions)
+            assertTrue(back.decisions.isEmpty())
+            val pushed = sentTexts().last()
+            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
+        }
+
+    @Test
+    fun `中断与 IDE 完成信号也放行前台子代理的挂起请求`() =
+        runBlocking {
+            bind()
+            val interrupted = request(1, agentId = "fg1", agentType = "general-purpose")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), interrupted.decisions)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("下一轮")))
+            val completed = request(2, agentId = "fg2", agentType = "general-purpose")
+            router.onTurnCompleted("tab-1", router.currentTurn("tab-1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), completed.decisions)
         }
 
     @Test
@@ -731,9 +826,10 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `只由 IDE 完成信号结束的一轮放行主会话请求，子代理的保留`() =
+    fun `只由 IDE 完成信号结束的一轮放行主会话请求，后台子代理的保留`() =
         runBlocking {
             bind()
+            background("a1")
             val main = request(1, detail = "rm a.txt")
             val agent = request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
             // 记录里没有结束标记、也还没读到回复：只有 IDE 的完成信号
@@ -767,9 +863,10 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `读取边界不可靠的完成信号放行主会话请求，子代理的保留`() =
+    fun `读取边界不可靠的完成信号放行主会话请求，后台子代理的保留`() =
         runBlocking {
             bind()
+            background("a1")
             val main = request(1, detail = "rm a.txt")
             val agent = request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
             router.flushAfterReply("tab-1")

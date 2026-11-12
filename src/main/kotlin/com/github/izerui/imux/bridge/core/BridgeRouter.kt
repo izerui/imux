@@ -79,12 +79,12 @@ class BridgeRouter(
         /** 终端停在手机无法作答的框上，这句没有贴进终端。 */
         data object DialogOpen : SubmitPhase
 
-        /** 手机答了 hook 送来的确认：依次发出确认 [texts] 与下一条推送 [push]。 */
-        data class Hook(val binding: Binding, val texts: List<String>, val push: Push? = null) : SubmitPhase
-    }
+        /** 有没送达的 hook 队首，刚补推（或已在路上）：请手机先回答它，这句没有贴进终端。 */
+        data object AnswerFirst : SubmitPhase
 
-    /** 要推给手机的 hook 队首：送达后才记为已推给 [epoch]（见 [push]）。 */
-    private class Push(val entry: HookPromptQueue.Entry, val epoch: Long, val text: String)
+        /** 手机答了 hook 送来的确认：依次发出确认 [texts] 与下一条推送 [push]。 */
+        data class Hook(val binding: Binding, val texts: List<String>, val push: HookPromptQueue.Push? = null) : SubmitPhase
+    }
 
     suspend fun onInbound(message: InboundMessage): InboundOutcome {
         val owner = ownerOf(message.robotId) ?: return InboundOutcome.NOT_PAIRED
@@ -132,8 +132,14 @@ class BridgeRouter(
                     if (message.attachments.isNotEmpty()) return@withLock SubmitPhase.PromptRejected
                     return@withLock answerHook(current, hookHead, message.text)
                 }
-                // 队首还没送达（推送失败或还在路上）：手机没看到它，这句不算作答。先补推，再照常处理这句
-                if (hookHead != null) push(current, synchronized(lock) { hookQueues[tabId]?.nextPush(current) })
+                // 队首还没送达（推送失败或还在路上）：手机没看到它，这句不算作答，也绝不贴进终端——
+                // 电脑上正开着确认框，贴进去的回车可能直接选中默认项，等于随口一句批准了工具调用。
+                // 补推队首（已在路上的不重复推），送达或在路上就请手机先回答它；补推也失败就请到 IDE 中处理
+                if (hookHead != null) {
+                    val next = synchronized(lock) { hookQueues[tabId]?.nextPush(current) }
+                    val reachable = if (next != null) push(current, next) else true
+                    return@withLock if (reachable) SubmitPhase.AnswerFirst else SubmitPhase.DialogOpen
+                }
                 // 运行态正停着等人，又没有挂着的 hook 请求：手机答不了这个框，不当普通消息贴进终端
                 if (tab(tabId) { waitingActive }) return@withLock SubmitPhase.DialogOpen
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
@@ -169,9 +175,15 @@ class BridgeRouter(
                 reply(message.robotId, owner, texts.dialogOpen())
                 InboundOutcome.DIALOG_OPEN
             }
+            SubmitPhase.AnswerFirst -> {
+                reply(message.robotId, owner, texts.hookAnswerFirst())
+                InboundOutcome.PROMPT_REJECTED
+            }
             is SubmitPhase.Hook -> {
-                phase.texts.forEach { send(phase.binding, it) }
-                push(phase.binding, phase.push)
+                pushAfter(phase.push) {
+                    phase.texts.forEach { send(phase.binding, it) }
+                    push(phase.binding, phase.push)
+                }
                 InboundOutcome.SUBMITTED_TO_TERMINAL
             }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
@@ -225,8 +237,10 @@ class BridgeRouter(
                 return
             }
         superseded.forEach { it.respond(HookDecision.Pass) }
-        if (superseded.any { it.mayHaveReached(binding.epoch) }) send(binding, texts.promptAnsweredLocally(null))
-        push(binding, text)
+        pushAfter(text) {
+            if (superseded.any { it.mayHaveReached(binding.epoch) }) send(binding, texts.promptAnsweredLocally(null))
+            push(binding, text)
+        }
     }
 
     /**
@@ -272,10 +286,12 @@ class BridgeRouter(
                 val binding = bindings.bindingForTab(tabId)
                 Triple(entry, binding, binding?.let { queue.nextPush(it) })
             }
-        if (respond) entry.respond(HookDecision.Pass)
-        binding ?: return
-        if (entry.mayHaveReached(binding.epoch)) send(binding, notice(entry.request))
-        push(binding, next)
+        pushAfter(next) {
+            if (respond) entry.respond(HookDecision.Pass)
+            binding ?: return
+            if (entry.mayHaveReached(binding.epoch)) send(binding, notice(entry.request))
+            push(binding, next)
+        }
     }
 
     /**
@@ -284,7 +300,10 @@ class BridgeRouter(
      * 记录里的结束标记与 IDE 的完成信号（含读取边界不可靠时）都走这里。
      * 后台子代理可能在本轮结束后才请求，不动。队首变了就推新的队首。
      */
-    private suspend fun releaseMainSessionHooks(tabId: String) = releaseQuietly(tabId) { drainMainSession() }
+    private suspend fun releaseMainSessionHooks(tabId: String) {
+        val background = tab(tabId) { runningBackground() }
+        releaseQuietly(tabId) { drainTurn(background) }
+    }
 
     /**
      * 后台子代理结束：它挂起的请求不会再有人答，静默放行。记录里后台子代理的任务 id（`toolUseResult.agentId`、
@@ -308,8 +327,10 @@ class BridgeRouter(
                 val binding = bindings.bindingForTab(tabId)
                 Triple(released, binding, binding?.let { queue.nextPush(it) })
             }
-        released.forEach { it.respond(HookDecision.Pass) }
-        if (binding != null) push(binding, next)
+        pushAfter(next) {
+            released.forEach { it.respond(HookDecision.Pass) }
+            if (binding != null) push(binding, next)
+        }
     }
 
     /** 放行标签挂起的全部请求，交给电脑处理；不发消息。 */
@@ -369,12 +390,32 @@ class BridgeRouter(
      * 队首还没送达、也不在推给 [binding] 的路上时排好推送内容，记下正在推；没有要推的返回 null。在 [lock] 内调用。
      * 送达与否由 [push] 记下。
      */
-    private fun HookPromptQueue.nextPush(binding: Binding): Push? {
+    private fun HookPromptQueue.nextPush(binding: Binding): HookPromptQueue.Push? {
         val entry = head() ?: return null
         if (entry.mayHaveReached(binding.epoch)) return null
         val text = promptText(binding, entry) ?: return null
-        entry.pushingEpoch = binding.epoch
-        return Push(entry, binding.epoch, text)
+        return HookPromptQueue.Push(entry, binding.epoch, text).also { entry.pushing = it }
+    }
+
+    /** [push] 没送达或被放弃：清掉它的「正在推」标记（只清自己这次），留给之后补推。 */
+    private fun abandon(push: HookPromptQueue.Push?) {
+        push ?: return
+        synchronized(lock) { if (push.entry.pushing === push) push.entry.pushing = null }
+    }
+
+    /**
+     * [nextPush] 领到推送之后、[push] 发出之前还有别的挂起点（先发确认或通知）时用：[block] 无论正常结束、提前返回还是被取消，
+     * 都清掉没发出去的那次的「正在推」标记，否则这个队首再也不会被补推。
+     */
+    private inline fun pushAfter(
+        push: HookPromptQueue.Push?,
+        block: () -> Unit,
+    ) {
+        try {
+            block()
+        } finally {
+            abandon(push)
+        }
     }
 
     /**
@@ -383,7 +424,7 @@ class BridgeRouter(
      */
     private suspend fun push(
         binding: Binding,
-        push: Push?,
+        push: HookPromptQueue.Push?,
     ): Boolean {
         push ?: return false
         var delivered = false
@@ -391,7 +432,7 @@ class BridgeRouter(
             delivered = send(binding, push.text)
         } finally {
             synchronized(lock) {
-                if (push.entry.pushingEpoch == push.epoch) push.entry.pushingEpoch = null
+                if (push.entry.pushing === push) push.entry.pushing = null
                 if (delivered) push.entry.pushedEpoch = push.epoch
             }
         }
@@ -722,7 +763,9 @@ class BridgeRouter(
     ) {
         val binding = bindings.bindingForTab(tabId) ?: return
         tab(tabId) { waitingStarted() }
-        if (synchronized(lock) { hookQueues[tabId]?.size ?: 0 } == 0) send(binding, texts.waiting(reason))
+        val (pending, next) = synchronized(lock) { hookQueues[tabId].let { (it?.size ?: 0) to it?.nextPush(binding) } }
+        // 有挂着的请求：确认框已由 hook 推过；还没送达这台手机的（推送失败、机器人刚恢复）借这次补推
+        if (pending > 0) push(binding, next) else send(binding, texts.waiting(reason))
     }
 
     suspend fun onTranscriptRestarted(tabId: String) {

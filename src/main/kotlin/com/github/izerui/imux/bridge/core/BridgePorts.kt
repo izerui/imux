@@ -129,6 +129,9 @@ interface BridgeTexts {
     /** 计划确认回了「好」「ok」这类允许词：没有作答，提示回 1 或 2 选择怎么执行。 */
     fun hookPlanChoose(): String
 
+    /** 有等确认的请求时手机发了别的话：上面就是那个请求（刚补推过），请先回答；这句没有发给会话。 */
+    fun hookAnswerFirst(): String
+
     /** 推给手机的权限请求已在电脑上允许。 */
     fun hookAllowedLocally(): String
 
