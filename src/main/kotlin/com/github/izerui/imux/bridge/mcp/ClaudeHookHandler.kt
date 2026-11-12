@@ -41,13 +41,15 @@ class ClaudeHookHandler : HttpRequestHandler() {
         val channel = context.channel()
         // 一个请求只回写一次：挂起的请求可能同时被决定与异常兜底竞争
         val responded = AtomicBoolean()
-        fun respond(status: Int, body: String = "{}") {
-            if (!responded.compareAndSet(false, true) || !channel.isActive) return
+        /** 返回是否真的写出：已回过或连接已关闭时为 false。 */
+        fun respond(status: Int, body: String = "{}"): Boolean {
+            if (!responded.compareAndSet(false, true) || !channel.isActive) return false
             val response = DefaultFullHttpResponse(version, HttpResponseStatus.valueOf(status), Unpooled.copiedBuffer(body, Charsets.UTF_8))
             response.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=utf-8")
             response.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, response.content().readableBytes())
             if (status == 405) response.headers().set(HttpHeaderNames.ALLOW, "POST")
             response.send(channel, keepAlive)
+            return true
         }
         val service = MobileMcpService.getInstance()
         val tabId = loopbackBearer(request, context)?.let { service.callers.get(it)?.tabId }

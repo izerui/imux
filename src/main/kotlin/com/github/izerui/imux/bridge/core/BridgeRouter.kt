@@ -208,7 +208,7 @@ class BridgeRouter(
     suspend fun onHookRequest(
         tabId: String,
         request: HookRequest,
-        respond: (HookDecision) -> Unit,
+        respond: (HookDecision) -> Boolean,
     ) {
         // 在锁内查绑定再入队：解绑后的放行（onReleased）也在锁内清队，入队与清队不会错过
         val (binding, superseded, text) =
@@ -220,19 +220,25 @@ class BridgeRouter(
                 val superseded = if (request.kind == PromptKind.PERMISSION) emptyList() else queue.supersededBy(request)
                 queue.add(HookPromptQueue.Entry(request, respond))
                 Triple(binding, superseded, queue.nextPush(binding))
-            } ?: return respond(HookDecision.Pass)
+            } ?: run {
+                respond(HookDecision.Pass)
+                return
+            }
         superseded.forEach { it.respond(HookDecision.Pass) }
         if (superseded.any { it.mayHaveReached(binding.epoch) }) send(binding, texts.promptAnsweredLocally(null))
         push(binding, text)
     }
 
-    /** 电脑端允许后工具已跑完：了结与 [done] 匹配的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。 */
+    /**
+     * 工具跑完：先看是不是手机允许过的请求（抵消记录，什么也不做）；否则当作电脑端允许，
+     * 了结与 [done] 匹配的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。
+     */
     suspend fun onHookToolDone(
         tabId: String,
         done: HookToolDone,
         answers: String?,
     ) {
-        settleLocally(tabId, { matchLocal(done) }, respond = true) { request ->
+        settleLocally(tabId, { if (consumeAnsweredRemotely(done)) null else matchLocal(done) }, respond = true) { request ->
             when (request.kind) {
                 PromptKind.PERMISSION -> texts.hookAllowedLocally()
                 PromptKind.QUESTION -> texts.promptAnsweredLocally(answers)
@@ -315,6 +321,8 @@ class BridgeRouter(
     /**
      * 手机答 hook 队首：译成决定、出队并回给 hook，返回要发的确认与下一条推送。提问不是最后一题时只记下答案、推下一题，
      * 全部答完才一起回给 hook。须在提交锁内调用；respond 在 [lock] 外调用。
+     * 允许的请求出队时记进「手机已允许」（见 [HookPromptQueue.answeredRemotely]），先于 respond，免得它的 PostToolUse 抢先到达；
+     * 回写失败（电脑端已按 Esc 断开）时撤销记录，告诉手机电脑端已拒绝，而不是手机的选择。
      */
     private fun answerHook(
         binding: Binding,
@@ -348,10 +356,12 @@ class BridgeRouter(
                             }
                     }
                 queue.remove(request.id)
+                if (decision is HookDecision.Allow) queue.answeredRemotely(request)
                 Triple(decision, ack, queue.nextPush(binding))
             }
-        entry.respond(decision)
-        return SubmitPhase.Hook(binding, listOf(ack), next)
+        if (entry.respond(decision)) return SubmitPhase.Hook(binding, listOf(ack), next)
+        if (decision is HookDecision.Allow) synchronized(lock) { hookQueues[tabId]?.forgetAnsweredRemotely(request) }
+        return SubmitPhase.Hook(binding, listOf(texts.hookDeniedLocally()), next)
     }
 
     /**

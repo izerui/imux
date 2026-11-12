@@ -148,6 +148,9 @@ class HookPromptRouterTest {
     /** 一个请求与它收到的决定。 */
     private class Pending(val request: HookRequest) {
         val decisions = mutableListOf<HookDecision>()
+
+        /** hook 连接是否还在：为 false 时回写失败（电脑端已按 Esc 断开）。 */
+        var connected = true
     }
 
     private suspend fun request(
@@ -160,7 +163,10 @@ class HookPromptRouterTest {
         input: Map<String, String> = mapOf("command" to "\"key-$id\""),
     ): Pending {
         val pending = Pending(HookRequest(id, toolName, agentId, agentType, detail, questions, input))
-        router.onHookRequest("tab-1", pending.request) { pending.decisions += it }
+        router.onHookRequest("tab-1", pending.request) {
+            pending.decisions += it
+            pending.connected
+        }
         return pending
     }
 
@@ -573,6 +579,79 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `手机允许的请求跑完后，同参数的下一个请求不被当成电脑端已允许`() =
+        runBlocking {
+            bind()
+            val first = request(1, detail = "rm a.txt", input = k)
+            val second = request(2, detail = "rm a.txt", input = k)
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), first.decisions)
+            // #1 跑完的 PostToolUse：对上的是手机允许过的 #1，不是排队的 #2
+            router.onHookToolDone("tab-1", done(), null)
+            assertTrue(second.decisions.isEmpty())
+            assertFalse(sentTexts().joinToString(), sentTexts().contains("HOOK_ALLOWED_LOCALLY"))
+            router.onInbound(inbound("m2", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), second.decisions)
+        }
+
+    @Test
+    fun `手机允许的记录只抵消一次 PostToolUse`() =
+        runBlocking {
+            bind()
+            request(1, detail = "rm a.txt", input = k)
+            val second = request(2, detail = "rm a.txt", input = k)
+            router.onInbound(inbound("m1", "1"))
+            router.onHookToolDone("tab-1", done(), null)
+            // 再来一条同参数的 PostToolUse：这回是电脑端允许了 #2
+            router.onHookToolDone("tab-1", done(), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), second.decisions)
+            assertEquals("HOOK_ALLOWED_LOCALLY", sentTexts().last())
+        }
+
+    @Test
+    fun `手机拒绝的请求不留记录，同参数请求的 PostToolUse 照常了结它`() =
+        runBlocking {
+            bind()
+            request(1, detail = "rm a.txt", input = k)
+            val second = request(2, detail = "rm a.txt", input = k)
+            router.onInbound(inbound("m1", "2"))
+            router.onHookToolDone("tab-1", done(), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), second.decisions)
+        }
+
+    @Test
+    fun `电脑端已断开后手机才作答，允许与拒绝都告诉手机电脑端已拒绝`() =
+        runBlocking {
+            bind()
+            val allowed = request(1, detail = "rm a.txt", input = k)
+            val denied = request(2, detail = "rm b.txt")
+            allowed.connected = false
+            denied.connected = false
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), allowed.decisions)
+            val afterAllow = sentTexts().drop(1)
+            assertEquals("HOOK_DENIED_LOCALLY", afterAllow[0])
+            assertFalse(afterAllow.joinToString(), afterAllow.contains("HOOK_ALLOWED"))
+            assertTrue(afterAllow[1], afterAllow[1].contains("rm b.txt"))
+            router.onInbound(inbound("m2", "2"))
+            assertEquals(1, denied.decisions.size)
+            assertEquals("HOOK_DENIED_LOCALLY", sentTexts().last())
+            assertFalse(sentTexts().joinToString(), sentTexts().contains("HOOK_DENIED"))
+        }
+
+    @Test
+    fun `回写失败的允许不留记录，同参数请求的 PostToolUse 照常了结它`() =
+        runBlocking {
+            bind()
+            val first = request(1, detail = "rm a.txt", input = k)
+            val second = request(2, detail = "rm a.txt", input = k)
+            first.connected = false
+            router.onInbound(inbound("m1", "1"))
+            router.onHookToolDone("tab-1", done(), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), second.decisions)
+        }
+
+    @Test
     fun `参数相同的两个请求只了结最早的一个`() =
         runBlocking {
             bind()
@@ -810,7 +889,7 @@ class HookPromptRouterTest {
             for ((tool, detail) in listOf("ExitPlanMode" to "步骤".repeat(800), "Bash" to "echo " + "x".repeat(3000))) {
                 val small = FakeChannel(robot, maxTextBytes = 1000)
                 val r = BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) small else null }, Texts)
-                r.onHookRequest("tab-1", HookRequest(1, tool, null, null, detail, null, emptyMap())) {}
+                r.onHookRequest("tab-1", HookRequest(1, tool, null, null, detail, null, emptyMap())) { true }
                 val text = small.sent.single().text
                 assertTrue(tool, text.toByteArray().size <= 1000)
                 assertTrue(tool, text.contains("\n…"))
