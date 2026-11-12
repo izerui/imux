@@ -58,7 +58,9 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 27 | 电脑上提问选「Chat about this」 | hook 连接不关闭、无 PostToolUse，本轮随即结束（由本轮结束放行主会话请求兜住） |
 | 28 | 电脑上计划选 3 写修改意见 | 旧请求连接不关闭、无 PostToolUse；本轮不结束，Claude 改稿后同一代理发来新的 ExitPlanMode 请求 |
 | 29 | `allowedHttpHookUrls` 不含 hook 地址 | hook 不发出，电脑照常弹框执行，无报错 |
-| 30 | 危险操作确认约 2 分钟无人处理被自动拒绝（bypass 会话，2026-11-12） | hook 连接**不关闭**，也没有 PostToolUse / PostToolUseFailure；Claude 随后结束本轮。主会话请求由本轮结束放行兜住（手机上的确认静默撤回，不提示「已自动拒绝」）；子代理请求靠子代理结束时放行（前台子代理被拒后随即跑完，记录里有 `completed` 结果） |
+| 30 | 危险操作确认约 2 分钟无人处理被自动拒绝（bypass 会话，2026-11-12） | hook 连接**不关闭**，也没有 PostToolUse / PostToolUseFailure；Claude 随后结束本轮。主会话请求由本轮结束放行兜住（手机上的确认静默撤回，不提示「已自动拒绝」）；子代理请求靠子代理结束时放行（SubagentStop，见实测 32） |
+| 31 | 明确要求子代理前台同步运行（`run_in_background: false`，2.1.308） | 主会话记录里 Agent 结果仍是 `{"status":"async_launched","agentId":…,"isAsync":true}`：当前版本几乎不出现前台的 `completed` 结果，记录侧的「前台子代理跑完」信号很少触发 |
+| 32 | 注入 `SubagentStop` http hook（2.1.308） | 子代理结束时到达，请求体带 `agent_id`（与 PermissionRequest 的 `agent_id` 相同），约在它最后一次 PostToolUse 之后 3 秒。子代理的权限框不显示在主界面，主界面按 Esc 不影响它，hook 连接不关闭，会话结束时才关闭 |
 
 ## 方案
 
@@ -71,7 +73,8 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
   "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "http", "url": "http://127.0.0.1:<port>/imux/claude-hook",
     "headers": {"Authorization": "Bearer $IMUX_MOBILE_TOKEN"}, "allowedEnvVars": ["IMUX_MOBILE_TOKEN"], "timeout": 86400}]}],
   "PostToolUse":        [{"matcher": "*", "hooks": [{"type": "http", "url": "…同上", "headers": …, "allowedEnvVars": …, "timeout": 5}]}],
-  "PostToolUseFailure": [{"matcher": "*", "hooks": [{"type": "http", "url": "…同上", "headers": …, "allowedEnvVars": …, "timeout": 5}]}]
+  "PostToolUseFailure": [{"matcher": "*", "hooks": [{"type": "http", "url": "…同上", "headers": …, "allowedEnvVars": …, "timeout": 5}]}],
+  "SubagentStop":       [{"matcher": "*", "hooks": [{"type": "http", "url": "…同上", "headers": …, "allowedEnvVars": …, "timeout": 5}]}]
 }}
 ```
 
@@ -85,9 +88,10 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 
 在 IDE 内置 HTTP 服务上新增 `ClaudeHookHandler`（处理逻辑在可注入 `Channel`、协程作用域与路由函数的 `handleClaudeHook`，用 `EmbeddedChannel` 测）。复用 `LocalMcpHandler.kt` 的 `loopbackAllowed`（本机、端口、Host/Origin）与 `bearerToken`，但不走 MCP 的 Accept / JSON-RPC 约束：本机校验不通过回 403；校验通过但令牌缺失、无效或已撤销（插件热更新后没重启 IDE，旧 Claude 进程每次工具调用都会打过来）回 200 `{}`，不做任何决定，免得终端每次工具调用都冒 hook 错误。按令牌找到 `MobileCaller`（工程路径 + 标签 id），按 `hook_event_name` 分派：
 
-- 请求体：1 MB 以内整份解析；超过 1 MB 时只有 `PostToolUse` / `PostToolUseFailure` 还读（Edit、Write 的 `tool_response` 带整份文件），32 MB 以内流式只取 `hook_event_name`、`tool_name`、`agent_id`、`tool_input`、`tool_response.answers`；其余事件（含 `PermissionRequest`）超过 1 MB、或任何事件超过 32 MB，回 200 `{}`。平台内置服务的聚合上限是 180 MB（`ide.netty.max.frame.size.in.mb`），处理函数收到的已是聚合后的 `FullHttpRequest`。
+- 请求体：1 MB 以内整份解析；超过 1 MB 时只有 `PostToolUse` / `PostToolUseFailure`（Edit、Write 的 `tool_response` 带整份文件）与 `SubagentStop` 还读，32 MB 以内流式只取 `hook_event_name`、`tool_name`、`agent_id`、`tool_input`、`tool_response.answers`；其余事件（含 `PermissionRequest`）超过 1 MB、或任何事件超过 32 MB，回 200 `{}`。平台内置服务的聚合上限是 180 MB（`ide.netty.max.frame.size.in.mb`），处理函数收到的已是聚合后的 `FullHttpRequest`。
 
 - `PostToolUse` / `PostToolUseFailure`：立即回 `{}`，把 `(agent_id, tool_name, tool_input, tool_response)` 交给 §4 判断是否为电脑作答。
+- `SubagentStop`：立即回 `{}`，带 `agent_id` 时交给路由器 `onHookSubagentStopped`（§4「子代理结束」）；缺 `agent_id` 忽略。
 - `PermissionRequest`：
   - 标签未绑定机器人、或请求解析不出（如提问缺题目或选项）→ **立即回 `{}`**，只走电脑。机器人暂时离线时照常挂起：电脑端同时弹框，不受影响。
   - 否则登记为一个挂起请求，响应留到作答时再发（Netty 异步回写，与 `LocalMcpHandler` 的 `scope.launch` 一致），并监听 `channel.closeFuture()`。
@@ -120,7 +124,7 @@ HookPromptQueue.Entry(request, respond: (HookDecision) -> Boolean,   // 返回�
 | 电脑选是 | 收到 `PostToolUse`/`PostToolUseFailure`：先在「手机已允许」小表里找匹配并抵消（那是手机允许过的请求跑完了，什么也不做）；找不到才去队列，`agent_id`、`tool_name` 与队中某请求相同，且 `tool_input` 满足匹配前提：双方都为空→匹配；电脑端为空、请求不为空→仅计划匹配（ExitPlanMode 的 PostToolUse 输入为空对象）；双方都有字段但没有共有字段→不匹配；有共有字段→每个共有字段值相等（提问多出 `answers` 与 `annotations`，实测 26） | `{}`（结束挂着的请求） | 权限：「电脑端已允许」；提问：带上 `tool_response` 里每题答案（沿用 `promptAnsweredLocally` 文案）；计划：`promptHandledLocally`（「选择已在电脑端完成。」） |
 | 电脑选否 / Esc | hook 连接被关闭 | 无需回 | 「电脑端已拒绝」 |
 | 同代理新计划 / 提问让旧的作废 | 收到 `ExitPlanMode` 或 `AskUserQuestion` 请求，队中有同一 `agent_id`、同一 `tool_name` 的旧请求（实测 28：电脑上计划选 3 后旧请求不关闭，改稿后发来新的）；权限请求不适用，同一代理可能并行请求多个权限 | 旧的回 `{}` | 旧的推给过这台手机时先发「选择已在电脑端完成」，再推新的队首 |
-| 子代理结束 | 后台子代理：记录里的 `BackgroundEnded(taskId)`；前台子代理：主会话记录里 Agent 工具结果 `status: completed` 带 `agentId`，解成 `SubagentEnded`（hooks 文档 Agent 一节：前台为 `completed`，中途 Ctrl+B 转后台为 `async_launched`；本机记录有 `completed` + `agentId` 的实例）。这些 id（`toolUseResult.agentId`、`<task-id>`）与 hook 的 `agent_id` 是同一个值（两边都对应子代理记录 `subagents/agent-<id>.jsonl`） | 该代理的条目 `{}` | 不单独提示 |
+| 子代理结束 | 主信号：`SubagentStop` hook 的 `agent_id`（前台、后台都有，实测 32）。补充：记录里后台任务的 `BackgroundEnded(taskId)`，以及 Agent 工具结果 `status: completed` 带 `agentId` 解成的 `SubagentEnded`（当前版本少见，实测 31）。几条信号重复到达时由先出队的一方 respond，后到的找不到条目不做事。这些 id（`toolUseResult.agentId`、`<task-id>`）与 hook 的 `agent_id` 是同一个值（两边都对应子代理记录 `subagents/agent-<id>.jsonl`） | 该代理的条目 `{}` | 不单独提示 |
 | 记录重启、换绑解绑、标签关闭（会话结束）、IDE 退出 | 现有对应事件 | `{}` | 不单独提示 |
 
 本轮结束、中断时只放行主会话（无 `agent_id`）的挂起请求——主会话的确认活不过它所在的一轮，用作电脑端了结漏判（如提问选 Chat about this（实测 27）、允许后 Esc 中断、危险操作自动拒绝（实测 30））的兜底。子代理的请求不在这里放行，只认它结束的正面证据（上表「子代理结束」）：不能用「不在记下的后台任务里」推断前台——记录从文件末尾开始读，绑定之前就已启动的后台子代理、IDE 重启后接回的会话里的后台子代理都不在记下的后台任务里。记录里的结束标记与 IDE 的完成信号（`onTurnCompleted` 结算当前轮时，以及读取边界不可靠的 `flushAfterReply`）都算本轮结束。
@@ -177,7 +181,7 @@ HookPromptQueue.Entry(request, respond: (HookDecision) -> Boolean,   // 返回�
 ## 已知限制
 
 - **多题提问的后续题推送失败**：「已送达」按请求记，不按题。第 1 题送达后，后面某题推送失败时，手机的下一句仍按这道题的答案处理。
-- **前台子代理被中断**：主会话被 Esc 中断时前台子代理的结果不是 `completed`，它挂起的请求等记录重启、解绑或会话结束才放行（hook 连接若随中断关闭，则由连接关闭了结）。
+- **子代理被中断**：子代理挂起的请求靠 `SubagentStop` 放行。实测 32 中主界面按 Esc 不影响子代理、连接也不关闭；子代理被中断或被停止时 `SubagentStop` 是否到达**未实测**。若不到达，它的请求等记录重启、解绑或会话结束（连接关闭）才放行。
 
 ## 测试
 
