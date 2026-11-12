@@ -58,7 +58,7 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 27 | 电脑上提问选「Chat about this」 | hook 连接不关闭、无 PostToolUse，本轮随即结束（由本轮结束放行主会话请求兜住） |
 | 28 | 电脑上计划选 3 写修改意见 | 旧请求连接不关闭、无 PostToolUse；本轮不结束，Claude 改稿后同一代理发来新的 ExitPlanMode 请求 |
 | 29 | `allowedHttpHookUrls` 不含 hook 地址 | hook 不发出，电脑照常弹框执行，无报错 |
-| 30 | 危险操作确认约 2 分钟无人处理被自动拒绝（bypass 会话，2026-11-12） | hook 连接**不关闭**，也没有 PostToolUse / PostToolUseFailure；Claude 随后结束本轮。主会话请求由本轮结束放行兜住（手机上的确认静默撤回，不提示「已自动拒绝」）；子代理请求靠后台子代理结束时放行 |
+| 30 | 危险操作确认约 2 分钟无人处理被自动拒绝（bypass 会话，2026-11-12） | hook 连接**不关闭**，也没有 PostToolUse / PostToolUseFailure；Claude 随后结束本轮。主会话请求由本轮结束放行兜住（手机上的确认静默撤回，不提示「已自动拒绝」）；前台子代理请求同样由本轮结束放行，后台子代理请求靠后台子代理结束时放行 |
 
 ## 方案
 
@@ -108,7 +108,7 @@ HookPromptQueue.Entry(request, respond: (HookDecision) -> Boolean,   // 返回�
 - **一次只推队首**，与终端一次只显示一个框一致；队首了结后推下一个。并行子代理同时请求时，手机消息末尾附「还有 N 个确认在排队」。
 - 推送内容沿用现有渲染：`PermissionPrompts.render`、`AskedQuestions.render`、`texts.plan`、`fitted` 截断。子代理的请求在标题行注明来源（`agent_type`），对应终端的 `from the general-purpose agent`。
 - **送达才算推过**：渠道确认接收（`DeliveryResult.Accepted`）后才把队首记为已推给这个绑定代次；推送失败或还在路上（限频重试）的不算。
-- 手机消息到达时，若该标签的 hook 队首已送达这台手机，按 §5 译成 hook 响应，**不按任何键**；队首还没送达时手机没看到它，这句不算作答：先补推队首，再把这句照常按普通消息处理（运行态正停着等人时按 §6 回 `DialogOpen`）。机器人接回（`onBound`、`onReattached`）时也补推没送达的队首。
+- 手机消息到达时，若该标签的 hook 队首已送达这台手机，按 §5 译成 hook 响应，**不按任何键**；队首还没送达时手机没看到它，这句不算作答，**也不贴进终端**（电脑上正开着确认框，贴进去的回车可能直接选中默认项）：补推队首（已在路上的不重复推），送达或在路上就回「上面是等你确认的请求，请先回答它」（`hookAnswerFirst`），补推也失败就回 `DialogOpen`。绑定或自动接回（`onBound`、`onReattached`）、收到等待通知（`onWaiting`）时也补推没送达的队首。领到推送（「正在推」标记）到发出之间被取消时清掉标记，免得这个队首再也不补推。
 
 ### 4. 了结与通知
 
@@ -123,7 +123,7 @@ HookPromptQueue.Entry(request, respond: (HookDecision) -> Boolean,   // 返回�
 | 后台子代理结束 | 记录里的 `BackgroundEnded(taskId)`：后台子代理的任务 id（`toolUseResult.agentId`、`<task-id>`）与 hook 的 `agent_id` 是同一个值（两边都对应子代理记录 `subagents/agent-<id>.jsonl`） | 该代理的条目 `{}` | 不单独提示 |
 | 记录重启、换绑解绑、标签关闭（会话结束）、IDE 退出 | 现有对应事件 | `{}` | 不单独提示 |
 
-本轮结束、中断时只放行主会话（无 `agent_id`）的挂起请求——主会话的确认活不过它所在的一轮，用作电脑端了结漏判（如提问选 Chat about this（实测 27）、允许后 Esc 中断）的兜底；后台子代理可能在本轮结束后才请求，不受影响。记录里的结束标记与 IDE 的完成信号（`onTurnCompleted` 结算当前轮时，以及读取边界不可靠的 `flushAfterReply`）都算本轮结束。
+本轮结束、中断时放行主会话（无 `agent_id`）与前台子代理（`agent_id` 不在 `TabState` 仍在运行的后台任务里）的挂起请求——它们的确认活不过主会话的这一轮，用作电脑端了结漏判（如提问选 Chat about this（实测 27）、允许后 Esc 中断、危险操作自动拒绝（实测 30））的兜底；后台子代理可能在本轮结束后才请求，不受影响，由后台子代理结束时放行。记录里的结束标记与 IDE 的完成信号（`onTurnCompleted` 结算当前轮时，以及读取边界不可靠的 `flushAfterReply`）都算本轮结束。
 
 要点：
 
@@ -165,8 +165,8 @@ HookPromptQueue.Entry(request, respond: (HookDecision) -> Boolean,   // 返回�
 
 上线初期 hook 与旧的按键方案（按会话记录推送确认框、手机回复后模拟按键作答，即 `TabState.waitingSubject`、`PermissionPrompts.reply`、`AskedQuestions.answer` 等）并存，未注入 hook 的 Claude 标签走旧方案。现已整体删除，`BridgeRouter` 只剩 hook 一条作答路径：
 
-- `onWaiting`：该标签 hook 队列非空时什么也不发（确认框已由 hook 推过）；否则发「<原因>，请到 IDE 中处理」。
-- 手机消息：有 hook 队首先译成决定回给 hook；否则运行态正停着等人（`waitingActive`）时回 `DialogOpen`，不贴进终端；都不是才照常提交。
+- `onWaiting`：该标签 hook 队列非空时不发等待提示（确认框已由 hook 推过），只补推还没送达的队首；否则发「<原因>，请到 IDE 中处理」。
+- 手机消息：有已送达的 hook 队首就译成决定回给 hook；有队首但没送达时补推并提示先回答它（补推失败回 `DialogOpen`），不贴进终端；没有队首而运行态正停着等人（`waitingActive`）时回 `DialogOpen`，不贴进终端；都不是才照常提交。
 - 没能注入 hook 的 Claude 标签（启动贡献准备失败时会弹「手机媒体工具未能接入」警告，或插件更新后未重启 IDE 时已在跑的进程——令牌已失效，hook 入口回 `{}`，不弹警告也不报 hook 错误）：收到 Claude 的等待通知后只提示到 IDE 中处理，等待期间手机的话被拦下，不贴进终端。这与 Codex、Pi 不同：桥接没有接入它们的确认框状态，不能识别或拦截，框打开期间手机的话仍可能按普通消息发进终端（见用户指南）。
 - 会话记录解码不再产出工具调用、提问、工具结果事件，终端端口也不再提供按键写入。
 
