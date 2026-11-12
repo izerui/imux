@@ -253,6 +253,16 @@ class BridgeRouter(
         }
     }
 
+    /**
+     * 子代理停止（SubagentStop hook，前台、后台都有，带 agent_id）：子代理结束的主信号。它挂起的请求不会再有人答，
+     * 静默放行，手机已允许记录一并清掉。记录里的 [SessionEvent.SubagentEnded]、[SessionEvent.BackgroundEnded] 是补充；
+     * 几条信号重复到达时，只有先出队的一方 respond，后到的找不到条目，什么也不做。
+     */
+    suspend fun onHookSubagentStopped(
+        tabId: String,
+        agentId: String,
+    ) = releaseAgentHooks(tabId, agentId)
+
     /** hook 连接被关闭（电脑端拒绝或 Esc）：了结该请求，不再 respond。 */
     suspend fun onHookClosed(
         tabId: String,
@@ -290,7 +300,7 @@ class BridgeRouter(
      * 本轮结束或中断时只放行主会话（无 agentId）挂起的请求，静默出队：主会话的确认活不过它所在的一轮，
      * 用作电脑端了结漏判（PostToolUse 对不上、提问选 Chat about this、允许后 Esc 中断等）的兜底。
      * 记录里的结束标记与 IDE 的完成信号（含读取边界不可靠时）都走这里。
-     * 子代理的请求一律不动：后台的可能在本轮结束后才请求，前台的由它跑完的结果（[SessionEvent.SubagentEnded]）放行。
+     * 子代理的请求一律不动：后台的可能在本轮结束后才请求；子代理结束时由 [onHookSubagentStopped]（补充：记录里的结束事件）放行。
      * 不用「不在后台任务里」推断前台：绑定前就已启动的后台子代理不在记下的后台任务里。队首变了就推新的队首。
      */
     private suspend fun releaseMainSessionHooks(tabId: String) = releaseQuietly(tabId) { drainMainSession() }

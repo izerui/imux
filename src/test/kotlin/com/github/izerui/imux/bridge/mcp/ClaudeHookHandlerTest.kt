@@ -33,6 +33,11 @@ class ClaudeHookHandlerTest {
         val requests = mutableListOf<Pair<HookRequest, (HookDecision) -> Boolean>>()
         val toolDone = mutableListOf<HookToolDone>()
         val closed = mutableListOf<Pair<String, Long>>()
+        val stopped = mutableListOf<Pair<String, String>>()
+
+        override suspend fun onHookSubagentStopped(tabId: String, agentId: String) {
+            stopped += tabId to agentId
+        }
 
         override suspend fun onHookRequest(tabId: String, request: HookRequest, respond: (HookDecision) -> Boolean) {
             requests += request to respond
@@ -124,6 +129,22 @@ class ClaudeHookHandlerTest {
         assertEquals(200, written.status().code())
         assertEquals("{}", written.text())
         assertEquals(listOf(HookToolDone(null, "Bash", mapOf("command" to "\"ls\""))), routes.toolDone)
+    }
+
+    @Test
+    fun `SubagentStop 立即回空对象并把 agent_id 交给路由器`() {
+        handle("""{"hook_event_name":"SubagentStop","agent_id":"a6e875b4ab49cb680"}""")
+        val written = response()!!
+        assertEquals(200, written.status().code())
+        assertEquals("{}", written.text())
+        assertEquals(listOf("tab-1" to "a6e875b4ab49cb680"), routes.stopped)
+    }
+
+    @Test
+    fun `SubagentStop 缺 agent_id 时只回空对象`() {
+        handle("""{"hook_event_name":"SubagentStop"}""")
+        assertEquals("{}", response()!!.text())
+        assertTrue(routes.stopped.isEmpty())
     }
 
     @Test

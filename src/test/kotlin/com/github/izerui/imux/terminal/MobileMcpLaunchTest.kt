@@ -12,9 +12,10 @@ class MobileMcpLaunchTest {
 
     // region --settings
 
-    @Test fun `hook 设置含三种事件且凭证保持环境引用`() {
+    @Test fun `hook 设置含四种事件且凭证保持环境引用`() {
         val root = JsonParser.parseString(hookSettings).asJsonObject.getAsJsonObject("hooks")
-        for (event in listOf("PermissionRequest", "PostToolUse", "PostToolUseFailure")) {
+        assertEquals(setOf("PermissionRequest", "PostToolUse", "PostToolUseFailure", "SubagentStop"), root.keySet())
+        for (event in listOf("PermissionRequest", "PostToolUse", "PostToolUseFailure", "SubagentStop")) {
             val hook = root.getAsJsonArray(event)[0].asJsonObject.getAsJsonArray("hooks")[0].asJsonObject
             assertEquals(event, hookUrl, hook["url"].asString)
             assertEquals(event, "Bearer \$IMUX_MOBILE_TOKEN", hook.getAsJsonObject("headers")["Authorization"].asString)
@@ -29,6 +30,9 @@ class MobileMcpLaunchTest {
         assertEquals(5, postHook["timeout"].asInt)
         val failHook = root.getAsJsonArray("PostToolUseFailure")[0].asJsonObject.getAsJsonArray("hooks")[0].asJsonObject
         assertEquals(5, failHook["timeout"].asInt)
+        val stopRule = root.getAsJsonArray("SubagentStop")[0].asJsonObject
+        assertEquals("*", stopRule["matcher"].asString)
+        assertEquals(5, stopRule.getAsJsonArray("hooks")[0].asJsonObject["timeout"].asInt)
     }
 
     @Test fun `Claude 新建与恢复都带 --settings 且在 --resume 之前`() {

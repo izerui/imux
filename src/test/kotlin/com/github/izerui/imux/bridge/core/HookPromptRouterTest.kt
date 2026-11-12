@@ -826,6 +826,43 @@ class HookPromptRouterTest {
         }
 
     @Test
+    fun `子代理停止的 hook 静默放行它的挂起请求，其它代理与主会话的保留`() =
+        runBlocking {
+            bind()
+            val stopped = request(1, detail = "rm a.txt", agentId = "a1", agentType = "general-purpose")
+            val other = request(2, detail = "rm b.txt", agentId = "a2", agentType = "general-purpose")
+            val main = request(3, detail = "rm c.txt")
+            router.onHookSubagentStopped("tab-1", "a1")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), stopped.decisions)
+            assertTrue(other.decisions.isEmpty())
+            assertTrue(main.decisions.isEmpty())
+            assertFalse(sentTexts().joinToString(), sentTexts().any { it.startsWith("HOOK_DENIED_LOCALLY") || it.startsWith("HOOK_ALLOWED_LOCALLY") })
+            val pushed = sentTexts().last()
+            assertTrue(pushed, pushed.startsWith("HOOK_PERMISSION(") && pushed.contains("rm b.txt"))
+        }
+
+    @Test
+    fun `子代理停止、跑完结果与后台结束通知重复到达，各请求只放行一次`() =
+        runBlocking {
+            bind()
+            val pending = request(1, agentId = "a8", agentType = "general-purpose")
+            router.onHookSubagentStopped("tab-1", "a8")
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(finishedAgent))
+            router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("a8")))
+            router.onHookSubagentStopped("tab-1", "a8")
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+        }
+
+    @Test
+    fun `子代理结束时它的手机已允许记录一并清掉`() {
+        val queue = HookPromptQueue()
+        val allowed = HookRequest(1, "Bash", "a1", "general-purpose", "ls", null, k)
+        queue.answeredRemotely(allowed)
+        queue.drainAgent("a1")
+        assertFalse(queue.consumeAnsweredRemotely(done(agentId = "a1")))
+    }
+
+    @Test
     fun `先开后台子代理再绑定手机，本轮结束时它的请求保留`() =
         runBlocking {
             // 后台子代理在绑定之前就已启动：记录里的启动结果没读到，路由器不知道它在后台

@@ -39,7 +39,7 @@ internal object ClaudeHookJson {
     /**
      * 解析请求体。不超过 [MAX_BODY_BYTES]（1 MB）时整份解析；读出的不是 JSON 对象回 400。
      *
-     * 超过 1 MB 时只有 PostToolUse / PostToolUseFailure 还要读（Edit、Write 的 tool_response 带整份文件，丢掉会让电脑端允许对不上）：
+     * 超过 1 MB 时只有 PostToolUse / PostToolUseFailure（Edit、Write 的 tool_response 带整份文件，丢掉会让电脑端允许对不上）与 SubagentStop 还要读：
      * 不超过 [MAX_TOOL_DONE_BYTES]（32 MB）就流式只取对号用到的字段（见 [slim]）；其余事件（PermissionRequest 等）回 200 {}，等于交给电脑。
      * 超过 32 MB 不读，回 200 {}。平台内置服务的聚合上限是 180 MB（`ide.netty.max.frame.size.in.mb`），32 MB 以内都能收到。
      */
@@ -59,7 +59,8 @@ internal object ClaudeHookJson {
     /** PostToolUse / PostToolUseFailure 的上限。 */
     private const val MAX_TOOL_DONE_BYTES = 32 * 1024 * 1024
 
-    private val TOOL_DONE_EVENTS = setOf("PostToolUse", "PostToolUseFailure")
+    /** 超过 1 MB 仍要读的事件：SubagentStop 带子代理最后一条回复，也可能很长，只需 agent_id。 */
+    private val TOOL_DONE_EVENTS = setOf("PostToolUse", "PostToolUseFailure", "SubagentStop")
 
     /**
      * 流式读顶层对象，只留 `hook_event_name`、`tool_name`、`agent_id`、`tool_input`、`tool_response.answers`，
@@ -90,6 +91,9 @@ internal object ClaudeHookJson {
         json.endObject()
         return result
     }
+
+    /** SubagentStop 停下的子代理 `agent_id`；缺失返回 null。 */
+    fun subagentStopped(body: JsonObject): String? = body.string("agent_id")
 
     /** PostToolUse / PostToolUseFailure 解析成 [HookToolDone]；缺 tool_name 返回 null。 */
     fun toolDone(body: JsonObject): HookToolDone? {

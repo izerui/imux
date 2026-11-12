@@ -181,6 +181,17 @@ class ClaudeHookJsonTest {
         assertEquals(HookToolDone(null, "Bash", mapOf("command" to "\"ls\"")), ClaudeHookJson.toolDone(parsed.json))
     }
 
+    @Test fun `SubagentStop 取出 agent_id，缺失时为 null`() {
+        assertEquals("a6e875b4ab49cb680", ClaudeHookJson.subagentStopped(json("""{"hook_event_name":"SubagentStop","agent_id":"a6e875b4ab49cb680","agent_type":"general-purpose"}""")))
+        assertNull(ClaudeHookJson.subagentStopped(json("""{"hook_event_name":"SubagentStop"}""")))
+    }
+
+    @Test fun `超过 1 MB 的 SubagentStop 照常取出 agent_id`() {
+        val text = """{"hook_event_name":"SubagentStop","agent_id":"a1","last_assistant_message":"$bigFile"}"""
+        val parsed = body(text) as ClaudeHookJson.Body.Parsed
+        assertEquals("a1", ClaudeHookJson.subagentStopped(parsed.json))
+    }
+
     @Test fun `超过 1 MB 的 PermissionRequest 回 200 交给电脑`() {
         val text = """{"hook_event_name":"PermissionRequest","tool_name":"Write","tool_input":{"file_path":"/p/a.txt","content":"$bigFile"}}"""
         assertEquals(ClaudeHookJson.Body.Reply(200), body(text))

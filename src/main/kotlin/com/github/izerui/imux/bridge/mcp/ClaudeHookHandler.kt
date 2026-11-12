@@ -80,6 +80,8 @@ internal interface ClaudeHookRoutes {
     suspend fun onHookToolDone(tabId: String, done: HookToolDone, answers: String?)
 
     suspend fun onHookClosed(tabId: String, id: Long)
+
+    suspend fun onHookSubagentStopped(tabId: String, agentId: String)
 }
 
 internal fun BridgeRouter.hookRoutes(): ClaudeHookRoutes {
@@ -92,6 +94,8 @@ internal fun BridgeRouter.hookRoutes(): ClaudeHookRoutes {
             router.onHookToolDone(tabId, done, answers)
 
         override suspend fun onHookClosed(tabId: String, id: Long) = router.onHookClosed(tabId, id)
+
+        override suspend fun onHookSubagentStopped(tabId: String, agentId: String) = router.onHookSubagentStopped(tabId, agentId)
     }
 }
 
@@ -146,6 +150,11 @@ internal fun handleClaudeHook(
             val done = ClaudeHookJson.toolDone(body) ?: return
             val answers = ClaudeHookJson.localAnswers(body["tool_response"])
             scope.launch { routes.onHookToolDone(tabId, done, answers) }
+        }
+        "SubagentStop" -> {
+            respond(200)
+            val agentId = ClaudeHookJson.subagentStopped(body) ?: return
+            scope.launch { routes.onHookSubagentStopped(tabId, agentId) }
         }
         "PermissionRequest" -> {
             val id = nextId()

@@ -191,6 +191,7 @@ internal fun claudeHookSettings(url: String, tokenEnvironment: String): String {
             add("PermissionRequest", eventRule(86400))
             add("PostToolUse", eventRule(5))
             add("PostToolUseFailure", eventRule(5))
+            add("SubagentStop", eventRule(5))
         })
     }.toString()
 }
