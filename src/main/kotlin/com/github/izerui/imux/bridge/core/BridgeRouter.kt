@@ -222,7 +222,7 @@ class BridgeRouter(
                 if (request.kind == PromptKind.QUESTION && request.questions.isNullOrEmpty()) return@synchronized null
                 val queue = hookQueues.getOrPut(tabId) { HookPromptQueue() }
                 val superseded = if (request.kind == PromptKind.PERMISSION) emptyList() else queue.supersededBy(request)
-                queue.add(HookPromptQueue.Entry(request, respond))
+                queue.add(HookPromptQueue.Entry(request, respond, now()))
                 Triple(binding, superseded, queue.nextPush(binding))
             } ?: run {
                 respond(HookDecision.Pass)
@@ -230,13 +230,13 @@ class BridgeRouter(
             }
         superseded.forEach { it.respond(HookDecision.Pass) }
         pushAfter(text) {
-            if (superseded.any { it.mayHaveReached(binding.epoch) }) send(binding, texts.promptAnsweredLocally(null))
+            superseded.filter { it.mayHaveReached(binding.epoch) }.forEach { send(binding, texts.promptHandledLocally(it.request.step)) }
             push(binding, text)
         }
     }
 
     /**
-     * 工具跑完：先看是不是手机允许过的请求（抵消记录，什么也不做）；否则当作电脑端允许，
+     * 工具跑完：同一次调用的记录结果已先处理过就跳过（见 [onToolResulted]）；再看是不是手机允许过的请求（抵消记录，什么也不做）；否则当作电脑端允许，
      * 了结与 [done] 匹配的最早请求，respond(Pass)。[answers] 是提问的「题目 → 答案」行。
      */
     suspend fun onHookToolDone(
@@ -244,18 +244,41 @@ class BridgeRouter(
         done: HookToolDone,
         answers: String?,
     ) {
-        settleLocally(tabId, { if (consumeAnsweredRemotely(done)) null else matchLocal(done) }, respond = true) { request ->
+        settleLocally(tabId, { if (!firstFinish(done.toolUseId) || consumeAnsweredRemotely(done)) null else matchLocal(done) }, respond = true) { request ->
             when (request.kind) {
-                PromptKind.PERMISSION -> texts.hookAllowedLocally()
-                PromptKind.QUESTION -> texts.promptAnsweredLocally(answers)
-                PromptKind.PLAN -> texts.promptAnsweredLocally(null)
+                PromptKind.PERMISSION -> texts.hookAllowedLocally(request.step)
+                PromptKind.QUESTION -> texts.promptAnsweredLocally(request.step, answers)
+                PromptKind.PLAN -> texts.planApprovedLocally(request.step)
+            }
+        }
+    }
+
+    /**
+     * 主会话的工具结果写进了记录：了结与那次调用匹配、在结果之前到达的请求，respond(Pass)。
+     * 兜住没有 PostToolUse、连接也不关的情形——确认框超时被 Claude Code 自己拒绝（实测 34）；不靠它的话，
+     * 那一轮没结束前请求一直占着队首，手机发来的下一句话会被当成对它的回答。
+     * 与 [onHookToolDone] 按调用 id 去重（同一次调用只认先到的一路），并同样先抵消手机已允许的记录：
+     * 否则后到的一路会对上另一个参数相同、还在等的请求。
+     */
+    private suspend fun onToolResulted(
+        tabId: String,
+        event: SessionEvent.ToolResulted,
+    ) {
+        val call = tab(tabId) { takeToolCall(event.toolUseId) } ?: return
+        // 出错的结果分不清是电脑上拒绝还是超时自动拒绝，只说这条已失效；没出错的是电脑上允许或作答了
+        settleLocally(tabId, { if (!firstFinish(call.toolUseId) || consumeAnsweredRemotely(call)) null else matchResult(call, event.at) }, respond = true) { request ->
+            when {
+                event.isError -> texts.hookExpired(request.step)
+                request.kind == PromptKind.PERMISSION -> texts.hookAllowedLocally(request.step)
+                request.kind == PromptKind.PLAN -> texts.planApprovedLocally(request.step)
+                else -> texts.promptAnsweredLocally(request.step, null)
             }
         }
     }
 
     /**
      * 子代理停止（SubagentStop hook，前台、后台都有，带 agent_id）：子代理结束的主信号。它挂起的请求不会再有人答，
-     * 静默放行，手机已允许记录一并清掉。记录里的 [SessionEvent.SubagentEnded]、[SessionEvent.BackgroundEnded] 是补充；
+     * 放行（推给过这台手机的告诉它已失效），手机已允许记录一并清掉。记录里的 [SessionEvent.SubagentEnded]、[SessionEvent.BackgroundEnded] 是补充；
      * 几条信号重复到达时，只有先出队的一方 respond，后到的找不到条目，什么也不做。
      */
     suspend fun onHookSubagentStopped(
@@ -268,7 +291,7 @@ class BridgeRouter(
         tabId: String,
         id: Long,
     ) {
-        settleLocally(tabId, { remove(id) }, respond = false) { texts.hookDeniedLocally() }
+        settleLocally(tabId, { remove(id) }, respond = false) { texts.hookDeniedLocally(it.step) }
     }
 
     /**
@@ -297,26 +320,29 @@ class BridgeRouter(
     }
 
     /**
-     * 本轮结束或中断时只放行主会话（无 agentId）挂起的请求，静默出队：主会话的确认活不过它所在的一轮，
+     * 本轮结束或中断时只放行主会话（无 agentId）挂起的请求（推给过这台手机的告诉它已失效）：主会话的确认活不过它所在的一轮，
      * 用作电脑端了结漏判（PostToolUse 对不上、提问选 Chat about this、允许后 Esc 中断等）的兜底。
      * 记录里的结束标记与 IDE 的完成信号（含读取边界不可靠时）都走这里。
      * 子代理的请求一律不动：后台的可能在本轮结束后才请求；子代理结束时由 [onHookSubagentStopped]（补充：记录里的结束事件）放行。
      * 不用「不在后台任务里」推断前台：绑定前就已启动的后台子代理不在记下的后台任务里。队首变了就推新的队首。
      */
-    private suspend fun releaseMainSessionHooks(tabId: String) = releaseQuietly(tabId) { drainMainSession() }
+    private suspend fun releaseMainSessionHooks(tabId: String) = releaseExpired(tabId) { drainMainSession() }
 
     /**
-     * 子代理结束（后台的任务结束通知、前台的 Agent 工具结果）：它挂起的请求不会再有人答，静默放行。记录里后台子代理的任务 id（`toolUseResult.agentId`、
+     * 子代理结束（后台的任务结束通知、前台的 Agent 工具结果）：它挂起的请求不会再有人答，放行（推给过这台手机的告诉它已失效）。记录里后台子代理的任务 id（`toolUseResult.agentId`、
      * `<task-id>`）与 hook 请求的 `agent_id` 是同一个值（子代理记录文件名 `subagents/agent-<id>.jsonl` 两边一致）；
      * 后台命令的任务 id 对不上任何请求，不受影响。
      */
     private suspend fun releaseAgentHooks(
         tabId: String,
         agentId: String,
-    ) = releaseQuietly(tabId) { drainAgent(agentId) }
+    ) = releaseExpired(tabId) { drainAgent(agentId) }
 
-    /** 按 [take] 静默出队并 respond(Pass)；队首变了就推新的队首。 */
-    private suspend fun releaseQuietly(
+    /**
+     * 按 [take] 出队并 respond(Pass)。推给过这台手机的逐条告诉它已失效、不用再回——手机上那条消息还在，
+     * 不说的话之后看到再去回，回复会落空或被当成别的话；没推过的手机没见过，不提。队首变了就推新的队首。
+     */
+    private suspend fun releaseExpired(
         tabId: String,
         take: HookPromptQueue.() -> List<HookPromptQueue.Entry>,
     ) {
@@ -329,7 +355,9 @@ class BridgeRouter(
             }
         pushAfter(next) {
             released.forEach { it.respond(HookDecision.Pass) }
-            if (binding != null) push(binding, next)
+            binding ?: return
+            released.filter { it.mayHaveReached(binding.epoch) }.forEach { send(binding, texts.hookExpired(it.request.step)) }
+            push(binding, next)
         }
     }
 
@@ -343,7 +371,7 @@ class BridgeRouter(
      * 手机答 hook 队首：译成决定、出队并回给 hook，返回要发的确认与下一条推送。提问不是最后一题时只记下答案、推下一题，
      * 全部答完才一起回给 hook。须在提交锁内调用；respond 在 [lock] 外调用。
      * 允许的请求出队时记进「手机已允许」（见 [HookPromptQueue.answeredRemotely]），先于 respond，免得它的 PostToolUse 抢先到达；
-     * 回写失败（电脑端已按 Esc 断开）时撤销记录，告诉手机电脑端已拒绝，而不是手机的选择。
+     * 回写失败（电脑端已拒绝或按 Esc 断开）时撤销记录，告诉手机这句回复没有生效（[BridgeTexts.hookTooLate]）。
      */
     private fun answerHook(
         binding: Binding,
@@ -367,24 +395,33 @@ class BridgeRouter(
                             if (entry.questionIndex < questions.size) {
                                 return SubmitPhase.Hook(binding, listOfNotNull(queue.promptText(binding, entry)))
                             }
-                            HookDecision.Allow(answers = entry.answers.toMap()) to texts.hookAnswersSubmitted()
+                            HookDecision.Allow(answers = entry.answers.toMap()) to null
                         }
                         PromptKind.PERMISSION ->
-                            HookReplies.permission(reply).let { it to if (it is HookDecision.Allow) texts.hookAllowed() else texts.hookDenied() }
+                            HookReplies.permission(reply).let { it to forwardedNotice(it) { texts.hookWordsForwarded(request.step) } }
                         PromptKind.PLAN ->
                             // 允许词不作答：条目留在队首，提示回 1 或 2
                             (HookReplies.plan(reply) ?: return SubmitPhase.Hook(binding, listOf(texts.hookPlanChoose()))).let {
-                                it to if (it is HookDecision.Allow) texts.hookPlanApproved(it.modes == HookReplies.PLAN_FIRST_MODES) else texts.hookPlanRevising()
+                                it to forwardedNotice(it) { texts.hookPlanRevising() }
                             }
                     }
                 queue.remove(request.id)
                 if (decision is HookDecision.Allow) queue.answeredRemotely(request)
                 Triple(decision, ack, queue.nextPush(binding))
             }
-        if (entry.respond(decision)) return SubmitPhase.Hook(binding, listOf(ack), next)
+        if (entry.respond(decision)) return SubmitPhase.Hook(binding, listOfNotNull(ack), next)
         if (decision is HookDecision.Allow) synchronized(lock) { hookQueues[tabId]?.forgetAnsweredRemotely(request) }
-        return SubmitPhase.Hook(binding, listOf(texts.hookDeniedLocally()), next)
+        return SubmitPhase.Hook(binding, listOf(texts.hookTooLate(request.step)), next)
     }
+
+    /**
+     * 手机作答后的回执：选了选项（允许、拒绝、计划 1/2、提问答案）不回——选择是手机自己做的，复述一遍只是噪音。
+     * 只有手机说的话被当成对确认的回复、转给了 Claude 时才说明（[notice]），否则用户不知道那句话没进会话。
+     */
+    private inline fun forwardedNotice(
+        decision: HookDecision,
+        notice: () -> String,
+    ): String? = if (decision is HookDecision.Deny && HookReplies.forwardsWords(decision)) notice() else null
 
     /**
      * 队首还没送达、也不在推给 [binding] 的路上时排好推送内容，记下正在推；没有要推的返回 null。在 [lock] 内调用。
@@ -614,6 +651,8 @@ class BridgeRouter(
                     if (!echo) send(binding, texts.localInputLabel() + "\n" + event.text)
                 }
                 SessionEvent.ToolStarted -> tab(tabId) { toolStarted() }
+                is SessionEvent.ToolCalled -> tab(tabId) { toolCalled(event.toolUseId, HookToolDone(null, event.toolName, event.input, event.toolUseId)) }
+                is SessionEvent.ToolResulted -> onToolResulted(tabId, event)
                 SessionEvent.TurnStarted -> {
                     sendAfterReply(tabId)
                     tab(tabId) { startTurn() }

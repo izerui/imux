@@ -167,7 +167,7 @@ class ClaudeHookJsonTest {
         val parsed = body(text) as ClaudeHookJson.Body.Parsed
         assertEquals("PostToolUse", parsed.json["hook_event_name"].asString)
         assertEquals(
-            HookToolDone("a1", "Write", mapOf("file_path" to "\"/p/a.txt\"", "content" to "\"hi\"")),
+            HookToolDone("a1", "Write", mapOf("file_path" to "\"/p/a.txt\"", "content" to "\"hi\""), "t1"),
             ClaudeHookJson.toolDone(parsed.json),
         )
         assertEquals("颜色？ → 红", ClaudeHookJson.localAnswers(parsed.json["tool_response"]))
@@ -179,6 +179,13 @@ class ClaudeHookJsonTest {
         val text = """{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"ls"},"error":"$bigFile"}"""
         val parsed = body(text) as ClaudeHookJson.Body.Parsed
         assertEquals(HookToolDone(null, "Bash", mapOf("command" to "\"ls\"")), ClaudeHookJson.toolDone(parsed.json))
+    }
+
+    @Test fun `PostToolUse 带上 tool_use_id，缺失时为 null`() {
+        val withId = json("""{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_1","tool_input":{"command":"ls"}}""")
+        assertEquals(HookToolDone(null, "Bash", mapOf("command" to "\"ls\""), "toolu_1"), ClaudeHookJson.toolDone(withId))
+        val withoutId = json("""{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}""")
+        assertEquals(null, ClaudeHookJson.toolDone(withoutId)?.toolUseId)
     }
 
     @Test fun `SubagentStop 取出 agent_id，缺失时为 null`() {

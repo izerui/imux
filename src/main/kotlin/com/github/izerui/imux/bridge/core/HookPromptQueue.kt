@@ -12,6 +12,8 @@ internal class HookPromptQueue {
         val request: HookRequest,
         /** 回给 hook；返回是否真的写出（连接已被关闭时为 false）。 */
         val respond: (HookDecision) -> Boolean,
+        /** 到达时间（毫秒），与会话记录里工具结果的时间比先后，见 [matchResult]。 */
+        val arrivedAt: Long,
     ) {
         /** 已送达手机时的绑定代次；没送达过为 null。只有送达给当前代次的，手机的回复才算作答。 */
         var pushedEpoch: Long? = null
@@ -40,6 +42,9 @@ internal class HookPromptQueue {
     /** 手机已允许、等 PostToolUse 的请求，按作答顺序。 */
     private val answeredRemotely = ArrayDeque<HookRequest>()
 
+    /** 处理过完成信号的工具调用 id，按处理顺序，最多 [MAX_FINISHED] 条。 */
+    private val finished = LinkedHashSet<String>()
+
     val size: Int get() = entries.size
 
     fun add(entry: Entry) {
@@ -53,6 +58,13 @@ internal class HookPromptQueue {
 
     /** 电脑端允许后对上的请求：与 [done] 匹配（[HookRequest.matches]）的取最早一个出队。 */
     fun matchLocal(done: HookToolDone): Entry? = entries.firstOrNull { it.request.matches(done) }?.also { entries.remove(it) }
+
+    /**
+     * 会话记录里 [call] 的结果在 [at] 写入：与它匹配、且在此之前到达的最早一个请求出队。之后才到的同样请求是重试，
+     * 不是这一次调用的（记录轮询有延迟，结果可能晚于重试的请求才读到）。
+     */
+    fun matchResult(call: HookToolDone, at: Long): Entry? =
+        entries.firstOrNull { it.arrivedAt < at && it.request.matches(call) }?.also { entries.remove(it) }
 
     /** 与 [request] 同一代理、同一工具的旧条目全部出队，按到达顺序返回。 */
     fun supersededBy(request: HookRequest): List<Entry> =
@@ -78,6 +90,17 @@ internal class HookPromptQueue {
         return true
     }
 
+    /**
+     * 工具调用 [toolUseId] 的完成信号是否第一次到：PostToolUse 与记录里的工具结果是同一次调用的两路信号，先后不定，
+     * 只认先到的一路，免得后到的那路再对上另一个参数相同的请求。没有 id 的信号不去重。
+     */
+    fun firstFinish(toolUseId: String?): Boolean {
+        toolUseId ?: return true
+        if (!finished.add(toolUseId)) return false
+        if (finished.size > MAX_FINISHED) finished.remove(finished.first())
+        return true
+    }
+
     /** 本轮结束：主会话（无 agentId）的条目全部出队，按到达顺序返回，手机已允许的主会话记录一并清掉；子代理的留着。 */
     fun drainMainSession(): List<Entry> {
         answeredRemotely.removeAll { it.agentId == null }
@@ -95,5 +118,6 @@ internal class HookPromptQueue {
 
     private companion object {
         const val MAX_ANSWERED_REMOTELY = 32
+        const val MAX_FINISHED = 200
     }
 }

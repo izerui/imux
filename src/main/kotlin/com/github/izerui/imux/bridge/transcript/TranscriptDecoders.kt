@@ -9,6 +9,7 @@ import com.github.izerui.imux.model.AgentType
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import java.time.Instant
 
 /**
  * 把会话记录的一行解成桥接事件。全文保留，不截断、不压缩换行——
@@ -42,7 +43,7 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         if (message.string("model") == "<synthetic>" && !root.flag("isApiErrorMessage")) return emptyList()
         val content = message.get("content") ?: return emptyList()
         return when (message.string("role")) {
-            "user" -> backgroundStarted(root, content) + userEvents(content, humanOrigin(root))
+            "user" -> backgroundStarted(root, content) + toolResults(root, content) + userEvents(content, humanOrigin(root))
             // 一条消息的各个块分行写入且都带 stop_reason；只在含正文的那一行标记结束，结论才在结束之前。
             // 除了还要调工具（tool_use、pause_turn），其余收尾都算本轮结束：end_turn 之外，
             // 输出超长截断、API 报错也会带着正文停下，漏标的话这一轮就没有结论发出
@@ -131,9 +132,26 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         return blocks(content).flatMap { block ->
             when (block.string("type")) {
                 "text" -> listOfNotNull(block.string("text")?.let(::assistantText))
-                "tool_use" -> listOfNotNull(backgroundLaunched(block), SessionEvent.ToolStarted)
+                "tool_use" -> listOfNotNull(backgroundLaunched(block), toolCalled(block), SessionEvent.ToolStarted)
                 else -> emptyList()
             }
+        }
+    }
+
+    private fun toolCalled(toolUse: JsonObject): SessionEvent? {
+        val id = toolUse.string("id") ?: return null
+        val name = toolUse.string("name") ?: return null
+        return SessionEvent.ToolCalled(id, name, ClaudeToolInputs.fields(toolUse.obj("input") ?: JsonObject()))
+    }
+
+    /** 工具结果块：带这一行的时间，没有时间或解析不出的不发（对不上请求到达的先后，宁可不了结）。 */
+    private fun toolResults(
+        root: JsonObject,
+        content: JsonElement,
+    ): List<SessionEvent> {
+        val at = root.string("timestamp")?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() } ?: return emptyList()
+        return blocks(content).filter { it.string("type") == "tool_result" }.mapNotNull { block ->
+            block.string("tool_use_id")?.let { SessionEvent.ToolResulted(it, at, block.flag("is_error")) }
         }
     }
 

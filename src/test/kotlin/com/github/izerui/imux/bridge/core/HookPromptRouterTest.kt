@@ -83,7 +83,11 @@ class HookPromptRouterTest {
 
         override fun multiSelectMark() = "(多选)"
 
-        override fun promptAnsweredLocally(answer: String?) = "ANSWERED_LOCALLY($answer)"
+        override fun promptAnsweredLocally(step: String, answer: String?) = if (answer == null) "HANDLED_LOCALLY($step)" else "ANSWERED_LOCALLY($answer)"
+
+        override fun planApprovedLocally(step: String) = "PLAN_APPROVED_LOCALLY($step)"
+
+        override fun promptHandledLocally(step: String) = "HANDLED_LOCALLY($step)"
 
         override fun promptRejected() = "PROMPT_REJECTED"
 
@@ -119,13 +123,7 @@ class HookPromptRouterTest {
 
         override fun hookQueued(count: Int) = "HOOK_QUEUED($count)"
 
-        override fun hookAllowed() = "HOOK_ALLOWED"
-
-        override fun hookDenied() = "HOOK_DENIED"
-
-        override fun hookAnswersSubmitted() = "HOOK_ANSWERS_SUBMITTED"
-
-        override fun hookPlanApproved(firstOption: Boolean) = "HOOK_PLAN_APPROVED($firstOption)"
+        override fun hookWordsForwarded(step: String) = "HOOK_WORDS_FORWARDED($step)"
 
         override fun hookPlanRevising() = "HOOK_PLAN_REVISING"
 
@@ -133,9 +131,13 @@ class HookPromptRouterTest {
 
         override fun hookAnswerFirst() = "HOOK_ANSWER_FIRST"
 
-        override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
+        override fun hookAllowedLocally(step: String) = "HOOK_ALLOWED_LOCALLY($step)"
 
-        override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"
+        override fun hookDeniedLocally(step: String) = "HOOK_DENIED_LOCALLY($step)"
+
+        override fun hookExpired(step: String) = "HOOK_EXPIRED($step)"
+
+        override fun hookTooLate(step: String) = "HOOK_TOO_LATE($step)"
     }
 
     private class FakeAttachment : InboundAttachment {
@@ -143,6 +145,9 @@ class HookPromptRouterTest {
 
         override suspend fun fetch(maxBytes: Long): FetchResult = error("路由器不应直接调用 fetch")
     }
+
+    /** 路由器的时钟：请求按它记下到达时间，与记录里工具结果的时间比先后。 */
+    private var clock = 0L
 
     private val registry = BindingRegistry()
     private val port = FakePort()
@@ -156,6 +161,7 @@ class HookPromptRouterTest {
             Texts,
             attachmentStore = { _, _ -> PlaceResult.Saved(".imux/a.png") },
             notReadyRetryDelayMs = 0,
+            now = { clock },
         )
 
     private fun inbound(
@@ -237,7 +243,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `权限请求推送内容与来源，回 1 后允许并确认`() =
+    fun `权限请求推送内容与来源，回 1 后允许且不回执`() =
         runBlocking {
             bind()
             val pending = request(1, agentType = "general-purpose")
@@ -247,12 +253,12 @@ class HookPromptRouterTest {
             assertTrue(pushed, pushed.contains("rm a.txt"))
             assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "1")))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
-            assertEquals("HOOK_ALLOWED", sentTexts().last())
+            assertEquals(listOf(pushed), sentTexts())
             assertTrue(port.submitted.isEmpty())
         }
 
     @Test
-    fun `其他说法拒绝并把原话交给 Claude`() =
+    fun `其他说法拒绝并把原话交给 Claude，告诉手机这句话被当作对确认的回复`() =
         runBlocking {
             bind()
             val pending = request(1)
@@ -261,8 +267,40 @@ class HookPromptRouterTest {
                 listOf<HookDecision>(HookDecision.Deny("The user denied this tool call from their phone and said: 改用 git rm")),
                 pending.decisions,
             )
-            assertEquals("HOOK_DENIED", sentTexts().last())
+            assertEquals("HOOK_WORDS_FORWARDED(rm a.txt)", sentTexts().last())
             assertTrue(port.submitted.isEmpty())
+        }
+
+    @Test
+    fun `回拒绝词只拒绝，不回执`() =
+        runBlocking {
+            bind()
+            val pending = request(1)
+            router.onInbound(inbound("m1", "拒绝"))
+            assertEquals(listOf<HookDecision>(HookDecision.Deny("The user denied this tool call from their phone.")), pending.decisions)
+            assertEquals(1, sentTexts().size)
+        }
+
+    @Test
+    fun `本轮结束、中断与子代理结束撤掉推过的确认时各告诉手机已失效，排队没推过的不提`() =
+        runBlocking {
+            bind()
+            // 本轮结束：推过的队首告诉手机，排队的第二条没推过、不提，随后它成为队首被推出
+            request(1, detail = "rm a.txt")
+            request(2, detail = "rm b.txt", agentId = "a1", agentType = "general-purpose")
+            request(3, detail = "rm c.txt")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnEnded))
+            val afterEnd = sentTexts().drop(1)
+            assertTrue(afterEnd.joinToString(), afterEnd.contains("HOOK_EXPIRED(rm a.txt)"))
+            assertFalse(afterEnd.joinToString(), afterEnd.contains("HOOK_EXPIRED(rm c.txt)"))
+            assertTrue(afterEnd.last(), afterEnd.last().startsWith("HOOK_PERMISSION(") && afterEnd.last().contains("rm b.txt"))
+            // 子代理结束：它推过的确认告诉手机
+            router.onHookSubagentStopped("tab-1", "a1")
+            assertEquals("HOOK_EXPIRED(rm b.txt)", sentTexts().last())
+            // 中断：推过的主会话确认告诉手机
+            request(4, detail = "rm d.txt")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            assertTrue(sentTexts().joinToString(), sentTexts().contains("HOOK_EXPIRED(rm d.txt)"))
         }
 
     @Test
@@ -282,7 +320,7 @@ class HookPromptRouterTest {
             // 补推送达后，下一句才是作答
             router.onInbound(inbound("m2", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
-            assertEquals("HOOK_ALLOWED", sentTexts().last())
+            assertEquals(2, sentTexts().size)
             assertTrue(port.submitted.isEmpty())
         }
 
@@ -349,11 +387,14 @@ class HookPromptRouterTest {
             bind()
             request(1, toolName = "ExitPlanMode", detail = "# 旧计划")
             // 新计划作废旧计划时先告诉手机，这条挂住；协程在推新计划之前被取消
-            channel.hang = { it.startsWith("ANSWERED_LOCALLY") }
+            channel.hang = { it.startsWith("HANDLED_LOCALLY") }
             val job = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
                 request(2, toolName = "ExitPlanMode", detail = "# 新计划")
             }
             job.cancelAndJoin()
+            // 确实挂在作废通知上，而不是匹配不上直接发完
+            assertTrue(channel.attempts.joinToString(), channel.attempts.contains("HANDLED_LOCALLY(旧计划)"))
+            assertFalse(channel.sent.joinToString { it.text }, channel.sent.any { it.text == "PLAN(# 新计划)" })
             channel.hang = { false }
             router.onWaiting("tab-1", "plan")
             assertEquals("PLAN(# 新计划)", sentTexts().last())
@@ -445,10 +486,10 @@ class HookPromptRouterTest {
             assertEquals(1, sentTexts().size)
             router.onInbound(inbound("m1", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), first.decisions)
-            val next = sentTexts().drop(1)
-            assertEquals("HOOK_ALLOWED", next[0])
-            assertTrue(next[1], next[1].contains("rm b.txt"))
-            assertTrue(next[1], next[1].endsWith("\n\nHOOK_QUEUED(1)"))
+            // 不回执，直接推下一个
+            val next = sentTexts().drop(1).single()
+            assertTrue(next, next.contains("rm b.txt"))
+            assertTrue(next, next.endsWith("\n\nHOOK_QUEUED(1)"))
             assertTrue(second.decisions.isEmpty())
             router.onInbound(inbound("m2", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), second.decisions)
@@ -459,7 +500,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `提问一题一题答，最后一次性提交答案`() =
+    fun `提问一题一题答，最后一次性提交答案，不回执`() =
         runBlocking {
             bind()
             val pending = request(1, toolName = "AskUserQuestion", detail = "", questions = listOf(colors, fruits))
@@ -472,29 +513,39 @@ class HookPromptRouterTest {
                 listOf<HookDecision>(HookDecision.Allow(answers = mapOf("颜色？" to "绿", "水果？" to "苹果, 橙子"))),
                 pending.decisions,
             )
-            assertEquals("HOOK_ANSWERS_SUBMITTED", sentTexts().last())
+            assertEquals(2, sentTexts().size)
             assertTrue(port.submitted.isEmpty())
         }
 
     @Test
-    fun `计划回 1 按电脑第 1 项批准`() =
+    fun `计划回 1 按电脑第 1 项批准，不回执`() =
         runBlocking {
             bind()
             val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
             router.onInbound(inbound("m1", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("auto", "bypassPermissions"))), pending.decisions)
-            assertEquals("HOOK_PLAN_APPROVED(true)", sentTexts().last())
+            assertEquals(listOf("PLAN(# 计划)"), sentTexts())
         }
 
     @Test
-    fun `计划回 2 批准并切手动模式`() =
+    fun `计划回 2 批准并切手动模式，不回执`() =
         runBlocking {
             bind()
             val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
             assertEquals(listOf("PLAN(# 计划)"), sentTexts())
             router.onInbound(inbound("m1", "2"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("default"))), pending.decisions)
-            assertEquals("HOOK_PLAN_APPROVED(false)", sentTexts().last())
+            assertEquals(listOf("PLAN(# 计划)"), sentTexts())
+        }
+
+    @Test
+    fun `计划回不执行只拒绝，不回执`() =
+        runBlocking {
+            bind()
+            val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
+            router.onInbound(inbound("m1", "不执行"))
+            assertEquals(listOf<HookDecision>(HookDecision.Deny("The user does not want to proceed with this plan yet.")), pending.decisions)
+            assertEquals(listOf("PLAN(# 计划)"), sentTexts())
         }
 
     @Test
@@ -511,7 +562,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `计划回别的话转告 Claude 修改`() =
+    fun `计划回别的话转告 Claude 修改，告诉手机这句话被当作修改意见`() =
         runBlocking {
             bind()
             val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划")
@@ -527,7 +578,7 @@ class HookPromptRouterTest {
             val pending = request(1, input = k)
             router.onHookToolDone("tab-1", done(), null)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
-            assertEquals("HOOK_ALLOWED_LOCALLY", sentTexts().last())
+            assertEquals("HOOK_ALLOWED_LOCALLY(rm a.txt)", sentTexts().last())
             assertEquals(2, sentTexts().size)
             assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "1")))
             assertEquals(listOf("1"), port.submitted)
@@ -555,7 +606,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `计划在电脑端批准后能对上`() =
+    fun `计划在电脑端批准后能对上，告诉手机批准的是哪个计划`() =
         runBlocking {
             bind()
             val pending = request(1, toolName = "ExitPlanMode", detail = "# 计划", input = mapOf("plan" to "\"# 计划\"", "planFilePath" to "\"/tmp/p.md\""))
@@ -563,7 +614,7 @@ class HookPromptRouterTest {
             router.onHookToolDone("tab-1", done("ExitPlanMode", input = emptyMap()), null)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
             val after = sentTexts().takeLast(2)
-            assertEquals("ANSWERED_LOCALLY(null)", after[0])
+            assertEquals("PLAN_APPROVED_LOCALLY(计划)", after[0])
             assertTrue(after[1], after[1].startsWith("HOOK_PERMISSION(") && after[1].contains("rm b.txt"))
             assertTrue(next.decisions.isEmpty())
         }
@@ -600,7 +651,7 @@ class HookPromptRouterTest {
             val old = request(1, toolName = "ExitPlanMode", detail = "# 旧计划")
             val revised = request(2, toolName = "ExitPlanMode", detail = "# 新计划")
             assertEquals(listOf<HookDecision>(HookDecision.Pass), old.decisions)
-            assertEquals(listOf("PLAN(# 旧计划)", "ANSWERED_LOCALLY(null)", "PLAN(# 新计划)"), sentTexts())
+            assertEquals(listOf("PLAN(# 旧计划)", "HANDLED_LOCALLY(旧计划)", "PLAN(# 新计划)"), sentTexts())
             assertTrue(revised.decisions.isEmpty())
             router.onInbound(inbound("m1", "2"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow(modes = listOf("default"))), revised.decisions)
@@ -618,7 +669,7 @@ class HookPromptRouterTest {
             val texts = sentTexts()
             assertEquals(3, texts.size)
             assertTrue(texts[0], texts[0].startsWith("QUESTION1/1(") && texts[0].contains("颜色？"))
-            assertEquals("ANSWERED_LOCALLY(null)", texts[1])
+            assertEquals("HANDLED_LOCALLY(颜色？)", texts[1])
             assertTrue(texts[2], texts[2].startsWith("QUESTION1/1(") && texts[2].contains("水果？"))
         }
 
@@ -671,7 +722,7 @@ class HookPromptRouterTest {
             bind()
             val pending = request(1)
             router.onHookClosed("tab-1", 1)
-            assertEquals("HOOK_DENIED_LOCALLY", sentTexts().last())
+            assertEquals("HOOK_DENIED_LOCALLY(rm a.txt)", sentTexts().last())
             assertTrue(pending.decisions.isEmpty())
             router.onInbound(inbound("m1", "1"))
             assertTrue(pending.decisions.isEmpty())
@@ -699,8 +750,7 @@ class HookPromptRouterTest {
             val pending = request(1, input = k)
             router.onInbound(inbound("m1", "1"))
             router.onHookToolDone("tab-1", done(), null)
-            assertEquals(2, sentTexts().size)
-            assertEquals("HOOK_ALLOWED", sentTexts().last())
+            assertEquals(1, sentTexts().size)
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), pending.decisions)
         }
 
@@ -715,7 +765,7 @@ class HookPromptRouterTest {
             // #1 跑完的 PostToolUse：对上的是手机允许过的 #1，不是排队的 #2
             router.onHookToolDone("tab-1", done(), null)
             assertTrue(second.decisions.isEmpty())
-            assertFalse(sentTexts().joinToString(), sentTexts().contains("HOOK_ALLOWED_LOCALLY"))
+            assertFalse(sentTexts().joinToString(), sentTexts().any { it.startsWith("HOOK_ALLOWED_LOCALLY") })
             router.onInbound(inbound("m2", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), second.decisions)
         }
@@ -731,7 +781,7 @@ class HookPromptRouterTest {
             // 再来一条同参数的 PostToolUse：这回是电脑端允许了 #2
             router.onHookToolDone("tab-1", done(), null)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), second.decisions)
-            assertEquals("HOOK_ALLOWED_LOCALLY", sentTexts().last())
+            assertEquals("HOOK_ALLOWED_LOCALLY(rm a.txt)", sentTexts().last())
         }
 
     @Test
@@ -746,7 +796,7 @@ class HookPromptRouterTest {
         }
 
     @Test
-    fun `电脑端已断开后手机才作答，允许与拒绝都告诉手机电脑端已拒绝`() =
+    fun `电脑端已断开后手机才作答，允许与拒绝都告诉手机回复没有生效`() =
         runBlocking {
             bind()
             val allowed = request(1, detail = "rm a.txt", input = k)
@@ -756,13 +806,13 @@ class HookPromptRouterTest {
             router.onInbound(inbound("m1", "1"))
             assertEquals(listOf<HookDecision>(HookDecision.Allow()), allowed.decisions)
             val afterAllow = sentTexts().drop(1)
-            assertEquals("HOOK_DENIED_LOCALLY", afterAllow[0])
-            assertFalse(afterAllow.joinToString(), afterAllow.contains("HOOK_ALLOWED"))
+            assertEquals("HOOK_TOO_LATE(rm a.txt)", afterAllow[0])
+            assertFalse(afterAllow.joinToString(), afterAllow.any { it.startsWith("HOOK_ALLOWED") })
             assertTrue(afterAllow[1], afterAllow[1].contains("rm b.txt"))
             router.onInbound(inbound("m2", "2"))
             assertEquals(1, denied.decisions.size)
-            assertEquals("HOOK_DENIED_LOCALLY", sentTexts().last())
-            assertFalse(sentTexts().joinToString(), sentTexts().contains("HOOK_DENIED"))
+            assertEquals("HOOK_TOO_LATE(rm b.txt)", sentTexts().last())
+            assertFalse(sentTexts().joinToString(), sentTexts().any { it.startsWith("HOOK_DENIED") })
         }
 
     @Test
@@ -786,7 +836,7 @@ class HookPromptRouterTest {
             router.onHookToolDone("tab-1", done(), null)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), first.decisions)
             assertTrue(second.decisions.isEmpty())
-            assertEquals("HOOK_ALLOWED_LOCALLY", sentTexts()[1])
+            assertEquals("HOOK_ALLOWED_LOCALLY(rm a.txt)", sentTexts()[1])
             assertTrue(sentTexts().last(), sentTexts().last().startsWith("HOOK_PERMISSION("))
             assertEquals(3, sentTexts().size)
         }
@@ -868,6 +918,146 @@ class HookPromptRouterTest {
             router.onSessionEvents("tab-1", listOf(SessionEvent.BackgroundEnded("a8")))
             assertEquals(listOf<HookDecision>(HookDecision.Pass), finished.decisions)
             assertEquals(listOf<HookDecision>(HookDecision.Pass), background.decisions)
+        }
+
+    @Test
+    fun `确认框超时被 Claude Code 拒绝后，记录里的结果了结请求，手机下一句照常提交`() =
+        runBlocking {
+            bind()
+            // 按这次事故的真实记录形状：发起命令那一行、两分钟后超时拒绝的结果行
+            val toolUse = """{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"rm -f x"}}]}}"""
+            val denied =
+                """{"type":"user","timestamp":"2026-11-12T10:28:05.048Z","message":{"role":"user","content":[""" +
+                    """{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Permission for this command was denied"}]}}"""
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(toolUse))
+            clock = java.time.Instant.parse("2026-11-12T10:26:05Z").toEpochMilli()
+            val pending = request(1, detail = "rm -f x", input = mapOf("command" to "\"rm -f x\""))
+            // 两分钟后超时：没有 PostToolUse，hook 连接也不关，只有记录里的拒绝结果
+            router.onSessionEvents("tab-1", ClaudeTranscriptDecoder.decode(denied))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+            assertEquals("HOOK_EXPIRED(rm -f x)", sentTexts().last())
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("m1", "做到什么程度了")))
+            assertEquals(listOf("做到什么程度了"), port.submitted)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+        }
+
+    @Test
+    fun `电脑端允许的结果先于 PostToolUse 读到时告诉手机已允许`() =
+        runBlocking {
+            bind()
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "Bash", k)))
+            clock = 1_000
+            val pending = request(1, input = k)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t1", 2_000, isError = false)))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+            assertEquals("HOOK_ALLOWED_LOCALLY(rm a.txt)", sentTexts().last())
+            router.onHookToolDone("tab-1", done(), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+            assertEquals(2, sentTexts().size)
+        }
+
+    @Test
+    fun `提问与计划的结果在记录里出错时也告诉手机已失效，写明是哪一个`() =
+        runBlocking {
+            bind()
+            val questions = mapOf("questions" to "[\"颜色？\"]")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "AskUserQuestion", questions)))
+            clock = 1_000
+            val question = request(1, toolName = "AskUserQuestion", detail = "{}", questions = listOf(colors), input = questions)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t1", 2_000, isError = true)))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), question.decisions)
+            assertEquals("HOOK_EXPIRED(颜色？)", sentTexts().last())
+            val plan = mapOf("plan" to "\"# 计划\"")
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t2", "ExitPlanMode", plan)))
+            val planRequest = request(2, toolName = "ExitPlanMode", detail = "# 计划", input = plan)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t2", 3_000, isError = true)))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), planRequest.decisions)
+            assertEquals("HOOK_EXPIRED(计划)", sentTexts().last())
+        }
+
+    @Test
+    fun `结果写入之后才到的同样请求是重试，旧结果不了结它`() =
+        runBlocking {
+            bind()
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "Bash", k)))
+            // 记录轮询有延迟：重试的请求 3000 到达，2000 写入的旧结果之后才读到
+            clock = 3_000
+            val retry = request(1, input = k)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t1", 2_000, isError = true)))
+            assertTrue(retry.decisions.isEmpty())
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), retry.decisions)
+        }
+
+    @Test
+    fun `记录里的结果只了结主会话参数相同的请求，子代理与并行的其它请求都不动`() =
+        runBlocking {
+            bind()
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "Bash", k)))
+            clock = 1_000
+            val agent = request(1, agentId = "a1", agentType = "general-purpose", input = k)
+            val parallel = request(2, input = mapOf("command" to "\"other\""))
+            val main = request(3, input = k)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t1", 2_000, isError = true)))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), main.decisions)
+            assertTrue(agent.decisions.isEmpty())
+            assertTrue(parallel.decisions.isEmpty())
+            assertTrue(agent.decisions.isEmpty())
+            assertTrue(parallel.decisions.isEmpty())
+        }
+
+    @Test
+    fun `没记过调用的结果什么也不做，即使队中有本来能对上的请求`() =
+        runBlocking {
+            bind()
+            clock = 1_000
+            val pending = request(1, input = k)
+            // 绑定前发起的调用：记录里只读到结果，没读到 tool_use
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("unknown", 2_000, isError = true)))
+            assertTrue(pending.decisions.isEmpty())
+            // 对照：记过的同样结果会了结它，说明上面没了结不是因为对不上
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "Bash", k), SessionEvent.ToolResulted("t1", 2_000, isError = true)))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
+        }
+
+    @Test
+    fun `同一次调用的两路完成信号只认先到的一路，后到的不了结另一个参数相同的请求`() =
+        runBlocking {
+            bind()
+            clock = 1_000
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "Bash", k), SessionEvent.ToolCalled("t2", "Bash", k)))
+            // PostToolUse 先到
+            val first = request(1, input = k)
+            val second = request(2, input = k)
+            router.onHookToolDone("tab-1", HookToolDone(null, "Bash", k, "t1"), null)
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), first.decisions)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t1", 2_000, isError = false)))
+            assertTrue(second.decisions.isEmpty())
+            // 记录先到
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t2", 2_000, isError = false)))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), second.decisions)
+            val third = request(3, input = k)
+            router.onHookToolDone("tab-1", HookToolDone(null, "Bash", k, "t2"), null)
+            assertTrue(third.decisions.isEmpty())
+        }
+
+    @Test
+    fun `手机允许的调用在记录里的结果先到时抵消记录，不了结参数相同的另一个请求，随后的 PostToolUse 也不了结`() =
+        runBlocking {
+            bind()
+            clock = 1_000
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolCalled("t1", "Bash", k)))
+            val first = request(1, input = k)
+            val second = request(2, input = k)
+            router.onInbound(inbound("m1", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), first.decisions)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.ToolResulted("t1", 2_000, isError = false)))
+            assertTrue(second.decisions.isEmpty())
+            router.onHookToolDone("tab-1", HookToolDone(null, "Bash", k, "t1"), null)
+            assertTrue(second.decisions.isEmpty())
+            // 第二个请求仍在队首，手机照常能答
+            router.onInbound(inbound("m2", "1"))
+            assertEquals(listOf<HookDecision>(HookDecision.Allow()), second.decisions)
         }
 
     @Test

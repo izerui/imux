@@ -26,7 +26,7 @@ internal object ClaudeHookJson {
         // 子代理来源以 agent_id 为准：--agent 启动的主会话也带 agent_type，但不是子代理
         val agentId = body.string("agent_id")
         val agentType = agentId?.let { body.string("agent_type") }
-        return HookRequest(id, toolName, agentId, agentType, ClaudeToolInputs.detail(toolName, input), questions, topLevel(input))
+        return HookRequest(id, toolName, agentId, agentType, ClaudeToolInputs.detail(toolName, input), questions, ClaudeToolInputs.fields(input))
     }
 
     /** 请求体的解析结果：解析出的 JSON 对象，或要直接回的状态码。 */
@@ -63,7 +63,7 @@ internal object ClaudeHookJson {
     private val TOOL_DONE_EVENTS = setOf("PostToolUse", "PostToolUseFailure", "SubagentStop")
 
     /**
-     * 流式读顶层对象，只留 `hook_event_name`、`tool_name`、`agent_id`、`tool_input`、`tool_response.answers`，
+     * 流式读顶层对象，只留 `hook_event_name`、`tool_name`、`agent_id`、`tool_use_id`、`tool_input`、`tool_response.answers`，
      * 其余字段跳过不建树。顶层不是对象时抛出。
      */
     private fun slim(reader: Reader): JsonObject {
@@ -72,7 +72,7 @@ internal object ClaudeHookJson {
         json.beginObject()
         while (json.hasNext()) {
             when (val name = json.nextName()) {
-                "hook_event_name", "tool_name", "agent_id" ->
+                "hook_event_name", "tool_name", "agent_id", "tool_use_id" ->
                     if (json.peek() == JsonToken.STRING) result.addProperty(name, json.nextString()) else json.skipValue()
                 "tool_input" -> result.add(name, JsonParser.parseReader(json))
                 "tool_response" -> {
@@ -98,12 +98,8 @@ internal object ClaudeHookJson {
     /** PostToolUse / PostToolUseFailure 解析成 [HookToolDone]；缺 tool_name 返回 null。 */
     fun toolDone(body: JsonObject): HookToolDone? {
         val toolName = body.string("tool_name") ?: return null
-        return HookToolDone(body.string("agent_id"), toolName, topLevel(body.obj("tool_input") ?: JsonObject()))
+        return HookToolDone(body.string("agent_id"), toolName, ClaudeToolInputs.fields(body.obj("tool_input") ?: JsonObject()), body.string("tool_use_id"))
     }
-
-    /** tool_input 的顶层字段 → 键名递归排序后的 JSON 字符串。 */
-    private fun topLevel(input: JsonObject): Map<String, String> =
-        input.entrySet().associate { (key, value) -> key to sorted(value).toString() }
 
     /** Pass → {}；Allow → updatedInput 为原 tool_input（提问加 answers）、modes 非空时按顺序各加一条 setMode；Deny → message。不带 interrupt（实测 5）。 */
     fun response(decision: HookDecision, toolInput: JsonObject): JsonObject {
@@ -149,14 +145,6 @@ internal object ClaudeHookJson {
                 "$question → ${if (answer.isJsonPrimitive) answer.asString else answer.toString()}"
             }
             .takeIf { it.isNotEmpty() }
-    }
-
-    private fun sorted(element: JsonElement): JsonElement = when {
-        element.isJsonObject -> JsonObject().also { copy ->
-            element.asJsonObject.entrySet().sortedBy { it.key }.forEach { (key, value) -> copy.add(key, sorted(value)) }
-        }
-        element.isJsonArray -> JsonArray().also { copy -> element.asJsonArray.forEach { copy.add(sorted(it)) } }
-        else -> element
     }
 
     private const val ASK_USER_QUESTION = "AskUserQuestion"

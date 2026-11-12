@@ -63,8 +63,17 @@ interface BridgeTexts {
     /** 跟在多选题题目后面的标注。 */
     fun multiSelectMark(): String
 
-    /** 推给手机的提问、计划已在电脑上处理；[answer] 是提问的作答（每题「问题 → 答案」），拿不到时为 null。 */
-    fun promptAnsweredLocally(answer: String?): String
+    /**
+     * 推给手机的提问 [step]（见 [HookRequest.step]）已在电脑上作答；[answer] 是每题「问题 → 答案」，已写明是哪道题，不再带 [step]；
+     * 拿不到时为 null，改说 [step] 已处理。
+     */
+    fun promptAnsweredLocally(step: String, answer: String?): String
+
+    /** 推给手机的计划 [step] 已在电脑上批准。 */
+    fun planApprovedLocally(step: String): String
+
+    /** 推给手机的提问或计划 [step] 已在电脑上处理（改稿后被新计划替换、新提问替换旧提问等，说不出具体选了什么）。 */
+    fun promptHandledLocally(step: String): String
 
     /** 推给手机的确认还挂着时回复带了附件，没有作答。 */
     fun promptRejected(): String
@@ -111,19 +120,10 @@ interface BridgeTexts {
     /** 推送的确认后面还有 [count] 个在排队。 */
     fun hookQueued(count: Int): String
 
-    /** 手机允许了权限请求。 */
-    fun hookAllowed(): String
+    /** 手机说的话被当作对权限请求 [step] 的回复：已拒绝这一步，原话转给了 Claude。选了选项（允许、拒绝）不回执。 */
+    fun hookWordsForwarded(step: String): String
 
-    /** 手机拒绝了权限请求（含说了别的要求）。 */
-    fun hookDenied(): String
-
-    /** 提问的各题答案已一次性交给 Claude。 */
-    fun hookAnswersSubmitted(): String
-
-    /** 手机批准了计划：[firstOption] 为真按电脑上的第 1 项切换模式（自动模式，跳过权限启动的会话恢复跳过权限），否则改文件时逐个确认。 */
-    fun hookPlanApproved(firstOption: Boolean): String
-
-    /** 手机没有批准计划，原话已交给 Claude。 */
+    /** 手机说的话被当作对计划的修改意见，转给了 Claude。选了选项（1、2、不执行）不回执。 */
     fun hookPlanRevising(): String
 
     /** 计划确认回了「好」「ok」这类允许词：没有作答，提示回 1 或 2 选择怎么执行。 */
@@ -132,11 +132,20 @@ interface BridgeTexts {
     /** 有等确认的请求时手机发了别的话：上面就是那个请求（刚补推过），请先回答；这句没有发给会话。 */
     fun hookAnswerFirst(): String
 
-    /** 推给手机的权限请求已在电脑上允许。 */
-    fun hookAllowedLocally(): String
+    /** 推给手机的权限请求 [step] 已在电脑上允许。 */
+    fun hookAllowedLocally(step: String): String
 
-    /** 推给手机的确认已在电脑上拒绝或按 Esc 关掉。 */
-    fun hookDeniedLocally(): String
+    /** 推给手机的权限请求 [step] 已在电脑上拒绝或按 Esc 取消（hook 连接被关闭）。 */
+    fun hookDeniedLocally(step: String): String
+
+    /**
+     * 推给手机的确认 [step] 没等到手机回复就过去了：记录里已有它的出错结果（电脑上拒绝，或等太久被 Claude Code 自动拒绝），
+     * 或它所在的一轮结束、中断，或发起它的子代理结束。告诉手机不用再回。
+     */
+    fun hookExpired(step: String): String
+
+    /** 手机回复了权限请求 [step]，但回写时它已在电脑上拒绝或取消：回复没有生效。 */
+    fun hookTooLate(step: String): String
 }
 
 sealed interface PlaceResult {

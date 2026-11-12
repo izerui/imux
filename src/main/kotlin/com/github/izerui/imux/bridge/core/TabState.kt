@@ -42,6 +42,19 @@ internal class TabState {
     /** 还在运行的后台任务，按开始顺序。不随轮次清空：后台任务本来就跨轮运行。 */
     private val running = LinkedHashSet<String>()
 
+    /** 主会话的工具调用（工具名与参数），按工具调用 id；等结果出现时取走。中断的调用等不到结果，所以限量。 */
+    private val toolCalls = boundedMap<String, HookToolDone>()
+
+    fun toolCalled(
+        toolUseId: String,
+        call: HookToolDone,
+    ) {
+        toolCalls[toolUseId] = call
+    }
+
+    /** 取走 [toolUseId] 的调用；没记过（绑定前发起、已被挤掉）返回 null。 */
+    fun takeToolCall(toolUseId: String): HookToolDone? = toolCalls.remove(toolUseId)
+
     fun backgroundLaunched(
         toolUseId: String,
         description: String?,

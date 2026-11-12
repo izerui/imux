@@ -81,7 +81,11 @@ class BridgeRouterTest {
 
         override fun multiSelectMark() = "(多选)"
 
-        override fun promptAnsweredLocally(answer: String?) = "ANSWERED_LOCALLY($answer)"
+        override fun promptAnsweredLocally(step: String, answer: String?) = "ANSWERED_LOCALLY($answer)"
+
+        override fun planApprovedLocally(step: String) = "PLAN_APPROVED_LOCALLY"
+
+        override fun promptHandledLocally(step: String) = "HANDLED_LOCALLY"
 
         override fun promptRejected() = "PROMPT_REJECTED"
 
@@ -120,13 +124,7 @@ class BridgeRouterTest {
 
         override fun hookQueued(count: Int) = "HOOK_QUEUED($count)"
 
-        override fun hookAllowed() = "HOOK_ALLOWED"
-
-        override fun hookDenied() = "HOOK_DENIED"
-
-        override fun hookAnswersSubmitted() = "HOOK_ANSWERS_SUBMITTED"
-
-        override fun hookPlanApproved(firstOption: Boolean) = "HOOK_PLAN_APPROVED($firstOption)"
+        override fun hookWordsForwarded(step: String) = "HOOK_WORDS_FORWARDED"
 
         override fun hookPlanRevising() = "HOOK_PLAN_REVISING"
 
@@ -134,9 +132,13 @@ class BridgeRouterTest {
 
         override fun hookAnswerFirst() = "HOOK_ANSWER_FIRST"
 
-        override fun hookAllowedLocally() = "HOOK_ALLOWED_LOCALLY"
+        override fun hookAllowedLocally(step: String) = "HOOK_ALLOWED_LOCALLY"
 
-        override fun hookDeniedLocally() = "HOOK_DENIED_LOCALLY"
+        override fun hookDeniedLocally(step: String) = "HOOK_DENIED_LOCALLY"
+
+        override fun hookExpired(step: String) = "HOOK_EXPIRED"
+
+        override fun hookTooLate(step: String) = "HOOK_TOO_LATE"
     }
 
     private class FakeAttachment(override val kind: AttachmentKind = AttachmentKind.IMAGE) : InboundAttachment {

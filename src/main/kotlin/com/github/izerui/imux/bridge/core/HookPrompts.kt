@@ -36,6 +36,22 @@ data class HookRequest(
         return input.all { (key, value) -> done.input[key]?.let { it == value } ?: true }
     }
 
+    /**
+     * 回执里指代这一步，超过 [MAX_STEP] 截短：提问取第一题；其余取要批准内容的第一行（命令的说明，没有说明就是命令本身；
+     * 计划去掉标题的 `#`）。内容为空，或只有参数原文（JSON，没有命令、路径、网址可取）时用工具名。
+     */
+    val step: String
+        get() {
+            val line =
+                if (kind == PromptKind.QUESTION) {
+                    questions?.firstOrNull()?.question?.trim()
+                } else {
+                    detail.lineSequence().map { it.trim().trimStart('#').trim() }.firstOrNull { it.isNotEmpty() }
+                }
+            if (line.isNullOrEmpty() || line.startsWith("{")) return toolName
+            return if (line.length > MAX_STEP) line.take(MAX_STEP - 1) + "…" else line
+        }
+
     /** AskUserQuestion → QUESTION，ExitPlanMode → PLAN，其余 → PERMISSION。 */
     val kind: PromptKind
         get() = when (toolName) {
@@ -43,13 +59,21 @@ data class HookRequest(
             PermissionPrompts.EXIT_PLAN_MODE -> PromptKind.PLAN
             else -> PromptKind.PERMISSION
         }
+
+    private companion object {
+        const val MAX_STEP = 40
+    }
 }
 
-/** 一次 PostToolUse / PostToolUseFailure：电脑端允许后工具跑完。[input] 同 [HookRequest.input]。 */
+/**
+ * 一次工具调用跑完（PostToolUse / PostToolUseFailure，或主会话记录里的工具结果）。[input] 同 [HookRequest.input]。
+ * [toolUseId] 是这次调用的 id（PermissionRequest 没有，见实测 14），同一次调用的两路完成信号按它去重。
+ */
 data class HookToolDone(
     val agentId: String?,
     val toolName: String,
     val input: Map<String, String>,
+    val toolUseId: String? = null,
 )
 
 /** hook 路径的决定：交给电脑、允许、拒绝。 */
@@ -79,6 +103,9 @@ object HookReplies {
      * 以跳过权限方式启动的会话最终为 bypass；其余会话里 bypass 是空操作，停在 auto。顺序不能反。
      */
     val PLAN_FIRST_MODES = listOf("auto", "bypassPermissions")
+
+    /** [decision] 是否把手机的原话转给了 Claude（权限的拒绝附言、计划的修改意见），而不是拒绝词译成的通用拒绝。 */
+    fun forwardsWords(decision: HookDecision.Deny): Boolean = decision.message != DENIED && decision.message != PLAN_DENIED
 
     /** 权限确认：允许词 → Allow()；拒绝词或像选项编号/字母 → 通用拒绝；其余 → 拒绝并附原话。 */
     fun permission(reply: String): HookDecision {

@@ -5,10 +5,13 @@ import com.github.izerui.imux.bridge.core.AskedQuestion
 import com.github.izerui.imux.bridge.json.flag
 import com.github.izerui.imux.bridge.json.objects
 import com.github.izerui.imux.bridge.json.string
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 
 /**
- * Claude 工具调用参数的解析：hook 入口从 tool_input 得出「要批准的内容」与题目。
+ * Claude 工具调用参数的解析：hook 入口从 tool_input 得出「要批准的内容」与题目；
+ * hook 与会话记录都用 [fields] 把参数规范化，两边才能按参数对上同一次调用。
  */
 object ClaudeToolInputs {
     /** 要批准的内容：计划取全文，命令连同说明，其余取文件路径、网址、查询或参数原文；计划按 8000 截短，其它 1500。 */
@@ -23,6 +26,17 @@ object ClaudeToolInputs {
             }
         val max = if (name == EXIT_PLAN_MODE) MAX_PLAN_DETAIL else MAX_TOOL_DETAIL
         return if (detail.length > max) detail.take(max - 1) + "…" else detail
+    }
+
+    /** 参数的顶层字段 → 键名递归排序后的 JSON 字符串。 */
+    fun fields(input: JsonObject): Map<String, String> = input.entrySet().associate { (key, value) -> key to sorted(value).toString() }
+
+    private fun sorted(element: JsonElement): JsonElement = when {
+        element.isJsonObject -> JsonObject().also { copy ->
+            element.asJsonObject.entrySet().sortedBy { it.key }.forEach { (key, value) -> copy.add(key, sorted(value)) }
+        }
+        element.isJsonArray -> JsonArray().also { copy -> element.asJsonArray.forEach { copy.add(sorted(it)) } }
+        else -> element
     }
 
     /** 题目与选项；任何一题缺题目或选项返回 null。 */

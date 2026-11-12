@@ -37,8 +37,12 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun multiSelectMark() = ImuxBundle.message("bridge.status.question.multiSelect")
 
-    override fun promptAnsweredLocally(answer: String?) =
-        if (answer == null) ImuxBundle.message("bridge.status.promptHandledLocally") else ImuxBundle.message("bridge.status.promptAnsweredLocally", answer)
+    override fun promptAnsweredLocally(step: String, answer: String?) =
+        if (answer == null) promptHandledLocally(step) else ImuxBundle.message("bridge.status.promptAnsweredLocally", answer)
+
+    override fun planApprovedLocally(step: String) = ImuxBundle.message("bridge.status.planApprovedLocally", step)
+
+    override fun promptHandledLocally(step: String) = ImuxBundle.message("bridge.status.promptHandledLocally", step)
 
     override fun promptRejected() = ImuxBundle.message("bridge.reply.promptRejected")
 
@@ -92,14 +96,7 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun hookQueued(count: Int) = ImuxBundle.message("bridge.status.hookQueued", count)
 
-    override fun hookAllowed() = ImuxBundle.message("bridge.reply.hookAllowed")
-
-    override fun hookDenied() = ImuxBundle.message("bridge.reply.hookDenied")
-
-    override fun hookAnswersSubmitted() = ImuxBundle.message("bridge.reply.hookAnswersSubmitted")
-
-    override fun hookPlanApproved(firstOption: Boolean) =
-        if (firstOption) ImuxBundle.message("bridge.reply.hookPlanApproved.auto") else ImuxBundle.message("bridge.reply.hookPlanApproved.manual")
+    override fun hookWordsForwarded(step: String) = ImuxBundle.message("bridge.reply.hookWordsForwarded", step)
 
     override fun hookPlanRevising() = ImuxBundle.message("bridge.reply.hookPlanRevising")
 
@@ -107,7 +104,11 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun hookAnswerFirst() = ImuxBundle.message("bridge.reply.hookAnswerFirst")
 
-    override fun hookAllowedLocally() = ImuxBundle.message("bridge.status.hookAllowedLocally")
+    override fun hookAllowedLocally(step: String) = ImuxBundle.message("bridge.status.hookAllowedLocally", step)
 
-    override fun hookDeniedLocally() = ImuxBundle.message("bridge.status.hookDeniedLocally")
+    override fun hookDeniedLocally(step: String) = ImuxBundle.message("bridge.status.hookDeniedLocally", step)
+
+    override fun hookExpired(step: String) = ImuxBundle.message("bridge.status.hookExpired", step)
+
+    override fun hookTooLate(step: String) = ImuxBundle.message("bridge.reply.hookTooLate", step)
 }

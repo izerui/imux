@@ -8,6 +8,33 @@ import org.junit.Test
 
 /** hook 路径的请求构建、手机回复到决定的翻译、提问回答。 */
 class HookPromptsTest {
+    private fun request(
+        toolName: String,
+        detail: String,
+        questions: List<AskedQuestion>? = null,
+    ) = HookRequest(1, toolName, null, null, detail, questions, emptyMap())
+
+    @Test
+    fun `回执里的这一步：命令取说明行，提问取第一题，计划去掉标题井号，长的截短，参数原文与空内容都用工具名`() {
+        assertEquals("删除构建目录", request("Bash", "删除构建目录\nrm -rf build").step)
+        assertEquals("颜色？", request("AskUserQuestion", "{\"questions\":[]}", listOf(AskedQuestion("颜色？", false, listOf(AskedOption("红", null))))).step)
+        assertEquals("改造计划", request("ExitPlanMode", "\n# 改造计划\n\n步骤").step)
+        val long = request("Bash", "a".repeat(60)).step
+        assertEquals(40, long.length)
+        assertTrue(long, long.endsWith("…"))
+        assertEquals("mcp__x__run", request("mcp__x__run", "{\"arg\":1}").step)
+        assertEquals("Bash", request("Bash", "  \n ").step)
+        assertEquals("AskUserQuestion", request("AskUserQuestion", "", emptyList()).step)
+    }
+
+    @Test
+    fun `转告判定：权限与计划的原话各算转告，两种通用拒绝都不算`() {
+        assertTrue(HookReplies.forwardsWords(HookReplies.permission("改用 git rm") as HookDecision.Deny))
+        assertTrue(HookReplies.forwardsWords(HookReplies.plan("先别动数据库") as HookDecision.Deny))
+        assertFalse(HookReplies.forwardsWords(HookReplies.permission("拒绝") as HookDecision.Deny))
+        assertFalse(HookReplies.forwardsWords(HookReplies.plan("不执行") as HookDecision.Deny))
+    }
+
     @Test
     fun `权限：允许类回复只允许这一次`() {
         assertEquals(HookDecision.Allow(), HookReplies.permission("好"))

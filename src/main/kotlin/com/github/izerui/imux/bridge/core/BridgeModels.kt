@@ -73,6 +73,26 @@ sealed interface SessionEvent {
     data object ToolStarted : SessionEvent
 
     /**
+     * Claude 主会话的一次工具调用：工具名与规范化参数（同 [HookRequest.input]），记下来等 [ToolResulted] 时对上挂起的 hook 请求。
+     * 与 [ToolStarted] 一起发出。
+     */
+    data class ToolCalled(
+        val toolUseId: String,
+        val toolName: String,
+        val input: Map<String, String>,
+    ) : SessionEvent
+
+    /**
+     * Claude 主会话的工具结果写进了记录，[at] 是这一行的时间（毫秒）。不论允许后跑完、电脑端拒绝，
+     * 还是确认框超时被 Claude Code 自己拒绝（这时既没有 PostToolUse，hook 连接也不关），都会有这一行。
+     */
+    data class ToolResulted(
+        val toolUseId: String,
+        val at: Long,
+        val isError: Boolean,
+    ) : SessionEvent
+
+    /**
      * CLI 注入的消息开启了新一轮（后台任务完成通知、Codex 的 task_started 等），不是输入，不转发。
      * 只用来结束上一轮的“已结算”状态，否则这一轮的过程说明会被当成迟到的最终回复逐条推送。
      */

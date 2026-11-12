@@ -31,7 +31,7 @@ class TranscriptDecodersTest {
     }
 
     @Test
-    fun `Claude 区分用户文本、助手文本与工具调用且保留换行，工具结果不产生事件`() {
+    fun `Claude 区分用户文本、助手文本与工具调用且保留换行，没有时间的工具结果不产生事件`() {
         val user = """{"type":"user","uuid":"u1","origin":{"kind":"human"},"message":{"role":"user","content":"第一行\n第二行"}}"""
         val assistant =
             """{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[""" +
@@ -44,10 +44,32 @@ class TranscriptDecodersTest {
 
         assertEquals(listOf(SessionEvent.UserText("第一行\n第二行")), ClaudeTranscriptDecoder.decode(user))
         assertEquals(
-            listOf(SessionEvent.AssistantText("```kt\nval a = 1\n```"), SessionEvent.ToolStarted),
+            listOf(SessionEvent.AssistantText("```kt\nval a = 1\n```"), SessionEvent.ToolCalled("t1", "Read", emptyMap()), SessionEvent.ToolStarted),
             ClaudeTranscriptDecoder.decode(assistant),
         )
-        assertTrue("工具结果不产生事件", ClaudeTranscriptDecoder.decode(result).isEmpty())
+        assertTrue("没有时间的工具结果不产生事件", ClaudeTranscriptDecoder.decode(result).isEmpty())
+    }
+
+    @Test
+    fun `Claude 工具调用带规范化参数，工具结果带行时间与是否出错`() {
+        val call =
+            """{"type":"assistant","message":{"role":"assistant","content":[""" +
+                """{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"rm -f ${'$'}OUT/*.png","opts":{"b":1,"a":2}}}]}}"""
+        assertEquals(
+            listOf(SessionEvent.ToolCalled("t1", "Bash", mapOf("command" to "\"rm -f ${'$'}OUT/*.png\"", "opts" to "{\"a\":2,\"b\":1}")), SessionEvent.ToolStarted),
+            ClaudeTranscriptDecoder.decode(call),
+        )
+        val denied =
+            """{"type":"user","timestamp":"2026-11-12T10:28:05.048Z","message":{"role":"user","content":[""" +
+                """{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Permission for this command was denied"}]}}"""
+        val ok =
+            """{"type":"user","timestamp":"2026-11-12T10:28:05.048Z","message":{"role":"user","content":[""" +
+                """{"type":"tool_result","tool_use_id":"t2","content":"ok"}]}}"""
+        val at = java.time.Instant.parse("2026-11-12T10:28:05.048Z").toEpochMilli()
+        assertEquals(listOf(SessionEvent.ToolResulted("t1", at, true)), ClaudeTranscriptDecoder.decode(denied))
+        assertEquals(listOf(SessionEvent.ToolResulted("t2", at, false)), ClaudeTranscriptDecoder.decode(ok))
+        val badTime = ok.replace("2026-11-12T10:28:05.048Z", "昨天")
+        assertTrue("时间解析不出不发", ClaudeTranscriptDecoder.decode(badTime).isEmpty())
     }
 
     @Test
@@ -239,7 +261,14 @@ class TranscriptDecodersTest {
         val launch =
             """{"type":"assistant","message":{"role":"assistant","content":[""" +
                 """{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"pnpm build","description":"完整构建","run_in_background":true}}]}}"""
-        assertEquals(listOf(SessionEvent.BackgroundLaunched("t1", "完整构建"), SessionEvent.ToolStarted), claudeEvents(launch))
+        assertEquals(
+            listOf(
+                SessionEvent.BackgroundLaunched("t1", "完整构建"),
+                SessionEvent.ToolCalled("t1", "Bash", mapOf("command" to "\"pnpm build\"", "description" to "\"完整构建\"", "run_in_background" to "true")),
+                SessionEvent.ToolStarted,
+            ),
+            claudeEvents(launch),
+        )
 
         val bash =
             """{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b9"}]},""" +
