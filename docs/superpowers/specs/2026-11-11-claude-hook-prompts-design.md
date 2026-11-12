@@ -58,6 +58,7 @@ Claude Code 的 `PermissionRequest` hook 能拿到每一次要弹框的调用（
 | 27 | 电脑上提问选「Chat about this」 | hook 连接不关闭、无 PostToolUse，本轮随即结束（由本轮结束放行主会话请求兜住） |
 | 28 | 电脑上计划选 3 写修改意见 | 旧请求连接不关闭、无 PostToolUse；本轮不结束，Claude 改稿后同一代理发来新的 ExitPlanMode 请求 |
 | 29 | `allowedHttpHookUrls` 不含 hook 地址 | hook 不发出，电脑照常弹框执行，无报错 |
+| 30 | 危险操作确认约 2 分钟无人处理被自动拒绝（bypass 会话，2026-11-12） | hook 连接**不关闭**，也没有 PostToolUse / PostToolUseFailure；Claude 随后结束本轮。主会话请求由本轮结束放行兜住（手机上的确认静默撤回，不提示「已自动拒绝」）；子代理请求靠后台子代理结束时放行 |
 
 ## 方案
 
