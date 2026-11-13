@@ -55,8 +55,8 @@ class PhoneMenuTest {
         assertEquals(
             listOf(
                 PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.IDLE, "idle", true),
-                PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.CONNECTED, "bound", true, session = "T:other"),
-                PhoneMenuEntry.Robot(RobotId("c"), "bot-c", RobotMenuState.CONNECTED, "current", false, current = true, session = "T:this"),
+                PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.CONNECTED, "bound", true, session = "T:other", agent = AgentType.CODEX),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c", RobotMenuState.CONNECTED, "current", false, current = true, session = "T:this", agent = AgentType.CODEX),
                 PhoneMenuEntry.Robot(RobotId("d"), "bot-d", RobotMenuState.UNPAIRED, "unpaired", false),
                 PhoneMenuEntry.AddRobot,
                 PhoneMenuEntry.Disconnect(RobotId("c")),
@@ -82,6 +82,10 @@ class PhoneMenuTest {
         assertEquals(
             listOf(Triple("企微 · bot-a", "idle", null), Triple("企微 · bot-b", "bound", "T")),
             entries.filterIsInstance<PhoneMenuEntry.Robot>().map { Triple(it.label, it.status, it.session) },
+        )
+        assertEquals(
+            listOf(null, AgentType.CODEX),
+            entries.filterIsInstance<PhoneMenuEntry.Robot>().map { it.agent },
         )
     }
 
@@ -138,8 +142,8 @@ class PhoneMenuTest {
             titleOf = { it.target.tabId },
             labels = labels,
         )
-        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.OFFLINE, "boundOffline", true, session = "closed"), entries[0])
-        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.CONNECTED, "bound", true, session = "live"), entries[1])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.OFFLINE, "boundOffline", true, session = "closed", agent = AgentType.CODEX), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.CONNECTED, "bound", true, session = "live", agent = AgentType.CODEX), entries[1])
     }
 
     @Test
@@ -153,8 +157,8 @@ class PhoneMenuTest {
             titleOf = { "closed" },
             labels = labels,
         )
-        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.PROBLEM, "problem:Failed(reason=auth)", true, session = "closed"), entries[0])
-        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.PROBLEM, "problem:Kicked", true, session = "closed"), entries[1])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.PROBLEM, "problem:Failed(reason=auth)", true, session = "closed", agent = AgentType.CODEX), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.PROBLEM, "problem:Kicked", true, session = "closed", agent = AgentType.CODEX), entries[1])
     }
 
     @Test
@@ -168,7 +172,7 @@ class PhoneMenuTest {
             titleOf = { "title" },
             labels = labels,
         )
-        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.OFFLINE, "currentOffline", false, current = true, session = "title"), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.OFFLINE, "currentOffline", false, current = true, session = "title", agent = AgentType.CODEX), entries[0])
         assertEquals(PhoneMenuEntry.Disconnect(RobotId("a")), entries.last())
     }
 

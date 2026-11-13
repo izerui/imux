@@ -5,6 +5,7 @@ import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.robot.RobotRecord
+import com.github.izerui.imux.model.AgentType
 
 sealed interface PhoneMenuEntry {
     /**
@@ -23,6 +24,8 @@ sealed interface PhoneMenuEntry {
         val current: Boolean = false,
         /** 连着的会话标题（已限长），没连会话时为 null。 */
         val session: String? = null,
+        /** 连着的会话是哪个智能体，标题前画它的图标。 */
+        val agent: AgentType? = null,
     ) : PhoneMenuEntry
 
     data object NoRobots : PhoneMenuEntry
@@ -77,7 +80,7 @@ fun phoneMenuModel(
             label: String,
             enabled: Boolean = true,
             current: Boolean = false,
-        ) = PhoneMenuEntry.Robot(robot.id, name, state, label, enabled, current, session)
+        ) = PhoneMenuEntry.Robot(robot.id, name, state, label, enabled, current, session, binding?.target?.agentType)
         entries +=
             when {
                 robot.owner() == null -> row(RobotMenuState.UNPAIRED, labels.unpaired(), enabled = false)

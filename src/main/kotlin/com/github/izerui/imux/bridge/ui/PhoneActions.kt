@@ -9,6 +9,7 @@ import com.github.izerui.imux.bridge.terminal.bindingSessionAvailable
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
+import com.github.izerui.imux.icons.AgentIcons
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
 import com.github.izerui.imux.terminal.BannerColors
 import com.github.izerui.imux.terminal.StatusDotIcon
@@ -108,6 +109,8 @@ internal fun phoneAction(
     icon: javax.swing.Icon? = null,
     /** 右对齐的灰字。 */
     secondaryText: String? = null,
+    /** 灰字旁的图标。 */
+    secondaryIcon: javax.swing.Icon? = null,
     run: (AnActionEvent) -> Unit = {},
 ): AnAction =
     object : DumbAwareAction(text, null, icon) {
@@ -116,16 +119,25 @@ internal fun phoneAction(
         override fun update(e: AnActionEvent) {
             e.presentation.isEnabled = enabled
             secondaryText?.let { e.presentation.putClientProperty(ActionUtil.SECONDARY_TEXT, it) }
+            secondaryIcon?.let { e.presentation.putClientProperty(ActionUtil.SECONDARY_ICON, it) }
         }
 
         override fun actionPerformed(e: AnActionEvent) = run(e)
     }
 
-/** 菜单里的一个机器人：状态圆点 + 名字 + 状态词，会话标题作右侧灰字；当前连着的不可选。 */
+/** 菜单里的一个机器人：状态圆点 + 名字 + 状态词，智能体图标与会话标题在右侧；当前连着的不可选。 */
 internal fun robotAction(
     entry: PhoneMenuEntry.Robot,
     run: (AnActionEvent) -> Unit,
-): AnAction = phoneAction("${entry.label}  ${entry.status}", entry.enabled, menuDot(entry.state), entry.session, run)
+): AnAction =
+    phoneAction(
+        "${entry.label}  ${entry.status}",
+        entry.enabled,
+        menuDot(entry.state),
+        entry.session,
+        entry.agent?.let(AgentIcons::forAgent),
+        run,
+    )
 
 // 与菜单里其它 16px 图标同宽，名字才对得齐
 private val connectedDot = StatusDotIcon(BannerColors.ONLINE, slotWidth = 16)
