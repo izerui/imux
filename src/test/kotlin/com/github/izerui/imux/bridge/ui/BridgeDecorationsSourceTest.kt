@@ -71,7 +71,7 @@ class BridgeDecorationsSourceTest {
     }
 
     @Test
-    fun `菜单显示不可选的项：当前连着的机器人打勾、不可选`() {
+    fun `菜单显示不可选的项：当前连着的机器人不可选`() {
         val popup = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneTool.kt").bodyAfter(
             "private fun popup(",
             '{'
@@ -79,7 +79,7 @@ class BridgeDecorationsSourceTest {
         val args = popup.lines().filterNot { it.trim().startsWith("//") }.joinToString("").filterNot(Char::isWhitespace)
         assertTrue("不可选的也显示", args.contains("ActionSelectionAid.SPEEDSEARCH,true,"))
         val actions = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneActions.kt").normalized
-        assertTrue(actions.contains("if (entry.current) AllIcons.Actions.Checked else null"))
+        assertTrue("机器人行以状态圆点打头", actions.contains("menuDot(entry.state)"))
         assertTrue("三处菜单都用同一个画法", !tool.contains("phoneAction(entry.label"))
     }
 

@@ -10,10 +10,11 @@ import com.github.izerui.imux.bridge.channel.ConnectionStatus
 import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.terminal.AgentTerminalVirtualFile
+import com.github.izerui.imux.terminal.BannerColors
+import com.github.izerui.imux.terminal.StatusDotIcon
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.ex.ActionUtil
@@ -120,11 +121,25 @@ internal fun phoneAction(
         override fun actionPerformed(e: AnActionEvent) = run(e)
     }
 
-/** 菜单里的一个机器人；当前连着的打勾、不可选。 */
+/** 菜单里的一个机器人：状态圆点 + 名字 + 状态词，会话标题作右侧灰字；当前连着的不可选。 */
 internal fun robotAction(
     entry: PhoneMenuEntry.Robot,
     run: (AnActionEvent) -> Unit,
-): AnAction = phoneAction(entry.label, entry.enabled, if (entry.current) AllIcons.Actions.Checked else null, entry.status, run)
+): AnAction = phoneAction("${entry.label}  ${entry.status}", entry.enabled, menuDot(entry.state), entry.session, run)
+
+// 与菜单里其它 16px 图标同宽，名字才对得齐
+private val connectedDot = StatusDotIcon(BannerColors.ONLINE, slotWidth = 16)
+private val offlineDot = StatusDotIcon(BannerColors.OFFLINE, slotWidth = 16)
+private val problemDot = StatusDotIcon(BannerColors.PROBLEM, slotWidth = 16)
+private val idleDot = StatusDotIcon(BannerColors.OFFLINE, filled = false, slotWidth = 16)
+
+private fun menuDot(state: RobotMenuState): javax.swing.Icon =
+    when (state) {
+        RobotMenuState.CONNECTED -> connectedDot
+        RobotMenuState.OFFLINE -> offlineDot
+        RobotMenuState.PROBLEM -> problemDot
+        RobotMenuState.IDLE, RobotMenuState.UNPAIRED -> idleDot
+    }
 
 /** 打开通讯机器人设置页。 */
 internal fun showRobotSettings(project: Project?) =

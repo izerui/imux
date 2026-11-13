@@ -14,6 +14,7 @@ import javax.swing.JPanel
 object BannerColors {
     val ONLINE = JBColor(0x369650, 0x5FB865)
     val PROBLEM = JBColor(0xC27D04, 0xE0B153)
+    val OFFLINE = JBColor(0x9AA0A6, 0x7A7E85)
     val DIVIDER = JBColor(0xA8BFE8, 0x35538F)
 }
 
@@ -31,8 +32,15 @@ class BannerDivider : JPanel() {
     override fun getMaximumSize() = preferredSize
 }
 
-/** 段内状态圆点：绿色表示在进行，黄色表示出了问题。 */
-class StatusDotIcon(var color: JBColor = BannerColors.ONLINE) : Icon {
+/**
+ * 段内状态圆点：绿色表示在进行，黄色表示出了问题。
+ * [filled] 为 false 时画空心圈；[slotWidth] 是占位宽度，菜单里与其它 16px 图标对齐时加宽。
+ */
+class StatusDotIcon(
+    var color: JBColor = BannerColors.ONLINE,
+    private val filled: Boolean = true,
+    private val slotWidth: Int = 12,
+) : Icon {
     override fun paintIcon(
         c: Component?,
         g: Graphics,
@@ -44,13 +52,15 @@ class StatusDotIcon(var color: JBColor = BannerColors.ONLINE) : Icon {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             g2.color = color
             val size = JBUI.scale(7)
-            g2.fillOval(x + (iconWidth - size) / 2, y + (iconHeight - size) / 2, size, size)
+            val left = x + (iconWidth - size) / 2
+            val top = y + (iconHeight - size) / 2
+            if (filled) g2.fillOval(left, top, size, size) else g2.drawOval(left, top, size - 1, size - 1)
         } finally {
             g2.dispose()
         }
     }
 
-    override fun getIconWidth() = JBUI.scale(12)
+    override fun getIconWidth() = JBUI.scale(slotWidth)
 
     override fun getIconHeight() = JBUI.scale(16)
 }

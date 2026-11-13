@@ -7,15 +7,22 @@ import com.github.izerui.imux.bridge.core.RobotId
 import com.github.izerui.imux.bridge.robot.RobotRecord
 
 sealed interface PhoneMenuEntry {
+    /**
+     * 一行机器人：圆点 + 名字 + 状态词，连着的会话标题作右侧灰字。
+     * 状态靠最左边的圆点和紧跟名字的状态词表达，竖着扫一眼就能分清。
+     */
     data class Robot(
         val robotId: RobotId,
-        /** 机器人名，菜单左侧。 */
+        /** 机器人名。 */
         val label: String,
-        /** 状态，菜单右侧的灰字；状态词打头（空闲 / 已连接 / 离线……），竖着扫一眼就能分清。 */
+        val state: RobotMenuState,
+        /** 状态词：空闲、已连接、离线……与 [state] 对应。 */
         val status: String,
         val enabled: Boolean,
-        /** 就是这个会话现在连着的机器人：打勾显示，不可选。 */
+        /** 就是这个会话现在连着的机器人：不可选。 */
         val current: Boolean = false,
+        /** 连着的会话标题（已限长），没连会话时为 null。 */
+        val session: String? = null,
     ) : PhoneMenuEntry
 
     data object NoRobots : PhoneMenuEntry
@@ -25,14 +32,17 @@ sealed interface PhoneMenuEntry {
     data class Disconnect(val robotId: RobotId) : PhoneMenuEntry
 }
 
-/** 菜单右侧的状态文字，不含机器人名。 */
+/** 菜单行最左边圆点的颜色：绿=已连接，灰=离线，空心=空闲，黄=手机连接异常。 */
+enum class RobotMenuState { CONNECTED, OFFLINE, IDLE, PROBLEM, UNPAIRED }
+
+/** 紧跟机器人名的状态词，不含机器人名与会话标题。 */
 interface MenuLabels {
     fun idle(): String
 
-    fun bound(session: String): String
+    fun bound(): String
 
     /** 连着的会话离线了（工程关闭、CLI 退出）：绑定还在，恢复后自动接回。 */
-    fun boundOffline(session: String): String
+    fun boundOffline(): String
 
     fun unpaired(): String
 
@@ -61,29 +71,31 @@ fun phoneMenuModel(
         val binding = bindingOf(robot.id)
         val name = nameOf(robot)
         val status = statusOf(robot.id)
+        val session = binding?.let { menuTitle(titleOf(it)) }
+        fun row(
+            state: RobotMenuState,
+            label: String,
+            enabled: Boolean = true,
+            current: Boolean = false,
+        ) = PhoneMenuEntry.Robot(robot.id, name, state, label, enabled, current, session)
         entries +=
             when {
-                robot.owner() == null -> PhoneMenuEntry.Robot(robot.id, name, labels.unpaired(), false)
+                robot.owner() == null -> row(RobotMenuState.UNPAIRED, labels.unpaired(), enabled = false)
                 binding != null && binding.target.tabId == thisTabId -> {
                     currentRobot = robot.id
-                    val label = when {
-                        needsAttention(status) -> labels.problem(status)
-                        !sessionAvailable(binding) -> labels.currentOffline()
-                        else -> labels.current()
+                    when {
+                        needsAttention(status) -> row(RobotMenuState.PROBLEM, labels.problem(status), false, current = true)
+                        !sessionAvailable(binding) -> row(RobotMenuState.OFFLINE, labels.currentOffline(), false, current = true)
+                        else -> row(RobotMenuState.CONNECTED, labels.current(), false, current = true)
                     }
-                    PhoneMenuEntry.Robot(robot.id, name, label, false, current = true)
                 }
-                binding != null && !sessionAvailable(binding) ->
-                    PhoneMenuEntry.Robot(
-                        robot.id,
-                        name,
-                        if (needsAttention(status)) labels.problem(status) else labels.boundOffline(titleOf(binding)),
-                        true,
-                    )
-                binding != null -> PhoneMenuEntry.Robot(robot.id, name, labels.bound(titleOf(binding)), true)
+                binding != null && needsAttention(status) && !sessionAvailable(binding) ->
+                    row(RobotMenuState.PROBLEM, labels.problem(status))
+                binding != null && !sessionAvailable(binding) -> row(RobotMenuState.OFFLINE, labels.boundOffline())
+                binding != null -> row(RobotMenuState.CONNECTED, labels.bound())
                 // 手机连接不正常也可以先连上，恢复后自动收发；只是不能谎称“空闲”
-                status != ConnectionStatus.Online -> PhoneMenuEntry.Robot(robot.id, name, labels.problem(status), true)
-                else -> PhoneMenuEntry.Robot(robot.id, name, labels.idle(), true)
+                status != ConnectionStatus.Online -> row(RobotMenuState.PROBLEM, labels.problem(status))
+                else -> row(RobotMenuState.IDLE, labels.idle())
             }
     }
     if (robots.isEmpty()) entries += PhoneMenuEntry.NoRobots
@@ -95,9 +107,9 @@ fun phoneMenuModel(
 object BundleMenuLabels : MenuLabels {
     override fun idle() = ImuxBundle.message("bridge.action.robot.idle")
 
-    override fun bound(session: String) = ImuxBundle.message("bridge.action.robot.bound", menuTitle(session))
+    override fun bound() = ImuxBundle.message("bridge.action.robot.bound")
 
-    override fun boundOffline(session: String) = ImuxBundle.message("bridge.action.robot.bound.offline", menuTitle(session))
+    override fun boundOffline() = ImuxBundle.message("bridge.action.robot.bound.offline")
 
     override fun unpaired() = ImuxBundle.message("bridge.action.robot.unpaired")
 
