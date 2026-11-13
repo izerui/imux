@@ -16,6 +16,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
@@ -104,6 +105,8 @@ internal fun phoneAction(
     text: String,
     enabled: Boolean = true,
     icon: javax.swing.Icon? = null,
+    /** 右对齐的灰字。 */
+    secondaryText: String? = null,
     run: (AnActionEvent) -> Unit = {},
 ): AnAction =
     object : DumbAwareAction(text, null, icon) {
@@ -111,6 +114,7 @@ internal fun phoneAction(
 
         override fun update(e: AnActionEvent) {
             e.presentation.isEnabled = enabled
+            secondaryText?.let { e.presentation.putClientProperty(ActionUtil.SECONDARY_TEXT, it) }
         }
 
         override fun actionPerformed(e: AnActionEvent) = run(e)
@@ -120,7 +124,7 @@ internal fun phoneAction(
 internal fun robotAction(
     entry: PhoneMenuEntry.Robot,
     run: (AnActionEvent) -> Unit,
-): AnAction = phoneAction(entry.label, entry.enabled, if (entry.current) AllIcons.Actions.Checked else null, run)
+): AnAction = phoneAction(entry.label, entry.enabled, if (entry.current) AllIcons.Actions.Checked else null, entry.status, run)
 
 /** 打开通讯机器人设置页。 */
 internal fun showRobotSettings(project: Project?) =

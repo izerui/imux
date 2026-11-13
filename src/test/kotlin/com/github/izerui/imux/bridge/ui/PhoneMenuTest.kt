@@ -8,33 +8,25 @@ import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.robot.RobotRecord
 import com.github.izerui.imux.model.AgentType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PhoneMenuTest {
     private val labels =
         object : MenuLabels {
-            override fun idle(name: String) = "$name/idle"
+            override fun idle() = "idle"
 
-            override fun bound(
-                name: String,
-                session: String,
-            ) = "$name/bound:$session"
+            override fun bound(session: String) = "bound:$session"
 
-            override fun boundOffline(
-                name: String,
-                session: String,
-            ) = "$name/boundOffline:$session"
+            override fun boundOffline(session: String) = "boundOffline:$session"
 
-            override fun unpaired(name: String) = "$name/unpaired"
+            override fun unpaired() = "unpaired"
 
-            override fun current(name: String) = "$name/current"
+            override fun current() = "current"
 
-            override fun currentOffline(name: String) = "$name/currentOffline"
+            override fun currentOffline() = "currentOffline"
 
-            override fun problem(
-                name: String,
-                status: ConnectionStatus?,
-            ) = "$name/problem:$status"
+            override fun problem(status: ConnectionStatus?) = "problem:$status"
         }
 
     private fun robot(
@@ -62,10 +54,10 @@ class PhoneMenuTest {
             )
         assertEquals(
             listOf(
-                PhoneMenuEntry.Robot(RobotId("a"), "bot-a/idle", true),
-                PhoneMenuEntry.Robot(RobotId("b"), "bot-b/bound:T:other", true),
-                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/current", false, current = true),
-                PhoneMenuEntry.Robot(RobotId("d"), "bot-d/unpaired", false),
+                PhoneMenuEntry.Robot(RobotId("a"), "bot-a", "idle", true),
+                PhoneMenuEntry.Robot(RobotId("b"), "bot-b", "bound:T:other", true),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c", "current", false, current = true),
+                PhoneMenuEntry.Robot(RobotId("d"), "bot-d", "unpaired", false),
                 PhoneMenuEntry.AddRobot,
                 PhoneMenuEntry.Disconnect(RobotId("c")),
             ),
@@ -88,8 +80,8 @@ class PhoneMenuTest {
                 nameOf = { "企微 · " + it.name },
             )
         assertEquals(
-            listOf("企微 · bot-a/idle", "企微 · bot-b/bound:T"),
-            entries.filterIsInstance<PhoneMenuEntry.Robot>().map { it.label },
+            listOf("企微 · bot-a" to "idle", "企微 · bot-b" to "bound:T"),
+            entries.filterIsInstance<PhoneMenuEntry.Robot>().map { it.label to it.status },
         )
     }
 
@@ -126,9 +118,9 @@ class PhoneMenuTest {
             )
         assertEquals(
             listOf(
-                PhoneMenuEntry.Robot(RobotId("a"), "bot-a/problem:Kicked", true),
-                PhoneMenuEntry.Robot(RobotId("b"), "bot-b/idle", true),
-                PhoneMenuEntry.Robot(RobotId("c"), "bot-c/problem:null", true),
+                PhoneMenuEntry.Robot(RobotId("a"), "bot-a", "problem:Kicked", true),
+                PhoneMenuEntry.Robot(RobotId("b"), "bot-b", "idle", true),
+                PhoneMenuEntry.Robot(RobotId("c"), "bot-c", "problem:null", true),
                 PhoneMenuEntry.AddRobot,
             ),
             entries,
@@ -146,8 +138,8 @@ class PhoneMenuTest {
             titleOf = { it.target.tabId },
             labels = labels,
         )
-        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a/boundOffline:closed", true), entries[0])
-        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b/bound:live", true), entries[1])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", "boundOffline:closed", true), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", "bound:live", true), entries[1])
     }
 
     @Test
@@ -161,8 +153,8 @@ class PhoneMenuTest {
             titleOf = { "closed" },
             labels = labels,
         )
-        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a/problem:Failed(reason=auth)", true), entries[0])
-        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b/problem:Kicked", true), entries[1])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", "problem:Failed(reason=auth)", true), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", "problem:Kicked", true), entries[1])
     }
 
     @Test
@@ -176,7 +168,16 @@ class PhoneMenuTest {
             titleOf = { "title" },
             labels = labels,
         )
-        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a/currentOffline", false, current = true), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", "currentOffline", false, current = true), entries[0])
         assertEquals(PhoneMenuEntry.Disconnect(RobotId("a")), entries.last())
+    }
+
+    @Test
+    fun `菜单里的长会话标题截短，免得撑宽弹窗`() {
+        assertEquals("短标题", menuTitle("  短标题 "))
+        val long = "Review the current code changes (staged, unstaged, and untracked)"
+        val cut = menuTitle(long)
+        assertEquals(24, cut.codePointCount(0, cut.length))
+        assertTrue(cut.endsWith("…") && long.startsWith(cut.dropLast(1)))
     }
 }
