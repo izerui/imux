@@ -18,11 +18,18 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.ui.JBColor
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
+import java.awt.Component
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
+import javax.swing.Icon
 
 object BridgeNotifications {
     fun info(
@@ -107,10 +114,6 @@ internal fun phoneAction(
     text: String,
     enabled: Boolean = true,
     icon: javax.swing.Icon? = null,
-    /** 右对齐的灰字。 */
-    secondaryText: String? = null,
-    /** 灰字旁的图标。 */
-    secondaryIcon: javax.swing.Icon? = null,
     run: (AnActionEvent) -> Unit = {},
 ): AnAction =
     object : DumbAwareAction(text, null, icon) {
@@ -118,40 +121,85 @@ internal fun phoneAction(
 
         override fun update(e: AnActionEvent) {
             e.presentation.isEnabled = enabled
-            secondaryText?.let { e.presentation.putClientProperty(ActionUtil.SECONDARY_TEXT, it) }
-            secondaryIcon?.let { e.presentation.putClientProperty(ActionUtil.SECONDARY_ICON, it) }
+            // 不可选的行平台默认把图标转灰，智能体图标和状态色会糊成一团；显式给禁用图标就原样画
+            icon?.let { e.presentation.disabledIcon = it }
         }
 
         override fun actionPerformed(e: AnActionEvent) = run(e)
     }
 
-/** 菜单里的一个机器人：状态圆点 + 名字 + 状态词，智能体图标与会话标题在右侧；当前连着的不可选。 */
+/**
+ * 菜单里的一个机器人：最左边一列表示状态，后面是名字 + 状态词 + 会话标题；当前连着的不可选。
+ * 会话标题不放右侧副文本：平台把副文本画成禁用灰，不可选的行更淡，看不清。
+ * 连着会话的行，最左边画智能体图标并在右下角叠状态小圆点；没连会话的行只画圆点。
+ */
 internal fun robotAction(
     entry: PhoneMenuEntry.Robot,
     run: (AnActionEvent) -> Unit,
 ): AnAction =
     phoneAction(
-        "${entry.label}  ${entry.status}",
+        listOfNotNull("${entry.label}  ${entry.status}", entry.session).joinToString("  —  "),
         entry.enabled,
-        menuDot(entry.state),
-        entry.session,
-        entry.agent?.let(AgentIcons::forAgent),
+        menuIcon(entry),
         run,
     )
 
-// 与菜单里其它 16px 图标同宽，名字才对得齐
 private val connectedDot = StatusDotIcon(BannerColors.ONLINE, slotWidth = 16)
 private val offlineDot = StatusDotIcon(BannerColors.OFFLINE, slotWidth = 16)
 private val problemDot = StatusDotIcon(BannerColors.PROBLEM, slotWidth = 16)
 private val idleDot = StatusDotIcon(BannerColors.OFFLINE, filled = false, slotWidth = 16)
 
-private fun menuDot(state: RobotMenuState): javax.swing.Icon =
+private fun stateColor(state: RobotMenuState): JBColor? =
     when (state) {
+        RobotMenuState.CONNECTED -> BannerColors.ONLINE
+        RobotMenuState.OFFLINE -> BannerColors.OFFLINE
+        RobotMenuState.PROBLEM -> BannerColors.PROBLEM
+        RobotMenuState.IDLE, RobotMenuState.UNPAIRED -> null
+    }
+
+private fun menuIcon(entry: PhoneMenuEntry.Robot): Icon {
+    val badge = stateColor(entry.state)
+    if (entry.agent != null && badge != null) return BadgedIcon(AgentIcons.forAgent(entry.agent), badge)
+    return when (entry.state) {
         RobotMenuState.CONNECTED -> connectedDot
         RobotMenuState.OFFLINE -> offlineDot
         RobotMenuState.PROBLEM -> problemDot
         RobotMenuState.IDLE, RobotMenuState.UNPAIRED -> idleDot
     }
+}
+
+/** 智能体图标右下角叠一个状态小圆点；圆点外描一圈底色，压在图标上也看得清。 */
+private class BadgedIcon(
+    private val base: Icon,
+    private val badge: JBColor,
+) : Icon {
+    override fun paintIcon(
+        c: Component?,
+        g: Graphics,
+        x: Int,
+        y: Int,
+    ) {
+        base.paintIcon(c, g, x, y)
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val size = JBUI.scale(7)
+            val ring = JBUI.scale(1)
+            val left = x + iconWidth - size
+            val top = y + iconHeight - size
+            g2.color = c?.background ?: UIUtil.getListBackground()
+            g2.fillOval(left - ring, top - ring, size + 2 * ring, size + 2 * ring)
+            g2.color = badge
+            g2.fillOval(left, top, size, size)
+        } finally {
+            g2.dispose()
+        }
+    }
+
+    override fun getIconWidth() = base.iconWidth
+
+    override fun getIconHeight() = base.iconHeight
+}
 
 /** 打开通讯机器人设置页。 */
 internal fun showRobotSettings(project: Project?) =

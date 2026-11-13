@@ -79,7 +79,7 @@ class BridgeDecorationsSourceTest {
         val args = popup.lines().filterNot { it.trim().startsWith("//") }.joinToString("").filterNot(Char::isWhitespace)
         assertTrue("不可选的也显示", args.contains("ActionSelectionAid.SPEEDSEARCH,true,"))
         val actions = SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/ui/PhoneActions.kt").normalized
-        assertTrue("机器人行以状态圆点打头", actions.contains("menuDot(entry.state)"))
+        assertTrue("机器人行以状态圆点打头", actions.contains("menuIcon(entry)"))
         assertTrue("三处菜单都用同一个画法", !tool.contains("phoneAction(entry.label"))
     }
 
