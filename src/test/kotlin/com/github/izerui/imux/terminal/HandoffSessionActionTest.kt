@@ -32,7 +32,7 @@ class HandoffSessionActionTest {
         assertEquals(
             "Take over the task from the session below. First use tools to read the complete source session record " +
                 "at the exact path `$path`, then inspect the current workspace and assess " +
-                "the current progress. Report the completed work, remaining work, and relevant local changes, then " +
+                "the current progress. Report the completed work, remaining work, anything not yet closed-loop in business flow or logic, and relevant local changes, then " +
                 "wait for further instructions.\n\n" +
                 "Session type: Claude Code\nSession ID: session-abc-123",
             handoffPrompt(session, PluginLanguage.ENGLISH),
@@ -45,7 +45,7 @@ class HandoffSessionActionTest {
 
         assertEquals(
             "接手以下会话中的任务。先使用工具完整读取精确路径 `$path` 下的源会话记录，" +
-                "再检查当前工作区并梳理当前进展。反馈已完成事项、剩余事项和相关本地改动，然后等待下一步指示。\n\n" +
+                "再检查当前工作区并梳理当前进展。反馈已完成事项、剩余事项、业务或逻辑上还没闭环的地方和相关本地改动，然后等待下一步指示。\n\n" +
                 "会话类型：Claude Code\n会话 ID：session-abc-123",
             handoffPrompt(session, PluginLanguage.SIMPLIFIED_CHINESE),
         )
