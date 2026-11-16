@@ -67,6 +67,23 @@ internal fun resizedTrailSize(
         if (resizeHeight) fit(startHeight + dy, metrics.minHeight, maxHeight) else startHeight,
     )
 
+/**
+ * 放不下时宽高按同一比例缩小，保持设定尺寸的形状；宽度缩到 [minWidth] 为止，之后只缩高度。放得下时原样返回，不放大。
+ * 只用于还没手动拖过尺寸的报告页：拖过之后按手动的宽高显示（见 [TrailSizeSetting.isCustomized]）。
+ */
+internal fun fitKeepingRatio(
+    desiredWidth: Int,
+    desiredHeight: Int,
+    availableWidth: Int,
+    availableHeight: Int,
+    minWidth: Int,
+): Dimension {
+    if (desiredWidth <= 0 || desiredHeight <= 0) return Dimension(desiredWidth, desiredHeight)
+    val scale = minOf(1.0, availableWidth.toDouble() / desiredWidth, availableHeight.toDouble() / desiredHeight)
+    val width = (desiredWidth * scale).toInt().coerceAtLeast(minOf(minWidth, desiredWidth))
+    return Dimension(width, (desiredHeight * scale).toInt())
+}
+
 /** 夹在 [min, available] 之间；可用区域比下限还小时取可用区域。 */
 private fun fit(desired: Int, min: Int, available: Int): Int {
     val max = available.coerceAtLeast(0)
@@ -75,20 +92,29 @@ private fun fit(desired: Int, min: Int, available: Int): Int {
 
 /**
  * 卡片大小在所有会话间共用、重启保留。存未缩放的值，换显示器缩放后仍是同样的视觉大小。
+ * 默认是手机屏幕的比例：卡片里的报告页按手机排版显示，520 是报告页手机排版的宽度上限。
  */
 internal object TrailSizeSetting {
-    const val DEFAULT_WIDTH = 360
-    const val DEFAULT_HEIGHT = 420
+    const val DEFAULT_WIDTH = 520
+    const val DEFAULT_HEIGHT = 1127
+
+    /** 报告页按比例缩小时的最小宽度，再窄页面就挤了。 */
+    const val MIN_REPORT_WIDTH = 320
 
     /** 没有时间线可显示（未生成、生成中、未落盘）时的紧凑高度。 */
     const val COMPACT_HEIGHT = 140
 
-    private const val WIDTH_KEY = "imux.sessionTrail.width"
-    private const val HEIGHT_KEY = "imux.sessionTrail.height"
+    // 换了新键：不沿用改成报告页之前的 360×420 记录
+    private const val WIDTH_KEY = "imux.sessionReport.width"
+    private const val HEIGHT_KEY = "imux.sessionReport.height"
 
     fun width(): Int = PropertiesComponent.getInstance().getInt(WIDTH_KEY, DEFAULT_WIDTH)
 
     fun height(): Int = PropertiesComponent.getInstance().getInt(HEIGHT_KEY, DEFAULT_HEIGHT)
+
+    /** 手动拖过尺寸：之后按存下的宽高显示，不再按比例自适应。恢复默认（[reset]）后回到自适应。 */
+    fun isCustomized(): Boolean =
+        PropertiesComponent.getInstance().let { it.isValueSet(WIDTH_KEY) || it.isValueSet(HEIGHT_KEY) }
 
     fun save(width: Int, height: Int) {
         PropertiesComponent.getInstance().setValue(WIDTH_KEY, width, DEFAULT_WIDTH)

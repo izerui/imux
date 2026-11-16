@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.awt.Dimension
@@ -114,5 +115,50 @@ class SessionTrailLayoutTest {
             val slot = javax.swing.SwingUtilities.convertRectangle(button.parent, button.bounds, card)
             assertEquals("@${cardWidth}px", Rectangle(cardWidth - chipSize, 0, chipSize, chipSize), slot)
         }
+    }
+
+    // ── 报告页：默认手机比例，放不下时同比缩小 ──
+
+    @Test
+    fun `放得下时按原尺寸不放大`() {
+        assertEquals(java.awt.Dimension(520, 1127), fitKeepingRatio(520, 1127, 2000, 2000, 320))
+    }
+
+    @Test
+    fun `放不下时宽高同比缩小`() {
+        assertEquals(java.awt.Dimension(369, 800), fitKeepingRatio(520, 1127, 2000, 800, 320))
+    }
+
+    @Test
+    fun `宽度缩到下限后只缩高度`() {
+        assertEquals(java.awt.Dimension(320, 500), fitKeepingRatio(520, 1127, 2000, 500, 320))
+    }
+
+    @Test
+    fun `可用宽度不足时也同比缩小`() {
+        assertEquals(java.awt.Dimension(400, 866), fitKeepingRatio(520, 1127, 400, 2000, 320))
+    }
+
+    @Test
+    fun `报告弹窗默认是 520 乘 1127 的手机比例`() {
+        assertEquals(520, TrailSizeSetting.DEFAULT_WIDTH)
+        assertEquals(1127, TrailSizeSetting.DEFAULT_HEIGHT)
+    }
+
+    @Test
+    fun `有报告的就绪、生成中、失败状态显示报告页，其余不显示`() {
+        val node = com.github.izerui.imux.overview.OverviewNode(com.github.izerui.imux.overview.NodeSymbol.MAIN, "一")
+        val withReport = com.github.izerui.imux.overview.OverviewResult(
+            listOf(node), java.time.Instant.now(), report = com.github.izerui.imux.overview.report.SessionReport(timeline = listOf(node)),
+        )
+        val empty = com.github.izerui.imux.overview.OverviewResult(emptyList(), java.time.Instant.now())
+        assertTrue(showsReport(com.github.izerui.imux.overview.TrailState.Ready(withReport, false)))
+        assertTrue(showsReport(com.github.izerui.imux.overview.TrailState.Loading(null, 0, withReport)))
+        assertTrue(showsReport(com.github.izerui.imux.overview.TrailState.Failed("x", withReport)))
+        assertFalse(showsReport(com.github.izerui.imux.overview.TrailState.Ready(empty, false)))
+        assertFalse(showsReport(com.github.izerui.imux.overview.TrailState.Loading(null, 0, null)))
+        assertFalse(showsReport(com.github.izerui.imux.overview.TrailState.Failed("x", null)))
+        assertFalse(showsReport(com.github.izerui.imux.overview.TrailState.Empty))
+        assertFalse(showsReport(null))
     }
 }

@@ -185,22 +185,22 @@ internal class SessionTrailOverlay(
         availableWidth = (width - rightReserve - metrics.margin * 2).coerceAtLeast(0)
         availableHeight = (height - topOffset - metrics.margin * 2).coerceAtLeast(0)
         val size = dragSize
-        val desiredWidth = size?.width ?: JBUI.scale(TrailSizeSetting.width())
-        val desiredHeight = size?.height ?: desiredCardHeight()
+        var desiredWidth = size?.width ?: JBUI.scale(TrailSizeSetting.width())
+        var desiredHeight = size?.height ?: desiredCardHeight()
+        // 报告页没拖过尺寸时按比例自适应；拖拽中、拖过之后都按手动的宽高，只由 trailBounds 截到可用范围
+        if (size == null && showsReport(renderedState) && !TrailSizeSetting.isCustomized()) {
+            val fitted = fitKeepingRatio(desiredWidth, desiredHeight, availableWidth, availableHeight, JBUI.scale(TrailSizeSetting.MIN_REPORT_WIDTH))
+            desiredWidth = fitted.width
+            desiredHeight = fitted.height
+        }
         val bounds = trailBounds(width, height, rightReserve, expanded, desiredWidth, desiredHeight, metrics, topOffset)
         if (expanded) card.bounds = bounds
     }
 
-    /** 有时间线时用设定高度；提示、加载、报错这类短内容按内容收紧，不超过设定高度。 */
+    /** 显示报告页时用设定高度；提示、加载、报错这类短内容按内容收紧，不超过设定高度。 */
     private fun desiredCardHeight(): Int {
         val setting = JBUI.scale(TrailSizeSetting.height())
-        val hasTimeline = when (val state = renderedState) {
-            is TrailState.Ready -> state.result.nodes.isNotEmpty()
-            is TrailState.Failed -> state.previous?.nodes?.isNotEmpty() == true
-            is TrailState.Loading -> state.previous?.nodes?.isNotEmpty() == true
-            else -> false
-        }
-        if (hasTimeline) return setting
+        if (showsReport(renderedState)) return setting
         return card.preferredSize.height.coerceAtLeast(JBUI.scale(TrailSizeSetting.COMPACT_HEIGHT)).coerceAtMost(setting)
     }
 
@@ -392,10 +392,8 @@ internal class SessionTrailOverlay(
             val size = dragSize ?: return
             start = null
             dragSize = null
-            TrailSizeSetting.save(
-                if (resizeWidth) JBUI.unscale(size.width) else TrailSizeSetting.width(),
-                if (resizeHeight) JBUI.unscale(size.height) else TrailSizeSetting.height(),
-            )
+            // 两边都存眼前看到的：只拖宽时若高度仍存默认值，放不下时会被同比缩回去
+            TrailSizeSetting.save(JBUI.unscale(size.width), JBUI.unscale(size.height))
             relayout()
         }
 
@@ -480,3 +478,12 @@ internal fun trailCardHeader(title: JComponent, collapseButton: JComponent): JCo
 
 /** 卡片左、下边缘的拖拽热区宽度（未缩放）。 */
 internal const val TRAIL_RESIZE_ZONE = 6
+
+/** 这个状态下内容区显示报告页（生成中、失败时有旧报告也显示旧报告）；其余显示提示、加载、错误面板。 */
+internal fun showsReport(state: TrailState?): Boolean =
+    when (state) {
+        is TrailState.Ready -> state.result.report?.timeline?.isNotEmpty() == true
+        is TrailState.Loading -> state.previous?.report?.timeline?.isNotEmpty() == true
+        is TrailState.Failed -> state.previous?.report?.timeline?.isNotEmpty() == true
+        else -> false
+    }
