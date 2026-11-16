@@ -670,7 +670,7 @@ class ClarificationViewPreviewTest {
     // ---- 默认尺寸 ----
 
     @Test
-    fun `各页按打开时的默认尺寸渲染：宽 680、高按内容限制在 420～640`() {
+    fun `各页按打开时的默认尺寸渲染：宽 830、高按内容限制在 520～720，内容少的页面都是 520`() {
         val asking = listOf(methodQuestion)
         val pages =
             listOf(
@@ -691,12 +691,22 @@ class ClarificationViewPreviewTest {
             // 预览里没有标题栏，窗口其余部分只有按钮栏
             val height = initialHeight(view.preferredContentHeight(width), bar.preferredSize.height)
             heights[page] = height
-            assertTrue("$page：高度在 360～520 之间（$height）", height in JBUI.scale(MIN_INITIAL_HEIGHT)..JBUI.scale(MAX_INITIAL_HEIGHT))
+            assertTrue("$page：高度在 520～720 之间（$height）", height in JBUI.scale(MIN_INITIAL_HEIGHT)..JBUI.scale(MAX_INITIAL_HEIGHT))
             val root = window(view, state, width, height)
             png(root, "default-$page-${width}x$height")
             assertNoHorizontalClipping(view, root, "default-$page")
             assertEdgePadding(view, root, "default-$page")
         }
-        assertTrue("一道短问题的窗口比一批长问题矮：${heights}", heights.getValue("asking-single") < heights.getValue("asking-batch"))
+        // 内容少的页面（输入、调查中、一道短问题、失败）按最矮的 520 打开，与手动调到的舒适大小一致
+        for (page in listOf("input", "investigating", "asking-single", "failed")) {
+            org.junit.Assert.assertEquals("$page 应按最矮高度打开：$heights", JBUI.scale(MIN_INITIAL_HEIGHT), heights.getValue(page))
+        }
+    }
+
+    @Test
+    fun `讨论窗口初始宽 830，内容少时也有 520 高，长内容最多 720 高`() {
+        org.junit.Assert.assertEquals(830, ClarificationDialog.INITIAL_WIDTH)
+        org.junit.Assert.assertEquals(JBUI.scale(520), initialHeight(contentHeight = 50, restOfWindow = 80))
+        org.junit.Assert.assertEquals(JBUI.scale(720), initialHeight(contentHeight = 5_000, restOfWindow = 80))
     }
 }

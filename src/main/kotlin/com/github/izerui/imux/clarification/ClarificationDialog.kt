@@ -68,8 +68,8 @@ internal class ClarificationDialog(
     override fun createCenterPanel(): JComponent = view.component
 
     /**
-     * 打开时算一次的初始尺寸（之后不随状态变化改窗口大小，免得窗口跳来跳去）：宽 560，
-     * 高 = 当前页在这个宽度下的内容高度 + 窗口其余部分（标题栏、按钮栏、边框），限制在 360～520 之间——
+     * 打开时算一次的初始尺寸（之后不随状态变化改窗口大小，免得窗口跳来跳去）：宽 [INITIAL_WIDTH]，
+     * 高 = 当前页在这个宽度下的内容高度 + 窗口其余部分（标题栏、按钮栏、边框），限制在 [MIN_INITIAL_HEIGHT]～[MAX_INITIAL_HEIGHT] 之间——
      * 短问题不开出一个高高的空窗口，长内容在窗口里滚动。平台在 pack 之后才取这个尺寸，此时窗口其余部分量得出来；
      * 平台取 pack 尺寸与它的较大者，内容区的首选视口尺寸因此故意给得很小（见 [ClarificationView]）。
      */
@@ -181,7 +181,7 @@ internal class ClarificationDialog(
 
     companion object {
         private const val MAC_ORDER_PRIMARY = 100
-        internal const val INITIAL_WIDTH = 680
+        internal const val INITIAL_WIDTH = 830
 
         /** 量不到窗口其余部分时（没有 pack）按标题栏 + 按钮栏的常见高度估计。 */
         private const val REST_OF_WINDOW_ESTIMATE = 90
@@ -231,8 +231,8 @@ internal class RenderCoalescer(private val schedule: (Runnable) -> Unit, private
 
 // ---- 纯函数：提取出来方便单测 ----
 
-internal const val MIN_INITIAL_HEIGHT = 420
-internal const val MAX_INITIAL_HEIGHT = 640
+internal const val MIN_INITIAL_HEIGHT = 520
+internal const val MAX_INITIAL_HEIGHT = 720
 
 /** 关闭会丢掉的东西：提交过的回答、这一批已填写的回答、未发送的结果（结果页或发送中）。 */
 internal fun closeNeedsConfirmation(
