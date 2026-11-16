@@ -126,4 +126,10 @@ class SessionTrailOverlaySourceTest {
             }
         }
     }
+
+    @Test
+    fun `在系统浏览器中打开不用 263 计划移除的 BrowserUtil browse File`() {
+        assertFalse(overlay.normalized.contains(".toFile())"))
+        assertTrue(overlay.normalized.contains("BrowserUtil.browse(it.toUri())"))
+    }
 }

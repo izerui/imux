@@ -173,7 +173,7 @@ internal class SessionTrailOverlay(
             }
 
             override fun actionPerformed(event: AnActionEvent) {
-                shownReport?.let { BrowserUtil.browse(it.toFile()) }
+                shownReport?.let { BrowserUtil.browse(it.toUri()) }
             }
         }
 
@@ -366,7 +366,7 @@ internal class SessionTrailOverlay(
     }
 
     private fun reportView(): ReportView =
-        reportView ?: ReportViews.create(onEscape = { setExpanded(false) }, openExternal = { BrowserUtil.browse(it.toFile()) }).also { view ->
+        reportView ?: ReportViews.create(onEscape = { setExpanded(false) }, openExternal = { BrowserUtil.browse(it.toUri()) }).also { view ->
             Disposer.register(this, view)
             view.setDark(!JBColor.isBright())
             reportView = view
