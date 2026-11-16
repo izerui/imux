@@ -117,7 +117,6 @@ class AgentTerminalFileEditor(
     /** 终端顶部叠放的提示条：审查进度与结果、断线、轨迹失败等，平时不占行。 */
     private val noticeOverlay = TerminalNoticeOverlay(this, onChanged = { onNoticesChanged() })
     private val pairNotices = noticeOverlay.sink(NoticeSource.PAIR)
-    private val talkNotices = noticeOverlay.sink(NoticeSource.TALK)
 
     /** 点到轨迹卡片之外（终端正文、滚动条、叠加控件、提示条）就收起面板。 */
     private val trailOutsideClicks by lazy { TrailOutsideClicks { trailOverlay.collapse() } }
@@ -602,12 +601,9 @@ class AgentTerminalFileEditor(
         terminalLayer?.revalidate()
     }
 
-    /** 先聊再做：讨论窗口开着时按钮显示「讨论中」，刚打开时提示一次。 */
+    /** 先聊再做：讨论窗口开着时按钮显示「讨论中」。聊完交给这个终端的说明写在讨论窗口里，不另弹提示。 */
     private fun refreshTalk() {
         val open = ClarificationService.getInstance(project).isOpen(virtualFile.sessionKey)
-        if (discussing == false && open) {
-            talkNotices.flash(Notice("talk:open", NoticeTone.SUCCESS, ImuxBundle.message("clarify.notice.open")))
-        }
         discussing = open
         toolStrip?.refresh()
     }
