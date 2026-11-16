@@ -154,8 +154,8 @@ internal class SessionTrailOverlay(
     /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。写入失败时为 null。 */
     private var shownReport: Path? = null
 
-    /** 写报告文件的请求序号：后台写完回到界面线程时，只认最近一次。 */
-    private var reportRequest = 0
+    /** 写报告文件的请求序号：后台排到写入时、写完回到界面线程时，都只认最近一次。界面线程写、后台线程读。 */
+    @Volatile private var reportRequest = 0
 
     private val updateAction =
         object : DumbAwareAction(AllIcons.Actions.Refresh) {
@@ -395,7 +395,11 @@ internal class SessionTrailOverlay(
         val sessionKey = key
         val service = ProgressOverviewService.getInstance(project)
         ApplicationManager.getApplication().executeOnPooledThread {
-            val write = service.writeReport(sessionKey, result)
+            // 写入排队进行；排到时已有更新的请求就不写，免得较早的一次后写完，把新报告盖回旧的
+            val write = synchronized(service.reportWriteLock) {
+                if (request != reportRequest) return@executeOnPooledThread
+                service.writeReport(sessionKey, result)
+            }
             ApplicationManager.getApplication().invokeLater({
                 if (!disposed && request == reportRequest) applyReport(view, result, banners, write)
             }, ModalityState.any())

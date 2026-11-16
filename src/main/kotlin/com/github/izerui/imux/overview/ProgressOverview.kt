@@ -216,13 +216,13 @@ internal class OverviewCache(private val storageDir: Path?) {
             }
             val lineCount = obj.get("lineCount")?.takeUnless { it.isJsonNull }?.asLong
             val reportObj = obj.get("report") as? com.google.gson.JsonObject
+            // facts 写坏了只当没有统计，不让整份缓存作废
+            val report = reportObj?.let(::reportFromJson)
+                ?.copy(timeline = nodes, facts = factsFromJson(reportObj.get("facts") as? com.google.gson.JsonObject))
             val result =
                 when {
-                    reportObj != null -> {
-                        val report = reportFromJson(reportObj)?.copy(timeline = nodes, facts = factsFromJson(reportObj.getAsJsonObject("facts")))
-                        OverviewResult(nodes, generatedAt, report = report)
-                    }
-                    // 升级前的旧缓存：只有时间线
+                    report != null -> OverviewResult(nodes, generatedAt, report = report)
+                    // 升级前的旧缓存只有时间线；报告部分读不出来（写坏了）也一样：显示时间线并提示更新
                     nodes.isNotEmpty() -> OverviewResult(nodes, generatedAt, report = SessionReport(timeline = nodes), legacy = true)
                     else -> OverviewResult(nodes, generatedAt)
                 }
@@ -313,6 +313,9 @@ class ProgressOverviewService(
         val session = SessionMonitor.getInstance(project).model.sessionOf(sessionKey) ?: return null
         return cachedView(cached, session.filePath)
     }
+
+    /** 报告文件的写入一次只进行一个（见 SessionTrailOverlay.showReport）。 */
+    internal val reportWriteLock = Any()
 
     private val reportTemplate: String by lazy {
         ProgressOverviewService::class.java.getResourceAsStream(REPORT_TEMPLATE)!!.use { String(it.readAllBytes(), Charsets.UTF_8) }

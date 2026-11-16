@@ -838,4 +838,34 @@ class ProgressOverviewTest {
         assertEquals(com.github.izerui.imux.overview.report.ReportFacts(), result.report!!.facts)
         assertEquals("完成", cache.get("s1")!!.result.report!!.timeline.single().text)
     }
+
+    @Test
+    fun `缓存里的报告读不出来但时间线还在时，按旧格式显示时间线并提示更新`() {
+        val dir = Files.createTempDirectory("overview-cache-test").also { it.toFile().deleteOnExit() }
+        val file = sessionFile("u1\n")
+        Files.writeString(
+            dir.resolve("s1.json"),
+            """{"fileSize":${Files.size(file)},"lineCount":1,"generatedAt":0,"nodes":[{"symbol":"MAIN","text":"旧"}],""" +
+                """"report":{"timeline":[{"type":"MAIN"}],"facts":3}}""",
+        )
+
+        val cached = OverviewCache(dir).get("s1")!!
+        assertEquals(listOf("旧"), cached.result.report!!.timeline.map { it.text })
+        assertTrue(cached.result.legacy)
+        assertTrue(cachedView(cached, file).stale)
+    }
+
+    @Test
+    fun `缓存里 facts 写坏时报告照常读出，只是没有统计`() {
+        val dir = Files.createTempDirectory("overview-cache-test").also { it.toFile().deleteOnExit() }
+        Files.writeString(
+            dir.resolve("s1.json"),
+            """{"fileSize":2,"lineCount":1,"generatedAt":0,"nodes":[{"symbol":"MAIN","text":"一"}],""" +
+                """"report":{"goal":"目标","timeline":[{"type":"MAIN","text":"一"}],"facts":3}}""",
+        )
+
+        val report = OverviewCache(dir).get("s1")!!.result.report!!
+        assertEquals("目标", report.goal)
+        assertEquals(com.github.izerui.imux.overview.report.ReportFacts(), report.facts)
+    }
 }

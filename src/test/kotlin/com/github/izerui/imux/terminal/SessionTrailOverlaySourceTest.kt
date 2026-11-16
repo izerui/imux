@@ -156,4 +156,15 @@ class SessionTrailOverlaySourceTest {
         val report = content.indexOf("return reportContent(")
         assertTrue("非报告分支要作废上一次请求：$content", invalidate > report)
     }
+
+    @Test
+    fun `报告写入排队进行，轮到时已过期的那次不写，免得旧报告盖掉新的`() {
+        val show = overlay.bodyAfter("private fun showReport(", '{')
+        val lock = show.indexOf("synchronized(service.reportWriteLock)")
+        val stale = show.indexOf("request != reportRequest")
+        val write = show.indexOf(".writeReport(")
+        assertTrue("写入要排队：$show", lock >= 0)
+        assertTrue("排到之后先看自己是不是过期了，再写：$show", stale > lock && write > stale)
+        assertTrue("请求序号跨线程读：要 @Volatile", overlay.normalized.contains("@Volatile private var reportRequest"))
+    }
 }

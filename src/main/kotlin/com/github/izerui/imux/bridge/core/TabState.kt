@@ -33,6 +33,9 @@ internal class TabState {
 
     private val remoteEchoes = ArrayDeque<String>()
 
+    /** 最近一次手机提交的时刻；用来判断还没进记录的话是不是可能正要开新一轮（见 [idle]）。 */
+    private var lastRemoteSubmitAt: Long? = null
+
     /** 后台调用的说明，按工具调用 id；等结果给出任务 id 时取走。调用失败就等不到结果，所以限量。 */
     private val launches = boundedMap<String, String>()
 
@@ -207,10 +210,17 @@ internal class TabState {
     }
 
     /**
-     * 此刻没有在跑的一轮：本轮已结算，手机提交的话也都已在记录里出现（还没出现的可能正要开新一轮）。
+     * 此刻没有在跑的一轮：本轮已结算，手机提交的话也都已在记录里出现（还没出现的可能正要开新一轮；
+     * 提交超过 [ECHO_RUNNING_GRACE_MS] 仍没出现的不再算）。
      * 刚绑定、还没读到轮次时不算空闲：可能绑在一轮的半路上。
      */
-    val idle: Boolean get() = settled && remoteEchoes.isEmpty()
+    fun idle(now: Long): Boolean =
+        settled && (remoteEchoes.isEmpty() || lastRemoteSubmitAt?.let { now - it >= ECHO_RUNNING_GRACE_MS } == true)
+
+    /** 手机提交了一句话（回显登记见 [expectEcho]）。 */
+    fun remoteSubmitted(at: Long) {
+        lastRemoteSubmitAt = at
+    }
 
     /** 已结算时交出待发的回复，未结算返回 null。 */
     fun takeIfSettled(): PendingReply? = if (settled) takeReply() else null
@@ -251,6 +261,12 @@ internal class TabState {
 
     private companion object {
         const val ECHO_CAPACITY = 20
+
+        /**
+         * 手机提交的话这么久还没在记录里出现，就不再据此认为会话正要开新一轮：斜杠命令等在记录里是改写后的样子，
+         * 那条登记永远对不上，不能让会话从此一直算「在跑」。
+         */
+        const val ECHO_RUNNING_GRACE_MS = 30_000L
 
         const val BACKGROUND_CAPACITY = 200
 

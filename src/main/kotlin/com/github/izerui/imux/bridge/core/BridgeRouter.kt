@@ -154,7 +154,10 @@ class BridgeRouter(
                     Gate.Open -> Unit
                 }
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
-                tab(tabId) { expectEcho(text) }
+                tab(tabId) {
+                    expectEcho(text)
+                    remoteSubmitted(now())
+                }
                 try {
                     val phase = submitWithRetry(message.robotId, current, text)
                     // 未提交成功，清除回显登记
@@ -232,7 +235,7 @@ class BridgeRouter(
                 // 先摘下主会话挂着的确认：Esc 关掉确认框时不会被当成电脑端拒绝告诉手机；按键结果出来再决定拒绝还是交还
                 val drained = queue?.drainMainSession().orEmpty()
                 // 只看这一轮结束没有：空闲后的「等待输入」提醒不算在跑；真停在确认框上时这一轮还没结束
-                val idle = drained.isEmpty() && tabs[tabId]?.idle == true
+                val idle = drained.isEmpty() && tabs[tabId]?.idle(now()) == true
                 // 按键之前登记：按后台停止键的间隙里轮询可能已读到中断，中断会清掉这条登记
                 if (!idle) tabs.getOrPut(tabId) { TabState() }.stopRequested(now())
                 Triple(drained, idle, queue?.nextPush(binding))
