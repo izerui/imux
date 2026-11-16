@@ -64,6 +64,8 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun backgroundStopped() = ImuxBundle.message("bridge.reply.backgroundStopped")
 
+    override fun stopUnconfirmed() = ImuxBundle.message("bridge.reply.stopUnconfirmed")
+
     override fun backgroundRunning(tasks: List<String?>) =
         ImuxBundle.message(
             "bridge.status.backgroundRunning",

@@ -148,4 +148,12 @@ class SessionTrailOverlaySourceTest {
     fun `报告写入失败时显示错误横幅并可重试`() {
         assertTrue(overlay.normalized.contains("action.overview.report.writeFailed"))
     }
+
+    @Test
+    fun `切到不显示报告的状态时作废还没写完的报告`() {
+        val content = overlay.bodyAfter("private fun contentFor(", '{')
+        val invalidate = content.indexOf("reportRequest++")
+        val report = content.indexOf("return reportContent(")
+        assertTrue("非报告分支要作废上一次请求：$content", invalidate > report)
+    }
 }

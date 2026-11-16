@@ -1,5 +1,6 @@
 package com.github.izerui.imux.overview.report
 
+import com.github.izerui.imux.overview.safeSessionFileName
 import com.github.izerui.imux.project.ensureImuxIgnored
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
@@ -56,9 +57,9 @@ internal fun renderReportPage(template: String, dataJson: String): String {
 private fun templateDigest(template: String): String =
     MessageDigest.getInstance("SHA-256").digest(template.toByteArray(Charsets.UTF_8)).take(6).joinToString("") { "%02x".format(it) }
 
-/** `.imux/reports/` 下的报告文件，文件名按与轨迹缓存相同的规则转成安全字符。 */
+/** `.imux/reports/` 下的报告文件，文件名与轨迹缓存共用 [safeSessionFileName]。 */
 internal fun reportFile(projectRoot: Path, sessionKey: String): Path =
-    projectRoot.resolve(".imux").resolve("reports").resolve(sessionKey.replace(Regex("[^a-zA-Z0-9_-]"), "_") + ".html")
+    projectRoot.resolve(".imux").resolve("reports").resolve(safeSessionFileName(sessionKey) + ".html")
 
 /** 先确保 `.imux/` 不进 Git；内容与已有文件相同时不写，否则写临时文件后原子替换。 */
 internal fun writeReportFile(projectRoot: Path, sessionKey: String, html: String): ReportWrite {

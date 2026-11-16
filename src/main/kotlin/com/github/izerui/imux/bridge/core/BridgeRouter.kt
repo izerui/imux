@@ -38,6 +38,8 @@ class BridgeRouter(
     private val rateLimitRetryDelayMs: Long = 20_000,
     /** IDE 完成信号到了却还没读到回复时，最多等多久再判定这一轮没有文字回复。 */
     private val noReplyGraceMs: Long = 3_000,
+    /** 手机发了停止、按下 Esc 后，最多等多久看到这一轮中断；等不到就如实告诉手机。 */
+    private val stopGraceMs: Long = 5_000,
     private val now: () -> Long = System::currentTimeMillis,
     /** 自动接回后等机器人上线的最长时间。 */
     private val reconnectWaitMs: Long = 30_000,
@@ -199,8 +201,10 @@ class BridgeRouter(
                 pushAfter(phase.push) {
                     when (phase.result) {
                         StopResult.SENT -> {
-                            // 中断了一轮的不回执：中断写进记录后照常推「本轮已中断」，那一句就是停成功的回复
-                            if (!phase.turnRunning) reply(message.robotId, owner, texts.backgroundStopped())
+                            // 中断了一轮的不回执：中断写进记录后照常推「本轮已中断」，那一句就是停成功的回复；
+                            // 等不到中断（会话其实空闲、还没读到状态）由 onQuiet 如实补一句
+                            if (phase.turnRunning) tab(phase.binding.target.tabId) { stopRequested(now()) }
+                            else reply(message.robotId, owner, texts.backgroundStopped())
                             push(phase.binding, phase.push)
                             InboundOutcome.STOPPED
                         }
@@ -770,6 +774,9 @@ class BridgeRouter(
      * 说一声已完成，再发排着的提示。
      */
     suspend fun onQuiet(tabId: String) {
+        if (tab(tabId) { takeUnconfirmedStop(now(), stopGraceMs) }) {
+            bindings.bindingForTab(tabId)?.let { send(it, texts.stopUnconfirmed()) }
+        }
         val due =
             tab(tabId) {
                 val since = awaitingReplySince ?: return@tab false

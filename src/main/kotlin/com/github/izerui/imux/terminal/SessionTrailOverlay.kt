@@ -319,6 +319,9 @@ internal class SessionTrailOverlay(
     private fun contentFor(state: TrailState): JComponent {
         val regenerate = { store.generate(key, virtualFile.tabId) }
         if (showsReport(state)) return reportContent(state, regenerate)
+        // 不再显示报告：还在后台写的那次作废，写完也不再动按钮和视图
+        reportRequest++
+        shownReport = null
         return when (state) {
             TrailState.Unavailable -> buildHintPanel(ImuxBundle.message("action.overview.pending"), null)
             TrailState.Empty -> buildHintPanel(

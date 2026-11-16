@@ -825,4 +825,17 @@ class ProgressOverviewTest {
         assertTrue("旧缓存只有时间线，不能当成前文汇总", prompts.single().contains("第 1 行到第 4 行"))
         assertFalse(prompts.single().contains("只需读取第 3 行"))
     }
+
+    @Test
+    fun `统计事实出错时报告照常保存，只是没有统计`() {
+        val cache = OverviewCache(null)
+        val result = runTrailGeneration(
+            cache, "s1", sessionFile("u1\na1\n"), { _, _ -> "p" },
+            runAgent = { reportOutput("[MAIN] 完成") },
+            facts = { throw java.nio.file.NoSuchFileException("会话文件被删") },
+        )
+        assertEquals("完成", result.report!!.timeline.single().text)
+        assertEquals(com.github.izerui.imux.overview.report.ReportFacts(), result.report!!.facts)
+        assertEquals("完成", cache.get("s1")!!.result.report!!.timeline.single().text)
+    }
 }

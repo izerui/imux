@@ -80,6 +80,23 @@ class ProjectAttachmentStoreTest {
         }
 
     @Test
+    fun `gitignore 写不进去时附件照常保存`() =
+        runBlocking {
+            val root = project(git = false)
+            // 附件目录已在、.imux 本身只读：.gitignore 写不进去，附件目录照样能写
+            Files.createDirectories(root.resolve(".imux/attachments/2026-10-27"))
+            val imux = root.resolve(".imux")
+            Files.setPosixFilePermissions(imux, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"))
+            try {
+                val result = store().place(target(root), FakeAttachment(png, null))
+                assertTrue("附件不受影响：$result", result is PlaceResult.Saved)
+                assertTrue("确认 .gitignore 确实没写进去", !Files.exists(imux.resolve(".gitignore")))
+            } finally {
+                Files.setPosixFilePermissions(imux, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
+            }
+        }
+
+    @Test
     fun `有文件名时清理后使用并加后缀，没有扩展名时补上识别出的扩展名`() =
         runBlocking {
             val root = project()

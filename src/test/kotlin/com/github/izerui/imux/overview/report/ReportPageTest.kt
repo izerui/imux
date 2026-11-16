@@ -89,4 +89,19 @@ class ReportPageTest {
 
         assertEquals("*\n", Files.readString(root.resolve(".imux/.gitignore")))
     }
+
+    @Test
+    fun `gitignore 写不进去时报告照常写入`() {
+        val root = Files.createTempDirectory("project")
+        Files.createDirectories(root.resolve(".imux/reports"))
+        val imux = root.resolve(".imux")
+        Files.setPosixFilePermissions(imux, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"))
+        try {
+            val write = writeReportFile(root, "s1", "<html>1</html>")
+            assertTrue(Files.isRegularFile(write.path))
+            assertFalse("确认 .gitignore 确实没写进去", Files.exists(imux.resolve(".gitignore")))
+        } finally {
+            Files.setPosixFilePermissions(imux, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
+        }
+    }
 }

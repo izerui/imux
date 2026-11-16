@@ -127,8 +127,8 @@ private fun extractObject(output: String): JsonObject? {
     var start = output.indexOf('{')
     while (start >= 0) {
         val end = matchingBrace(output, start)
-        if (end < 0) return null
-        parseObject(output.substring(start, end + 1))?.let { return it }
+        // 配不上（说明文字里多了个 `{`）就从下一个 `{` 再试，后面可能就是完整的报告
+        if (end >= 0) parseObject(output.substring(start, end + 1))?.let { return it }
         start = output.indexOf('{', start + 1)
     }
     return null

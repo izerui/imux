@@ -154,8 +154,24 @@ internal class TabState {
         current.text.append(text)
     }
 
+    /** 手机发了停止、按下了 Esc 的时刻；等到这一轮中断或结束就清掉，等不到由 [takeUnconfirmedStop] 交出。 */
+    private var stopRequestedAt: Long? = null
+
+    fun stopRequested(at: Long) {
+        stopRequestedAt = at
+    }
+
+    /** 按下停止后过了 [graceMs] 仍没中断、也没结束：交出一次（返回 true）并清掉，之后不再提。 */
+    fun takeUnconfirmedStop(now: Long, graceMs: Long): Boolean {
+        val at = stopRequestedAt ?: return false
+        if (now - at < graceMs) return false
+        stopRequestedAt = null
+        return true
+    }
+
     /** 这一轮被中断：中断前的过程说明作废，按已收尾处理，之后的完成信号不再结算。 */
     fun interrupt() {
+        stopRequestedAt = null
         waitingExited()
         awaitingReplySince = null
         pending = null
@@ -165,6 +181,8 @@ internal class TabState {
 
     /** 记录里读到本轮结束标记：结算，交出待发的回复。 */
     fun endByMarker(): PendingReply? {
+        // 停止还没生效这一轮就结束了：手机会收到这一轮的回复，不再说停止没生效
+        stopRequestedAt = null
         endedByMarker = true
         settled = true
         // 这一轮已经结束：其中的框都已过去
@@ -177,6 +195,7 @@ internal class TabState {
         // 同一轮重复到达的完成信号（含中断后的）只结算一次，“没有文字回复”的提示才不会重复
         if (turn != this.turn || endedByMarker || settled) return false
         settled = true
+        stopRequestedAt = null
         // 确认是当前这一轮结束了，其中的框都已过去；上一轮迟到的信号在上面就返回了，不清状态
         waitingExited()
         return true

@@ -110,6 +110,9 @@ interface BridgeTexts {
     /** 手机发了停止，会话此刻没有在跑的一轮：只停了后台任务。 */
     fun backgroundStopped(): String
 
+    /** 手机发了停止、按下了 Esc，等了一会儿也没看到这一轮中断：会话当时可能并没有在执行。 */
+    fun stopUnconfirmed(): String
+
     /** 一轮回复发出后还有后台任务在运行；[tasks] 是它们的说明，没有说明的为 null。 */
     fun backgroundRunning(tasks: List<String?>): String
 

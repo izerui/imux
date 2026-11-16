@@ -72,6 +72,9 @@ data class CachedView(
     val stale: Boolean,
 )
 
+/** 会话键转成可作文件名的字符：轨迹缓存与报告文件共用，同一会话两边的文件名才对得上。 */
+internal fun safeSessionFileName(sessionKey: String): String = sessionKey.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+
 /** 会话文件大小与摘要覆盖到的位置不同，即之后又有新的消息或工具输出。 */
 internal fun isStale(cached: CachedOverview, sessionFile: Path): Boolean =
     runCatching { Files.size(sessionFile) }.getOrDefault(-1L) != cached.fileSize
@@ -153,10 +156,7 @@ internal class OverviewCache(private val storageDir: Path?) {
         }
     }
 
-    private fun cacheFile(sessionKey: String): Path {
-        val safeName = sessionKey.replace(Regex("[^a-zA-Z0-9_-]"), "_")
-        return storageDir!!.resolve("$safeName.json")
-    }
+    private fun cacheFile(sessionKey: String): Path = storageDir!!.resolve("${safeSessionFileName(sessionKey)}.json")
 
     /**
      * 用临时文件写入后原子替换，避免写入中途损坏已有摘要。
@@ -277,7 +277,9 @@ internal fun runTrailGeneration(
     val startedAt = Instant.now()
     val report = generateReport(buildPrompt(cached, cursor), runAgent, isCancelled)
     val nodes = sanitizeNodeTimes(report.timeline, startedAt)
-    val result = OverviewResult(nodes, Instant.now(), report = report.copy(timeline = nodes, facts = facts(cursor)))
+    // 时长与改动文件只是附加信息：统计出错（比如会话文件恰好被删）就当没有，不能把智能体写好的报告一起丢掉
+    val reportFacts = runCatching { facts(cursor) }.getOrElse { ReportFacts() }
+    val result = OverviewResult(nodes, Instant.now(), report = report.copy(timeline = nodes, facts = reportFacts))
     return storeOverview(cache, sessionKey, result, sessionFile, cursor)
 }
 

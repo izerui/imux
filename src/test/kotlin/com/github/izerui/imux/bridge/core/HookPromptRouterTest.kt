@@ -120,6 +120,8 @@ class HookPromptRouterTest {
 
         override fun backgroundStopped() = "BACKGROUND_STOPPED"
 
+        override fun stopUnconfirmed() = "STOP_UNCONFIRMED"
+
         override fun connected(
             project: String,
             agent: String,

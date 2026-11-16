@@ -120,6 +120,8 @@ class BridgeRouterTest {
 
         override fun backgroundStopped() = "BACKGROUND_STOPPED"
 
+        override fun stopUnconfirmed() = "STOP_UNCONFIRMED"
+
         override fun connected(
             project: String,
             agent: String,
@@ -1751,5 +1753,58 @@ class BridgeRouterTest {
             assertEquals(InboundOutcome.OFFLINE, router.onInbound(inbound("1", "stop")))
             assertEquals(listOf("tab-1" to true), port.stops)
             assertEquals(listOf("OFFLINE"), sentTexts())
+        }
+
+    // ── 停止后等不到中断：如实告诉手机 ──
+
+    private val stopClocked =
+        BridgeRouter(registry, { if (it == robot) owner else null }, port, { if (it == robot) channel else null }, Texts, now = { clock }, stopGraceMs = 5_000)
+
+    @Test
+    fun `停止后等到中断时只推本轮已中断`() =
+        runBlocking {
+            registry.bind(robot, target)
+            stopClocked.onInbound(inbound("1", "停止"))
+            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            clock += 10_000
+            stopClocked.onQuiet("tab-1")
+            assertEquals(listOf("INTERRUPTED"), sentTexts())
+        }
+
+    @Test
+    fun `停止后迟迟没有中断时如实告诉手机，只说一次`() =
+        runBlocking {
+            registry.bind(robot, target)
+            stopClocked.onInbound(inbound("1", "停"))
+            clock += 4_000
+            stopClocked.onQuiet("tab-1")
+            assertTrue("没到等待时间不说", channel.sent.isEmpty())
+            clock += 2_000
+            stopClocked.onQuiet("tab-1")
+            stopClocked.onQuiet("tab-1")
+            assertEquals(listOf("STOP_UNCONFIRMED"), sentTexts())
+        }
+
+    @Test
+    fun `只停后台任务时已经回过，不再等中断`() =
+        runBlocking {
+            registry.bind(robot, target)
+            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            channel.sent.clear()
+            stopClocked.onInbound(inbound("1", "停止"))
+            clock += 10_000
+            stopClocked.onQuiet("tab-1")
+            assertEquals(listOf("BACKGROUND_STOPPED"), sentTexts())
+        }
+
+    @Test
+    fun `停止后这一轮由完成信号结束时不再说停止没生效`() =
+        runBlocking {
+            registry.bind(robot, target)
+            stopClocked.onInbound(inbound("1", "停止"))
+            stopClocked.onTurnCompleted("tab-1", stopClocked.currentTurn("tab-1"))
+            clock += 10_000
+            stopClocked.onQuiet("tab-1")
+            assertFalse(sentTexts().contains("STOP_UNCONFIRMED"))
         }
 }

@@ -157,4 +157,11 @@ class ReportJsonTest {
         assertEquals(Severity.HIGH, report.issues[0].severity)
         assertEquals(NodeSymbol.MAIN, report.timeline[0].symbol)
     }
+
+    @Test
+    fun `说明文字里不配对的左括号不影响取出后面的报告`() {
+        val report = parseAgentReport("字段格式以 { 开头，报告如下：\n$full")
+        assertNotNull(report)
+        assertEquals("手机上发停止就能停下会话", report!!.goal)
+    }
 }
