@@ -385,7 +385,7 @@ internal fun parseOverviewOutput(output: String): List<OverviewNode> {
 }
 
 /** 时间写坏了不影响节点本身，只是不显示时间。 */
-private fun parseNodeTime(raw: String): Instant? {
+internal fun parseNodeTime(raw: String): Instant? {
     val value = raw.trim().ifEmpty { return null }
     return runCatching { java.time.OffsetDateTime.parse(value).toInstant() }.getOrNull()
         ?: runCatching { Instant.parse(value) }.getOrNull()
