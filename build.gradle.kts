@@ -52,6 +52,8 @@ dependencies {
         // Ultimate 专属插件。使用 Community 发行版可避免依赖报告展开整套 IU 插件及其可选缺失模块。
         intellijIdea("262.10315.19")
         bundledPlugin("org.jetbrains.plugins.terminal")
+        // 会话报告内嵌显示用 JCEF；2026.2 起它是可被禁用的内置插件，plugin.xml 里为可选依赖
+        bundledPlugin("com.intellij.modules.jcef")
         // 暂不引入 testFramework(TestFrameworkType.Platform)：
         // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，
         // 本机网络下该主机 TLS 稳定被重置。它只服务于 BasePlatformTestCase 类的

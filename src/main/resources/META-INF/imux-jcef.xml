@@ -1,0 +1,3 @@
+<idea-plugin>
+  <!-- 可选依赖 com.intellij.modules.jcef 的配置：内嵌显示会话报告。JCEF 不可用时 imux 照常工作，报告改在系统浏览器打开。 -->
+</idea-plugin>

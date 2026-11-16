@@ -77,6 +77,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
+    <depends optional="true" config-file="imux-jcef.xml">com.intellij.modules.jcef</depends>
 
     <!-- 会话装饰：其它功能给终端标签、会话树、终端顶部加的标记与横幅。现有代码只认这个接口。 -->
     <extensionPoints>
