@@ -182,6 +182,12 @@ internal class TabState {
         return true
     }
 
+    /**
+     * 此刻没有在跑的一轮：本轮已结算，手机提交的话也都已在记录里出现（还没出现的可能正要开新一轮）。
+     * 刚绑定、还没读到轮次时不算空闲：可能绑在一轮的半路上。
+     */
+    val idle: Boolean get() = settled && remoteEchoes.isEmpty()
+
     /** 已结算时交出待发的回复，未结算返回 null。 */
     fun takeIfSettled(): PendingReply? = if (settled) takeReply() else null
 

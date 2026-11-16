@@ -98,6 +98,9 @@ object HookReplies {
     private const val DENIED_AND_SAID = "The user denied this tool call from their phone and said: "
     private const val PLAN_DENIED = "The user does not want to proceed with this plan yet."
 
+    /** 手机发了停止：挂着的确认一律拒绝，随后按 Esc 中断这一轮。 */
+    const val STOPPED = "The user stopped this turn from their phone."
+
     /**
      * 计划回 1：与电脑上的第 1 项一致，先切 auto 再切 bypassPermissions（实测 23、24）。
      * 以跳过权限方式启动的会话最终为 bypass；其余会话里 bypass 是空操作，停在 auto。顺序不能反。

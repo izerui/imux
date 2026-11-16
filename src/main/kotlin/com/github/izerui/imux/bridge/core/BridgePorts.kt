@@ -28,6 +28,15 @@ fun interface TerminalSessionPort {
         target: SessionTarget,
         text: String,
     ): SubmitResult
+
+    /**
+     * 手机发了停止：[turnRunning] 时先中断正在跑的一轮（等同按 Esc），再按这个 CLI 的方式停掉后台任务。
+     * 回到等待输入，不退出 CLI。按什么键由实现方按智能体决定。不能按键的端口按离线处理。
+     */
+    suspend fun stop(
+        target: SessionTarget,
+        turnRunning: Boolean,
+    ): StopResult = StopResult.OFFLINE
 }
 
 /** 发往手机的提示文案，由资源包实现，测试用假实现。 */
@@ -92,8 +101,14 @@ interface BridgeTexts {
     /** 本轮失败，只展示简短原因，不把异常终止当成成功。 */
     fun turnFailed(reason: String): String
 
-    /** 这一轮在电脑上被中断。 */
+    /** 这一轮被中断（电脑上按了 Esc，或手机发了停止）。 */
     fun turnInterrupted(): String
+
+    /** 手机发了停止，但会话此刻没有在跑的一轮，也没有能停的后台任务，没有按键。 */
+    fun nothingToStop(): String
+
+    /** 手机发了停止，会话此刻没有在跑的一轮：只停了后台任务。 */
+    fun backgroundStopped(): String
 
     /** 一轮回复发出后还有后台任务在运行；[tasks] 是它们的说明，没有说明的为 null。 */
     fun backgroundRunning(tasks: List<String?>): String

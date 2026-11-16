@@ -95,6 +95,10 @@ class TabPollerTest {
 
         override fun turnInterrupted() = "INTERRUPTED"
 
+        override fun nothingToStop() = "NOTHING_TO_STOP"
+
+        override fun backgroundStopped() = "BACKGROUND_STOPPED"
+
         override fun connected(
             project: String,
             agent: String,

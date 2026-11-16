@@ -138,6 +138,17 @@ sealed interface SessionEvent {
 
 enum class SubmitResult { SUBMITTED_TO_TERMINAL, NOT_READY, OFFLINE }
 
+/** 手机发了停止，终端端口的处理结果。 */
+enum class StopResult {
+    /** 已按下停止的键（中断这一轮、停后台任务）。 */
+    SENT,
+
+    /** 没有在跑的一轮，这个 CLI 也没有能停的后台任务：没有按键。 */
+    NOTHING_TO_STOP,
+
+    OFFLINE,
+}
+
 sealed interface DeliveryResult {
     data object Accepted : DeliveryResult
     data class Rejected(val reason: String) : DeliveryResult
@@ -173,4 +184,10 @@ enum class InboundOutcome {
 
     /** 终端停在手机无法作答的框上：没有贴进终端，已提示到 IDE 中处理。 */
     DIALOG_OPEN,
+
+    /** 手机发了停止：已向终端按下停止的键。 */
+    STOPPED,
+
+    /** 手机发了停止，但没有能停的：没有按键，已告知。 */
+    NOTHING_TO_STOP,
 }

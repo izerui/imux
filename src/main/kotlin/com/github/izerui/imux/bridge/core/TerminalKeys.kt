@@ -5,6 +5,11 @@ internal object TerminalKeys {
     /** 手机输入法常给的全角字母数字转成半角，去掉首尾空白与结尾标点，便于认出「Ｂ。」这类选择。 */
     fun normalizeReply(text: String): String = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC).trim().trimEnd(*TRAILING_PUNCTUATION).trim()
 
+    /** 整条消息就是停止词（不论大小写、全半角、结尾标点）：当作 Esc，中断正在跑的一轮。只认整句，「停止使用 xx」照常转交。 */
+    fun isStop(text: String): Boolean = normalizeReply(text).lowercase() in STOP_WORDS
+
+    private val STOP_WORDS = setOf("停止", "停", "stop", "esc")
+
     private val TRAILING_PUNCTUATION = charArrayOf('。', '.', '！', '!', '，', ',', '？', '?', '~', '～')
 }
 

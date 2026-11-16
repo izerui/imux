@@ -32,6 +32,19 @@ class BridgeRouterTest {
     private class FakePort(var result: SubmitResult = SubmitResult.SUBMITTED_TO_TERMINAL) : TerminalSessionPort {
         val submitted = mutableListOf<Pair<String, String>>()
 
+        /** 每次停止：标签与是否要中断一轮。 */
+        val stops = mutableListOf<Pair<String, Boolean>>()
+
+        var stopResult = StopResult.SENT
+
+        override suspend fun stop(
+            target: SessionTarget,
+            turnRunning: Boolean,
+        ): StopResult {
+            stops += target.tabId to turnRunning
+            return stopResult
+        }
+
         override suspend fun submit(
             target: SessionTarget,
             text: String,
@@ -102,6 +115,10 @@ class BridgeRouterTest {
         override fun turnFailed(reason: String) = "FAILED($reason)"
 
         override fun turnInterrupted() = "INTERRUPTED"
+
+        override fun nothingToStop() = "NOTHING_TO_STOP"
+
+        override fun backgroundStopped() = "BACKGROUND_STOPPED"
 
         override fun connected(
             project: String,
@@ -1666,5 +1683,73 @@ class BridgeRouterTest {
                 assertEquals(name, InboundOutcome.SUBMITTED_TO_TERMINAL, r.onInbound(inbound("x$name", "2")))
                 assertEquals(name, listOf("tab-1" to "2"), p.submitted)
             }
+        }
+
+    @Test
+    fun `停止词各自中断这一轮不贴进终端`() =
+        runBlocking {
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("1", "停止")))
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("2", "停")))
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("3", "STOP")))
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("4", "Esc")))
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("5", " 停止。")))
+            assertEquals(List(5) { "tab-1" to true }, port.stops)
+            assertTrue(port.submitted.isEmpty())
+            // 中断了一轮不回执，等记录里的中断推「本轮已中断」
+            assertTrue(channel.sent.isEmpty())
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted))
+            assertEquals(listOf("INTERRUPTED"), sentTexts())
+        }
+
+    @Test
+    fun `句子里带停止词照常提交不停止`() =
+        runBlocking {
+            registry.bind(robot, target)
+            assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("1", "停止使用旧接口")))
+            assertEquals(listOf("tab-1" to "停止使用旧接口"), port.submitted)
+            assertTrue(port.stops.isEmpty())
+        }
+
+    @Test
+    fun `本轮已结束时停止不中断一轮只停后台并告知`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.AssistantText("好了"), SessionEvent.TurnEnded))
+            channel.sent.clear()
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("1", "停止")))
+            assertEquals(listOf("tab-1" to false), port.stops)
+            assertEquals(listOf("BACKGROUND_STOPPED"), sentTexts())
+        }
+
+    @Test
+    fun `没有能停的时告知没有在执行`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            channel.sent.clear()
+            port.stopResult = StopResult.NOTHING_TO_STOP
+            assertEquals(InboundOutcome.NOTHING_TO_STOP, router.onInbound(inbound("1", "停止")))
+            assertEquals(listOf("NOTHING_TO_STOP"), sentTexts())
+        }
+
+    @Test
+    fun `刚提交的话还没进记录时停止仍中断一轮`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            router.onInbound(inbound("1", "跑一下测试"))
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("2", "停")))
+            assertEquals(listOf("tab-1" to true), port.stops)
+        }
+
+    @Test
+    fun `终端离线时停止回复离线`() =
+        runBlocking {
+            registry.bind(robot, target)
+            port.stopResult = StopResult.OFFLINE
+            assertEquals(InboundOutcome.OFFLINE, router.onInbound(inbound("1", "stop")))
+            assertEquals(listOf("tab-1" to true), port.stops)
+            assertEquals(listOf("OFFLINE"), sentTexts())
         }
 }

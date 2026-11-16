@@ -82,6 +82,14 @@ class BridgeRouter(
         /** 有没送达的 hook 队首，刚补推（或已在路上）：请手机先回答它，这句没有贴进终端。 */
         data object AnswerFirst : SubmitPhase
 
+        /** 手机发了停止：终端端口的结果 [result]，[turnRunning] 为是否中断了一轮；挂着的主会话确认已拒绝，之后推下一条 [push]。 */
+        data class Stopped(
+            val binding: Binding,
+            val result: StopResult,
+            val turnRunning: Boolean,
+            val push: HookPromptQueue.Push?,
+        ) : SubmitPhase
+
         /** 手机答了 hook 送来的确认：依次发出确认 [texts] 与下一条推送 [push]。 */
         data class Hook(val binding: Binding, val texts: List<String>, val push: HookPromptQueue.Push? = null) : SubmitPhase
     }
@@ -125,6 +133,15 @@ class BridgeRouter(
 
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
+                // 停止词先于一切：挂着确认时也不当作答，直接中断这一轮
+                if (message.attachments.isEmpty() && TerminalKeys.isStop(message.text)) {
+                    return@withLock try {
+                        stop(current)
+                    } catch (e: CancellationException) {
+                        unmarkSeen(message.robotId, message.externalMessageId)
+                        throw e
+                    }
+                }
                 // hook 送来的确认优先：已送达这台手机的队首，译成决定回给 hook，不按任何键
                 when (val gate = gate(current)) {
                     is Gate.Answer -> {
@@ -178,8 +195,52 @@ class BridgeRouter(
                 }
                 InboundOutcome.SUBMITTED_TO_TERMINAL
             }
+            is SubmitPhase.Stopped ->
+                pushAfter(phase.push) {
+                    when (phase.result) {
+                        StopResult.SENT -> {
+                            // 中断了一轮的不回执：中断写进记录后照常推「本轮已中断」，那一句就是停成功的回复
+                            if (!phase.turnRunning) reply(message.robotId, owner, texts.backgroundStopped())
+                            push(phase.binding, phase.push)
+                            InboundOutcome.STOPPED
+                        }
+                        StopResult.NOTHING_TO_STOP -> {
+                            reply(message.robotId, owner, texts.nothingToStop())
+                            push(phase.binding, phase.push)
+                            InboundOutcome.NOTHING_TO_STOP
+                        }
+                        StopResult.OFFLINE -> outcomeOf(message.robotId, owner, SubmitResult.OFFLINE)
+                    }
+                }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
         }
+    }
+
+    /**
+     * 手机发了停止：停掉正在跑的一轮与后台任务，回到等待输入。主会话挂着的确认先拒绝（不发回执）：中断本来也会让它们作废，
+     * 拒绝了 hook 才不会被当作电脑端拒绝告诉手机。一轮已结算时不中断（空闲时连按两次 Esc 会打开 Claude 的回退菜单），
+     * 只停后台任务；按什么键由终端端口决定。须在提交锁内调用。
+     */
+    private suspend fun stop(binding: Binding): SubmitPhase {
+        val tabId = binding.target.tabId
+        val (denied, idle, next) =
+            synchronized(lock) {
+                val queue = hookQueues[tabId]
+                val denied = queue?.drainMainSession().orEmpty()
+                val idle = denied.isEmpty() && tabs[tabId]?.let { it.idle && !it.waitingActive } == true
+                Triple(denied, idle, queue?.nextPush(binding))
+            }
+        denied.forEach { it.respond(HookDecision.Deny(HookReplies.STOPPED)) }
+        val result =
+            try {
+                sessionPort.stop(binding.target, turnRunning = !idle)
+            } catch (e: CancellationException) {
+                abandon(next)
+                throw e
+            } catch (_: Exception) {
+                StopResult.OFFLINE
+            }
+        return SubmitPhase.Stopped(binding, result, turnRunning = !idle, next)
     }
 
     private suspend fun outcomeOf(
@@ -444,12 +505,12 @@ class BridgeRouter(
      * [nextPush] 领到推送之后、[push] 发出之前还有别的挂起点（先发确认或通知）时用：[block] 无论正常结束、提前返回还是被取消，
      * 都清掉没发出去的那次的「正在推」标记，否则这个队首再也不会被补推。
      */
-    private inline fun pushAfter(
+    private inline fun <T> pushAfter(
         push: HookPromptQueue.Push?,
-        block: () -> Unit,
-    ) {
+        block: () -> T,
+    ): T {
         try {
-            block()
+            return block()
         } finally {
             abandon(push)
         }

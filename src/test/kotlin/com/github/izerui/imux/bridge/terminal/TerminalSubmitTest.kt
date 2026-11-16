@@ -1,5 +1,6 @@
 package com.github.izerui.imux.bridge.terminal
 
+import com.github.izerui.imux.model.AgentType
 import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,5 +36,32 @@ class TerminalSubmitTest {
     @Test
     fun `终端未开启括号粘贴时如实返回未送出`() {
         assertFalse(submitText(builder(mutableListOf(), accept = false), "x"))
+    }
+
+    @Test
+    fun `停止的键原样写进终端，不用括号粘贴也不回车`() {
+        val calls = mutableListOf<String>()
+        sendKey(builder(calls, accept = true), "\u001b")
+        assertEquals(listOf("send(\u001b)"), calls)
+    }
+
+    @Test
+    fun `三个智能体在跑一轮时先按 Esc，再各自停后台任务`() {
+        assertEquals(
+            listOf(StopKey("\u001b"), StopKey("\u0018\u000b", 500), StopKey("\u0018\u000b", 300)),
+            stopKeys(AgentType.CLAUDE, turnRunning = true),
+        )
+        assertEquals(
+            listOf(StopKey("\u001b"), StopKey("/stop", 500), StopKey("\r", 300)),
+            stopKeys(AgentType.CODEX, turnRunning = true),
+        )
+        assertEquals(listOf(StopKey("\u001b")), stopKeys(AgentType.PI, turnRunning = true))
+    }
+
+    @Test
+    fun `三个智能体没在跑一轮时都不按 Esc，Pi 什么也不按`() {
+        assertEquals(listOf(StopKey("\u0018\u000b"), StopKey("\u0018\u000b", 300)), stopKeys(AgentType.CLAUDE, turnRunning = false))
+        assertEquals(listOf(StopKey("/stop"), StopKey("\r", 300)), stopKeys(AgentType.CODEX, turnRunning = false))
+        assertEquals(emptyList<StopKey>(), stopKeys(AgentType.PI, turnRunning = false))
     }
 }

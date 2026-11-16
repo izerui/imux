@@ -3,8 +3,10 @@ package com.github.izerui.imux.bridge.terminal
 import com.github.izerui.imux.bridge.TerminalBridgeService
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.SessionTarget
+import com.github.izerui.imux.bridge.core.StopResult
 import com.github.izerui.imux.bridge.core.SubmitResult
 import com.github.izerui.imux.bridge.core.TerminalSessionPort
+import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.serviceIfCreated
@@ -13,6 +15,7 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.terminal.frontend.view.TerminalView
 import com.intellij.terminal.frontend.view.TerminalViewSessionState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
 
@@ -33,6 +36,30 @@ class ImuxTerminalSessionPort(
         target: SessionTarget,
         text: String,
     ): SubmitResult = withContext(Dispatchers.EDT) { submitOnce(target, text) }
+
+    /** 逐个按下 [stopKeys]；按到一半终端没了就不再按，已按下的照样算数。 */
+    override suspend fun stop(
+        target: SessionTarget,
+        turnRunning: Boolean,
+    ): StopResult {
+        val keys = stopKeys(target.agentType, turnRunning)
+        if (keys.isEmpty()) {
+            return withContext(Dispatchers.EDT) {
+                if (liveView(target) == null) StopResult.OFFLINE else StopResult.NOTHING_TO_STOP
+            }
+        }
+        keys.forEachIndexed { index, key ->
+            if (key.delayMs > 0) delay(key.delayMs)
+            val sent =
+                withContext(Dispatchers.EDT) {
+                    val view = liveView(target) ?: return@withContext false
+                    sendKey(view.createSendTextBuilder(), key.text)
+                    true
+                }
+            if (!sent) return if (index == 0) StopResult.OFFLINE else StopResult.SENT
+        }
+        return StopResult.SENT
+    }
 
     /** 界面与提交消息使用同一个存活判据；保留的恢复绑定不代表终端在线。 */
     internal fun isAvailable(target: SessionTarget): Boolean = liveView(target) != null
@@ -64,6 +91,49 @@ internal fun submitText(
     builder: TerminalSendTextBuilder,
     text: String,
 ): Boolean = builder.requireBracketedPasteMode().shouldExecute().trySend(text)
+
+/** 停止时按的一个键：[text] 原样写进终端，发它之前先等 [delayMs]。 */
+internal data class StopKey(
+    val text: String,
+    val delayMs: Long = 0,
+)
+
+/**
+ * 手机发停止时要按的键，回到等待输入、不退出 CLI。[turnRunning] 时先按 Esc 中断这一轮：三个 CLI 都以单独一个 ESC 字节中断，
+ * 不用 Ctrl+C（Claude Code、Codex 空闲时连按两次会退出）。再停后台任务：
+ * - Claude Code：Ctrl+X Ctrl+K 停掉全部后台子代理，3 秒内按两次才生效（顺带关掉 artifact 自动回复）；后台 shell 不管，它没有一键停止的键。
+ * - Codex：`/stop` 停掉全部后台终端。逐字输入、隔一会儿再回车，与人手敲一样：连着回车会被 Codex 当成粘贴里的换行。
+ * - Pi：没有后台任务，没在跑一轮时什么也不按。
+ * Esc 之后隔一会儿再按下一个键：紧跟其后的键会和 Esc 拼成 Alt 组合键，也让 CLI 先把这一轮停稳。
+ */
+internal fun stopKeys(
+    agent: AgentType,
+    turnRunning: Boolean,
+): List<StopKey> {
+    val background =
+        when (agent) {
+            AgentType.CLAUDE -> listOf(StopKey(KILL_AGENTS), StopKey(KILL_AGENTS, KEY_GAP_MS))
+            AgentType.CODEX -> listOf(StopKey("/stop"), StopKey("\r", KEY_GAP_MS))
+            AgentType.PI -> emptyList()
+        }
+    if (!turnRunning) return background
+    return listOf(StopKey(ESCAPE)) + background.mapIndexed { index, key -> if (index == 0) key.copy(delayMs = AFTER_ESCAPE_MS) else key }
+}
+
+/** 原样写进终端，不用括号粘贴（会被当成贴进来的文字），也不带回车。 */
+internal fun sendKey(
+    builder: TerminalSendTextBuilder,
+    text: String,
+) = builder.send(text)
+
+private const val ESCAPE = "\u001b"
+
+/** Ctrl+X Ctrl+K。 */
+private const val KILL_AGENTS = "\u0018\u000b"
+
+private const val KEY_GAP_MS = 300L
+
+private const val AFTER_ESCAPE_MS = 500L
 
 private fun openProjectAt(projectPath: String): Project? =
     ProjectManager.getInstance().openProjects.firstOrNull { it.basePath == projectPath }

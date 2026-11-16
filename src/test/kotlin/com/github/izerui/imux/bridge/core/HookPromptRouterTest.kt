@@ -23,6 +23,17 @@ class HookPromptRouterTest {
     private class FakePort : TerminalSessionPort {
         val submitted = mutableListOf<String>()
 
+        /** 每次停止是否要中断一轮。 */
+        val stops = mutableListOf<Boolean>()
+
+        override suspend fun stop(
+            target: SessionTarget,
+            turnRunning: Boolean,
+        ): StopResult {
+            stops += turnRunning
+            return StopResult.SENT
+        }
+
         /** 每次提交的结果；默认提交成功。 */
         var result: suspend (attempt: Int) -> SubmitResult = { SubmitResult.SUBMITTED_TO_TERMINAL }
 
@@ -104,6 +115,10 @@ class HookPromptRouterTest {
         override fun turnFailed(reason: String) = "FAILED($reason)"
 
         override fun turnInterrupted() = "INTERRUPTED"
+
+        override fun nothingToStop() = "NOTHING_TO_STOP"
+
+        override fun backgroundStopped() = "BACKGROUND_STOPPED"
 
         override fun connected(
             project: String,
@@ -1326,5 +1341,24 @@ class HookPromptRouterTest {
                 assertTrue(tool, text.toByteArray().size <= 1000)
                 assertTrue(tool, text.contains("\n…"))
             }
+        }
+
+    @Test
+    fun `确认挂着时停止拒绝主会话的确认再中断一轮不发回执`() =
+        runBlocking {
+            bind()
+            val first = request(1)
+            val second = request(2)
+            val agent = request(3, agentId = "a1")
+            channel.sent.clear()
+            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("m1", "停止")))
+            assertEquals(listOf(HookDecision.Deny(HookReplies.STOPPED)), first.decisions)
+            assertEquals(listOf(HookDecision.Deny(HookReplies.STOPPED)), second.decisions)
+            // 子代理的确认不动，成为队首后推给手机
+            assertTrue(agent.decisions.isEmpty())
+            assertEquals(listOf(true), port.stops)
+            assertTrue(port.submitted.isEmpty())
+            assertEquals(1, sentTexts().size)
+            assertTrue(sentTexts().single().startsWith("HOOK_PERMISSION("))
         }
 }

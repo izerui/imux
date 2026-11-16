@@ -60,6 +60,10 @@ internal object BundleBridgeTexts : BridgeTexts {
 
     override fun turnInterrupted() = ImuxBundle.message("bridge.status.turnInterrupted")
 
+    override fun nothingToStop() = ImuxBundle.message("bridge.reply.nothingToStop")
+
+    override fun backgroundStopped() = ImuxBundle.message("bridge.reply.backgroundStopped")
+
     override fun backgroundRunning(tasks: List<String?>) =
         ImuxBundle.message(
             "bridge.status.backgroundRunning",
