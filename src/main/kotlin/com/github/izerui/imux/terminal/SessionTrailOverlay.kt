@@ -170,7 +170,7 @@ internal class SessionTrailOverlay(
         }
 
     private val openAction =
-        object : DumbAwareAction(AllIcons.Ide.External_link_arrow) {
+        object : DumbAwareAction(AllIcons.Actions.MoveTo2) {
             override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
             override fun update(event: AnActionEvent) {
