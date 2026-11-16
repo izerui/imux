@@ -10,15 +10,21 @@ import com.github.izerui.imux.agent.oneShotAgentInvocation
 import com.github.izerui.imux.agent.runOneShotAgent
 import com.github.izerui.imux.agent.runTracked
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.overview.report.REPORT_TEMPLATE
 import com.github.izerui.imux.overview.report.ReportFacts
+import com.github.izerui.imux.overview.report.ReportSession
+import com.github.izerui.imux.overview.report.ReportWrite
 import com.github.izerui.imux.overview.report.SessionReport
 import com.github.izerui.imux.overview.report.agentReportJson
 import com.github.izerui.imux.overview.report.factsFromJson
 import com.github.izerui.imux.overview.report.factsJson
+import com.github.izerui.imux.overview.report.pageDataJson
 import com.github.izerui.imux.overview.report.parseAgentReport
+import com.github.izerui.imux.overview.report.renderReportPage
 import com.github.izerui.imux.overview.report.reportFromJson
 import com.github.izerui.imux.overview.report.reportPrompt
 import com.github.izerui.imux.overview.report.transcriptFacts
+import com.github.izerui.imux.overview.report.writeReportFile
 import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.resolveShell
 import com.intellij.openapi.application.ApplicationManager
@@ -304,6 +310,25 @@ class ProgressOverviewService(
         val cached = overviewCache.get(sessionKey) ?: return null
         val session = SessionMonitor.getInstance(project).model.sessionOf(sessionKey) ?: return null
         return cachedView(cached, session.filePath)
+    }
+
+    private val reportTemplate: String by lazy {
+        ProgressOverviewService::class.java.getResourceAsStream(REPORT_TEMPLATE)!!.use { String(it.readAllBytes(), Charsets.UTF_8) }
+    }
+
+    /**
+     * 把 [result] 渲染成 `.imux/reports/` 下的报告文件；会话标题、智能体、工程名与界面语言都在此刻现取，
+     * 改了标题或切换了插件语言，重新调用即生效，不必重跑智能体。内容没变时不重写。
+     * 没有报告、工程没有目录或写入失败时返回 null（失败记日志）。
+     */
+    internal fun writeReport(sessionKey: String, result: OverviewResult): ReportWrite? {
+        val report = result.report ?: return null
+        val root = project.basePath?.let(Path::of) ?: return null
+        val session = SessionMonitor.getInstance(project).model.sessionOf(sessionKey)
+        val reportSession = ReportSession(session?.title.orEmpty(), session?.agentType?.displayName.orEmpty(), project.name, result.generatedAt)
+        return runCatching {
+            writeReportFile(root, sessionKey, renderReportPage(reportTemplate, pageDataJson(report, ImuxBundle.currentLanguage().id, reportSession)))
+        }.onFailure { LOG.warn("会话报告写入失败 sessionKey=$sessionKey", it) }.getOrNull()
     }
 
     /**

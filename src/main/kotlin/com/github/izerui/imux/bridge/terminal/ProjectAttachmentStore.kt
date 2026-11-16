@@ -8,6 +8,7 @@ import com.github.izerui.imux.bridge.core.FetchedFile
 import com.github.izerui.imux.bridge.core.InboundAttachment
 import com.github.izerui.imux.bridge.core.PlaceResult
 import com.github.izerui.imux.bridge.core.SessionTarget
+import com.github.izerui.imux.project.ensureImuxIgnored
 import com.intellij.openapi.diagnostic.logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -67,6 +68,7 @@ class ProjectAttachmentStore(
         val base = root.resolve(".imux").resolve("attachments")
         val dir = base.resolve(now.toLocalDate().toString())
         Files.createDirectories(dir)
+        ensureImuxIgnored(root)
         val sniffed = AttachmentNames.extensionOf(readHead(file.path))
         val name =
             AttachmentNames.sanitize(file.suggestedName)?.let { if ('.' !in it && sniffed != null) "$it.$sniffed" else it }

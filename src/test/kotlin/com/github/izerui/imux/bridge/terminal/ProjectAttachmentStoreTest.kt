@@ -72,6 +72,14 @@ class ProjectAttachmentStoreTest {
         }
 
     @Test
+    fun `保存附件时 imux 目录自带忽略，工程根下没有 git 也一样`() =
+        runBlocking {
+            val root = project(git = false)
+            store().place(target(root), FakeAttachment(png, null))
+            assertEquals("*\n", Files.readString(root.resolve(".imux/.gitignore")))
+        }
+
+    @Test
     fun `有文件名时清理后使用并加后缀，没有扩展名时补上识别出的扩展名`() =
         runBlocking {
             val root = project()

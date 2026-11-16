@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session report</title>
+<style>
+  :root {
+    --bg: #faf9f5; --panel: #ffffff; --ink: #1f1e1d; --muted: #6b6a66; --line: #e8e6dc;
+    --accent: #c96442; --add-bg: #e9f6ec; --add-ink: #1d6b34; --del-bg: #fbeaea; --del-ink: #9b2c2c;
+    --note-bg: #fff7e6; --note-line: #f0c36d; --code-bg: #f5f4ee;
+    --side: #8a8780; --change: #7c5cd6; --rollback: #b7791f; --error: #d64545; --progress: #3b82f6; --ok: #2f8a4c;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1f1e1d; --panel: #2a2927; --ink: #f0eee6; --muted: #a8a69e; --line: #3a3936;
+      --add-bg: #1e3a26; --add-ink: #8fd6a4; --del-bg: #45201f; --del-ink: #f2a3a3;
+      --note-bg: #3a3222; --note-line: #b8913f; --code-bg: #232220; --side: #8f8c85;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1f1e1d; --panel: #2a2927; --ink: #f0eee6; --muted: #a8a69e; --line: #3a3936;
+    --add-bg: #1e3a26; --add-ink: #8fd6a4; --del-bg: #45201f; --del-ink: #f2a3a3;
+    --note-bg: #3a3222; --note-line: #b8913f; --code-bg: #232220; --side: #8f8c85;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Hiragino Sans", "Malgun Gothic", "Helvetica Neue", sans-serif; }
+  code, pre { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-size: 13px; }
+
+  main { max-width: 980px; margin: 0 auto; padding-block: 32px 80px; padding-inline: 20px; }
+  h1 { font-size: 28px; line-height: 1.3; margin: 0 0 10px; }
+  .goal { margin: 0 0 6px; }
+  .goal b { color: var(--accent); margin-right: 6px; }
+  .sub { color: var(--muted); margin: 0 0 8px; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; padding: 1px 10px; border-radius: 999px; font-weight: 600; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+  .status.in_progress { color: var(--progress); background: color-mix(in srgb, var(--progress) 13%, transparent); }
+  .status.failed { color: var(--error); background: color-mix(in srgb, var(--error) 13%, transparent); }
+  h2 { font-size: 19px; margin: 40px 0 14px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+
+  /* 概览卡片 */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+  .card .num { font-size: 26px; font-weight: 700; }
+  .card .num.warn { color: var(--error); }
+  .card .label { color: var(--muted); font-size: 13px; }
+
+  /* 关键决定 */
+  .decisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .decision { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+  .decision h3 { margin: 0 0 8px; font-size: 16px; }
+  .decision p { margin: 0; color: var(--muted); font-size: 13.5px; }
+
+  /* 关键改动：一个文件一个标签 */
+  .tabs { display: flex; gap: 4px; margin-bottom: -1px; overflow-x: auto; }
+  .tab { flex: none; border: 1px solid var(--line); border-bottom: none; background: transparent; color: var(--muted);
+         border-radius: 8px 8px 0 0; padding: 6px 14px; cursor: pointer; font: inherit; font-size: 13px; }
+  .tab.on { background: var(--panel); color: var(--ink); font-weight: 600; }
+  .diff { background: var(--panel); border: 1px solid var(--line); border-radius: 0 12px 12px 12px; overflow: hidden; }
+  .diff .file { padding: 8px 14px; border-bottom: 1px solid var(--line); font-family: "SF Mono", Menlo, monospace;
+                font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+  .diff .what { padding: 10px 14px 0; font-weight: 600; }
+  .diff pre { margin: 0; padding: 8px 0; overflow-x: auto; }
+  .ln { display: block; padding: 0 14px; white-space: pre; min-width: max-content; }
+  .ln.add { background: var(--add-bg); color: var(--add-ink); }
+  .ln.del { background: var(--del-bg); color: var(--del-ink); }
+  .ln::before { display: inline-block; width: 1.4em; opacity: .7; }
+  .ln.add::before { content: "+"; } .ln.del::before { content: "-"; } .ln.ctx::before { content: " "; }
+  .note { margin: 6px 14px 12px; padding: 8px 12px; background: var(--note-bg); border-left: 3px solid var(--note-line);
+          border-radius: 6px; font-size: 13.5px; }
+  .pane { display: none; }
+  .pane.on { display: block; }
+
+  /* 验证情况 */
+  .checks { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 18px; margin: 0; list-style: none; }
+  .checks li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .checks li:last-child { border-bottom: none; }
+  .result { flex: none; font-size: 12px; font-weight: 600; padding: 0 8px; border-radius: 10px; color: #fff; }
+  .result.passed { background: var(--ok); }
+  .result.failed { background: var(--error); }
+  .result.not_run { background: var(--side); }
+  .checks .what { flex: 1 1 200px; }
+  .checks .detail { flex-basis: 100%; color: var(--muted); font-size: 13px; }
+
+  /* 改动文件列表 */
+  details.files { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  details.files > summary { cursor: pointer; padding: 10px 16px; color: var(--muted); font-size: 13.5px; }
+  details.files ul { margin: 0; padding: 4px 16px 12px 34px; font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  details.files li { overflow-wrap: anywhere; padding: 2px 0; }
+
+  /* 时间线 */
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--line); }
+  .timeline li { position: relative; margin: 0 0 18px 14px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 7px; width: 10px; height: 10px;
+                         border-radius: 50%; background: var(--accent); }
+  .timeline .t { color: var(--muted); font-size: 12.5px; margin-right: 6px; font-family: "SF Mono", Menlo, monospace; }
+  .tag { display: inline-block; font-size: 12px; padding: 0 8px; border-radius: 10px; color: #fff; margin-right: 6px; }
+  .timeline li.SIDE::before { background: var(--side); } .timeline li.SIDE .text { color: var(--muted); }
+  .timeline li.CHANGE::before { background: var(--change); } .CHANGE .tag { background: var(--change); }
+  .timeline li.ERROR::before { background: var(--error); } .ERROR .tag { background: var(--error); }
+  .timeline li.ROLLBACK_START::before, .timeline li.ROLLBACK_END::before { background: var(--rollback); }
+  .ROLLBACK_START .tag, .ROLLBACK_END .tag { background: var(--rollback); }
+  .SIDE .tag { background: var(--side); }
+  .timeline li.IN_PROGRESS::before { background: var(--progress); box-shadow: 0 0 0 4px color-mix(in srgb, var(--progress) 22%, transparent); }
+  .IN_PROGRESS .tag { background: var(--progress); }
+  .timeline li.rolled .text { text-decoration: line-through; color: var(--muted); }
+
+  /* 遗留问题与下一步 */
+  .risk { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 18px 4px 38px; margin: 0; }
+  .risk li { margin: 10px 0; }
+  .sev { display: inline-block; font-size: 12px; font-weight: 600; padding: 0 7px; border-radius: 4px; margin-right: 6px; }
+  .sev.high { color: #fff; background: var(--error); }
+  .sev.medium { color: #fff; background: var(--rollback); }
+  .sev.low { color: var(--muted); background: var(--code-bg); }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12.5px; text-align: center; }
+
+  /* 手机宽度：收紧字号与间距 */
+  @media (max-width: 520px) {
+    body { font-size: 14px; }
+    main { padding-block: 20px 48px; padding-inline: 16px; }
+    h1 { font-size: 22px; }
+    h2 { font-size: 17px; margin-top: 30px; }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .card .num { font-size: 22px; }
+    .decisions { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+<main id="app"></main>
+
+<script id="imux-data" type="application/json">{}</script>
+
+<script>
+(function () {
+  // 界面文字，按 lang 取；正文由智能体按同一种语言写
+  var I18N = {
+    "zh-CN": {
+      report: "会话报告", loading: "正在加载报告……", broken: "报告数据读取失败：", footer: "由 imux 会话报告生成",
+      goal: "目标", generatedAt: "生成于",
+      status: { done: "已完成", in_progress: "进行中", failed: "失败" },
+      stats: { filesChanged: "改动文件", duration: "会话时长", errors: "报错", rollbacks: "回滚" },
+      minutes: "{m} 分钟", hours: "{h} 小时 {m} 分",
+      sections: { decisions: "关键决定", changes: "关键改动", verification: "验证情况", files: "改动文件", timeline: "过程时间线", issues: "遗留问题", nextSteps: "下一步" },
+      allFiles: "全部 {n} 个文件",
+      result: { passed: "通过", failed: "失败", not_run: "未运行" },
+      types: { SIDE: "旁支", CHANGE: "需求变更", ERROR: "报错", ROLLBACK_START: "回滚开始", ROLLBACK_END: "回滚结束", IN_PROGRESS: "进行中" },
+      severity: { high: "高", medium: "中", low: "低" },
+      change: "改动 {n}"
+    },
+    "zh-TW": {
+      report: "會話報告", loading: "正在載入報告……", broken: "報告資料讀取失敗：", footer: "由 imux 會話報告產生",
+      goal: "目標", generatedAt: "產生於",
+      status: { done: "已完成", in_progress: "進行中", failed: "失敗" },
+      stats: { filesChanged: "變更檔案", duration: "會話時長", errors: "錯誤", rollbacks: "回滾" },
+      minutes: "{m} 分鐘", hours: "{h} 小時 {m} 分",
+      sections: { decisions: "關鍵決定", changes: "關鍵變更", verification: "驗證情況", files: "變更檔案", timeline: "過程時間線", issues: "遺留問題", nextSteps: "下一步" },
+      allFiles: "全部 {n} 個檔案",
+      result: { passed: "通過", failed: "失敗", not_run: "未執行" },
+      types: { SIDE: "旁支", CHANGE: "需求變更", ERROR: "錯誤", ROLLBACK_START: "回滾開始", ROLLBACK_END: "回滾結束", IN_PROGRESS: "進行中" },
+      severity: { high: "高", medium: "中", low: "低" },
+      change: "變更 {n}"
+    },
+    "en": {
+      report: "Session report", loading: "Loading report…", broken: "Could not read the report data: ", footer: "Generated by imux session report",
+      goal: "Goal", generatedAt: "Generated",
+      status: { done: "Done", in_progress: "In progress", failed: "Failed" },
+      stats: { filesChanged: "Files changed", duration: "Duration", errors: "Errors", rollbacks: "Rollbacks" },
+      minutes: "{m} min", hours: "{h} h {m} min",
+      sections: { decisions: "Key decisions", changes: "Key changes", verification: "Verification", files: "Changed files", timeline: "Timeline", issues: "Open issues", nextSteps: "Next steps" },
+      allFiles: "All {n} files",
+      result: { passed: "Passed", failed: "Failed", not_run: "Not run" },
+      types: { SIDE: "Side", CHANGE: "Changed", ERROR: "Error", ROLLBACK_START: "Rollback start", ROLLBACK_END: "Rollback end", IN_PROGRESS: "In progress" },
+      severity: { high: "High", medium: "Med", low: "Low" },
+      change: "Change {n}"
+    },
+    "ja": {
+      report: "セッションレポート", loading: "レポートを読み込み中…", broken: "レポートデータを読み込めませんでした：", footer: "imux セッションレポートで生成",
+      goal: "目標", generatedAt: "生成日時",
+      status: { done: "完了", in_progress: "進行中", failed: "失敗" },
+      stats: { filesChanged: "変更ファイル", duration: "所要時間", errors: "エラー", rollbacks: "ロールバック" },
+      minutes: "{m} 分", hours: "{h} 時間 {m} 分",
+      sections: { decisions: "主な判断", changes: "主な変更", verification: "検証", files: "変更ファイル", timeline: "タイムライン", issues: "残課題", nextSteps: "次のステップ" },
+      allFiles: "全 {n} ファイル",
+      result: { passed: "成功", failed: "失敗", not_run: "未実行" },
+      types: { SIDE: "脇道", CHANGE: "要件変更", ERROR: "エラー", ROLLBACK_START: "ロールバック開始", ROLLBACK_END: "ロールバック終了", IN_PROGRESS: "進行中" },
+      severity: { high: "高", medium: "中", low: "低" },
+      change: "変更 {n}"
+    },
+    "ko": {
+      report: "세션 보고서", loading: "보고서를 불러오는 중…", broken: "보고서 데이터를 읽지 못했습니다: ", footer: "imux 세션 보고서로 생성",
+      goal: "목표", generatedAt: "생성",
+      status: { done: "완료", in_progress: "진행 중", failed: "실패" },
+      stats: { filesChanged: "변경 파일", duration: "세션 시간", errors: "오류", rollbacks: "롤백" },
+      minutes: "{m}분", hours: "{h}시간 {m}분",
+      sections: { decisions: "주요 결정", changes: "주요 변경", verification: "검증", files: "변경 파일", timeline: "타임라인", issues: "남은 문제", nextSteps: "다음 단계" },
+      allFiles: "전체 {n}개 파일",
+      result: { passed: "통과", failed: "실패", not_run: "미실행" },
+      types: { SIDE: "곁가지", CHANGE: "요구 변경", ERROR: "오류", ROLLBACK_START: "롤백 시작", ROLLBACK_END: "롤백 끝", IN_PROGRESS: "진행 중" },
+      severity: { high: "높음", medium: "중간", low: "낮음" },
+      change: "변경 {n}"
+    },
+    "de": {
+      report: "Sitzungsbericht", loading: "Bericht wird geladen…", broken: "Berichtsdaten konnten nicht gelesen werden: ", footer: "Erstellt mit dem imux-Sitzungsbericht",
+      goal: "Ziel", generatedAt: "Erstellt",
+      status: { done: "Fertig", in_progress: "In Arbeit", failed: "Fehlgeschlagen" },
+      stats: { filesChanged: "Geänderte Dateien", duration: "Dauer", errors: "Fehler", rollbacks: "Rückbauten" },
+      minutes: "{m} Min.", hours: "{h} Std. {m} Min.",
+      sections: { decisions: "Wichtige Entscheidungen", changes: "Wichtige Änderungen", verification: "Prüfung", files: "Geänderte Dateien", timeline: "Zeitverlauf", issues: "Offene Punkte", nextSteps: "Nächste Schritte" },
+      allFiles: "Alle {n} Dateien",
+      result: { passed: "Bestanden", failed: "Fehlgeschlagen", not_run: "Nicht ausgeführt" },
+      types: { SIDE: "Nebenweg", CHANGE: "Geändert", ERROR: "Fehler", ROLLBACK_START: "Rückbau Start", ROLLBACK_END: "Rückbau Ende", IN_PROGRESS: "In Arbeit" },
+      severity: { high: "Hoch", medium: "Mittel", low: "Niedrig" },
+      change: "Änderung {n}"
+    },
+    "fr": {
+      report: "Rapport de session", loading: "Chargement du rapport…", broken: "Impossible de lire les données du rapport : ", footer: "Généré par le rapport de session imux",
+      goal: "Objectif", generatedAt: "Généré le",
+      status: { done: "Terminé", in_progress: "En cours", failed: "Échec" },
+      stats: { filesChanged: "Fichiers modifiés", duration: "Durée", errors: "Erreurs", rollbacks: "Retours arrière" },
+      minutes: "{m} min", hours: "{h} h {m} min",
+      sections: { decisions: "Décisions clés", changes: "Modifications clés", verification: "Vérification", files: "Fichiers modifiés", timeline: "Chronologie", issues: "Points ouverts", nextSteps: "Prochaines étapes" },
+      allFiles: "Les {n} fichiers",
+      result: { passed: "Réussi", failed: "Échec", not_run: "Non lancé" },
+      types: { SIDE: "Aparté", CHANGE: "Changement", ERROR: "Erreur", ROLLBACK_START: "Début du retour", ROLLBACK_END: "Fin du retour", IN_PROGRESS: "En cours" },
+      severity: { high: "Haute", medium: "Moy.", low: "Basse" },
+      change: "Modification {n}"
+    },
+    "es": {
+      report: "Informe de sesión", loading: "Cargando el informe…", broken: "No se pudieron leer los datos del informe: ", footer: "Generado con el informe de sesión de imux",
+      goal: "Objetivo", generatedAt: "Generado",
+      status: { done: "Terminado", in_progress: "En curso", failed: "Fallido" },
+      stats: { filesChanged: "Archivos cambiados", duration: "Duración", errors: "Errores", rollbacks: "Reversiones" },
+      minutes: "{m} min", hours: "{h} h {m} min",
+      sections: { decisions: "Decisiones clave", changes: "Cambios clave", verification: "Verificación", files: "Archivos cambiados", timeline: "Cronología", issues: "Pendientes", nextSteps: "Siguientes pasos" },
+      allFiles: "Los {n} archivos",
+      result: { passed: "Aprobado", failed: "Fallido", not_run: "Sin ejecutar" },
+      types: { SIDE: "Desvío", CHANGE: "Cambio", ERROR: "Error", ROLLBACK_START: "Inicio de reversión", ROLLBACK_END: "Fin de reversión", IN_PROGRESS: "En curso" },
+      severity: { high: "Alta", medium: "Media", low: "Baja" },
+      change: "Cambio {n}"
+    },
+    "pt-BR": {
+      report: "Relatório da sessão", loading: "Carregando o relatório…", broken: "Não foi possível ler os dados do relatório: ", footer: "Gerado pelo relatório de sessão do imux",
+      goal: "Objetivo", generatedAt: "Gerado em",
+      status: { done: "Concluído", in_progress: "Em andamento", failed: "Falhou" },
+      stats: { filesChanged: "Arquivos alterados", duration: "Duração", errors: "Erros", rollbacks: "Reversões" },
+      minutes: "{m} min", hours: "{h} h {m} min",
+      sections: { decisions: "Decisões principais", changes: "Mudanças principais", verification: "Verificação", files: "Arquivos alterados", timeline: "Linha do tempo", issues: "Pendências", nextSteps: "Próximos passos" },
+      allFiles: "Todos os {n} arquivos",
+      result: { passed: "Passou", failed: "Falhou", not_run: "Não executado" },
+      types: { SIDE: "Desvio", CHANGE: "Mudança", ERROR: "Erro", ROLLBACK_START: "Início da reversão", ROLLBACK_END: "Fim da reversão", IN_PROGRESS: "Em andamento" },
+      severity: { high: "Alta", medium: "Média", low: "Baixa" },
+      change: "Mudança {n}"
+    },
+    "ru": {
+      report: "Отчёт о сессии", loading: "Загрузка отчёта…", broken: "Не удалось прочитать данные отчёта: ", footer: "Создано отчётом о сессии imux",
+      goal: "Цель", generatedAt: "Создан",
+      status: { done: "Готово", in_progress: "В работе", failed: "Ошибка" },
+      stats: { filesChanged: "Изменено файлов", duration: "Длительность", errors: "Ошибки", rollbacks: "Откаты" },
+      minutes: "{m} мин", hours: "{h} ч {m} мин",
+      sections: { decisions: "Ключевые решения", changes: "Ключевые изменения", verification: "Проверка", files: "Изменённые файлы", timeline: "Ход работы", issues: "Открытые вопросы", nextSteps: "Дальнейшие шаги" },
+      allFiles: "Все файлы ({n})",
+      result: { passed: "Пройдено", failed: "Ошибка", not_run: "Не запускалось" },
+      types: { SIDE: "Побочное", CHANGE: "Изменение", ERROR: "Ошибка", ROLLBACK_START: "Начало отката", ROLLBACK_END: "Конец отката", IN_PROGRESS: "В работе" },
+      severity: { high: "Высокий", medium: "Средний", low: "Низкий" },
+      change: "Изменение {n}"
+    }
+  };
+  var KNOWN_TYPES = ["MAIN", "SIDE", "CHANGE", "ERROR", "ROLLBACK_START", "ROLLBACK_END", "IN_PROGRESS"];
+  var T = I18N.en;
+
+  // 所有文字都走 textContent，数据里的内容不会被当成 HTML
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = String(text);
+    return node;
+  }
+  function list(value) { return Array.isArray(value) ? value : []; }
+  function fill(pattern, values) { return pattern.replace(/\{(\w+)\}/g, function (_, k) { return values[k]; }); }
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  function time(value) {
+    var d = new Date(value);
+    return !value || isNaN(d) ? "" : pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  function dateTime(value, lang) {
+    var d = new Date(value);
+    if (!value || isNaN(d)) return "";
+    try { return d.toLocaleString(lang, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
+    catch (e) { return d.toISOString(); }
+  }
+  function duration(minutes) {
+    var m = Math.max(0, Math.round(minutes));
+    return m < 60 ? fill(T.minutes, { m: m }) : fill(T.hours, { h: Math.floor(m / 60), m: m % 60 });
+  }
+  function heading(text) { return el("h2", null, text); }
+
+  function render(data) {
+    var lang = I18N[data.lang] ? data.lang : "en";
+    T = I18N[lang];
+    document.documentElement.lang = lang;
+    var app = document.getElementById("app");
+    app.textContent = "";
+    var session = data.session || {};
+    document.title = (session.title ? session.title + " · " : "") + T.report;
+
+    // 标题、目标、总结、信息行
+    app.appendChild(el("h1", null, session.title || T.report));
+    if (data.goal) {
+      var goal = el("p", "goal");
+      goal.appendChild(el("b", null, T.goal));
+      goal.appendChild(document.createTextNode(data.goal));
+      app.appendChild(goal);
+    }
+    if (data.summary) app.appendChild(el("p", "sub", data.summary));
+    var meta = el("div", "meta");
+    if (T.status[data.status]) meta.appendChild(el("span", "status " + data.status, T.status[data.status]));
+    [session.project, session.agent, session.generatedAt && T.generatedAt + " " + dateTime(session.generatedAt, lang)]
+      .filter(Boolean).forEach(function (t) { meta.appendChild(el("span", null, t)); });
+    app.appendChild(meta);
+
+    // 概览卡片：文件数数 files，时长由插件统计，报错与回滚从时间线里数
+    var nodes = list(data.timeline);
+    var files = list(data.files).filter(function (f) { return typeof f === "string" && f; });
+    var count = function (type) { return nodes.filter(function (n) { return n.type === type; }).length; };
+    var s = data.stats || {};
+    var stats = [];
+    if (Array.isArray(data.files)) stats.push([T.stats.filesChanged, files.length]);
+    if (typeof s.durationMinutes === "number") stats.push([T.stats.duration, duration(s.durationMinutes)]);
+    if (nodes.length) {
+      stats.push([T.stats.errors, count("ERROR"), count("ERROR") > 0]);
+      stats.push([T.stats.rollbacks, count("ROLLBACK_START")]);
+    }
+    if (stats.length) {
+      var cards = el("div", "cards");
+      stats.forEach(function (item) {
+        var card = el("div", "card");
+        card.appendChild(el("div", "num" + (item[2] ? " warn" : ""), item[1]));
+        card.appendChild(el("div", "label", item[0]));
+        cards.appendChild(card);
+      });
+      app.appendChild(cards);
+    }
+
+    // 关键决定
+    var decisions = list(data.decisions);
+    if (decisions.length) {
+      app.appendChild(heading(T.sections.decisions));
+      var dWrap = el("div", "decisions");
+      decisions.forEach(function (item) {
+        var box = el("div", "decision");
+        box.appendChild(el("h3", null, item.title || ""));
+        if (item.reason) box.appendChild(el("p", null, item.reason));
+        dWrap.appendChild(box);
+      });
+      app.appendChild(dWrap);
+    }
+
+    // 关键改动：一个文件一个标签
+    var changes = list(data.changes);
+    if (changes.length) {
+      app.appendChild(heading(T.sections.changes));
+      var tabs = el("div", "tabs"), diff = el("div", "diff");
+      changes.forEach(function (change, i) {
+        var name = (change.file || "").split("/").pop() || fill(T.change, { n: i + 1 });
+        var tab = el("button", "tab" + (i === 0 ? " on" : ""), name);
+        var pane = el("div", "pane" + (i === 0 ? " on" : ""));
+        pane.appendChild(el("div", "file", change.file || ""));
+        if (change.summary) pane.appendChild(el("div", "what", change.summary));
+        var lines = list(change.snippet && change.snippet.lines);
+        if (lines.length) {
+          var pre = el("pre");
+          lines.forEach(function (line) {
+            pre.appendChild(el("span", "ln " + ({ add: "add", del: "del" }[line.kind] || "ctx"), line.text || ""));
+          });
+          pane.appendChild(pre);
+        }
+        if (change.note) pane.appendChild(el("div", "note", change.note));
+        tab.addEventListener("click", function () {
+          tabs.querySelectorAll(".tab").forEach(function (t) { t.classList.toggle("on", t === tab); });
+          diff.querySelectorAll(".pane").forEach(function (p) { p.classList.toggle("on", p === pane); });
+        });
+        tabs.appendChild(tab);
+        diff.appendChild(pane);
+      });
+      app.appendChild(tabs);
+      app.appendChild(diff);
+    }
+
+    // 验证情况
+    var checks = list(data.verification);
+    if (checks.length) {
+      app.appendChild(heading(T.sections.verification));
+      var cl = el("ul", "checks");
+      checks.forEach(function (check) {
+        var result = T.result[check.result] ? check.result : "not_run";
+        var li = el("li");
+        li.appendChild(el("span", "result " + result, T.result[result]));
+        li.appendChild(el("span", "what", check.what || ""));
+        if (check.detail) li.appendChild(el("span", "detail", check.detail));
+        cl.appendChild(li);
+      });
+      app.appendChild(cl);
+    }
+
+    // 全部改动文件：默认收起
+    if (files.length) {
+      app.appendChild(heading(T.sections.files));
+      var box = el("details", "files");
+      box.appendChild(el("summary", null, fill(T.allFiles, { n: files.length })));
+      var ul = el("ul");
+      files.forEach(function (f) { ul.appendChild(el("li", null, f)); });
+      box.appendChild(ul);
+      app.appendChild(box);
+    }
+
+    // 时间线：回滚区间里的步骤划掉
+    if (nodes.length) {
+      app.appendChild(heading(T.sections.timeline));
+      var ol = el("ol", "timeline");
+      var inRollback = false;
+      nodes.forEach(function (node) {
+        var type = KNOWN_TYPES.indexOf(node.type) >= 0 ? node.type : "MAIN";
+        if (type === "ROLLBACK_START") inRollback = true;
+        var li = el("li", type + (inRollback && type === "MAIN" ? " rolled" : ""));
+        if (node.time) li.appendChild(el("span", "t", time(node.time)));
+        if (T.types[type]) li.appendChild(el("span", "tag", T.types[type]));
+        li.appendChild(el("span", "text", node.text || ""));
+        ol.appendChild(li);
+        if (type === "ROLLBACK_END") inRollback = false;
+      });
+      app.appendChild(ol);
+    }
+
+    // 遗留问题
+    var issues = list(data.issues);
+    if (issues.length) {
+      app.appendChild(heading(T.sections.issues));
+      var il = el("ul", "risk");
+      issues.forEach(function (issue) {
+        var li = el("li");
+        var sev = T.severity[issue.severity] ? issue.severity : "low";
+        li.appendChild(el("span", "sev " + sev, T.severity[sev]));
+        li.appendChild(document.createTextNode(issue.text || ""));
+        il.appendChild(li);
+      });
+      app.appendChild(il);
+    }
+
+    // 下一步
+    var steps = list(data.nextSteps);
+    if (steps.length) {
+      app.appendChild(heading(T.sections.nextSteps));
+      var sl = el("ol", "risk");
+      steps.forEach(function (step) { sl.appendChild(el("li", null, step)); });
+      app.appendChild(sl);
+    }
+
+    app.appendChild(el("footer", null, T.footer));
+  }
+
+  var app = document.getElementById("app");
+  try {
+    render(JSON.parse(document.getElementById("imux-data").textContent));
+  } catch (e) {
+    app.textContent = T.broken + e.message;
+  }
+})();
+</script>
+</body>
+</html>
