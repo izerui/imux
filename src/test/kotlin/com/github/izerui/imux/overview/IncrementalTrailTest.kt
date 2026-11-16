@@ -1,6 +1,9 @@
 package com.github.izerui.imux.overview
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
+import com.github.izerui.imux.overview.report.reportPrompt
+import com.github.izerui.imux.overview.report.SessionReport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -18,7 +21,7 @@ class IncrementalTrailTest {
     )
 
     private fun cached(fileSize: Long, lineCount: Long?, result: List<OverviewNode> = nodes) =
-        CachedOverview(OverviewResult(result, Instant.now()), fileSize, lineCount)
+        CachedOverview(OverviewResult(result, Instant.now(), report = SessionReport(timeline = result)), fileSize, lineCount)
 
     private fun tempFile(text: String): Path =
         Files.createTempFile("session", ".jsonl").also {
@@ -37,13 +40,13 @@ class IncrementalTrailTest {
         val file = tempFile("u1\na1\nu2\n")
         val cache = OverviewCache(null)
         val prompts = mutableListOf<String>()
-        val build = { c: CachedOverview?, cursor: TrailCursor -> trailPrompt(true, AgentType.CLAUDE, file, c, cursor) }
+        val build = { c: CachedOverview?, cursor: TrailCursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, c, cursor) }
 
         // 第一次：完整生成，截止第 3 行；智能体运行期间会话又追加了两行
         val first = runTrailGeneration(cache, "s1", file, build, runAgent = { prompt ->
             prompts += prompt
             append(file, "u3\na3\n")
-            "[MAIN] 第一次的时间线"
+            reportOutput("[MAIN] 第一次的时间线")
         })
 
         assertTrue("第一次是完整生成", prompts[0].contains("本次只总结第 1 行到第 3 行"))
@@ -56,11 +59,11 @@ class IncrementalTrailTest {
         // 第二次：必须拿到第一次的新时间线，并从第 4 行读到第 5 行
         val second = runTrailGeneration(cache, "s1", file, build, runAgent = { prompt ->
             prompts += prompt
-            "[MAIN] 第一次的时间线\n[MAIN] 第二次新增"
+            reportOutput("[MAIN] 第一次的时间线\n[MAIN] 第二次新增")
         })
 
         val incremental = prompts[1]
-        assertTrue("应带上第一次的新时间线", incremental.contains("[MAIN] 第一次的时间线"))
+        assertTrue("应带上第一次的新时间线", incremental.contains("第一次的时间线"))
         assertTrue("应从第一次截止行之后读起", incremental.contains("只需读取第 4 行到第 5 行"))
         assertTrue(incremental.contains("不要读取第 4 行之前的内容"))
         assertFalse("第二次期间没有追加，结果是最新的", second.stale)
@@ -73,21 +76,21 @@ class IncrementalTrailTest {
         val file = tempFile("u1\na1\n")
         val cache = OverviewCache(null)
         val prompts = mutableListOf<String>()
-        val build = { c: CachedOverview?, cursor: TrailCursor -> trailPrompt(true, AgentType.PI, file, c, cursor) }
+        val build = { c: CachedOverview?, cursor: TrailCursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, c, cursor) }
 
         repeat(3) { round ->
             runTrailGeneration(cache, "s1", file, build, runAgent = { prompt ->
                 prompts += prompt
                 append(file, "u${round + 2}\n")
-                "[MAIN] 第 ${round + 1} 次"
+                reportOutput("[MAIN] 第 ${round + 1} 次")
             })
         }
 
         assertTrue(prompts[0].contains("本次只总结第 1 行到第 2 行"))
         assertTrue("第二次已有基线", prompts[1].contains("只需读取第 3 行到第 3 行"))
-        assertTrue(prompts[1].contains("[MAIN] 第 1 次"))
+        assertTrue(prompts[1].contains("第 1 次"))
         assertTrue(prompts[2].contains("只需读取第 4 行到第 4 行"))
-        assertTrue(prompts[2].contains("[MAIN] 第 2 次"))
+        assertTrue(prompts[2].contains("第 2 次"))
     }
 
     @Test
@@ -95,14 +98,14 @@ class IncrementalTrailTest {
         val file = tempFile("u1\na1\nhalf")
         val cache = OverviewCache(null)
         val prompts = mutableListOf<String>()
-        val build = { c: CachedOverview?, cursor: TrailCursor -> trailPrompt(true, AgentType.CODEX, file, c, cursor) }
+        val build = { c: CachedOverview?, cursor: TrailCursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CODEX, file, c, cursor) }
 
-        val first = runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; "[MAIN] 一" })
+        val first = runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; reportOutput("[MAIN] 一") })
         assertTrue(prompts[0].contains("第 1 行到第 2 行"))
         assertTrue("半行不算已总结，结果过期", first.stale)
 
         append(file, " line\n")
-        runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; "[MAIN] 一\n[MAIN] 二" })
+        runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; reportOutput("[MAIN] 一\n[MAIN] 二") })
         assertTrue("补完的那一行从第 3 行读起", prompts[1].contains("只需读取第 3 行到第 3 行"))
     }
 
@@ -110,15 +113,15 @@ class IncrementalTrailTest {
     fun `半行一直没补完时连续重新生成，第二次不调用智能体，保留旧时间线并仍标过期`() {
         val file = tempFile("u1\na1\nu2\nhalf")
         val cache = OverviewCache(null)
-        val build = { c: CachedOverview?, cursor: TrailCursor -> trailPrompt(true, AgentType.CLAUDE, file, c, cursor) }
+        val build = { c: CachedOverview?, cursor: TrailCursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, c, cursor) }
 
         var firstCalls = 0
-        val first = runTrailGeneration(cache, "s1", file, build, runAgent = { firstCalls++; "[MAIN] 总结到第 3 行" })
+        val first = runTrailGeneration(cache, "s1", file, build, runAgent = { firstCalls++; reportOutput("[MAIN] 总结到第 3 行") })
         assertEquals(1, firstCalls)
         assertTrue(first.stale)
 
         var secondCalls = 0
-        val second = runTrailGeneration(cache, "s1", file, build, runAgent = { secondCalls++; "[MAIN] 不应出现" })
+        val second = runTrailGeneration(cache, "s1", file, build, runAgent = { secondCalls++; reportOutput("[MAIN] 不应出现") })
 
         assertEquals("截止位置没变，不能再花 token", 0, secondCalls)
         assertEquals("总结到第 3 行", second.nodes.single().text)
@@ -131,10 +134,10 @@ class IncrementalTrailTest {
     fun `截止位置没变且文件已是最新时也不调用智能体`() {
         val file = tempFile("u1\na1\n")
         val cache = OverviewCache(null)
-        runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { "[MAIN] 一" })
+        runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { reportOutput("[MAIN] 一") })
 
         var calls = 0
-        val again = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; "[MAIN] 二" })
+        val again = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; reportOutput("[MAIN] 二") })
 
         assertEquals(0, calls)
         assertEquals("一", again.nodes.single().text)
@@ -147,18 +150,18 @@ class IncrementalTrailTest {
         // 先用普通文件占住存储目录的位置，写盘必然失败
         val storage = Files.createTempFile("overview-not-a-dir", ".txt").also { it.toFile().deleteOnExit() }
         val cache = OverviewCache(storage)
-        val first = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { "[MAIN] 一" })
+        val first = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { reportOutput("[MAIN] 一") })
         assertTrue(first.saveFailed)
 
         // 目录问题仍在：不调用智能体，仍提示保存失败
         var calls = 0
-        val stillFailing = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; "[MAIN] 二" })
+        val stillFailing = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; reportOutput("[MAIN] 二") })
         assertEquals(0, calls)
         assertTrue(stillFailing.saveFailed)
 
         // 用户修好目录后再点：写盘成功，失败标记消失，磁盘上能读回
         Files.delete(storage)
-        val retried = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; "[MAIN] 二" })
+        val retried = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; reportOutput("[MAIN] 二") })
         assertEquals(0, calls)
         assertFalse(retried.saveFailed)
         assertEquals("一", retried.nodes.single().text)
@@ -171,11 +174,11 @@ class IncrementalTrailTest {
         val file = tempFile("u1\na1\nu2\na2\n")
         val cache = OverviewCache(null)
         val prompts = mutableListOf<String>()
-        val build = { c: CachedOverview?, cursor: TrailCursor -> trailPrompt(true, AgentType.PI, file, c, cursor) }
-        runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; "[MAIN] 四行" })
+        val build = { c: CachedOverview?, cursor: TrailCursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, c, cursor) }
+        runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; reportOutput("[MAIN] 四行") })
 
         Files.writeString(file, "x1\nx2\n")
-        val again = runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; "[MAIN] 改写后" })
+        val again = runTrailGeneration(cache, "s1", file, build, runAgent = { prompts += it; reportOutput("[MAIN] 改写后") })
 
         assertEquals(2, prompts.size)
         assertTrue("改写后从头完整生成", prompts[1].contains("本次只总结第 1 行到第 2 行"))
@@ -187,7 +190,7 @@ class IncrementalTrailTest {
     fun `只有半行时不调用智能体，存空结果`() {
         val file = tempFile("half")
         var calls = 0
-        val result = runTrailGeneration(OverviewCache(null), "s1", file, { _, _ -> "p" }, runAgent = { calls++; "[MAIN] x" })
+        val result = runTrailGeneration(OverviewCache(null), "s1", file, { _, _ -> "p" }, runAgent = { calls++; reportOutput("[MAIN] x") })
 
         assertEquals(0, calls)
         assertTrue(result.nodes.isEmpty())
@@ -270,25 +273,25 @@ class IncrementalTrailTest {
     // ── 提示词 ──
 
     @Test
-    fun `增量提示词带上旧时间线和起止行`() {
+    fun `增量提示词带上上次报告和起止行`() {
         val file = Path.of("/tmp/session.jsonl")
-        val prompt = trailPrompt(isChinese = true, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500))
+        val prompt = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500))
 
-        assertTrue(prompt.contains("[MAIN] 确认需求：右上角轨迹面板"))
-        assertTrue(prompt.contains("[IN_PROGRESS] 实现叠加层"))
+        assertTrue(prompt.contains("确认需求：右上角轨迹面板"))
+        assertTrue(prompt.contains("实现叠加层"))
         assertTrue(prompt.contains("只需读取第 41 行到第 55 行"))
         assertTrue("应要求不要读起始行之前的内容", prompt.contains("不要读取第 41 行之前"))
         assertTrue("应要求不要读截止行之后的内容", prompt.contains("第 55 行之后是本次开始后才追加的内容，不要读取"))
-        assertTrue("应输出完整时间线", prompt.contains("完整时间线"))
+        assertTrue("应输出完整的新报告", prompt.contains("输出一份完整的新报告"))
         assertTrue("安全约束保留", prompt.contains("不要修改、创建或删除任何文件"))
         assertTrue(prompt.contains(file.toAbsolutePath().normalize().toString()))
     }
 
     @Test
-    fun `英文增量提示词同样带上旧时间线和起止行`() {
-        val prompt = trailPrompt(isChinese = false, AgentType.CODEX, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
+    fun `英文增量提示词同样带上上次报告和起止行`() {
+        val prompt = reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CODEX, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
 
-        assertTrue(prompt.contains("[MAIN] 确认需求：右上角轨迹面板"))
+        assertTrue(prompt.contains("确认需求：右上角轨迹面板"))
         assertTrue(prompt.contains("Read only lines 41 to 55"))
         assertTrue(prompt.contains("Do not read anything before line 41"))
         assertTrue(prompt.contains("Lines after 55 were appended after this run started"))
@@ -297,11 +300,11 @@ class IncrementalTrailTest {
 
     @Test
     fun `完整提示词同样截止到快照行`() {
-        val zh = overviewPrompt(true, AgentType.PI, Path.of("/tmp/s.jsonl"), 55)
+        val zh = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, Path.of("/tmp/s.jsonl"), null, TrailCursor(55, 0))
         assertTrue(zh.contains("本次只总结第 1 行到第 55 行"))
         assertTrue(zh.contains("第 55 行之后是本次开始后才追加的内容，不要读取"))
 
-        val en = overviewPrompt(false, AgentType.PI, Path.of("/tmp/s.jsonl"), 55)
+        val en = reportPrompt(false, PluginLanguage.ENGLISH, AgentType.PI, Path.of("/tmp/s.jsonl"), null, TrailCursor(55, 0))
         assertTrue(en.contains("Summarize only lines 1 to 55"))
         assertTrue(en.contains("Lines after 55 were appended after this run started"))
     }
@@ -309,41 +312,41 @@ class IncrementalTrailTest {
     // ── 粒度：长期使用也保持简洁 ──
 
     @Test
-    fun `完整与增量提示词都要求概括措辞并限制总数约 20 个`() {
+    fun `完整与增量提示词都要求概括措辞并限制时间线最多 20 条`() {
         val file = Path.of("/tmp/s.jsonl")
         val zhPrompts = listOf(
-            overviewPrompt(true, AgentType.CLAUDE, file, 55),
-            trailPrompt(true, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500)),
+            reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, null, TrailCursor(55, 0)),
+            reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500)),
         )
         for (prompt in zhPrompts) {
             assertTrue(prompt.contains("不罗列文件名、命令、参数等实现细节"))
-            assertTrue(prompt.contains("最多约 20 个"))
+            assertTrue(prompt.contains("最多 20 条"))
             assertTrue("不能再鼓励长会话无限增加", !prompt.contains("很长的会话可以适当增加"))
         }
 
         val enPrompts = listOf(
-            overviewPrompt(false, AgentType.CODEX, file, 55),
-            trailPrompt(false, AgentType.CODEX, file, cached(1_000, 40), TrailCursor(55, 1_500)),
+            reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CODEX, file, null, TrailCursor(55, 0)),
+            reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CODEX, file, cached(1_000, 40), TrailCursor(55, 1_500)),
         )
         for (prompt in enPrompts) {
             assertTrue(prompt.contains("do not list file names, commands or parameters"))
-            assertTrue(prompt.contains("at most about 20 nodes"))
+            assertTrue(prompt.contains("at most 20;"))
             assertTrue(!prompt.contains("very long sessions may use more"))
         }
     }
 
     @Test
-    fun `增量时旧时间线与新内容一起整体调整，不要求保留旧节点`() {
-        val zh = trailPrompt(true, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
-        assertTrue(zh.contains("把上次的时间线和新增内容合在一起，整体重新整理"))
+    fun `增量时上次报告与新内容一起整体调整，不要求保留旧节点`() {
+        val zh = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
+        assertTrue(zh.contains("把上次的报告和新增内容合在一起"))
         assertTrue(zh.contains("旧节点可以改写、合并或删减"))
         assertTrue("关键转折仍要体现", zh.contains("需求变更、报错和被放弃的方案仍要在时间线里体现"))
         assertFalse("不能再要求原样保留", zh.contains("原样保留"))
         assertFalse(zh.contains("先是之前的节点，再接上新增内容的节点"))
 
-        val en = trailPrompt(false, AgentType.PI, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
-        assertTrue(en.contains("Combine the previous timeline with the new content and reorganize it as a whole"))
-        assertTrue(en.contains("Earlier nodes may be reworded, merged or dropped"))
+        val en = reportPrompt(false, PluginLanguage.ENGLISH, AgentType.PI, Path.of("/tmp/s.jsonl"), cached(1_000, 40), TrailCursor(55, 1_500))
+        assertTrue(en.contains("Combine the previous report with the new content"))
+        assertTrue(en.contains("earlier nodes may be reworded, merged or dropped"))
         assertTrue(en.contains("requirement changes, errors and abandoned approaches must still be reflected"))
         assertFalse(en.contains("Keep earlier nodes as they are"))
     }
@@ -352,16 +355,16 @@ class IncrementalTrailTest {
     fun `每个节点限制字数、只写一件事、不逐项列举`() {
         val file = Path.of("/tmp/s.jsonl")
         for (prompt in listOf(
-            overviewPrompt(true, AgentType.CLAUDE, file, 55),
-            trailPrompt(true, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500)),
+            reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, null, TrailCursor(55, 0)),
+            reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, cached(1_000, 40), TrailCursor(55, 1_500)),
         )) {
             assertTrue(prompt.contains("每个节点不超过 30 个字"))
             assertTrue(prompt.contains("不用分号或逗号把多件事串在一起"))
             assertTrue(prompt.contains("不逐项列举具体子项"))
         }
         for (prompt in listOf(
-            overviewPrompt(false, AgentType.CODEX, file, 55),
-            trailPrompt(false, AgentType.CODEX, file, cached(1_000, 40), TrailCursor(55, 1_500)),
+            reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CODEX, file, null, TrailCursor(55, 0)),
+            reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CODEX, file, cached(1_000, 40), TrailCursor(55, 1_500)),
         )) {
             assertTrue(prompt.contains("at most about 20 words per node"))
             assertTrue(prompt.contains("do not chain several things with semicolons or commas"))
@@ -373,10 +376,10 @@ class IncrementalTrailTest {
     fun `不满足增量条件时用完整提示词`() {
         val file = Path.of("/tmp/session.jsonl")
         val cursor = TrailCursor(55, 1_500)
-        val full = overviewPrompt(true, AgentType.PI, file, 55)
+        val full = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, null, TrailCursor(55, 0))
 
-        assertEquals(full, trailPrompt(true, AgentType.PI, file, null, cursor))
-        assertEquals(full, trailPrompt(true, AgentType.PI, file, cached(1_000, null), cursor))
-        assertFalse(trailPrompt(true, AgentType.PI, file, cached(1_000, 40), cursor) == full)
+        assertEquals(full, reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, null, cursor))
+        assertEquals(full, reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, cached(1_000, null), cursor))
+        assertFalse(reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, cached(1_000, 40), cursor) == full)
     }
 }

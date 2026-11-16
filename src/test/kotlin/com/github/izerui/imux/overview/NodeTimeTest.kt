@@ -1,6 +1,9 @@
 package com.github.izerui.imux.overview
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
+import com.github.izerui.imux.overview.report.reportPrompt
+import com.github.izerui.imux.overview.report.SessionReport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -18,7 +21,7 @@ class NodeTimeTest {
 
     @Test
     fun `解析带时间的节点`() {
-        val nodes = parseOverviewOutput(
+        val nodes = timelineOf(
             """
             [MAIN|2026-10-21T02:12:30Z] 确认需求
             [CHANGE|2026-10-21T02:27:00.123+00:00] 改为右上角面板
@@ -33,7 +36,7 @@ class NodeTimeTest {
 
     @Test
     fun `没有时间或时间写坏了也照常解析节点`() {
-        val nodes = parseOverviewOutput("[MAIN] 旧格式\n[SIDE|昨天下午] 时间写坏了\n[ERROR|] 空时间")
+        val nodes = timelineOf("[MAIN] 旧格式\n[SIDE|昨天下午] 时间写坏了\n[ERROR|] 空时间")
 
         assertEquals(listOf("旧格式", "时间写坏了", "空时间"), nodes.map { it.text })
         assertTrue(nodes.all { it.time == null })
@@ -264,55 +267,56 @@ class NodeTimeTest {
     }
 
     @Test
-    fun `提示词要求带上时间，增量时旧时间线带着时间`() {
+    fun `提示词要求带上时间，增量时上次报告带着时间`() {
         val file = Path.of("/tmp/s.jsonl")
-        val zh = overviewPrompt(true, AgentType.CLAUDE, file, 10)
-        assertTrue(zh.contains("[TYPE|时间] 一句话描述"))
+        val zh = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, null, TrailCursor(10, 0))
+        assertTrue(zh.contains("\"time\""))
         assertTrue(zh.contains("原样抄写"))
-        val en = overviewPrompt(false, AgentType.CODEX, file, 10)
-        assertTrue(en.contains("[TYPE|time] One-sentence description"))
+        val en = reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CODEX, file, null, TrailCursor(10, 0))
+        assertTrue(en.contains("copied verbatim from the record"))
 
-        val cached = CachedOverview(
-            OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "有时间", t1), OverviewNode(NodeSymbol.SIDE, "没时间")), Instant.now()),
-            100, 5,
-        )
-        val incremental = trailPrompt(true, AgentType.PI, file, cached, TrailCursor(9, 200))
-        assertTrue(incremental.contains("[MAIN|2026-10-21T02:12:30Z] 有时间"))
-        assertTrue(incremental.contains("[SIDE] 没时间"))
-        assertTrue("合并节点保留开始时间", incremental.contains("合并后的节点用其中最早的时间"))
+        val nodes = listOf(OverviewNode(NodeSymbol.MAIN, "有时间", t1), OverviewNode(NodeSymbol.SIDE, "没时间"))
+        val cached = CachedOverview(OverviewResult(nodes, Instant.now(), report = SessionReport(timeline = nodes)), 100, 5)
+        val incremental = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.PI, file, cached, TrailCursor(9, 200))
+        assertTrue(incremental.contains("有时间"))
+        assertTrue("有时间的旧节点带着时间", incremental.contains("\"time\": \"$t1\""))
+        assertTrue(incremental.contains("没时间"))
+        assertTrue("合并节点保留开始时间", incremental.contains("合并的节点用其中最早的时间"))
     }
 
     @Test
     fun `增量提示词要求旧节点没有时间就保持没有，不要猜`() {
-        val cached = CachedOverview(OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧")), Instant.now()), 100, 5)
-        val zh = trailPrompt(true, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached, TrailCursor(9, 200))
-        assertTrue(zh.contains("旧时间线里没有时间的节点保持没有时间，不要猜测或补写"))
-        val en = trailPrompt(false, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached, TrailCursor(9, 200))
-        assertTrue(en.contains("Earlier nodes without a time must stay without a time; do not guess or fill one in"))
+        val old = listOf(OverviewNode(NodeSymbol.MAIN, "旧"))
+        val cached = CachedOverview(OverviewResult(old, Instant.now(), report = SessionReport(timeline = old)), 100, 5)
+        val zh = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached, TrailCursor(9, 200))
+        assertTrue(zh.contains("没有时间的旧节点保持没有时间，不要猜测或补写"))
+        val en = reportPrompt(false, PluginLanguage.ENGLISH, AgentType.CLAUDE, Path.of("/tmp/s.jsonl"), cached, TrailCursor(9, 200))
+        assertTrue(en.contains("earlier nodes without a time must stay without a time; do not guess or fill one in"))
     }
 
     @Test
-    fun `旧缓存没有时间时增量更新：旧节点继续无时间，新节点带时间，且不触发全量重读`() {
+    fun `上次报告的节点没有时间时增量更新：旧节点继续无时间，新节点带时间，且不触发全量重读`() {
         val file = Files.createTempFile("session", ".jsonl").also { it.toFile().deleteOnExit() }
         Files.writeString(file, "u1\na1\n")
         val cache = OverviewCache(null)
-        // 升级前的缓存：有行号（本轮已有增量基线），节点没有时间
-        cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧节点")), Instant.now()), Files.size(file), 2)
+        // 已有增量基线（行号），上次报告里的节点没有时间
+        val old = listOf(OverviewNode(NodeSymbol.MAIN, "旧节点"))
+        cache.put("s1", OverviewResult(old, Instant.now(), report = SessionReport(timeline = old)), Files.size(file), 2)
         Files.writeString(file, "u1\na1\nu2\na2\n")
 
         val prompts = mutableListOf<String>()
         val result = runTrailGeneration(
             cache, "s1", file,
-            { c, cursor -> trailPrompt(true, AgentType.CLAUDE, file, c, cursor) },
+            { c, cursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, c, cursor) },
             runAgent = { prompt ->
                 prompts += prompt
-                "[MAIN] 旧节点\n[MAIN|2026-10-21T02:12:30Z] 新节点"
+                reportOutput("[MAIN] 旧节点\n[MAIN|2026-10-21T02:12:30Z] 新节点")
             },
         )
 
         assertEquals(1, prompts.size)
         assertTrue("仍是增量，只读新增的行", prompts.single().contains("只需读取第 3 行到第 4 行"))
-        assertTrue("旧节点原样交给智能体，没有时间", prompts.single().contains("[MAIN] 旧节点"))
+        assertTrue("旧节点原样交给智能体，没有时间", prompts.single().contains("旧节点"))
         assertEquals(listOf(null, t1), result.nodes.map { it.time })
         assertEquals(listOf(null, t1), cache.get("s1")!!.result.nodes.map { it.time })
     }
@@ -325,7 +329,7 @@ class NodeTimeTest {
         cache.put("s1", OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "旧节点")), Instant.now()), Files.size(file), 2)
 
         var calls = 0
-        val result = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; "[MAIN|2026-10-21T02:12:30Z] 旧节点" })
+        val result = runTrailGeneration(cache, "s1", file, { _, _ -> "p" }, runAgent = { calls++; reportOutput("[MAIN|2026-10-21T02:12:30Z] 旧节点") })
 
         assertEquals("不为补时间而重读", 0, calls)
         assertNull(result.nodes.single().time)

@@ -2,6 +2,8 @@ package com.github.izerui.imux.overview
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.PluginLanguage
+import com.github.izerui.imux.overview.report.reportPrompt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -29,7 +31,7 @@ class ProgressOverviewTest {
             [IN_PROGRESS] 正在修复超时问题
         """.trimIndent()
 
-        val nodes = parseOverviewOutput(output)
+        val nodes = timelineOf(output)
 
         assertEquals(7, nodes.size)
         assertEquals(NodeSymbol.MAIN, nodes[0].symbol)
@@ -50,7 +52,7 @@ class ProgressOverviewTest {
             [MAIN] 改为图片懒加载
         """.trimIndent()
 
-        val nodes = parseOverviewOutput(output)
+        val nodes = timelineOf(output)
 
         assertEquals(5, nodes.size)
         assertEquals(NodeSymbol.ROLLBACK_START, nodes[1].symbol)
@@ -59,19 +61,19 @@ class ProgressOverviewTest {
 
     @Test
     fun `忽略不符合格式的行`() {
-        val nodes = parseOverviewOutput("[MAIN] 第一步\n这是额外文字\n\n[MAIN] 第二步")
+        val nodes = timelineOf("[MAIN] 第一步\n这是额外文字\n\n[MAIN] 第二步")
         assertEquals(2, nodes.size)
     }
 
     @Test
     fun `空输出返回空列表`() {
-        assertEquals(emptyList<OverviewNode>(), parseOverviewOutput(""))
-        assertEquals(emptyList<OverviewNode>(), parseOverviewOutput("   \n  "))
+        assertEquals(emptyList<OverviewNode>(), timelineOf(""))
+        assertEquals(emptyList<OverviewNode>(), timelineOf("   \n  "))
     }
 
     @Test
     fun `未知 TYPE 降级为 MAIN`() {
-        val nodes = parseOverviewOutput("[UNKNOWN] 某个节点")
+        val nodes = timelineOf("[UNKNOWN] 某个节点")
         assertEquals(NodeSymbol.MAIN, nodes.single().symbol)
     }
 
@@ -234,7 +236,7 @@ class ProgressOverviewTest {
 
         // 刷新：直接重新生成，调用前就被取消，缓存不应被触碰
         try {
-            generateTrail("prompt", { "[MAIN] 新摘要" }, isCancelled = { true })
+            generateReport("prompt", { reportOutput("[MAIN] 新摘要") }, isCancelled = { true })
             org.junit.Assert.fail("应被取消")
         } catch (_: java.util.concurrent.CancellationException) {
         }
@@ -405,7 +407,7 @@ class ProgressOverviewTest {
         // 重新生成：生成期间主会话追加消息
         val shown = runTrailGeneration(cache, "s1", sessionFile, { _, _ -> "prompt" }, runAgent = {
             Files.writeString(sessionFile, user("修复登录") + "\n" + user("生成期间的新要求") + "\n")
-            "[MAIN] 新摘要"
+            reportOutput("[MAIN] 新摘要")
         })
 
         assertTrue("展示层应拿到过期状态", shown.stale)
@@ -780,28 +782,28 @@ class ProgressOverviewTest {
     // ── 单次智能体调用生成 ──
 
     @Test
-    fun `回答能解析出节点时只调用一次`() {
+    fun `回答能解析出报告时只调用一次`() {
         val calls = AtomicInteger(0)
-        val nodes = generateTrail("prompt", { calls.incrementAndGet(); "好的：\n[MAIN] 完成登录修复" })
+        val nodes = generateReport("prompt", { calls.incrementAndGet(); "好的：\n" + reportOutput("[MAIN] 完成登录修复") }).timeline
 
         assertEquals(1, calls.get())
         assertEquals("完成登录修复", nodes.single().text)
     }
 
     @Test
-    fun `回答解析不出节点时自动重试一次`() {
+    fun `回答解析不出报告时自动重试一次`() {
         val calls = AtomicInteger(0)
-        val nodes = generateTrail("prompt", { if (calls.incrementAndGet() == 1) "我先看看文件。" else "[MAIN] 第二次成功" })
+        val nodes = generateReport("prompt", { if (calls.incrementAndGet() == 1) "我先看看文件。" else reportOutput("[MAIN] 第二次成功") }).timeline
 
         assertEquals(2, calls.get())
         assertEquals("第二次成功", nodes.single().text)
     }
 
     @Test
-    fun `重试后仍解析不出节点时报解析失败并保留原始回答`() {
+    fun `重试后仍解析不出报告时报解析失败并保留原始回答`() {
         val calls = AtomicInteger(0)
         try {
-            generateTrail("prompt", { "第 ${calls.incrementAndGet()} 次：抱歉无法完成" })
+            generateReport("prompt", { "第 ${calls.incrementAndGet()} 次：抱歉无法完成" })
             org.junit.Assert.fail("应抛出 OverviewParseException")
         } catch (e: OverviewParseException) {
             assertEquals(TRAIL_ATTEMPTS, calls.get())
@@ -813,7 +815,7 @@ class ProgressOverviewTest {
     fun `调用超时或失败时不重试直接抛出`() {
         val calls = AtomicInteger(0)
         try {
-            generateTrail("prompt", { calls.incrementAndGet(); throw com.github.izerui.imux.agent.OneShotAgentTimeoutException(600) })
+            generateReport("prompt", { calls.incrementAndGet(); throw com.github.izerui.imux.agent.OneShotAgentTimeoutException(600) })
             org.junit.Assert.fail("应抛出超时异常")
         } catch (_: com.github.izerui.imux.agent.OneShotAgentTimeoutException) {
         }
@@ -825,7 +827,7 @@ class ProgressOverviewTest {
         val calls = AtomicInteger(0)
         val cancelled = AtomicBoolean(false)
         try {
-            generateTrail("prompt", {
+            generateReport("prompt", {
                 calls.incrementAndGet()
                 cancelled.set(true)
                 "闲聊，没有节点"
@@ -847,11 +849,11 @@ class ProgressOverviewTest {
         val absolute = file.toAbsolutePath().normalize().toString()
         val formats = mapOf(AgentType.CLAUDE to "tool_result", AgentType.CODEX to "response_item", AgentType.PI to "toolResult")
         for ((type, marker) in formats) {
-            val prompt = overviewPrompt(isChinese = true, agentType = type, sessionFile = file, endLine = 120)
+            val prompt = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, type, file, null, TrailCursor(120, 0))
             assertTrue("$type 应给出绝对路径", prompt.contains("`$absolute`"))
             assertTrue("$type 应说明记录格式", prompt.contains(marker))
             zhGuards.forEach { assertTrue("$type 缺少：$it", prompt.contains(it)) }
-            assertTrue(prompt.contains("[TYPE|时间] 一句话描述"))
+            assertTrue(prompt.contains("只输出一个 JSON 对象"))
         }
     }
 
@@ -860,11 +862,11 @@ class ProgressOverviewTest {
         val file = Path.of("build", "sessions", "b.jsonl")
         val absolute = file.toAbsolutePath().normalize().toString()
         for (type in AgentType.entries) {
-            val prompt = overviewPrompt(isChinese = false, agentType = type, sessionFile = file, endLine = 120)
+            val prompt = reportPrompt(false, PluginLanguage.ENGLISH, type, file, null, TrailCursor(120, 0))
             assertTrue(prompt.contains("`$absolute`"))
             assertTrue(prompt.contains("JSONL"))
             enGuards.forEach { assertTrue("$type missing: $it", prompt.contains(it)) }
-            assertTrue(prompt.contains("[TYPE|time] One-sentence description"))
+            assertTrue(prompt.contains("Output a single JSON object"))
         }
     }
 
@@ -874,7 +876,7 @@ class ProgressOverviewTest {
         file.toFile().deleteOnExit()
         Files.writeString(file, user("机密需求：修复支付回调"))
 
-        val prompt = overviewPrompt(isChinese = true, agentType = AgentType.CLAUDE, sessionFile = file, endLine = 1)
+        val prompt = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, null, TrailCursor(1, 0))
         assertFalse("正文由智能体自己读取，不应塞进 prompt", prompt.contains("修复支付回调"))
     }
 
@@ -967,5 +969,71 @@ class ProgressOverviewTest {
         assertEquals("AI 响应超时，请稍后再更新", ImuxBundle.message(zh, "action.overview.failed.timeout"))
         assertEquals("正在执行 Read", ImuxBundle.message(zh, "action.overview.progress.tool", "Read"))
         assertEquals("35 秒", ImuxBundle.message(zh, "action.overview.progress.elapsed", 35))
+    }
+
+    // ── 会话报告：事实、缓存、旧格式 ──
+
+    private fun sessionFile(text: String): Path =
+        Files.createTempFile("session", ".jsonl").also {
+            it.toFile().deleteOnExit()
+            Files.writeString(it, text)
+        }
+
+    @Test
+    fun `生成结果带上插件统计的事实`() {
+        val facts = com.github.izerui.imux.overview.report.ReportFacts(135, listOf("a.kt"))
+        val result = runTrailGeneration(
+            OverviewCache(null), "s1", sessionFile("u1\na1\n"), { _, _ -> "p" },
+            runAgent = { reportOutput("[MAIN] 完成") },
+            facts = { facts },
+        )
+        assertEquals(facts, result.report!!.facts)
+    }
+
+    @Test
+    fun `报告随缓存往返且时间线同步写入 nodes`() {
+        val dir = Files.createTempDirectory("overview-cache-test").also { it.toFile().deleteOnExit() }
+        val output = """{"goal":"目标","status":"done","timeline":[{"type":"MAIN","text":"一"},{"type":"ERROR","text":"二"}],"nextSteps":["下一步"]}"""
+        val report = com.github.izerui.imux.overview.report.parseAgentReport(output)!!
+            .copy(facts = com.github.izerui.imux.overview.report.ReportFacts(5, listOf("x.kt")))
+        OverviewCache(dir).put("s1", OverviewResult(report.timeline, Instant.now(), report = report), fileSize = 4, lineCount = 2)
+
+        val loaded = OverviewCache(dir).get("s1")!!.result
+        assertEquals(report, loaded.report)
+        assertEquals(listOf("一", "二"), loaded.nodes.map { it.text })
+        assertFalse(loaded.legacy)
+        val raw = Files.readString(dir.resolve("s1.json"))
+        assertTrue("旧版本插件仍能读到时间线", raw.contains("\"nodes\""))
+    }
+
+    @Test
+    fun `旧缓存读出只有时间线并标为过期和格式升级`() {
+        val dir = Files.createTempDirectory("overview-cache-test").also { it.toFile().deleteOnExit() }
+        val file = sessionFile("u1\n")
+        Files.writeString(dir.resolve("s1.json"), """{"fileSize":${Files.size(file)},"lineCount":1,"generatedAt":0,"nodes":[{"symbol":"MAIN","text":"旧"}]}""")
+
+        val cached = OverviewCache(dir).get("s1")!!
+        assertEquals(listOf("旧"), cached.result.report!!.timeline.map { it.text })
+        assertTrue(cached.result.legacy)
+        assertTrue("文件没变也算过期，提示更新", cachedView(cached, file).stale)
+    }
+
+    @Test
+    fun `旧缓存截止位置没变也重新完整生成`() {
+        val dir = Files.createTempDirectory("overview-cache-test").also { it.toFile().deleteOnExit() }
+        val file = sessionFile("u1\na1\n")
+        Files.writeString(dir.resolve("s1.json"), """{"fileSize":${Files.size(file)},"lineCount":2,"generatedAt":0,"nodes":[{"symbol":"MAIN","text":"旧"}]}""")
+        val prompts = mutableListOf<String>()
+
+        val result = runTrailGeneration(
+            OverviewCache(dir), "s1", file,
+            { c, cursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, c, cursor) },
+            runAgent = { prompts += it; reportOutput("[MAIN] 新报告") },
+        )
+
+        assertEquals(1, prompts.size)
+        assertTrue("完整生成，从第 1 行读起", prompts.single().contains("第 1 行到第 2 行"))
+        assertFalse(result.legacy)
+        assertEquals("新报告", result.report!!.timeline.single().text)
     }
 }

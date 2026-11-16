@@ -10,6 +10,15 @@ import com.github.izerui.imux.agent.oneShotAgentInvocation
 import com.github.izerui.imux.agent.runOneShotAgent
 import com.github.izerui.imux.agent.runTracked
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.overview.report.ReportFacts
+import com.github.izerui.imux.overview.report.SessionReport
+import com.github.izerui.imux.overview.report.agentReportJson
+import com.github.izerui.imux.overview.report.factsFromJson
+import com.github.izerui.imux.overview.report.factsJson
+import com.github.izerui.imux.overview.report.parseAgentReport
+import com.github.izerui.imux.overview.report.reportFromJson
+import com.github.izerui.imux.overview.report.reportPrompt
+import com.github.izerui.imux.overview.report.transcriptFacts
 import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.resolveShell
 import com.intellij.openapi.application.ApplicationManager
@@ -46,6 +55,10 @@ data class OverviewResult(
     val saveFailed: Boolean = false,
     /** 生成期间会话又有新交互，摘要已落后；仅用于本次展示，不持久化。 */
     val stale: Boolean = false,
+    /** 会话报告；时间线与 [nodes] 相同。升级前的旧缓存只有时间线，按 [legacy] 补出一份只有时间线的报告。 */
+    val report: SessionReport? = null,
+    /** 读自升级前的旧缓存（只有时间线）：按过期处理，更新时完整生成。 */
+    val legacy: Boolean = false,
 )
 
 data class CachedView(
@@ -56,6 +69,10 @@ data class CachedView(
 /** 会话文件大小与摘要覆盖到的位置不同，即之后又有新的消息或工具输出。 */
 internal fun isStale(cached: CachedOverview, sessionFile: Path): Boolean =
     runCatching { Files.size(sessionFile) }.getOrDefault(-1L) != cached.fileSize
+
+/** 界面看到的缓存：旧格式的缓存也算过期，提示用户更新成完整报告。 */
+internal fun cachedView(cached: CachedOverview, sessionFile: Path): CachedView =
+    CachedView(cached.result, isStale(cached, sessionFile) || cached.result.legacy)
 
 internal data class CachedOverview(
     val result: OverviewResult,
@@ -157,6 +174,9 @@ internal class OverviewCache(private val storageDir: Path?) {
                     nodesArray.add(nodeObj)
                 }
                 add("nodes", nodesArray)
+                cached.result.report?.let { report ->
+                    add("report", agentReportJson(report).apply { add("facts", factsJson(report.facts)) })
+                }
             }
             val target = cacheFile(sessionKey)
             val tmp = Files.createTempFile(storageDir, "overview-", ".tmp")
@@ -189,7 +209,18 @@ internal class OverviewCache(private val storageDir: Path?) {
                 )
             }
             val lineCount = obj.get("lineCount")?.takeUnless { it.isJsonNull }?.asLong
-            CachedOverview(OverviewResult(nodes, generatedAt), fileSize, lineCount)
+            val reportObj = obj.get("report") as? com.google.gson.JsonObject
+            val result =
+                when {
+                    reportObj != null -> {
+                        val report = reportFromJson(reportObj)?.copy(timeline = nodes, facts = factsFromJson(reportObj.getAsJsonObject("facts")))
+                        OverviewResult(nodes, generatedAt, report = report)
+                    }
+                    // 升级前的旧缓存：只有时间线
+                    nodes.isNotEmpty() -> OverviewResult(nodes, generatedAt, report = SessionReport(timeline = nodes), legacy = true)
+                    else -> OverviewResult(nodes, generatedAt)
+                }
+            CachedOverview(result, fileSize, lineCount)
         }.getOrNull()
     }
 }
@@ -219,6 +250,7 @@ internal fun runTrailGeneration(
     buildPrompt: (cached: CachedOverview?, cursor: TrailCursor) -> String,
     runAgent: (String) -> String,
     isCancelled: () -> Boolean = { false },
+    facts: (TrailCursor) -> ReportFacts = { ReportFacts() },
 ): OverviewResult {
     val snapshotSize = runCatching { Files.size(sessionFile) }.getOrDefault(0L)
     val cursor = if (snapshotSize == 0L) TrailCursor(0, 0) else trailCursor(sessionFile, snapshotSize)
@@ -228,16 +260,19 @@ internal fun runTrailGeneration(
     val cached = cache.get(sessionKey)
     // 截止位置与上次完全相同：要么已是最新，要么只多了一截还没写完的半行。旧结果正好覆盖到这里，
     // 再调智能体只会把同样的内容重读一遍，直接返回旧结果并重新判断是否过期。
-    // 截止位置倒退（文件缩短、被改写）则由 trailPrompt 退回完整生成。
-    if (cached != null && cached.lineCount == cursor.lines && cached.fileSize == cursor.bytes) {
+    // 截止位置倒退（文件缩短、被改写）则由 reportPrompt 退回完整生成。
+    // 旧格式的缓存不走这条：截止位置没变也要完整生成一份报告
+    if (cached != null && !cached.result.legacy && cached.lineCount == cursor.lines && cached.fileSize == cursor.bytes) {
         val result = cached.result
         // 上次只是没写进磁盘：重试保存即可，同样不必重新生成
         if (!result.saveFailed) return result.copy(stale = isStale(cached, sessionFile))
         return storeOverview(cache, sessionKey, result.copy(saveFailed = false), sessionFile, cursor)
     }
     val startedAt = Instant.now()
-    val nodes = sanitizeNodeTimes(generateTrail(buildPrompt(cached, cursor), runAgent, isCancelled), startedAt)
-    return storeOverview(cache, sessionKey, OverviewResult(nodes, Instant.now()), sessionFile, cursor)
+    val report = generateReport(buildPrompt(cached, cursor), runAgent, isCancelled)
+    val nodes = sanitizeNodeTimes(report.timeline, startedAt)
+    val result = OverviewResult(nodes, Instant.now(), report = report.copy(timeline = nodes, facts = facts(cursor)))
+    return storeOverview(cache, sessionKey, result, sessionFile, cursor)
 }
 
 @Service(Service.Level.PROJECT)
@@ -268,7 +303,7 @@ class ProgressOverviewService(
     fun cachedOverview(sessionKey: String): CachedView? {
         val cached = overviewCache.get(sessionKey) ?: return null
         val session = SessionMonitor.getInstance(project).model.sessionOf(sessionKey) ?: return null
-        return CachedView(cached.result, isStale(cached, session.filePath))
+        return cachedView(cached, session.filePath)
     }
 
     /**
@@ -279,7 +314,8 @@ class ProgressOverviewService(
         val session = SessionMonitor.getInstance(project).model.sessionOf(sessionKey)
             ?: throw IllegalStateException("Session not found: $sessionKey")
 
-        val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
+        val language = ImuxBundle.currentLanguage()
+        val isChinese = language in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
         val shell = resolveShell(
             System.getenv("SHELL"),
             isWindows = SystemInfo.isWindows,
@@ -304,7 +340,7 @@ class ProgressOverviewService(
                 sessionKey,
                 session.filePath,
                 buildPrompt = { cached, cursor ->
-                    trailPrompt(isChinese, session.agentType, session.filePath, cached, cursor)
+                    reportPrompt(isChinese, language, session.agentType, session.filePath, cached, cursor)
                 },
                 runAgent = { text ->
                     runTracked(running) { processRef ->
@@ -320,6 +356,7 @@ class ProgressOverviewService(
                     }
                 },
                 isCancelled = { Thread.currentThread().isInterrupted },
+                facts = { cursor -> transcriptFacts(session.agentType, session.filePath, cursor.bytes, project.basePath?.let(Path::of)) },
             )
         } finally {
             unexited.addAll(cleanupProcesses(running))
@@ -336,20 +373,19 @@ class ProgressOverviewService(
 }
 
 /**
- * 调用智能体并解析时间线。回答里解析不出节点（比如只回了一段闲聊）时自动重试一次，
+ * 调用智能体并解析报告。回答里解析不出报告（比如只回了一段闲聊）时自动重试一次，
  * 仍然没有才报错；超时、CLI 失败、取消都直接抛出，不重试。
  */
-internal fun generateTrail(
+internal fun generateReport(
     prompt: String,
     runAgent: (String) -> String,
     isCancelled: () -> Boolean = { false },
-): List<OverviewNode> {
+): SessionReport {
     var lastOutput = ""
     repeat(TRAIL_ATTEMPTS) {
         if (isCancelled()) throw java.util.concurrent.CancellationException("Overview generation cancelled")
         val output = runAgent(prompt)
-        val nodes = parseOverviewOutput(output)
-        if (nodes.isNotEmpty()) return nodes
+        parseAgentReport(output)?.let { return it }
         lastOutput = output
     }
     throw OverviewParseException(lastOutput)
@@ -358,31 +394,7 @@ internal fun generateTrail(
 internal const val TRAIL_ATTEMPTS = 2
 
 internal class OverviewParseException(val rawOutput: String) :
-    RuntimeException("Overview output could not be parsed into timeline nodes")
-
-private val NODE_PATTERN = Regex("""^\[(\w+)(?:\|([^\]]*))?]\s*(.+)$""")
-
-internal fun parseOverviewOutput(output: String): List<OverviewNode> {
-    return output.lines()
-        .mapNotNull { line ->
-            val trimmed = line.trim()
-            val match = NODE_PATTERN.matchEntire(trimmed) ?: return@mapNotNull null
-            val type = match.groupValues[1]
-            val time = parseNodeTime(match.groupValues[2])
-            val text = match.groupValues[3].trim()
-            val symbol = when (type.uppercase()) {
-                "MAIN" -> NodeSymbol.MAIN
-                "SIDE" -> NodeSymbol.SIDE
-                "ROLLBACK_START" -> NodeSymbol.ROLLBACK_START
-                "ROLLBACK_END" -> NodeSymbol.ROLLBACK_END
-                "CHANGE" -> NodeSymbol.CHANGE
-                "ERROR" -> NodeSymbol.ERROR
-                "IN_PROGRESS" -> NodeSymbol.IN_PROGRESS
-                else -> NodeSymbol.MAIN
-            }
-            OverviewNode(symbol, text, time)
-        }
-}
+    RuntimeException("Overview output could not be parsed into a session report")
 
 /** 时间写坏了不影响节点本身，只是不显示时间。 */
 internal fun parseNodeTime(raw: String): Instant? {
