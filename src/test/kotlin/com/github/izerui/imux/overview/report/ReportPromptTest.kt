@@ -41,8 +41,11 @@ class ReportPromptTest {
     }
 
     @Test
-    fun `旧缓存没有报告时退回完整生成`() {
-        val prompt = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, cached(null), TrailCursor(150, 2_000))
+    fun `旧格式缓存只有时间线时退回完整生成`() {
+        val nodes = listOf(OverviewNode(NodeSymbol.MAIN, "确认需求"))
+        // 与 OverviewCache 读旧缓存时的形态一致：补出只有时间线的报告并标 legacy
+        val legacy = CachedOverview(OverviewResult(nodes, Instant.now(), report = SessionReport(timeline = nodes), legacy = true), 1_000, 100)
+        val prompt = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, legacy, TrailCursor(150, 2_000))
         assertTrue(prompt.contains("第 1 行到第 150 行"))
         assertFalse(prompt.contains("第 101 行"))
     }

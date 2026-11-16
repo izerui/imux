@@ -36,12 +36,16 @@ class ReportViewSourceTest {
     }
 
     @Test
-    fun `导航到报告本身和页内锚点时不拦截，其他地址交给外部打开`() {
+    fun `只有用户点开的外部地址才交给系统浏览器`() {
         val report = "file:///p/.imux/reports/s1.html"
-        assertTrue(isReportUrl(report, report))
-        assertTrue(isReportUrl(report, "$report#changes"))
-        org.junit.Assert.assertFalse(isReportUrl(report, "https://example.com"))
-        org.junit.Assert.assertFalse(isReportUrl(report, "file:///p/.imux/reports/s2.html"))
-        org.junit.Assert.assertFalse("还没加载报告时一律交给外部", isReportUrl(null, report))
+        assertTrue("用户点了外部链接", shouldOpenExternally(report, "https://example.com", userGesture = true))
+        assertTrue("用户点了别的本地文件", shouldOpenExternally(report, "file:///p/.imux/reports/s2.html", userGesture = true))
+        org.junit.Assert.assertFalse("报告本身", shouldOpenExternally(report, report, userGesture = true))
+        org.junit.Assert.assertFalse("页内锚点", shouldOpenExternally(report, "$report#changes", userGesture = true))
+        org.junit.Assert.assertFalse("不是用户点的（初始化、重定向）", shouldOpenExternally(report, "https://example.com", userGesture = false))
+        org.junit.Assert.assertFalse("空白页", shouldOpenExternally(report, "about:blank", userGesture = true))
+        org.junit.Assert.assertFalse("data 地址", shouldOpenExternally(report, "data:text/html,x", userGesture = true))
+        org.junit.Assert.assertFalse("JCEF 内部页面", shouldOpenExternally(report, "file:///jbcefbrowser/error.html", userGesture = true))
+        org.junit.Assert.assertFalse("还没加载报告时的初始导航", shouldOpenExternally(null, "about:blank", userGesture = false))
     }
 }

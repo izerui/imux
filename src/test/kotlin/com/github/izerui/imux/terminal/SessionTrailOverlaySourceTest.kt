@@ -104,7 +104,7 @@ class SessionTrailOverlaySourceTest {
 
     @Test
     fun `报告页由服务渲染成文件再交给视图显示`() {
-        assertTrue(overlay.normalized.contains(".writeReport(key,"))
+        assertTrue(overlay.normalized.contains(".writeReport(sessionKey, result)"))
         assertTrue(overlay.normalized.contains("view.show("))
     }
 
@@ -116,6 +116,7 @@ class SessionTrailOverlaySourceTest {
             "action.overview.report.noBrowser",
             "action.overview.report.stale",
             "action.overview.report.legacy",
+            "action.overview.report.writeFailed",
         )
         val bundles = java.io.File("src/main/resources/messages").listFiles { file -> file.name.startsWith("ImuxBundle") }!!
         org.junit.Assert.assertEquals(10, bundles.size)
@@ -131,5 +132,20 @@ class SessionTrailOverlaySourceTest {
     fun `在系统浏览器中打开不用 263 计划移除的 BrowserUtil browse File`() {
         assertFalse(overlay.normalized.contains(".toFile())"))
         assertTrue(overlay.normalized.contains("BrowserUtil.browse(it.toUri())"))
+    }
+
+    @Test
+    fun `报告文件在后台线程渲染写入，回到界面线程再显示`() {
+        val show = overlay.bodyAfter("private fun showReport(", '{')
+        val background = show.indexOf("executeOnPooledThread")
+        val write = show.indexOf(".writeReport(")
+        val back = show.indexOf("invokeLater")
+        assertTrue("写文件要在后台线程：$show", background >= 0 && write > background)
+        assertTrue("显示要回到界面线程：$show", back > write)
+    }
+
+    @Test
+    fun `报告写入失败时显示错误横幅并可重试`() {
+        assertTrue(overlay.normalized.contains("action.overview.report.writeFailed"))
     }
 }

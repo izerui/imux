@@ -60,12 +60,13 @@ private fun templateDigest(template: String): String =
 internal fun reportFile(projectRoot: Path, sessionKey: String): Path =
     projectRoot.resolve(".imux").resolve("reports").resolve(sessionKey.replace(Regex("[^a-zA-Z0-9_-]"), "_") + ".html")
 
-/** 内容与已有文件相同时不写；否则写临时文件后原子替换。写之前确保 `.imux/` 不进 Git。 */
+/** 先确保 `.imux/` 不进 Git；内容与已有文件相同时不写，否则写临时文件后原子替换。 */
 internal fun writeReportFile(projectRoot: Path, sessionKey: String, html: String): ReportWrite {
+    // 先于内容比较：.gitignore 被删了，报告没变也要补回
+    ensureImuxIgnored(projectRoot)
     val target = reportFile(projectRoot, sessionKey)
     val bytes = html.toByteArray(Charsets.UTF_8)
     if (Files.isRegularFile(target) && Files.readAllBytes(target).contentEquals(bytes)) return ReportWrite(target, changed = false)
-    ensureImuxIgnored(projectRoot)
     Files.createDirectories(target.parent)
     val tmp = Files.createTempFile(target.parent, "report-", ".tmp")
     try {

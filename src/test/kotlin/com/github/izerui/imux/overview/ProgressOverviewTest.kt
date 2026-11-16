@@ -807,4 +807,22 @@ class ProgressOverviewTest {
         assertFalse(result.legacy)
         assertEquals("新报告", result.report!!.timeline.single().text)
     }
+
+    @Test
+    fun `旧缓存之后会话又有新进展时完整生成而不是增量`() {
+        val dir = Files.createTempDirectory("overview-cache-test").also { it.toFile().deleteOnExit() }
+        val file = sessionFile("u1\na1\n")
+        Files.writeString(dir.resolve("s1.json"), """{"fileSize":${Files.size(file)},"lineCount":2,"generatedAt":0,"nodes":[{"symbol":"MAIN","text":"旧"}]}""")
+        Files.writeString(file, "u1\na1\nu2\na2\n")
+        val prompts = mutableListOf<String>()
+
+        runTrailGeneration(
+            OverviewCache(dir), "s1", file,
+            { c, cursor -> reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, AgentType.CLAUDE, file, c, cursor) },
+            runAgent = { prompts += it; reportOutput("[MAIN] 新报告") },
+        )
+
+        assertTrue("旧缓存只有时间线，不能当成前文汇总", prompts.single().contains("第 1 行到第 4 行"))
+        assertFalse(prompts.single().contains("只需读取第 3 行"))
+    }
 }

@@ -10,8 +10,8 @@ import com.github.izerui.imux.model.AgentType
  */
 internal fun incrementalStartLine(cached: CachedOverview?, cursor: TrailCursor): Long? {
     val lineCount = cached?.lineCount ?: return null
-    // 升级前的旧缓存只有时间线、没有报告：没有上次的报告可合并，完整生成
-    if (cached.result.nodes.isEmpty() || cached.result.report == null) return null
+    // 升级前的旧缓存只有时间线（读出时补成只有时间线的报告并标 legacy）：不能当成前文汇总，完整生成
+    if (cached.result.nodes.isEmpty() || cached.result.report == null || cached.result.legacy) return null
     if (cursor.bytes <= cached.fileSize || cursor.lines <= lineCount) return null
     return lineCount + 1
 }

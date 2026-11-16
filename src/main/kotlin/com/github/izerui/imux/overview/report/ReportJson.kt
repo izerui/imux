@@ -29,19 +29,19 @@ internal fun reportFromJson(obj: JsonObject): SessionReport? {
         SessionReport(
             goal = obj.text("goal"),
             summary = obj.text("summary"),
-            status = obj.text("status")?.let { value -> ReportStatus.entries.firstOrNull { it.wire == value } },
+            status = obj.word("status")?.let { value -> ReportStatus.entries.firstOrNull { it.wire == value } },
             decisions = obj.objects("decisions").mapNotNull { item ->
                 ReportDecision(item.text("title") ?: return@mapNotNull null, item.text("reason"))
             }.take(MAX_DECISIONS),
             changes = obj.objects("changes").mapNotNull { item ->
                 val lines = (item.get("snippet") as? JsonObject)?.objects("lines").orEmpty().mapNotNull { line ->
                     val text = line.raw("text") ?: return@mapNotNull null
-                    SnippetLine(LineKind.entries.firstOrNull { it.wire == line.text("kind") } ?: LineKind.CTX, text)
+                    SnippetLine(LineKind.entries.firstOrNull { it.wire == line.word("kind") } ?: LineKind.CTX, text)
                 }
                 ReportChange(item.text("file") ?: return@mapNotNull null, item.text("summary"), lines.take(MAX_SNIPPET_LINES), item.text("note"))
             }.take(MAX_CHANGES),
             verification = obj.objects("verification").mapNotNull { item ->
-                val result = CheckResult.entries.firstOrNull { it.wire == item.text("result") } ?: CheckResult.NOT_RUN
+                val result = CheckResult.entries.firstOrNull { it.wire == item.word("result") } ?: CheckResult.NOT_RUN
                 ReportCheck(item.text("what") ?: return@mapNotNull null, result, item.text("detail"))
             }.take(MAX_CHECKS),
             timeline = obj.objects("timeline").mapNotNull { item ->
@@ -49,7 +49,7 @@ internal fun reportFromJson(obj: JsonObject): SessionReport? {
                 OverviewNode(symbol, item.text("text") ?: return@mapNotNull null, item.text("time")?.let(::parseNodeTime))
             }.take(MAX_TIMELINE),
             issues = obj.objects("issues").mapNotNull { item ->
-                val severity = Severity.entries.firstOrNull { it.wire == item.text("severity") } ?: Severity.LOW
+                val severity = Severity.entries.firstOrNull { it.wire == item.word("severity") } ?: Severity.LOW
                 ReportIssue(severity, item.text("text") ?: return@mapNotNull null)
             }.take(MAX_ISSUES),
             nextSteps = obj.strings("nextSteps").take(MAX_NEXT_STEPS),
@@ -157,6 +157,9 @@ private fun matchingBrace(text: String, start: Int): Int {
 
 /** 字符串字段：去首尾空白，空的视同缺失；不是字符串（数字、对象）也视同缺失。 */
 private fun JsonObject.text(key: String): String? = raw(key)?.trim()?.ifEmpty { null }
+
+/** 枚举取值：不区分大小写，智能体写成 `Done`、`PASSED` 也认。 */
+private fun JsonObject.word(key: String): String? = text(key)?.lowercase()
 
 /** 原样的字符串字段，不去空白：代码行的缩进要保留。 */
 private fun JsonObject.raw(key: String): String? =

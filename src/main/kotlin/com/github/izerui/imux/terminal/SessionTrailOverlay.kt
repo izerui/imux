@@ -8,6 +8,7 @@ import com.github.izerui.imux.overview.ProgressOverviewService
 import com.github.izerui.imux.overview.TrailState
 import com.github.izerui.imux.overview.buildErrorPanel
 import com.github.izerui.imux.overview.OverviewResult
+import com.github.izerui.imux.overview.report.ReportWrite
 import com.github.izerui.imux.overview.buildFailedBanner
 import com.github.izerui.imux.overview.buildProgressBanner
 import com.github.izerui.imux.overview.buildSaveFailedBanner
@@ -19,6 +20,7 @@ import com.github.izerui.imux.terminal.report.ReportViews
 import com.intellij.ide.BrowserUtil
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -149,8 +151,11 @@ internal class SessionTrailOverlay(
     /** 显示报告页的视图，第一次需要时创建（见 [reportView]）。 */
     private var reportView: ReportView? = null
 
-    /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。 */
+    /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。写入失败时为 null。 */
     private var shownReport: Path? = null
+
+    /** 写报告文件的请求序号：后台写完回到界面线程时，只认最近一次。 */
+    private var reportRequest = 0
 
     private val updateAction =
         object : DumbAwareAction(AllIcons.Actions.Refresh) {
@@ -281,10 +286,11 @@ internal class SessionTrailOverlay(
     private fun render(state: TrailState) {
         titleLabel.text = ImuxBundle.message("action.overview.text")
         collapseButton.update()
-        reportButtons.forEach {
-            it.isVisible = showsReport(state)
-            it.update()
-        }
+        val (updateButton, openButton) = reportButtons
+        updateButton.isVisible = showsReport(state)
+        // 报告文件写好之后才能在浏览器里打开（见 applyReport）
+        openButton.isVisible = showsReport(state) && shownReport != null
+        reportButtons.forEach { it.update() }
 
         val sameLoading = state is TrailState.Loading && renderedState is TrailState.Loading &&
             (renderedState as TrailState.Loading).startedAt == state.startedAt
@@ -356,11 +362,16 @@ internal class SessionTrailOverlay(
             }
             else -> null
         }
+        val banners = JPanel().apply {
+            isOpaque = false
+            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
+            banner?.let(::add)
+        }
         val view = reportView()
-        showReport(view, result)
+        showReport(view, result, banners)
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            banner?.let { add(it, BorderLayout.NORTH) }
+            add(banners, BorderLayout.NORTH)
             add(view.component, BorderLayout.CENTER)
         }
     }
@@ -372,9 +383,38 @@ internal class SessionTrailOverlay(
             reportView = view
         }
 
-    /** 渲染报告文件；内容变了或换了文件才让视图重新加载，同一份报告切换状态时不闪。 */
-    private fun showReport(view: ReportView, result: OverviewResult) {
-        val write = ProgressOverviewService.getInstance(project).writeReport(key, result) ?: return
+    /**
+     * 在后台线程渲染并写报告文件（读写磁盘不占界面线程），写完回到界面线程交给视图；只认最近一次请求。
+     * 内容变了或换了文件才让视图重新加载，同一份报告切换状态时不闪。
+     */
+    private fun showReport(view: ReportView, result: OverviewResult, banners: JPanel) {
+        val request = ++reportRequest
+        val sessionKey = key
+        val service = ProgressOverviewService.getInstance(project)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val write = service.writeReport(sessionKey, result)
+            ApplicationManager.getApplication().invokeLater({
+                if (!disposed && request == reportRequest) applyReport(view, result, banners, write)
+            }, ModalityState.any())
+        }
+    }
+
+    /** 写入失败（没有工程目录、磁盘满、没有权限）时顶部加一条横幅，点「更新报告」再写一次；「在浏览器中打开」随之隐藏。 */
+    private fun applyReport(view: ReportView, result: OverviewResult, banners: JPanel, write: ReportWrite?) {
+        reportButtons[1].isVisible = write != null
+        if (write == null) {
+            shownReport = null
+            lateinit var failed: JComponent
+            failed = buildFailedBanner(ImuxBundle.message("action.overview.report.writeFailed")) {
+                banners.remove(failed)
+                banners.revalidate()
+                showReport(view, result, banners)
+            }
+            banners.add(failed)
+            banners.revalidate()
+            banners.repaint()
+            return
+        }
         if (write.changed || shownReport != write.path) {
             view.show(write.path)
             shownReport = write.path

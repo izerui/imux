@@ -19,7 +19,7 @@ import javax.swing.JComponent
  *
  * 用离屏渲染：默认的原生窗口总画在所有 Swing 组件之上，会盖住终端浮动层上方的图标组与提示条。
  * 加载完成时设好深浅色（根元素的 `data-theme`）并注入 Esc 监听，按 Esc 经 JS 查询通知插件收起卡片。
- * 页面里点到别的地址不在弹窗里跳转，交给系统浏览器。
+ * 页面里用户点开的外部地址不在弹窗里跳转，交给系统浏览器（见 [shouldOpenExternally]）。
  */
 internal class JcefReportView private constructor(
     private val onEscape: () -> Unit,
@@ -27,8 +27,9 @@ internal class JcefReportView private constructor(
 ) : ReportView {
     private val browser: JBCefBrowser = JBCefBrowser.createBuilder().setOffScreenRendering(true).build()
     private val escapeQuery: JBCefJSQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
-    private var currentUrl: String? = null
-    private var dark = false
+    // EDT 写、CEF 线程（onLoadEnd、onBeforeBrowse）读
+    @Volatile private var currentUrl: String? = null
+    @Volatile private var dark = false
 
     override val component: JComponent get() = browser.component
 
@@ -59,7 +60,7 @@ internal class JcefReportView private constructor(
                     isRedirect: Boolean,
                 ): Boolean {
                     val url = request.url ?: return false
-                    if (isReportUrl(currentUrl, url)) return false
+                    if (!shouldOpenExternally(currentUrl, url, userGesture)) return false
                     val external = runCatching { Path.of(java.net.URI(url)) }.getOrNull()
                     ApplicationManager.getApplication().invokeLater {
                         if (external != null) openExternal(external) else com.intellij.ide.BrowserUtil.browse(url)
@@ -100,6 +101,15 @@ internal class JcefReportView private constructor(
     }
 }
 
-/** 导航目标是不是正在显示的报告本身（含页内锚点）。 */
-internal fun isReportUrl(current: String?, target: String): Boolean =
-    current != null && (target == current || target.startsWith("$current#"))
+/**
+ * 这次导航要不要拦下、交给系统浏览器：只拦用户点开的、既不是报告本身（含页内锚点）也不是浏览器内部页面的地址。
+ * 初始化、重定向这类不是用户点的导航，以及 `about:`、`data:`、JCEF 自己的 `file:///jbcefbrowser/` 页面一律放行，
+ * 否则弹窗一打开就可能拉起系统浏览器，内置错误页也显示不出来。
+ */
+internal fun shouldOpenExternally(current: String?, target: String, userGesture: Boolean): Boolean {
+    if (!userGesture) return false
+    if (INTERNAL_PREFIXES.any(target::startsWith)) return false
+    return current == null || (target != current && !target.startsWith("$current#"))
+}
+
+private val INTERNAL_PREFIXES = listOf("about:", "data:", "file:///jbcefbrowser/")

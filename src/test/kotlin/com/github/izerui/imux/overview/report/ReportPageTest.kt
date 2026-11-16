@@ -24,7 +24,7 @@ class ReportPageTest {
     private fun count(text: String, part: String) = text.split(part).size - 1
 
     @Test
-    fun `正文里的 script 结束标签和 HTML 被转义成普通文字`() {
+    fun `正文里的 script 结束标签和 HTML 在页面数据里被转义`() {
         val page = renderReportPage(template, pageDataJson(report, "zh-CN", session))
         assertEquals("只有模板自己的 script 结束标签", count(template, "</script>"), count(page, "</script>"))
         assertFalse(page.contains("<img src=x"))
@@ -77,5 +77,16 @@ class ReportPageTest {
     @Test
     fun `报告文件名按安全会话键生成`() {
         assertEquals(Path.of("/p/.imux/reports/a_b_c.html"), reportFile(Path.of("/p"), "a/b:c"))
+    }
+
+    @Test
+    fun `gitignore 被删后即使报告内容没变也会补回`() {
+        val root = Files.createTempDirectory("project")
+        writeReportFile(root, "s1", "<html>1</html>")
+        Files.delete(root.resolve(".imux/.gitignore"))
+
+        writeReportFile(root, "s1", "<html>1</html>")
+
+        assertEquals("*\n", Files.readString(root.resolve(".imux/.gitignore")))
     }
 }

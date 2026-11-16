@@ -138,4 +138,23 @@ class ReportJsonTest {
         assertEquals(facts, factsFromJson(factsJson(facts)))
         assertEquals(ReportFacts(), factsFromJson(null))
     }
+
+    @Test
+    fun `枚举值不区分大小写`() {
+        val output = """
+            {
+              "status": "Done",
+              "changes": [ { "file": "x", "snippet": { "lines": [ { "kind": "ADD", "text": "a" } ] } } ],
+              "verification": [ { "what": "t", "result": "PASSED" } ],
+              "issues": [ { "severity": "High", "text": "i" } ],
+              "timeline": [ { "type": "main", "text": "n" } ]
+            }
+        """.trimIndent()
+        val report = parseAgentReport(output)!!
+        assertEquals(ReportStatus.DONE, report.status)
+        assertEquals(LineKind.ADD, report.changes[0].lines[0].kind)
+        assertEquals(CheckResult.PASSED, report.verification[0].result)
+        assertEquals(Severity.HIGH, report.issues[0].severity)
+        assertEquals(NodeSymbol.MAIN, report.timeline[0].symbol)
+    }
 }
