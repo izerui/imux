@@ -303,63 +303,6 @@ class ProgressOverviewTest {
     // ── 布局测试 ──
 
     @Test
-    fun `ScrollablePanel 声明跟随 viewport 宽度`() {
-        val panel = ScrollablePanel()
-        assertTrue("getScrollableTracksViewportWidth 应返回 true", panel.scrollableTracksViewportWidth)
-        assertFalse("getScrollableTracksViewportHeight 应返回 false", panel.scrollableTracksViewportHeight)
-    }
-
-    @Test
-    fun `createNodePanel 使用 JTextPane 而非 JLabel 以支持换行和选中`() {
-        val longText = "这是一段很长的中文节点描述。".repeat(10)
-        val node = OverviewNode(NodeSymbol.MAIN, longText)
-        val panel = createNodePanel(node, inRollback = false, isChinese = true)
-
-        fun findTextPanes(c: java.awt.Container): List<javax.swing.JTextPane> {
-            val result = mutableListOf<javax.swing.JTextPane>()
-            for (child in c.components) {
-                if (child is javax.swing.JTextPane) result.add(child)
-                if (child is java.awt.Container) result.addAll(findTextPanes(child))
-            }
-            return result
-        }
-
-        val textPanes = findTextPanes(panel)
-        assertTrue("节点面板应包含 JTextPane", textPanes.isNotEmpty())
-
-        val pane = textPanes.first()
-        assertEquals("JTextPane 应包含完整文本", longText, pane.text)
-        assertFalse("JTextPane 应不可编辑", pane.isEditable)
-    }
-
-    @Test
-    fun `nodePanel 使用 BorderLayout 且文本在 CENTER 位置`() {
-        val node = OverviewNode(NodeSymbol.MAIN, "测试节点")
-        val panel = createNodePanel(node, inRollback = false, isChinese = true)
-        assertTrue("应使用 BorderLayout", panel.layout is java.awt.BorderLayout)
-        val layout = panel.layout as java.awt.BorderLayout
-        assertNotNull("CENTER 应有组件", layout.getLayoutComponent(java.awt.BorderLayout.CENTER))
-        assertNotNull("WEST 应有 symbol 标签", layout.getLayoutComponent(java.awt.BorderLayout.WEST))
-    }
-
-    @Test
-    fun `多节点在 BoxLayout 中按顺序排列`() {
-        val nodes = listOf(
-            OverviewNode(NodeSymbol.MAIN, "第一个节点"),
-            OverviewNode(NodeSymbol.SIDE, "第二个节点"),
-            OverviewNode(NodeSymbol.MAIN, "第三个节点"),
-        )
-
-        val panel = ScrollablePanel()
-        for (node in nodes) {
-            panel.add(createNodePanel(node, inRollback = false, isChinese = true))
-        }
-
-        assertEquals("应有 3 个子组件", 3, panel.componentCount)
-        assertTrue("布局应为 BoxLayout", panel.layout is javax.swing.BoxLayout)
-    }
-
-    @Test
     fun `会话没有新交互时摘要不过期`() {
         val sessionFile = Files.createTempFile("session", ".jsonl")
         sessionFile.toFile().deleteOnExit()
@@ -440,54 +383,6 @@ class ProgressOverviewTest {
         allComponents(c).filterIsInstance<javax.swing.JLabel>().mapNotNull { it.text }
 
     @Test
-    fun `空摘要落盘后会话追加消息再打开可以重新生成`() {
-        val storageDir = Files.createTempDirectory("overview-cache-test")
-        storageDir.toFile().deleteOnExit()
-        val sessionFile = Files.createTempFile("session", ".jsonl")
-        sessionFile.toFile().deleteOnExit()
-
-        // 会话刚开始时打开总览：空摘要也会缓存并落盘
-        storeOverview(OverviewCache(storageDir), "s1", OverviewResult(emptyList(), Instant.now()), sessionFile, TrailCursor(0, Files.size(sessionFile)))
-
-        // 之后有了真实对话
-        Files.writeString(sessionFile, user("帮我实现 JWT 认证"))
-
-        // 重启 IDE 后再打开：从磁盘读回空摘要并判断过期
-        val cached = OverviewCache(storageDir).get("s1")!!
-        assertTrue(cached.result.nodes.isEmpty())
-        val stale = isStale(cached, sessionFile)
-
-        var regenerateClicks = 0
-        val panel = buildResultPanel(cached.result, stale) { regenerateClicks++ }
-
-        assertTrue("应显示过期提示", labelTexts(panel).contains(ImuxBundle.message("action.overview.stale")))
-        val retry = allComponents(panel).filterIsInstance<com.intellij.ui.components.ActionLink>()
-            .single { it.text == ImuxBundle.message("action.overview.retry") }
-        retry.doClick()
-        assertEquals("点击重新生成应触发生成", 1, regenerateClicks)
-    }
-
-    @Test
-    fun `空摘要未过期时只显示会话刚开始提示`() {
-        val panel = buildResultPanel(OverviewResult(emptyList(), Instant.now()), stale = false) {}
-
-        assertTrue(labelTexts(panel).contains(ImuxBundle.message("action.overview.single.hint")))
-        assertTrue("未过期时不需要重新生成入口",
-            allComponents(panel).none { it is com.intellij.ui.components.ActionLink })
-    }
-
-    @Test
-    fun `有内容的过期摘要也显示重新生成入口`() {
-        var clicks = 0
-        val panel = buildResultPanel(
-            OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "实现 JWT")), Instant.now()), stale = true,
-        ) { clicks++ }
-
-        allComponents(panel).filterIsInstance<com.intellij.ui.components.ActionLink>().single().doClick()
-        assertEquals(1, clicks)
-    }
-
-    @Test
     fun `无旧结果的失败视图显示错误信息并可重新生成`() {
         var clicks = 0
         val panel = buildErrorPanel("CLI 退出码 1") { clicks++ }
@@ -564,9 +459,6 @@ class ProgressOverviewTest {
         "codex exited with code 1: error: unexpected argument '--dangerously-bypass-approvals-and-sandbox' found; " +
             "tip: to pass '--dangerously-bypass-approvals-and-sandbox' as a value, use '-- --dangerously-bypass-approvals-and-sandbox'"
 
-    private val previousTrail =
-        OverviewResult(listOf(OverviewNode(NodeSymbol.MAIN, "实现 JWT"), OverviewNode(NodeSymbol.MAIN, "补测试")), Instant.now())
-
     /**
      * 离屏布局后，链接按首选尺寸完整画出（没有被压扁），且整块落在横幅里、横幅又落在根面板里。
      * 只找到链接再 doClick 抓不到被挤到第二行、超出 NORTH 高度而被裁掉的情况。
@@ -576,7 +468,7 @@ class ProgressOverviewTest {
         val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
         assertNotNull("$case：应有横幅", banner)
         val link = allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>()
-            .single { it.text == ImuxBundle.message("action.overview.retry") }
+            .single { it.text == ImuxBundle.message("action.overview.report.update") }
 
         val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
         val bannerRect = javax.swing.SwingUtilities.convertRectangle(banner.parent, banner.bounds, host)
@@ -596,83 +488,39 @@ class ProgressOverviewTest {
     }
 
     @Test
-    fun `长错误文本的失败横幅在窄卡片里仍完整显示重新生成`() = onEdt {
+    fun `窄卡片里失败、过期、保存失败横幅的更新报告链接都完整可见`() = onEdt {
+        val banners = mapOf(
+            "失败" to { buildFailedBanner(longCliError) {} },
+            "过期" to { buildStaleBanner(ImuxBundle.message("action.overview.report.stale")) {} },
+            "格式升级" to { buildStaleBanner(ImuxBundle.message("action.overview.report.legacy")) {} },
+            "保存失败" to { buildSaveFailedBanner {} },
+        )
         for (width in listOf(240, 360)) {
-            assertRetryLinkVisible(buildFailedWithPrevious(longCliError, previousTrail) {}, width, "失败横幅")
-        }
-    }
-
-    @Test
-    fun `短文字时链接紧跟文字，右侧留空`() = onEdt {
-        val root = buildResultPanel(previousTrail, stale = true) {}
-        val host = layoutOffscreen(root, 800, 400)
-        val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
-        val link = allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>().single()
-        val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
-        val bannerRect = javax.swing.SwingUtilities.convertRectangle(banner.parent, banner.bounds, host)
-        assertTrue("宽卡片里链接不应被推到最右侧：link=$linkRect banner=$bannerRect", linkRect.maxX < bannerRect.maxX - 100)
-    }
-
-    @Test
-    fun `更新中进度在顶部，旧时间线照常可看，且不再提供更新入口`() = onEdt {
-        var cancels = 0
-        val view = buildUpdatingPanel(previousTrail) { cancels++ }
-        view.progress.update("执行命令 sed -n '1143,1144p' /Users/x/.claude/projects/a.jsonl", 9)
-        val root = view.component
-        val host = layoutOffscreen(root, 360, 400)
-
-        val north = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
-        assertTrue("进度放在顶部横幅里", javax.swing.SwingUtilities.isDescendingFrom(view.progress.component, north))
-        val panes = allComponents(root).filterIsInstance<javax.swing.JTextPane>()
-        assertEquals("旧时间线照常显示", listOf("实现 JWT", "补测试"), panes.map { it.text })
-        val nodeRect = javax.swing.SwingUtilities.convertRectangle(panes.first().parent, panes.first().bounds, host)
-        val bannerRect = javax.swing.SwingUtilities.convertRectangle(north.parent, north.bounds, host)
-        assertTrue("旧时间线在进度横幅下方：node=$nodeRect banner=$bannerRect", nodeRect.y >= bannerRect.maxY && nodeRect.height > 0)
-
-        val links = allComponents(root).filterIsInstance<com.intellij.ui.components.ActionLink>()
-        assertEquals("只有取消，没有更新轨迹", listOf(ImuxBundle.message("action.overview.cancel")), links.map { it.text })
-        links.single().doClick()
-        assertEquals(1, cancels)
-    }
-
-    @Test
-    fun `窄卡片里顶部进度仍看得到动作，耗时与取消完整显示`() = onEdt {
-        for (width in listOf(240, 360)) {
-            val view = buildUpdatingPanel(previousTrail) {}
-            view.progress.update("执行命令 sed -n '1143,1144p' /Users/liuyuhua/.claude/projects/-Users-liuyuhua-github-imux/a.jsonl", 123)
-            val host = layoutOffscreen(view.component, width, 400)
-            val north = (view.component.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
-            val banner = javax.swing.SwingUtilities.convertRectangle(north.parent, north.bounds, host)
-            fun rect(c: java.awt.Component) = javax.swing.SwingUtilities.convertRectangle(c.parent, c.bounds, host)
-            val cancel = allComponents(north).filterIsInstance<com.intellij.ui.components.ActionLink>().single()
-            val where = "@${width}px banner=$banner action=${rect(view.progress.action)} elapsed=${rect(view.progress.elapsed)} cancel=${rect(cancel)}"
-
-            assertTrue("动作文字仍要留出可读宽度：$where", view.progress.action.width >= com.intellij.util.ui.JBUI.scale(100))
-            for (c in listOf(view.progress.elapsed, cancel)) {
-                assertTrue("${c.javaClass.simpleName} 不能被压扁：$where", c.width >= c.preferredSize.width)
-                assertTrue("${c.javaClass.simpleName} 要完整落在横幅内：$where", banner.contains(rect(c)))
+            for ((case, banner) in banners) {
+                val root = javax.swing.JPanel(java.awt.BorderLayout()).apply {
+                    add(banner(), java.awt.BorderLayout.NORTH)
+                    add(javax.swing.JPanel(), java.awt.BorderLayout.CENTER)
+                }
+                assertRetryLinkVisible(root, width, case)
             }
-            assertTrue("耗时完整显示三位数：$where", view.progress.elapsed.text == elapsedText(123))
-            assertTrue("动作在耗时左侧、不重叠：$where", rect(view.progress.action).maxX <= rect(view.progress.elapsed).x)
-            assertTrue("耗时在取消左侧、不重叠：$where", rect(view.progress.elapsed).maxX <= rect(cancel).x)
         }
     }
 
     @Test
-    fun `失败横幅截断的错误文字可以悬停查看全文`() = onEdt {
-        val root = buildFailedWithPrevious(longCliError, previousTrail) {}
-        layoutOffscreen(root, 240, 400)
-        val banner = (root.layout as java.awt.BorderLayout).getLayoutComponent(java.awt.BorderLayout.NORTH)
-        val message = allComponents(banner).filterIsInstance<javax.swing.JLabel>()
-            .single { it.text == ImuxBundle.message("action.overview.failed.banner", longCliError) }
-        assertEquals(longCliError, message.toolTipText)
-    }
-
-    @Test
-    fun `过期与保存失败横幅在窄卡片里仍完整显示重新生成`() = onEdt {
+    fun `窄卡片里进度条的取消链接完整可见`() = onEdt {
         for (width in listOf(240, 360)) {
-            assertRetryLinkVisible(buildResultPanel(previousTrail, stale = true) {}, width, "过期横幅")
-            assertRetryLinkVisible(buildResultPanel(previousTrail.copy(saveFailed = true), stale = false) {}, width, "保存失败横幅")
+            val (banner, row) = buildProgressBanner {}
+            row.update("Reading session.jsonl", 42)
+            val root = javax.swing.JPanel(java.awt.BorderLayout()).apply {
+                add(banner, java.awt.BorderLayout.NORTH)
+                add(javax.swing.JPanel(), java.awt.BorderLayout.CENTER)
+            }
+            val host = layoutOffscreen(root, width, 400)
+            val cancel = allComponents(banner).filterIsInstance<com.intellij.ui.components.ActionLink>()
+                .single { it.text == ImuxBundle.message("action.overview.cancel") }
+            val rect = javax.swing.SwingUtilities.convertRectangle(cancel.parent, cancel.bounds, host)
+            assertTrue("取消不能被压扁 @ ${width}px", cancel.width >= cancel.preferredSize.width)
+            assertTrue("取消必须完整落在卡片内 @ ${width}px：$rect", java.awt.Rectangle(0, 0, host.width, host.height).contains(rect))
         }
     }
 
@@ -683,89 +531,12 @@ class ProgressOverviewTest {
             val root = buildErrorPanel("codex exited with code 1\n$stackTrace") {}
             val host = layoutOffscreen(root, width, 200)
             val link = allComponents(root).filterIsInstance<com.intellij.ui.components.ActionLink>()
-                .single { it.text == ImuxBundle.message("action.overview.retry") }
+                .single { it.text == ImuxBundle.message("action.overview.report.update") }
             val linkRect = javax.swing.SwingUtilities.convertRectangle(link.parent, link.bounds, host)
             val where = "@ ${width}px：link=$linkRect host=${host.size}"
             assertTrue("链接不能被压扁：$where", link.width >= link.preferredSize.width && link.height >= link.preferredSize.height)
             assertTrue("链接必须完整落在卡片内：$where", java.awt.Rectangle(0, 0, host.width, host.height).contains(linkRect))
         }
-    }
-
-    private data class NodeLayout(
-        val viewportWidth: Int,
-        val timelineWidth: Int,
-        val nodeHeight: Int,
-        val nodeBottom: Int,
-        val nextTop: Int,
-        val secondNodeTop: Int,
-        val connectorBottom: Int,
-        val textSize: java.awt.Dimension,
-        val textBottomInNode: Int,
-        val endRect: java.awt.geom.Rectangle2D,
-        val lineHeight: Int,
-    )
-
-    private fun measureTimeline(longText: String, width: Int): NodeLayout = onEdt {
-        val panel = buildResultPanel(
-            OverviewResult(
-                listOf(OverviewNode(NodeSymbol.MAIN, longText), OverviewNode(NodeSymbol.MAIN, "第二个节点")),
-                Instant.now(),
-            ),
-            stale = false,
-        ) {}
-        layoutOffscreen(panel, width, 400)
-
-        val scroll = allComponents(panel).filterIsInstance<javax.swing.JScrollPane>().single()
-        val timeline = scroll.viewport.view as ScrollablePanel
-        val node = timeline.getComponent(0) as java.awt.Container
-        val connector = timeline.getComponent(1)
-        val secondNode = timeline.getComponent(2)
-        val text = node.components.filterIsInstance<javax.swing.JTextPane>().single()
-        NodeLayout(
-            viewportWidth = scroll.viewport.width,
-            timelineWidth = timeline.width,
-            nodeHeight = node.height,
-            nodeBottom = node.y + node.height,
-            nextTop = connector.y,
-            secondNodeTop = secondNode.y,
-            connectorBottom = connector.y + connector.height,
-            textSize = text.size,
-            textBottomInNode = text.y + text.height,
-            endRect = text.modelToView2D(text.document.length),
-            lineHeight = text.getFontMetrics(text.font).height,
-        )
-    }
-
-    private fun assertWholeNodeVisible(l: NodeLayout, width: Int) {
-        assertTrue("viewport 应有宽度 ($width): ${l.viewportWidth}", l.viewportWidth > 0)
-        assertTrue("viewport 不应超过容器 ($width): ${l.viewportWidth}", l.viewportWidth <= width)
-        assertEquals("时间线宽度应等于 viewport 宽度 ($width)", l.viewportWidth, l.timelineWidth)
-        assertTrue("文本组件应有尺寸 ($width): ${l.textSize}", l.textSize.width > 0 && l.textSize.height > 0)
-        assertTrue("文本组件不应超出时间线宽度 ($width)", l.textSize.width <= l.timelineWidth)
-        assertTrue("长正文应换成多行 ($width): 高 ${l.textSize.height}，单行 ${l.lineHeight}",
-            l.textSize.height >= l.lineHeight * 2)
-        assertTrue("正文末尾应在文本组件可见范围内 ($width): ${l.endRect} / ${l.textSize}",
-            l.endRect.maxY <= l.textSize.height && l.endRect.maxX <= l.textSize.width && l.endRect.y >= 0)
-        assertTrue("文本组件应完整落在节点内 ($width)", l.textBottomInNode <= l.nodeHeight)
-        assertTrue("连接线不应与节点重叠 ($width): ${l.nextTop} < ${l.nodeBottom}", l.nextTop >= l.nodeBottom)
-        assertTrue("下一节点不应与连接线重叠 ($width)", l.secondNodeTop >= l.connectorBottom)
-    }
-
-    @Test
-    fun `长中文节点在 500 宽和 300 宽下完整换行且下一节点不重叠`() {
-        val longText = "这是一段很长的中文节点描述，用于测试文本在弹窗宽度限制下是否正确换行而不被裁掉。".repeat(4) +
-            "末尾结论：全部验证通过"
-
-        val wide = measureTimeline(longText, 500)
-        assertWholeNodeVisible(wide, 500)
-
-        val narrow = measureTimeline(longText, 300)
-        assertWholeNodeVisible(narrow, 300)
-
-        assertTrue("缩窄后 viewport 应变窄: ${narrow.viewportWidth} vs ${wide.viewportWidth}",
-            narrow.viewportWidth < wide.viewportWidth)
-        assertTrue("缩窄后节点应增高: ${narrow.nodeHeight} vs ${wide.nodeHeight}",
-            narrow.nodeHeight > wide.nodeHeight)
     }
 
     // ── 超过 128000 字符的单条记录 ──

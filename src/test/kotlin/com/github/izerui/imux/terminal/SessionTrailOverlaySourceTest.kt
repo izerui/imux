@@ -81,4 +81,49 @@ class SessionTrailOverlaySourceTest {
         assertTrue(overlay.normalized.contains("isFocusable = false"))
         assertFalse(overlay.normalized.contains("requestFocus"))
     }
+
+    // ── 会话报告 ──
+
+    @Test
+    fun `标题栏带更新报告和在系统浏览器中打开按钮`() {
+        assertTrue(overlay.normalized.contains("action.overview.report.update"))
+        assertTrue(overlay.normalized.contains("action.overview.report.openInBrowser"))
+    }
+
+    @Test
+    fun `报告视图通过 ReportViews 创建并随面板释放`() {
+        assertTrue(overlay.normalized.contains("ReportViews.create("))
+        assertTrue(overlay.normalized.contains("Disposer.register(this, view)"))
+    }
+
+    @Test
+    fun `主题切换时重设报告深浅色`() {
+        assertTrue(overlay.normalized.contains("LafManagerListener.TOPIC"))
+        assertTrue(overlay.normalized.contains("setDark(!JBColor.isBright())"))
+    }
+
+    @Test
+    fun `报告页由服务渲染成文件再交给视图显示`() {
+        assertTrue(overlay.normalized.contains(".writeReport(key,"))
+        assertTrue(overlay.normalized.contains("view.show("))
+    }
+
+    @Test
+    fun `每种语言都有新增的报告文案`() {
+        val keys = listOf(
+            "action.overview.report.update",
+            "action.overview.report.openInBrowser",
+            "action.overview.report.noBrowser",
+            "action.overview.report.stale",
+            "action.overview.report.legacy",
+        )
+        val bundles = java.io.File("src/main/resources/messages").listFiles { file -> file.name.startsWith("ImuxBundle") }!!
+        org.junit.Assert.assertEquals(10, bundles.size)
+        for (bundle in bundles) {
+            val lines = bundle.readLines()
+            for (key in keys) {
+                assertTrue("${bundle.name} 缺少 $key", lines.any { it.startsWith("$key=") && it.length > key.length + 1 })
+            }
+        }
+    }
 }

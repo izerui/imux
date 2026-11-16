@@ -7,11 +7,18 @@ import com.github.izerui.imux.overview.LoadingRow
 import com.github.izerui.imux.overview.ProgressOverviewService
 import com.github.izerui.imux.overview.TrailState
 import com.github.izerui.imux.overview.buildErrorPanel
-import com.github.izerui.imux.overview.buildFailedWithPrevious
+import com.github.izerui.imux.overview.OverviewResult
+import com.github.izerui.imux.overview.buildFailedBanner
+import com.github.izerui.imux.overview.buildProgressBanner
+import com.github.izerui.imux.overview.buildSaveFailedBanner
+import com.github.izerui.imux.overview.buildStaleBanner
 import com.github.izerui.imux.overview.buildHintPanel
-import com.github.izerui.imux.overview.buildResultPanel
-import com.github.izerui.imux.overview.buildUpdatingPanel
 import com.github.izerui.imux.settings.ImuxSettings
+import com.github.izerui.imux.terminal.report.ReportView
+import com.github.izerui.imux.terminal.report.ReportViews
+import com.intellij.ide.BrowserUtil
+import com.intellij.ide.ui.LafManagerListener
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionToolbar
@@ -39,6 +46,7 @@ import java.awt.RenderingHints
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.nio.file.Path
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.KeyStroke
@@ -138,11 +146,51 @@ internal class SessionTrailOverlay(
         }
     private val body = JPanel(BorderLayout()).apply { isOpaque = false }
 
+    /** 显示报告页的视图，第一次需要时创建（见 [reportView]）。 */
+    private var reportView: ReportView? = null
+
+    /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。 */
+    private var shownReport: Path? = null
+
+    private val updateAction =
+        object : DumbAwareAction(AllIcons.Actions.Refresh) {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun update(event: AnActionEvent) {
+                event.presentation.text = ImuxBundle.message("action.overview.report.update")
+                event.presentation.isEnabled = store.state(key) !is TrailState.Loading
+            }
+
+            override fun actionPerformed(event: AnActionEvent) = store.generate(key, virtualFile.tabId)
+        }
+
+    private val openAction =
+        object : DumbAwareAction(AllIcons.Ide.External_link_arrow) {
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
+            override fun update(event: AnActionEvent) {
+                event.presentation.text = ImuxBundle.message("action.overview.report.openInBrowser")
+            }
+
+            override fun actionPerformed(event: AnActionEvent) {
+                shownReport?.let { BrowserUtil.browse(it.toFile()) }
+            }
+        }
+
+    /** 标题栏上的「更新报告」「在系统浏览器中打开」：有报告页时才显示。 */
+    private val reportButtons = listOf(updateAction, openAction).map { action ->
+        ActionButton(action, action.templatePresentation.clone(), CHIP_ACTION_PLACE, ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE).apply {
+            setLook(ActionButtonLook.SYSTEM_LOOK)
+            isFocusable = false
+            isVisible = false
+        }
+    }
+
     val card: JComponent = TrailSurface(showGrip = true).apply {
         layout = BorderLayout()
         // 左侧、底部的留白就是拖拽热区：落在卡片自身而不是子组件上，鼠标事件才会交给卡片
         border = trailCardBorder()
-        add(trailCardHeader(titleLabel, collapseButton), BorderLayout.NORTH)
+        add(trailCardHeader(titleLabel, collapseButton, reportButtons), BorderLayout.NORTH)
         add(body, BorderLayout.CENTER)
         isVisible = false
         val escape = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)
@@ -167,6 +215,10 @@ internal class SessionTrailOverlay(
         SessionMonitor.getInstance(project).addListener(this) {
             if (monitorAlarm.isEmpty) monitorAlarm.addRequest(::refresh, MONITOR_REFRESH_MS)
         }
+        // 报告页的深浅色跟随 IDE 主题
+        ApplicationManager.getApplication().messageBus.connect(this)
+            .subscribe(LafManagerListener.TOPIC, LafManagerListener { reportView?.setDark(!JBColor.isBright()) })
+        // 切换语言后重新渲染：报告页的界面文字随之切换（正文要等下次更新报告）
         ImuxSettings.getInstance().addLanguageListener(this) {
             renderedState = null
             refresh()
@@ -229,6 +281,10 @@ internal class SessionTrailOverlay(
     private fun render(state: TrailState) {
         titleLabel.text = ImuxBundle.message("action.overview.text")
         collapseButton.update()
+        reportButtons.forEach {
+            it.isVisible = showsReport(state)
+            it.update()
+        }
 
         val sameLoading = state is TrailState.Loading && renderedState is TrailState.Loading &&
             (renderedState as TrailState.Loading).startedAt == state.startedAt
@@ -256,29 +312,77 @@ internal class SessionTrailOverlay(
 
     private fun contentFor(state: TrailState): JComponent {
         val regenerate = { store.generate(key, virtualFile.tabId) }
+        if (showsReport(state)) return reportContent(state, regenerate)
         return when (state) {
             TrailState.Unavailable -> buildHintPanel(ImuxBundle.message("action.overview.pending"), null)
             TrailState.Empty -> buildHintPanel(
                 ImuxBundle.message("action.overview.empty"),
                 ImuxBundle.message("action.overview.generate") to regenerate,
             )
-            is TrailState.Loading -> loadingPanel(state.previous)
-            is TrailState.Ready -> buildResultPanel(state.result, state.stale, regenerate)
-            is TrailState.Failed -> {
-                val previous = state.previous
-                if (previous == null) buildErrorPanel(state.message, regenerate)
-                else buildFailedWithPrevious(state.message, previous, regenerate)
-            }
+            is TrailState.Loading -> loadingPanel()
+            // 生成过但会话刚开始、总结不出东西；有新进展后可以更新
+            is TrailState.Ready -> buildHintPanel(
+                ImuxBundle.message("action.overview.single.hint"),
+                if (state.stale) ImuxBundle.message("action.overview.report.update") to regenerate else null,
+            )
+            is TrailState.Failed -> buildErrorPanel(state.message, regenerate)
         }
     }
 
-    private fun loadingPanel(previous: com.github.izerui.imux.overview.OverviewResult?): JComponent {
-        // 更新时旧时间线照看，进度放顶部；第一次生成没有旧内容，进度居中
-        if (previous != null && previous.nodes.isNotEmpty()) {
-            val view = buildUpdatingPanel(previous) { store.cancel(key) }
-            loadingRow = view.progress
-            return view.component
+    /**
+     * 报告页：生成中、失败、过期、保存失败时顶部各有一条横幅，下面照常显示（旧）报告。
+     * 报告先由服务渲染成 `.imux/reports/` 下的文件，再交给视图显示。
+     */
+    private fun reportContent(state: TrailState, regenerate: () -> Unit): JComponent {
+        val result = when (state) {
+            is TrailState.Ready -> state.result
+            is TrailState.Loading -> state.previous
+            is TrailState.Failed -> state.previous
+            else -> null
+        } ?: error("showsReport 已确认有报告")
+        val banner: JComponent? = when (state) {
+            is TrailState.Loading -> buildProgressBanner { store.cancel(key) }.let { (component, row) ->
+                loadingRow = row
+                component
+            }
+            is TrailState.Failed -> buildFailedBanner(state.message, regenerate)
+            is TrailState.Ready -> when {
+                result.saveFailed -> buildSaveFailedBanner(regenerate)
+                state.stale -> buildStaleBanner(
+                    ImuxBundle.message(if (result.legacy) "action.overview.report.legacy" else "action.overview.report.stale"),
+                    regenerate,
+                )
+                else -> null
+            }
+            else -> null
         }
+        val view = reportView()
+        showReport(view, result)
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            banner?.let { add(it, BorderLayout.NORTH) }
+            add(view.component, BorderLayout.CENTER)
+        }
+    }
+
+    private fun reportView(): ReportView =
+        reportView ?: ReportViews.create(onEscape = { setExpanded(false) }, openExternal = { BrowserUtil.browse(it.toFile()) }).also { view ->
+            Disposer.register(this, view)
+            view.setDark(!JBColor.isBright())
+            reportView = view
+        }
+
+    /** 渲染报告文件；内容变了或换了文件才让视图重新加载，同一份报告切换状态时不闪。 */
+    private fun showReport(view: ReportView, result: OverviewResult) {
+        val write = ProgressOverviewService.getInstance(project).writeReport(key, result) ?: return
+        if (write.changed || shownReport != write.path) {
+            view.show(write.path)
+            shownReport = write.path
+        }
+    }
+
+    /** 第一次生成、还没有旧报告：进度居中。 */
+    private fun loadingPanel(): JComponent {
         val row = LoadingRow()
         loadingRow = row
         return JPanel(BorderLayout()).apply {
@@ -467,13 +571,25 @@ internal fun trailCornerSlot(button: JComponent): JComponent =
 internal fun trailCardBorder(): javax.swing.border.Border =
     JBUI.Borders.empty(0, TRAIL_RESIZE_ZONE, TRAIL_RESIZE_ZONE, 0)
 
-/** 卡片标题行：标题在左，「收起」占右上角按钮位，行高等于按钮位。 */
-internal fun trailCardHeader(title: JComponent, collapseButton: JComponent): JComponent =
+/** 卡片标题行：标题在左，[extras] 依次排在「收起」左边，「收起」占右上角按钮位，行高等于按钮位。 */
+internal fun trailCardHeader(title: JComponent, collapseButton: JComponent, extras: List<JComponent> = emptyList()): JComponent =
     JPanel(BorderLayout()).apply {
         isOpaque = false
         border = JBUI.Borders.emptyBottom(2)
         add(title.apply { border = JBUI.Borders.emptyLeft(6) }, BorderLayout.CENTER)
-        add(trailCornerSlot(collapseButton), BorderLayout.EAST)
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                if (extras.isNotEmpty()) {
+                    add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                        isOpaque = false
+                        extras.forEach(::add)
+                    }, BorderLayout.CENTER)
+                }
+                add(trailCornerSlot(collapseButton), BorderLayout.EAST)
+            },
+            BorderLayout.EAST,
+        )
     }
 
 /** 卡片左、下边缘的拖拽热区宽度（未缩放）。 */

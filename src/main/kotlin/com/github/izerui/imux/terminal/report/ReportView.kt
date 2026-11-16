@@ -34,7 +34,7 @@ internal object ReportViews {
      * 先确认插件启用才去碰 [JcefReportView]：插件被禁用时 JCEF 的类不在 imux 的类加载器里。
      */
     fun create(onEscape: () -> Unit, openExternal: (Path) -> Unit): ReportView {
-        val jcefEnabled = PluginManagerCore.getPlugin(JCEF_PLUGIN) != null && !PluginManagerCore.isDisabled(JCEF_PLUGIN)
+        val jcefEnabled = PluginManagerCore.isPluginInstalled(JCEF_PLUGIN) && !PluginManagerCore.isDisabled(JCEF_PLUGIN)
         if (jcefEnabled) JcefReportView.createIfSupported(onEscape, openExternal)?.let { return it }
         return FallbackReportView(openExternal)
     }

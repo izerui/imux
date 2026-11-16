@@ -4,7 +4,6 @@ import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.agent.AgentProgressEvent
 import com.github.izerui.imux.agent.AgentProgressKind
 import com.github.izerui.imux.agent.OneShotAgentTimeoutException
-import com.github.izerui.imux.settings.PluginLanguage
 import com.intellij.icons.AllIcons
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
@@ -13,20 +12,13 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
-import java.awt.Component
 import java.awt.FlowLayout
-import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JTextPane
-import javax.swing.Scrollable
 import javax.swing.ScrollPaneConstants
-import javax.swing.SwingConstants
-import javax.swing.text.SimpleAttributeSet
-import javax.swing.text.StyleConstants
 
 /**
  * 没有可展示的旧结果时的失败视图：标题固定在上方，「重新生成」固定在底部，
@@ -79,46 +71,6 @@ internal fun buildFailedBanner(message: String, onRetry: () -> Unit): JComponent
         tooltip = message,
         onRegenerate = onRetry,
     )
-
-/** 重新生成失败、但有旧结果：顶部失败横幅，下面照常显示旧时间线。 */
-internal fun buildFailedWithPrevious(message: String, previous: OverviewResult, onRetry: () -> Unit): JComponent =
-    JPanel(BorderLayout()).apply {
-        isOpaque = false
-        add(buildFailedBanner(message, onRetry), BorderLayout.NORTH)
-        add(buildResultPanel(previous, stale = false, onRetry), BorderLayout.CENTER)
-    }
-
-/**
- * 更新中、已有旧结果：顶部一条进度横幅（[progress] 与「取消」），下面照常显示旧时间线，
- * 完成后由调用方整体换成新结果。旧时间线上不再放过期横幅和「更新轨迹」，免得与进行中的更新冲突。
- */
-internal fun buildUpdatingPanel(previous: OverviewResult, onCancel: () -> Unit): UpdatingView {
-    val progress = LoadingRow(margin = 0)
-    val component = JPanel(BorderLayout()).apply {
-        isOpaque = false
-        add(
-            JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
-                isOpaque = true
-                background = JBColor(0xE3F2FD.toInt(), 0x1E3A5F)
-                border = JBUI.Borders.empty(4, 8)
-                add(progress.component, BorderLayout.CENTER)
-                add(
-                    ActionLink(ImuxBundle.message("action.overview.cancel")).apply {
-                        isFocusable = false
-                        addActionListener { onCancel() }
-                    },
-                    BorderLayout.EAST,
-                )
-            },
-            BorderLayout.NORTH,
-        )
-        add(buildResultPanel(previous.copy(saveFailed = false), stale = false, onRegenerate = {}), BorderLayout.CENTER)
-    }
-    return UpdatingView(component, progress)
-}
-
-/** 更新中视图：[progress] 由调用方按进度事件刷新。 */
-internal class UpdatingView(val component: JComponent, val progress: LoadingRow)
 
 /** 未落盘、未生成时的说明文字，可带一个操作链接。 */
 internal fun buildHintPanel(text: String, action: Pair<String, () -> Unit>?): JComponent {
@@ -257,120 +209,43 @@ internal fun overviewErrorText(error: Throwable): String = when (error) {
     else -> error.message ?: ImuxBundle.message("action.overview.failed.hint")
 }
 
-/**
- * 摘要结果面板。过期、保存失败的横幅和“重新生成”入口先于空结果判断，
- * 空摘要过期后也能让用户重新生成。
- */
-internal fun buildResultPanel(
-    result: OverviewResult,
-    stale: Boolean,
-    onRegenerate: () -> Unit,
-): JComponent {
-    val mainPanel = JPanel(BorderLayout()).apply {
-        isOpaque = false
-        border = JBUI.Borders.empty(4, 12, 4, 12)
-    }
-    statusBanner(result, stale, onRegenerate)?.let { mainPanel.add(it, BorderLayout.NORTH) }
-
-    if (result.nodes.isEmpty()) {
-        val hint = JBLabel(ImuxBundle.message("action.overview.single.hint")).apply {
-            foreground = JBColor.GRAY
-            horizontalAlignment = SwingConstants.CENTER
-        }
-        mainPanel.add(hint, BorderLayout.CENTER)
-        return mainPanel
-    }
-
-    val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-    val isAllSide = result.nodes.all { it.symbol == NodeSymbol.SIDE }
-
-    val timelinePanel = ScrollablePanel().apply {
-        border = JBUI.Borders.empty(8, 4, 8, 4)
-    }
-
-    // 只要有一个节点带时间就留出时间列，都没有时与以前一样
-    val timeColumnWidth = timeColumnWidthFor(result.nodes)
-    var inRollback = false
-    for ((index, node) in result.nodes.withIndex()) {
-        if (node.symbol == NodeSymbol.ROLLBACK_START) inRollback = true
-
-        val nodePanel = createNodePanel(node, inRollback, isChinese, timeColumnWidth)
-        timelinePanel.add(nodePanel)
-
-        if (node.symbol == NodeSymbol.ROLLBACK_END) inRollback = false
-
-        if (index < result.nodes.size - 1) {
-            val connector = symbolColumnLabel("│").apply {
-                foreground = JBColor(0x999999.toInt(), 0x555555)
-                alignmentX = Component.LEFT_ALIGNMENT
-                // 让出节点行的左内边距和时间列，与节点符号落在同一列
-                val left = JBUI.scale(4) + timeColumnWidth
-                border = BorderFactory.createEmptyBorder(0, left, 0, 0)
-                preferredSize = java.awt.Dimension(left + symbolColumnWidth(), preferredSize.height)
-                maximumSize = preferredSize
-            }
-            timelinePanel.add(connector)
-        }
-    }
-
-    val scrollPane = JBScrollPane(
-        timelinePanel,
-        ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
-        ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER,
-    ).apply {
-        border = JBUI.Borders.empty()
-        isOpaque = false
-        viewport.isOpaque = false
-    }
-    mainPanel.add(scrollPane, BorderLayout.CENTER)
-
-    val mainCount = result.nodes.count { it.symbol == NodeSymbol.MAIN || it.symbol == NodeSymbol.ROLLBACK_START || it.symbol == NodeSymbol.ROLLBACK_END }
-    val sideCount = result.nodes.count { it.symbol == NodeSymbol.SIDE }
-    val status = ImuxBundle.message(if (stale) "action.overview.status.stale" else "action.overview.status.latest")
-    val statsText = if (isAllSide) {
-        ImuxBundle.message("action.overview.stats.qa", result.nodes.size, status)
-    } else {
-        ImuxBundle.message("action.overview.stats", result.nodes.size, mainCount, sideCount, status)
-    }
-    val footer = JBLabel(statsText).apply {
-        foreground = JBColor(0x999999.toInt(), 0x686868)
-        font = JBUI.Fonts.smallFont()
-        border = JBUI.Borders.empty(4, 8)
-        horizontalAlignment = SwingConstants.CENTER
-    }
-    val footerPanel = JPanel(BorderLayout()).apply {
-        isOpaque = false
-        border = BorderFactory.createMatteBorder(1, 0, 0, 0, JBColor(0xDDDDDD.toInt(), 0x3C3F41))
-        add(footer, BorderLayout.CENTER)
-    }
-    mainPanel.add(footerPanel, BorderLayout.SOUTH)
-
-    return mainPanel
-}
-
+/** 重新生成报告的入口：失败面板、各条横幅共用。 */
 private fun regenerateLink(onRegenerate: () -> Unit) =
-    ActionLink(ImuxBundle.message("action.overview.retry")).apply {
+    ActionLink(ImuxBundle.message("action.overview.report.update")).apply {
         isFocusable = false
         addActionListener { onRegenerate() }
     }
 
-private fun statusBanner(result: OverviewResult, stale: Boolean, onRegenerate: () -> Unit): JComponent? {
-    val isAllSide = result.nodes.isNotEmpty() && result.nodes.all { it.symbol == NodeSymbol.SIDE }
-    return when {
-        result.saveFailed -> bannerRow(
-            AllIcons.General.Warning, ImuxBundle.message("action.overview.save.failed"), FAILED_BANNER_BACKGROUND,
-            onRegenerate = onRegenerate,
-        )
-        stale -> bannerRow(
-            AllIcons.General.Warning, ImuxBundle.message("action.overview.stale"), JBColor(0xFFF8E1.toInt(), 0x3B3820),
-            onRegenerate = onRegenerate,
-        )
-        isAllSide -> bannerRow(
-            AllIcons.General.Information, ImuxBundle.message("action.overview.qa.hint"), JBColor(0xE3F2FD.toInt(), 0x1E3A5F),
-        )
-        else -> null
-    }
+/**
+ * 生成中、已有旧报告：顶部一条进度条（进度文字、已用秒数与「取消」），下面照常显示旧报告，完成后整体换成新报告。
+ * 进度条里的 [LoadingRow] 由调用方按进度事件刷新。
+ */
+internal fun buildProgressBanner(onCancel: () -> Unit): Pair<JComponent, LoadingRow> {
+    val progress = LoadingRow(margin = 0)
+    val banner =
+        JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            isOpaque = true
+            background = JBColor(0xE3F2FD.toInt(), 0x1E3A5F)
+            border = JBUI.Borders.empty(4, 8)
+            add(progress.component, BorderLayout.CENTER)
+            add(
+                ActionLink(ImuxBundle.message("action.overview.cancel")).apply {
+                    isFocusable = false
+                    addActionListener { onCancel() }
+                },
+                BorderLayout.EAST,
+            )
+        }
+    return banner to progress
 }
+
+/** 报告过期（会话有新进展，或读自旧格式的缓存）：顶部一条说明与「更新报告」。 */
+internal fun buildStaleBanner(text: String, onUpdate: () -> Unit): JComponent =
+    bannerRow(AllIcons.General.Warning, text, JBColor(0xFFF8E1.toInt(), 0x3B3820), onRegenerate = onUpdate)
+
+/** 报告已生成但没能写进缓存：下次打开要重新生成，提示一下并给出重试。 */
+internal fun buildSaveFailedBanner(onRetry: () -> Unit): JComponent =
+    bannerRow(AllIcons.General.Warning, ImuxBundle.message("action.overview.save.failed"), FAILED_BANNER_BACKGROUND, onRegenerate = onRetry)
 
 private val FAILED_BANNER_BACKGROUND = JBColor(0xFDECEA.toInt(), 0x3C1F1F)
 
@@ -433,214 +308,3 @@ private class LeadingRowLayout(private val gap: Int) : java.awt.LayoutManager {
         }
     }
 }
-
-/**
- * 宽度跟随 viewport 的面板。
- */
-internal class ScrollablePanel : JPanel(), Scrollable {
-    init {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque = false
-    }
-    override fun getPreferredScrollableViewportSize(): java.awt.Dimension = preferredSize
-    override fun getScrollableUnitIncrement(visibleRect: java.awt.Rectangle, orientation: Int, direction: Int) = JBUI.scale(20)
-    override fun getScrollableBlockIncrement(visibleRect: java.awt.Rectangle, orientation: Int, direction: Int) = visibleRect.height
-    override fun getScrollableTracksViewportWidth() = true
-    override fun getScrollableTracksViewportHeight() = false
-}
-
-/**
- * [timeColumnWidth] 是轨迹线左边时间列的宽度，同一条时间线里各行相同；为 0 时不占这一列。
- * 默认按本节点自己的时间计算，单独调用时也能显示时间。
- */
-internal fun createNodePanel(
-    node: OverviewNode,
-    inRollback: Boolean,
-    isChinese: Boolean,
-    timeColumnWidth: Int = node.time?.let { timeColumnWidthFor(listOf(node)) } ?: 0,
-): JPanel {
-    val symbol = when (node.symbol) {
-        NodeSymbol.MAIN -> if (inRollback) "×" else "●"
-        NodeSymbol.SIDE -> "○"
-        NodeSymbol.ROLLBACK_START -> "┌"
-        NodeSymbol.ROLLBACK_END -> "└"
-        NodeSymbol.CHANGE -> "↻"
-        NodeSymbol.ERROR -> "⚠"
-        NodeSymbol.IN_PROGRESS -> "◐"
-    }
-
-    val symbolColor = when (node.symbol) {
-        NodeSymbol.MAIN -> if (inRollback) JBColor(0xAA5555.toInt(), 0x8B4513) else JBColor(0x333333.toInt(), 0xBBBBBB.toInt())
-        NodeSymbol.SIDE -> JBColor(0x999999.toInt(), 0x787878)
-        NodeSymbol.ROLLBACK_START, NodeSymbol.ROLLBACK_END -> JBColor(0xAA5555.toInt(), 0x8B4513)
-        NodeSymbol.CHANGE -> JBColor(0xCC8800.toInt(), 0xD4A843.toInt())
-        NodeSymbol.ERROR -> JBColor(0xCC0000.toInt(), 0xC75450)
-        NodeSymbol.IN_PROGRESS -> JBColor(0x336699.toInt(), 0x6897BB.toInt())
-    }
-
-    val textColor = when {
-        inRollback -> JBColor(0xAAAAAA.toInt(), 0x666666)
-        node.symbol == NodeSymbol.SIDE -> JBColor(0x999999.toInt(), 0x787878)
-        node.symbol == NodeSymbol.CHANGE -> JBColor(0xCC8800.toInt(), 0xD4A843.toInt())
-        node.symbol == NodeSymbol.ERROR -> JBColor(0xCC0000.toInt(), 0xC75450)
-        else -> JBColor(0x333333.toInt(), 0xBBBBBB.toInt())
-    }
-
-    return JPanel(BorderLayout()).apply {
-        isOpaque = false
-        alignmentX = Component.LEFT_ALIGNMENT
-        border = JBUI.Borders.empty(1, 4, 1, 4)
-
-        val symbolLabel = symbolColumnLabel(symbol).apply {
-            foreground = symbolColor
-            verticalAlignment = SwingConstants.TOP
-        }
-        if (timeColumnWidth <= 0) {
-            add(symbolLabel, BorderLayout.WEST)
-        } else {
-            // 时间单独成列放在轨迹线左边；没有时间的节点也占同样宽度，整条线保持笔直
-            add(
-                JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                    add(
-                        (node.time?.let(::nodeTimeLabel) ?: JBLabel()).apply {
-                            horizontalAlignment = SwingConstants.RIGHT
-                            preferredSize = java.awt.Dimension(timeColumnWidth, preferredSize.height)
-                        },
-                        BorderLayout.WEST,
-                    )
-                    add(symbolLabel, BorderLayout.CENTER)
-                },
-                BorderLayout.WEST,
-            )
-        }
-
-        val textPane = JTextPane().apply {
-            text = node.text
-            isEditable = false
-            isOpaque = false
-            foreground = textColor
-            font = JBUI.Fonts.label(12f)
-            border = JBUI.Borders.empty()
-            val attrs = SimpleAttributeSet()
-            StyleConstants.setLineSpacing(attrs, 0.2f)
-            styledDocument.setParagraphAttributes(0, document.length, attrs, false)
-        }
-        if (node.symbol != NodeSymbol.ROLLBACK_START) {
-            add(textPane, BorderLayout.CENTER)
-        } else {
-            val tag = JBLabel(if (isChinese) "已回滚" else "rolled back").apply {
-                foreground = JBColor(0xAA5555.toInt(), 0x8B4513)
-                font = JBUI.Fonts.smallFont()
-                verticalAlignment = SwingConstants.TOP
-            }
-            add(
-                JPanel(TextWithTrailingTagLayout(JBUI.scale(8), JBUI.scale(120))).apply {
-                    isOpaque = false
-                    add(textPane)
-                    add(tag)
-                },
-                BorderLayout.CENTER,
-            )
-        }
-    }
-}
-
-/**
- * 节点时间的显示：当天只显示时分，当年显示月日时分，跨年只显示日期（悬停可看到完整时间）。
- * 时间列按最长的那个预留宽度，跨年再带时分会把窄卡片里的正文挤得太窄。
- */
-internal fun nodeTimeText(time: java.time.Instant, now: java.time.Instant, zone: java.time.ZoneId): String {
-    val at = time.atZone(zone)
-    val today = now.atZone(zone)
-    val pattern = when {
-        at.toLocalDate() == today.toLocalDate() -> "HH:mm"
-        at.year == today.year -> "MM-dd HH:mm"
-        else -> "yyyy-MM-dd"
-    }
-    return java.time.format.DateTimeFormatter.ofPattern(pattern).format(at)
-}
-
-private fun nodeTimeLabel(time: java.time.Instant): JBLabel =
-    JBLabel(nodeTimeText(time, java.time.Instant.now(), java.time.ZoneId.systemDefault())).apply {
-        foreground = JBColor(0x999999.toInt(), 0x787878)
-        font = JBUI.Fonts.smallFont()
-        verticalAlignment = SwingConstants.TOP
-        border = JBUI.Borders.empty(1, 0, 0, 2)
-        toolTipText = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-            .format(time.atZone(java.time.ZoneId.systemDefault()))
-    }
-
-/** 时间列宽：取这条时间线里最长的时间；一个都没有时为 0。 */
-internal fun timeColumnWidthFor(nodes: List<OverviewNode>): Int =
-    nodes.mapNotNull { it.time }.maxOfOrNull { nodeTimeLabel(it).preferredSize.width } ?: 0
-
-/**
- * 正文加尾随标签（「已回滚」）：宽度够时标签在正文右边；正文剩不到 [minTextWidth] 时标签换到下一行，
- * 正文占满整行。窄卡片里时间列已经占去一块宽度，标签再固定在右边会把正文挤没。
- */
-private class TextWithTrailingTagLayout(private val gap: Int, private val minTextWidth: Int) : java.awt.LayoutManager {
-    override fun addLayoutComponent(name: String?, comp: java.awt.Component) = Unit
-    override fun removeLayoutComponent(comp: java.awt.Component) = Unit
-    override fun minimumLayoutSize(parent: java.awt.Container): java.awt.Dimension = preferredLayoutSize(parent)
-
-    private fun inline(width: Int, tag: java.awt.Component) = width - tag.preferredSize.width - gap >= minTextWidth
-
-    /** 正文按给定宽度换行后的高度。 */
-    private fun textHeight(text: java.awt.Component, width: Int): Int {
-        text.setSize(width.coerceAtLeast(1), Short.MAX_VALUE.toInt())
-        return text.preferredSize.height
-    }
-
-    override fun preferredLayoutSize(parent: java.awt.Container): java.awt.Dimension {
-        val (text, tag) = parent.components
-        val insets = parent.insets
-        val width = parent.width - insets.left - insets.right
-        if (width <= 0) {
-            return java.awt.Dimension(
-                text.preferredSize.width + gap + tag.preferredSize.width + insets.left + insets.right,
-                maxOf(text.preferredSize.height, tag.preferredSize.height) + insets.top + insets.bottom,
-            )
-        }
-        val height = if (inline(width, tag)) {
-            maxOf(textHeight(text, width - tag.preferredSize.width - gap), tag.preferredSize.height)
-        } else {
-            textHeight(text, width) + tag.preferredSize.height
-        }
-        return java.awt.Dimension(width + insets.left + insets.right, height + insets.top + insets.bottom)
-    }
-
-    override fun layoutContainer(parent: java.awt.Container) {
-        val (text, tag) = parent.components
-        val insets = parent.insets
-        val width = parent.width - insets.left - insets.right
-        val tagSize = tag.preferredSize
-        if (inline(width, tag)) {
-            val textWidth = width - tagSize.width - gap
-            text.setBounds(insets.left, insets.top, textWidth, textHeight(text, textWidth))
-            tag.setBounds(insets.left + textWidth + gap, insets.top, tagSize.width, tagSize.height)
-        } else {
-            val textHeight = textHeight(text, width)
-            text.setBounds(insets.left, insets.top, width, textHeight)
-            tag.setBounds(insets.left, insets.top + textHeight, tagSize.width, tagSize.height)
-        }
-    }
-}
-
-/** 轨迹线上出现的全部符号；列宽按其中最宽的一个算。 */
-private val TRAIL_GLYPHS = listOf("●", "○", "×", "┌", "└", "↻", "⚠", "◐", "│")
-
-/**
- * 符号列宽：所有符号里最宽的那个再加左右留白。符号是比例字体里的文字，宽窄不一
- * （⚠ 常由更宽的符号字体渲染），只有固定列宽加居中才能让各行的圆点和竖线落在同一条线上。
- */
-internal fun symbolColumnWidth(): Int =
-    TRAIL_GLYPHS.maxOf { JBLabel(it).apply { font = JBUI.Fonts.label(12f) }.preferredSize.width } + JBUI.scale(12)
-
-/** 轨迹线这一列里的一格：固定列宽、居中绘制。节点符号和连接竖线共用，保证同一列中心。 */
-private fun symbolColumnLabel(glyph: String): JBLabel =
-    JBLabel(glyph).apply {
-        font = JBUI.Fonts.label(12f)
-        horizontalAlignment = SwingConstants.CENTER
-        preferredSize = java.awt.Dimension(symbolColumnWidth(), preferredSize.height)
-    }
