@@ -37,11 +37,15 @@ class BridgeRouterTest {
 
         var stopResult = StopResult.SENT
 
+        /** 按键期间发生的事（比如轮询已经读到这一轮中断）。 */
+        var duringStop: suspend () -> Unit = {}
+
         override suspend fun stop(
             target: SessionTarget,
             turnRunning: Boolean,
         ): StopResult {
             stops += target.tabId to turnRunning
+            duringStop()
             return stopResult
         }
 
@@ -1806,5 +1810,39 @@ class BridgeRouterTest {
             clock += 10_000
             stopClocked.onQuiet("tab-1")
             assertFalse(sentTexts().contains("STOP_UNCONFIRMED"))
+        }
+
+    @Test
+    fun `按完后台停止键之前就读到中断时，不再补说停止没生效`() =
+        runBlocking {
+            registry.bind(robot, target)
+            port.duringStop = { stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnInterrupted)) }
+            stopClocked.onInbound(inbound("1", "停止"))
+            clock += 10_000
+            stopClocked.onQuiet("tab-1")
+            assertEquals(listOf("INTERRUPTED"), sentTexts())
+        }
+
+    @Test
+    fun `空闲后弹过等待提醒的会话发停止时只停后台，不按 Esc`() =
+        runBlocking {
+            registry.bind(robot, target)
+            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            stopClocked.onWaiting("tab-1", "idle")
+            channel.sent.clear()
+            stopClocked.onInbound(inbound("1", "停"))
+            assertEquals(listOf("tab-1" to false), port.stops)
+            assertEquals(listOf("BACKGROUND_STOPPED"), sentTexts())
+        }
+
+    @Test
+    fun `终端离线时停止只回离线，之后不再补说停止没生效`() =
+        runBlocking {
+            registry.bind(robot, target)
+            port.stopResult = StopResult.OFFLINE
+            stopClocked.onInbound(inbound("1", "停止"))
+            clock += 10_000
+            stopClocked.onQuiet("tab-1")
+            assertEquals(listOf("OFFLINE"), sentTexts())
         }
 }

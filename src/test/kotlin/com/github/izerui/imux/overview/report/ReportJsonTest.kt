@@ -164,4 +164,11 @@ class ReportJsonTest {
         assertNotNull(report)
         assertEquals("手机上发停止就能停下会话", report!!.goal)
     }
+
+    @Test
+    fun `说明里先有一段不是报告的 JSON 时取后面的报告`() {
+        val report = parseAgentReport("说明：代码行写成 {\"kind\":\"add\"} 这样。报告如下：\n$full")
+        assertNotNull(report)
+        assertEquals("手机上发停止就能停下会话", report!!.goal)
+    }
 }

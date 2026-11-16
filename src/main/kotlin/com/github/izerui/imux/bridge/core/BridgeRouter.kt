@@ -202,9 +202,8 @@ class BridgeRouter(
                     when (phase.result) {
                         StopResult.SENT -> {
                             // 中断了一轮的不回执：中断写进记录后照常推「本轮已中断」，那一句就是停成功的回复；
-                            // 等不到中断（会话其实空闲、还没读到状态）由 onQuiet 如实补一句
-                            if (phase.turnRunning) tab(phase.binding.target.tabId) { stopRequested(now()) }
-                            else reply(message.robotId, owner, texts.backgroundStopped())
+                            // 等不到中断（会话其实空闲、还没读到状态）由 onQuiet 如实补一句（按键前已在 stop 里登记）
+                            if (!phase.turnRunning) reply(message.robotId, owner, texts.backgroundStopped())
                             push(phase.binding, phase.push)
                             InboundOutcome.STOPPED
                         }
@@ -227,24 +226,42 @@ class BridgeRouter(
      */
     private suspend fun stop(binding: Binding): SubmitPhase {
         val tabId = binding.target.tabId
-        val (denied, idle, next) =
+        val (drained, idle, next) =
             synchronized(lock) {
                 val queue = hookQueues[tabId]
-                val denied = queue?.drainMainSession().orEmpty()
-                val idle = denied.isEmpty() && tabs[tabId]?.let { it.idle && !it.waitingActive } == true
-                Triple(denied, idle, queue?.nextPush(binding))
+                // 先摘下主会话挂着的确认：Esc 关掉确认框时不会被当成电脑端拒绝告诉手机；按键结果出来再决定拒绝还是交还
+                val drained = queue?.drainMainSession().orEmpty()
+                // 只看这一轮结束没有：空闲后的「等待输入」提醒不算在跑；真停在确认框上时这一轮还没结束
+                val idle = drained.isEmpty() && tabs[tabId]?.idle == true
+                // 按键之前登记：按后台停止键的间隙里轮询可能已读到中断，中断会清掉这条登记
+                if (!idle) tabs.getOrPut(tabId) { TabState() }.stopRequested(now())
+                Triple(drained, idle, queue?.nextPush(binding))
             }
-        denied.forEach { it.respond(HookDecision.Deny(HookReplies.STOPPED)) }
         val result =
             try {
                 sessionPort.stop(binding.target, turnRunning = !idle)
             } catch (e: CancellationException) {
+                giveBack(tabId, drained)
                 abandon(next)
                 throw e
             } catch (_: Exception) {
                 StopResult.OFFLINE
             }
+        if (result == StopResult.SENT) {
+            drained.forEach { it.respond(HookDecision.Deny(HookReplies.STOPPED)) }
+        } else {
+            // 一个键也没按出去：确认原样交还电脑，也不再等中断
+            giveBack(tabId, drained)
+        }
         return SubmitPhase.Stopped(binding, result, turnRunning = !idle, next)
+    }
+
+    private fun giveBack(
+        tabId: String,
+        drained: List<HookPromptQueue.Entry>,
+    ) {
+        tab(tabId) { clearStopRequest() }
+        drained.forEach { it.respond(HookDecision.Pass) }
     }
 
     private suspend fun outcomeOf(

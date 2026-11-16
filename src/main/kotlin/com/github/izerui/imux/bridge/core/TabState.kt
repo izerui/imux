@@ -161,6 +161,11 @@ internal class TabState {
         stopRequestedAt = at
     }
 
+    /** 停止键一个也没按出去（离线）：不再等中断。 */
+    fun clearStopRequest() {
+        stopRequestedAt = null
+    }
+
     /** 按下停止后过了 [graceMs] 仍没中断、也没结束：交出一次（返回 true）并清掉，之后不再提。 */
     fun takeUnconfirmedStop(now: Long, graceMs: Long): Boolean {
         val at = stopRequestedAt ?: return false

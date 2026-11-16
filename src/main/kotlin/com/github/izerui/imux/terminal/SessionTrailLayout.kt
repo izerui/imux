@@ -116,10 +116,15 @@ internal object TrailSizeSetting {
     fun isCustomized(): Boolean =
         PropertiesComponent.getInstance().let { it.isValueSet(WIDTH_KEY) || it.isValueSet(HEIGHT_KEY) }
 
+    /** 拖过就记下，即便恰好等于默认值：带默认值存时平台会把它删掉，就成了「没拖过」，又被按比例缩回去。 */
     fun save(width: Int, height: Int) {
-        PropertiesComponent.getInstance().setValue(WIDTH_KEY, width, DEFAULT_WIDTH)
-        PropertiesComponent.getInstance().setValue(HEIGHT_KEY, height, DEFAULT_HEIGHT)
+        PropertiesComponent.getInstance().setValue(WIDTH_KEY, width.toString())
+        PropertiesComponent.getInstance().setValue(HEIGHT_KEY, height.toString())
     }
 
-    fun reset() = save(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+    /** 恢复默认：清掉记录，回到按比例自适应。 */
+    fun reset() {
+        PropertiesComponent.getInstance().unsetValue(WIDTH_KEY)
+        PropertiesComponent.getInstance().unsetValue(HEIGHT_KEY)
+    }
 }

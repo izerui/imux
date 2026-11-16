@@ -26,12 +26,14 @@ class HookPromptRouterTest {
         /** 每次停止是否要中断一轮。 */
         val stops = mutableListOf<Boolean>()
 
+        var stopResult = StopResult.SENT
+
         override suspend fun stop(
             target: SessionTarget,
             turnRunning: Boolean,
         ): StopResult {
             stops += turnRunning
-            return StopResult.SENT
+            return stopResult
         }
 
         /** 每次提交的结果；默认提交成功。 */
@@ -1362,5 +1364,15 @@ class HookPromptRouterTest {
             assertTrue(port.submitted.isEmpty())
             assertEquals(1, sentTexts().size)
             assertTrue(sentTexts().single().startsWith("HOOK_PERMISSION("))
+        }
+
+    @Test
+    fun `终端离线按不出停止键时，挂着的确认交还电脑而不是拒绝`() =
+        runBlocking {
+            bind()
+            val pending = request(1)
+            port.stopResult = StopResult.OFFLINE
+            assertEquals(InboundOutcome.OFFLINE, router.onInbound(inbound("m1", "停止")))
+            assertEquals(listOf<HookDecision>(HookDecision.Pass), pending.decisions)
         }
 }

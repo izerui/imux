@@ -21,7 +21,7 @@ internal const val MAX_NEXT_STEPS = 8
  * 解析智能体的输出。允许 JSON 前后夹着说明文字或 ```json 围栏；取不出对象、或清洗后时间线为空（等于没总结出东西）返回 null。
  * 单项缺字段、类型不对只丢这一项；枚举值越界按各自的兜底处理，不让整份报告失败。
  */
-internal fun parseAgentReport(output: String): SessionReport? = extractObject(output)?.let(::reportFromJson)
+internal fun parseAgentReport(output: String): SessionReport? = candidateObjects(output).firstNotNullOfOrNull(::reportFromJson)
 
 /** [agentReportJson] 的逆，同样清洗；供缓存读取。时间线为空返回 null。 */
 internal fun reportFromJson(obj: JsonObject): SessionReport? {
@@ -121,18 +121,18 @@ internal fun factsFromJson(obj: JsonObject?): ReportFacts {
     return ReportFacts(duration, obj.strings("files"))
 }
 
-/** 整体是对象就用它；否则从每个 `{` 起按括号配对（跳过字符串里的括号）截出一段试着解析，取第一个能解析的对象。 */
-private fun extractObject(output: String): JsonObject? {
-    parseObject(output.trim())?.let { return it }
-    var start = output.indexOf('{')
-    while (start >= 0) {
-        val end = matchingBrace(output, start)
-        // 配不上（说明文字里多了个 `{`）就从下一个 `{` 再试，后面可能就是完整的报告
-        if (end >= 0) parseObject(output.substring(start, end + 1))?.let { return it }
-        start = output.indexOf('{', start + 1)
+/** 候选的 JSON 对象：整体是对象先给它；再从每个 `{` 起按括号配对（跳过字符串里的括号）截出一段试着解析。由调用方取第一个是报告的。 */
+private fun candidateObjects(output: String): Sequence<JsonObject> =
+    sequence {
+        parseObject(output.trim())?.let { yield(it) }
+        var start = output.indexOf('{')
+        while (start >= 0) {
+            val end = matchingBrace(output, start)
+            // 配不上（说明文字里多了个 `{`）、或截出的不是报告（说明里的一小段 JSON 示例），都从下一个 `{` 再试
+            if (end >= 0) parseObject(output.substring(start, end + 1))?.let { yield(it) }
+            start = output.indexOf('{', start + 1)
+        }
     }
-    return null
-}
 
 private fun parseObject(text: String): JsonObject? =
     runCatching { JsonParser.parseString(text) }.getOrNull()?.takeIf(JsonElement::isJsonObject)?.asJsonObject

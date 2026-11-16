@@ -161,4 +161,13 @@ class SessionTrailLayoutTest {
         assertFalse(showsReport(com.github.izerui.imux.overview.TrailState.Empty))
         assertFalse(showsReport(null))
     }
+
+    @Test
+    fun `拖到恰好是默认尺寸也记作拖过，只有恢复默认才清掉`() {
+        val layout = com.github.izerui.imux.SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/SessionTrailLayout.kt")
+        val save = layout.bodyAfter("fun save(", '{')
+        assertFalse("带默认值存时，等于默认的值会被平台删掉、算成没拖过：$save", save.contains("DEFAULT_"))
+        assertTrue(layout.bodyAfter("fun reset(", '{').contains("unsetValue(WIDTH_KEY)"))
+        assertTrue(layout.bodyAfter("fun reset(", '{').contains("unsetValue(HEIGHT_KEY)"))
+    }
 }
