@@ -107,16 +107,20 @@ class SessionListModel(
     }
 
     /**
-     * 进程探测把 [pendingKey] 的终端迁到了 [sessionId]（见 DriftCoordinator.applyDrifts）：记为已认领，
-     * 列表不再显示这条「新会话」占位。终端那边已经换过 key，所以不再产出换 key 信息。
+     * 进程探测把 [pendingKey] 的终端迁到了 [sessionId]（见 DriftCoordinator.applyDrifts）：记为已认领。
+     * 终端那边已经换过 key，所以不再产出换 key 信息；占位等这个会话出现在列表里才隐藏（见 [showsPending]）。
      * [pendingKey] 不是未认领的 pending 时什么也不做。
+     *
+     * 预知 id 的 pending（claude、pi）也不在这里认领：扫描时会按 id 精确认领。pi 会在会话文件只有文件头时
+     * 就上报迁移，这时认领了，关掉标签再取消就会因「已认领」被拒绝，占位一直留着。
      */
     fun claimPending(
         pendingKey: String,
         sessionId: String,
     ) {
         ApplicationManager.getApplication()?.assertIsDispatchThread()
-        if (pendings.none { it.key == pendingKey } || pendingKey in bindings) return
+        val pending = pendings.firstOrNull { it.key == pendingKey } ?: return
+        if (pending.sessionId != null || pendingKey in bindings) return
         bindings[pendingKey] = sessionId
         notifyListeners()
     }
@@ -165,7 +169,16 @@ class SessionListModel(
         if (changed) notifyListeners()
     }
 
-    private fun visiblePendingKeys(): List<String> = pendings.filter { it.key !in bindings }.map { it.key }
+    private fun visiblePendingKeys(): List<String> = pendings.filter(::showsPending).map { it.key }
+
+    /**
+     * 占位要等它认领的会话出现在列表里才隐藏：认领可能早于会话能显示（会话文件刚建、还没有可显示的内容），
+     * 这时先隐藏占位，列表里就暂时什么都没有。
+     */
+    private fun showsPending(pending: PendingSession): Boolean {
+        val bound = bindings[pending.key] ?: return true
+        return sessions.none { it.id == bound }
+    }
 
     fun sessionOf(id: String): AgentSession? = sessions.firstOrNull { it.id == id }
 
@@ -177,7 +190,7 @@ class SessionListModel(
         // pending 放前面：新建的会话应出现在分组顶部，与「最近活动优先」的排序意图一致
         val stillPending =
             pendings
-                .filter { it.agentType == agentType && it.key !in bindings }
+                .filter { it.agentType == agentType && showsPending(it) }
                 .map { ListEntry.Pending(it) }
         return stillPending + existing
     }

@@ -204,6 +204,55 @@ class SessionListModelTest {
         assertEquals(emptyList<Pair<String, String>>(), model.drainNewBindings())
     }
 
+    /**
+     * pi 一启动就上报会话、终端随即迁到真实 id（走 applyDrifts），这时会话文件只有文件头，列表还显示不出来。
+     * 原先在这里就认领并隐藏占位，新建的 pi 会话在发第一条消息前从列表里消失。
+     */
+    @Test
+    fun `pi 上报迁移时会话还显示不出来：占位保留，会话出现后才换成真实会话`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.PI, sessionId = "pi-1")
+
+        model.claimPending(pending.key, "pi-1")
+        model.refresh()
+
+        assertEquals(listOf(pending.key), model.entries(AgentType.PI).filterIsInstance<ListEntry.Pending>().map { it.pending.key })
+
+        clock.now = base.plusSeconds(30)
+        scanResult = listOf(session("pi-1", AgentType.PI, base.plusSeconds(20)))
+        model.refresh()
+
+        assertEquals("pi-1", model.boundIdFor(pending.key))
+        assertEquals(listOf("pi-1"), model.entries(AgentType.PI).map { (it as ListEntry.Existing).session.id })
+    }
+
+    @Test
+    fun `pi 上报迁移后、发第一条消息前关掉标签，占位仍能取消`() {
+        val model = model(FakeClock(base))
+        val pending = model.registerPending(AgentType.PI, sessionId = "pi-1")
+        model.claimPending(pending.key, "pi-1")
+
+        assertTrue(model.cancelPending(pending.key))
+        assertEquals(emptyList<ListEntry>(), model.entries(AgentType.PI))
+    }
+
+    @Test
+    fun `认领早于会话出现在列表时，占位先保留，会话出现后才隐藏`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.CODEX)
+
+        model.claimPending(pending.key, "X")
+        assertEquals(listOf(pending.key), model.entries(AgentType.CODEX).filterIsInstance<ListEntry.Pending>().map { it.pending.key })
+
+        clock.now = base.plusSeconds(30)
+        scanResult = listOf(session("X", AgentType.CODEX, base.plusSeconds(20)))
+        model.refresh()
+
+        assertEquals(listOf("X"), model.entries(AgentType.CODEX).map { (it as ListEntry.Existing).session.id })
+    }
+
     @Test
     fun `认领不存在或已认领的 pending 时什么也不做`() {
         val clock = FakeClock(base)
