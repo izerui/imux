@@ -37,7 +37,7 @@ class ImuxTerminalSessionPort(
         text: String,
     ): SubmitResult = withContext(Dispatchers.EDT) { submitOnce(target, text) }
 
-    /** 逐个按下 [stopKeys]；按到一半终端没了就不再按，已按下的照样算数。 */
+    /** 逐个按下 [stopKeys]，结果见 [pressStopKeys]。 */
     override suspend fun stop(
         target: SessionTarget,
         turnRunning: Boolean,
@@ -48,17 +48,13 @@ class ImuxTerminalSessionPort(
                 if (liveView(target) == null) StopResult.OFFLINE else StopResult.NOTHING_TO_STOP
             }
         }
-        keys.forEachIndexed { index, key ->
-            if (key.delayMs > 0) delay(key.delayMs)
-            val sent =
-                withContext(Dispatchers.EDT) {
-                    val view = liveView(target) ?: return@withContext false
-                    sendKey(view.createSendTextBuilder(), key.text)
-                    true
-                }
-            if (!sent) return if (index == 0) StopResult.OFFLINE else StopResult.SENT
+        return pressStopKeys(keys, wait = { delay(it) }) { text ->
+            withContext(Dispatchers.EDT) {
+                val view = liveView(target) ?: return@withContext false
+                sendKey(view.createSendTextBuilder(), text)
+                true
+            }
         }
-        return StopResult.SENT
     }
 
     /** 界面与提交消息使用同一个存活判据；保留的恢复绑定不代表终端在线。 */
@@ -118,6 +114,23 @@ internal fun stopKeys(
         }
     if (!turnRunning) return background
     return listOf(StopKey(ESCAPE)) + background.mapIndexed { index, key -> if (index == 0) key.copy(delayMs = AFTER_ESCAPE_MS) else key }
+}
+
+/**
+ * 逐个按下停止的键，每个键按前先等 [StopKey.delayMs]。全部按出去才算 [StopResult.SENT]；
+ * 中途有一个没按出去（终端没了）就停下、按 [StopResult.OFFLINE]：比如 `/stop` 打进去了、回车前终端消失，指令其实没提交，
+ * 不能告诉手机「已发送」。终端都不在了，本来就按未连接处理。
+ */
+internal suspend fun pressStopKeys(
+    keys: List<StopKey>,
+    wait: suspend (Long) -> Unit,
+    press: suspend (String) -> Boolean,
+): StopResult {
+    for (key in keys) {
+        if (key.delayMs > 0) wait(key.delayMs)
+        if (!press(key.text)) return StopResult.OFFLINE
+    }
+    return StopResult.SENT
 }
 
 /** 原样写进终端，不用括号粘贴（会被当成贴进来的文字），也不带回车。 */

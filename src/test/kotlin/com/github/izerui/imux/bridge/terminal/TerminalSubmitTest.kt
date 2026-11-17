@@ -64,4 +64,42 @@ class TerminalSubmitTest {
         assertEquals(listOf(StopKey("/stop"), StopKey("\r", 300)), stopKeys(AgentType.CODEX, turnRunning = false))
         assertEquals(emptyList<StopKey>(), stopKeys(AgentType.PI, turnRunning = false))
     }
+
+    @Test
+    fun `停止的键全部按出去才算已发送，中途终端没了按离线`() = kotlinx.coroutines.runBlocking {
+        val keys = listOf(StopKey("/stop"), StopKey("\r", 300))
+        val pressed = mutableListOf<String>()
+        assertEquals(
+            "全部按出去",
+            com.github.izerui.imux.bridge.core.StopResult.SENT,
+            pressStopKeys(keys, wait = {}) { pressed += it; true },
+        )
+        pressed.clear()
+        assertEquals(
+            "/stop 打进去了、回车前终端没了：指令没提交，不能说已发送",
+            com.github.izerui.imux.bridge.core.StopResult.OFFLINE,
+            pressStopKeys(keys, wait = {}) { key -> (key != "\r").also { if (it) pressed += key } },
+        )
+        assertEquals(listOf("/stop"), pressed)
+        assertEquals(
+            "第一个键就没按出去",
+            com.github.izerui.imux.bridge.core.StopResult.OFFLINE,
+            pressStopKeys(keys, wait = {}) { false },
+        )
+    }
+
+    @Test
+    fun `按键之间按约定等待`() = kotlinx.coroutines.runBlocking {
+        val waited = mutableListOf<Long>()
+        pressStopKeys(listOf(StopKey("\u001b"), StopKey("/stop", 500), StopKey("\r", 300)), wait = { waited += it }) { true }
+        assertEquals(listOf(500L, 300L), waited)
+    }
+
+    @Test
+    fun `终端端口的停止按 pressStopKeys 汇报结果`() {
+        val port = com.github.izerui.imux.SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/terminal/ImuxTerminalSessionPort.kt")
+        val stop = port.bodyAfter("override suspend fun stop(", '{')
+        assertTrue(stop, stop.contains("return pressStopKeys(keys, wait = { delay(it) })"))
+        assertTrue("不能再有按到一半也算已发送的分支：$stop", !stop.contains("StopResult.SENT"))
+    }
 }
