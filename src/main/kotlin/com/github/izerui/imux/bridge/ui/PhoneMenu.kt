@@ -92,8 +92,8 @@ fun phoneMenuModel(
                         else -> row(RobotMenuState.CONNECTED, labels.current(), false, current = true)
                     }
                 }
-                binding != null && needsAttention(status) && !sessionAvailable(binding) ->
-                    row(RobotMenuState.PROBLEM, labels.problem(status))
+                // 手机连接异常优先于会话状态，与上面本标签的判断同序：会话还在跑也收发不了，不能标「已连接」
+                binding != null && needsAttention(status) -> row(RobotMenuState.PROBLEM, labels.problem(status))
                 binding != null && !sessionAvailable(binding) -> row(RobotMenuState.OFFLINE, labels.boundOffline())
                 binding != null -> row(RobotMenuState.CONNECTED, labels.bound())
                 // 手机连接不正常也可以先连上，恢复后自动收发；只是不能谎称“空闲”

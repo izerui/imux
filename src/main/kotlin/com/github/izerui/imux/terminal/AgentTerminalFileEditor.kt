@@ -458,7 +458,7 @@ class AgentTerminalFileEditor(
     }
 
     /**
-     * 结对编程的状态落到三处：按钮图标与说明；审查进行中、失败时的常驻提示；
+     * 结对编程的状态落到三处：按钮图标与说明；审查进行中、失败、到达轮数上限暂停时的常驻提示；
      * 新结果的一次性提示（之后收进结果 chip）。
      */
     private fun refreshPeer() {
@@ -473,6 +473,7 @@ class AgentTerminalFileEditor(
         val progress = status?.progress
         val running = model.kind == PeerSegmentKind.RUNNING
         val failed = outcome?.takeIf { it.kind == PeerOutcomeKind.FAILED && !running }
+        val pausedAtLimit = coordinator.pausedAtLimit(key).takeIf { !running }
         val runningText =
             if (progress != null) progressSummary(name, progress) else ImuxBundle.message("action.peer.status.starting", name)
 
@@ -487,6 +488,13 @@ class AgentTerminalFileEditor(
                         actions = listOf(NoticeAction(ImuxBundle.message("action.peer.segment.cancelRun")) { coordinator.cancelCurrentRun(key) }),
                     )
                 failed != null -> failedNotice(failed)
+                pausedAtLimit != null ->
+                    Notice(
+                        key = "pair:maxRounds",
+                        tone = NoticeTone.WARNING,
+                        text = ImuxBundle.message("action.peer.notice.maxRounds", name, pausedAtLimit),
+                        actions = listOf(NoticeAction(ImuxBundle.message("action.peer.close")) { coordinator.unbind(virtualFile.sessionKey) }),
+                    )
                 model.kind == PeerSegmentKind.SCHEDULED ->
                     Notice(
                         key = "pair:scheduled",

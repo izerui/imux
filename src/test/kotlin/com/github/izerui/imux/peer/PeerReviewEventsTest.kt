@@ -107,6 +107,46 @@ class PeerReviewEventsTest {
             assertEquals(listOf(PeerReviewEvent.Stopped("s1", AgentType.CODEX, PeerStopReason.MAX_ROUNDS, maxRounds = 1)), events.toList())
         }
 
+    /** 到上限只在手机上说过；IDE 靠 pausedAtLimit 显示「自动审查已暂停」，否则按钮仍是就绪、看不出为什么停了。 */
+    @Test
+    fun `达到上限后记下暂停，用户再发消息时解除`() =
+        using(coordinator(maxRounds = 1, runCli = output("请修复"))) { c ->
+            c.bind("s1", AgentType.CODEX)
+            awaitIdle(c) { c.onTurnCompleted("s1") }
+            assertEquals(null, c.pausedAtLimit("s1"))
+
+            c.onTurnCompleted("s1")
+            assertEquals(1, c.pausedAtLimit("s1"))
+
+            c.onTurnStarted("s1")
+            assertEquals(null, c.pausedAtLimit("s1"))
+        }
+
+    @Test
+    fun `暂停中换伙伴重新开启，暂停状态随之清掉`() {
+        using(coordinator(maxRounds = 1, runCli = output("请修复"))) { c ->
+            c.bind("s1", AgentType.CODEX)
+            awaitIdle(c) { c.onTurnCompleted("s1") }
+            c.onTurnCompleted("s1")
+            assertEquals(1, c.pausedAtLimit("s1"))
+
+            c.bind("s1", AgentType.CLAUDE)
+            assertEquals(null, c.pausedAtLimit("s1"))
+        }
+    }
+
+    @Test
+    fun `暂停中停止结对后查不到暂停状态`() =
+        using(coordinator(maxRounds = 1, runCli = output("请修复"))) { c ->
+            c.bind("s1", AgentType.CODEX)
+            awaitIdle(c) { c.onTurnCompleted("s1") }
+            c.onTurnCompleted("s1")
+            assertEquals(1, c.pausedAtLimit("s1"))
+
+            c.unbind("s1")
+            assertEquals(null, c.pausedAtLimit("s1"))
+        }
+
     @Test
     fun `单次审查标明是单次`() =
         using(coordinator(runCli = output("PASS"))) { c ->

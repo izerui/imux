@@ -206,6 +206,34 @@ class WecomConnectionTest {
             assertEquals(DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED), conn.send(OutboundMessage(RobotId("r"), "u1", "hi")))
         }
 
+    /** 被拒后状态一直标着在线，用户就不知道最终回复没送到；另外三个渠道都会改报发送受阻。 */
+    @Test
+    fun `发送被拒时改报发送受阻，下一次发送成功后恢复在线`() =
+        runBlocking {
+            var sendErrcode = 93000
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") sendErrcode else 0 })
+            startAndAwaitOnline(conn)
+
+            conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
+            val blocked = ConnectionStatus.SendFailing("bridge.wecom.sendRejected", "93000 e")
+            withTimeout(2_000) { while (statuses.lastOrNull() != blocked) delay(5) }
+
+            sendErrcode = 0
+            conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
+            withTimeout(2_000) { while (statuses.lastOrNull() != ConnectionStatus.Online) delay(5) }
+        }
+
+    @Test
+    fun `限频被拒不算发送受阻`() =
+        runBlocking {
+            val conn = connection(acker = { cmd -> if (cmd == "aibot_send_msg") 846607 else 0 })
+            startAndAwaitOnline(conn)
+            conn.send(OutboundMessage(RobotId("r"), "u1", "hi"))
+            delay(100)
+            assertTrue(statuses.toString(), statuses.none { it is ConnectionStatus.SendFailing })
+            assertEquals(ConnectionStatus.Online, statuses.last())
+        }
+
     @Test
     fun `主动推送单聊 markdown 并按确认结果返回`() =
         runBlocking {

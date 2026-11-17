@@ -26,6 +26,10 @@ internal class PeerReviewLifecycle {
     @Volatile var outcome: PeerOutcome? = null
         private set
 
+    /** 持续结对连续自动审查到上限而暂停时，记下上限轮数；用户发下一条消息、重新开启或下一轮审查开始时清除。 */
+    @Volatile var pausedAtLimit: Int? = null
+        private set
+
     val scheduled: ScheduledPeerReview? get() = (review as? Review.Scheduled)?.request
     val isOneShot: Boolean get() = review is Review.OneShot
 
@@ -46,6 +50,7 @@ internal class PeerReviewLifecycle {
     fun bind() {
         review = Review.Idle
         isHandlingFeedback = false
+        pausedAtLimit = null
         clearFailure()
     }
 
@@ -75,6 +80,16 @@ internal class PeerReviewLifecycle {
 
     fun reviewStarted() {
         outcome = null
+        pausedAtLimit = null
+    }
+
+    fun limitReached(maxRounds: Int) {
+        pausedAtLimit = maxRounds
+    }
+
+    /** 用户自己发了消息：轮数重新计，暂停随之解除。 */
+    fun userTurnStarted() {
+        pausedAtLimit = null
     }
 
     fun recordOutcome(result: PeerOutcome) {

@@ -309,6 +309,10 @@ class PeerCoordinator internal constructor(
 
     fun scheduledReview(sessionKey: String): AgentType? = reviewLifecycles[sessionKey]?.scheduled?.target
 
+    /** 持续结对因连续审查到上限而暂停时返回上限轮数，见 [PeerReviewLifecycle.pausedAtLimit]。 */
+    fun pausedAtLimit(sessionKey: String): Int? =
+        reviewLifecycles[sessionKey]?.pausedAtLimit?.takeIf { bindings.containsKey(sessionKey) }
+
     fun isHandlingOneShotFeedback(sessionKey: String): Boolean = reviewLifecycles[sessionKey]?.isHandlingFeedback == true
 
     /** 撤销预约；已有预约被撤销时返回 true。 */
@@ -381,6 +385,7 @@ class PeerCoordinator internal constructor(
         if (injectedRounds >= maxRounds) {
             guard.cancelAndDetach()?.killProcess()
             LOG.info("结对编程：已达安全上限 $maxRounds 轮，不再启动副驾驶 sessionKey=$sessionKey")
+            reviewLifecycles[sessionKey]?.limitReached(maxRounds)
             bindings[sessionKey]?.let { announce(PeerReviewEvent.Stopped(sessionKey, it.targetAgentType, PeerStopReason.MAX_ROUNDS, maxRounds)) }
             notifyStateChanged(sessionKey)
             return
@@ -449,7 +454,10 @@ class PeerCoordinator internal constructor(
             return
         }
         // 自动注入也会使主会话进入运行态，只有非注入轮次才开启新的计数周期。
-        if (sessionKey !in peerInjectedSessions) roundCounts[sessionKey]?.set(0)
+        if (sessionKey !in peerInjectedSessions) {
+            roundCounts[sessionKey]?.set(0)
+            reviewLifecycles[sessionKey]?.userTurnStarted()
+        }
         passedSessions.remove(sessionKey)
         val cancelledRun = guards[sessionKey]?.cancelAndDetach()
         cancelledRun?.killProcess()

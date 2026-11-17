@@ -162,6 +162,21 @@ class PhoneMenuTest {
     }
 
     @Test
+    fun `连着别的运行中会话、手机连接失败或被接管时显示异常而不是已连接`() {
+        val entries = phoneMenuModel(
+            listOf(robot("a"), robot("b")),
+            bindingOf = { binding(it.value, "live-${it.value}") },
+            sessionAvailable = { true },
+            statusOf = { if (it.value == "a") ConnectionStatus.Failed("auth") else ConnectionStatus.Kicked },
+            thisTabId = "this",
+            titleOf = { "live" },
+            labels = labels,
+        )
+        assertEquals(PhoneMenuEntry.Robot(RobotId("a"), "bot-a", RobotMenuState.PROBLEM, "problem:Failed(reason=auth)", true, session = "live", agent = AgentType.CODEX), entries[0])
+        assertEquals(PhoneMenuEntry.Robot(RobotId("b"), "bot-b", RobotMenuState.PROBLEM, "problem:Kicked", true, session = "live", agent = AgentType.CODEX), entries[1])
+    }
+
+    @Test
     fun `本标签尚未运行时不允许重复绑定自己但保留断开入口`() {
         val entries = phoneMenuModel(
             listOf(robot("a")),

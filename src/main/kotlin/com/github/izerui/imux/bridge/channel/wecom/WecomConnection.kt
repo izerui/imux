@@ -23,7 +23,9 @@ import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
@@ -83,6 +85,7 @@ class WecomConnection(
         val id = WecomProtocol.reqId("aibot_send_msg", now(), random)
         val ack = request(state, transport, id, wecomMediaFrame("aibot_send_msg", id, wecomMediaBody(chatId, uploaded)))
             ?: return MediaAttempt.Unknown
+        run?.let { recordSendResult(it, ack) }
         return if (ack.errcode == 0) MediaAttempt.Accepted()
         else MediaAttempt.Rejected(MediaRejected(ack.errcode.toString(), canFallback = ack.errcode != ERRCODE_RATE_LIMITED))
     }
@@ -109,36 +112,126 @@ class WecomConnection(
         }
     }
 
+    /**
+     * 一次 start() 到 stop() 的运行。状态先在 [statusLock] 内排进 [statuses]，再由该运行自己的通知协程按序交给监听器：
+     * 绝不在持锁时回调监听器。调用方常在自己的锁里调 stop()，而监听器又会去拿那把锁，持锁回调会死锁。
+     * 连接循环与发送在不同协程里上报，经同一个队列才能保证监听器收到的顺序与状态变化的顺序一致。
+     */
+    private class Run(
+        val job: Job,
+        val statuses: Channel<ConnectionStatus>,
+    )
+
     private val seen = LinkedHashSet<String>()
 
     @Volatile
     private var session: SessionState? = null
 
     @Volatile
-    private var job: Job? = null
+    private var run: Run? = null
 
-    @Volatile
-    private var activeListener: ConnectionListener = ConnectionListener { }
+    /** 下面几项只在 [statusLock] 内读写。 */
+    private val statusLock = Any()
+
+    /** 链路的真实状态，只由运行循环和 stop() 写入。 */
+    private var linkStatus: ConnectionStatus? = null
+
+    /** 发送受阻：下一次发送成功清除；跨重连保留，只在 stop() 时清除。 */
+    private var sendBlocked: ConnectionStatus.SendFailing? = null
+
+    /** 最近一次交给监听器的状态，避免重复上报相同的受阻状态。 */
+    private var shown: ConnectionStatus? = null
 
     override fun start(
         sink: InboundSink,
         listener: ConnectionListener,
     ) {
-        if (job != null) return
-        activeListener = listener
-        job = scope.launch { runLoop(sink, listener) }
+        if (run != null) return
+        lateinit var created: Run
+        val job = scope.launch(start = CoroutineStart.LAZY) { runLoop(created, sink) }
+        val statuses = Channel<ConnectionStatus>(Channel.UNLIMITED)
+        created = Run(job, statuses)
+        run = created
+        scope.launch { notify(statuses, listener) }
+        job.start()
+    }
+
+    /** 在任何锁之外按序回调；stop() 关闭队列后，交完最后的“已停止”即结束。 */
+    private suspend fun notify(
+        statuses: Channel<ConnectionStatus>,
+        listener: ConnectionListener,
+    ) {
+        for (status in statuses) {
+            try {
+                listener.statusChanged(status)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // 监听器出错不能让后续状态丢失
+            }
+        }
     }
 
     override fun stop() {
-        val j = job ?: return
-        job = null
-        j.cancel()
+        val current = run ?: return
+        run = null
+        current.job.cancel()
         session?.transport?.close()
         session = null
-        activeListener.statusChanged(ConnectionStatus.Stopped)
+        // 只入队不回调，不会阻塞在监听器上
+        synchronized(statusLock) {
+            linkStatus = ConnectionStatus.Stopped
+            sendBlocked = null
+            shown = ConnectionStatus.Stopped
+            current.statuses.trySend(ConnectionStatus.Stopped)
+            current.statuses.close()
+        }
+    }
+
+    /**
+     * 上报链路状态。发送受阻标记保留（只在 stop() 时清除）：重新在线后如实显示之前记下的受阻。
+     * 与 stop() 同锁：被取消的运行在锁内看到自己已不活跃，不会再把状态改回去。
+     */
+    private fun reportLink(
+        current: Run,
+        status: ConnectionStatus,
+    ) = synchronized(statusLock) {
+        if (!current.job.isActive) return@synchronized
+        linkStatus = status
+        val display = if (status == ConnectionStatus.Online) sendBlocked ?: ConnectionStatus.Online else status
+        shown = display
+        current.statuses.trySend(display)
+    }
+
+    /**
+     * 按发送回执记下或清除发送受阻：成功清除；被拒（限频除外，那是路由器稍后重发的事）记下错误码，
+     * 与飞书、钉钉、微信一致，让设置页和手机按钮如实显示「发送受阻」，而不是一直标着在线。
+     */
+    private fun recordSendResult(
+        current: Run,
+        ack: WecomFrame.Ack,
+    ) = when (ack.errcode) {
+        0 -> blockSend(current, null)
+        ERRCODE_RATE_LIMITED -> Unit
+        else -> blockSend(current, ConnectionStatus.SendFailing("bridge.wecom.sendRejected", "${ack.errcode} ${ack.errmsg.orEmpty()}".trim()))
+    }
+
+    private fun blockSend(
+        current: Run,
+        status: ConnectionStatus.SendFailing?,
+    ) = synchronized(statusLock) {
+        if (run !== current) return@synchronized
+        sendBlocked = status
+        // 只有链路在线时才显示受阻；断线、重试中如实显示链路状态，以便界面能发起重连
+        if (linkStatus != ConnectionStatus.Online) return@synchronized
+        val display = sendBlocked ?: ConnectionStatus.Online
+        if (display == shown) return@synchronized
+        shown = display
+        current.statuses.trySend(display)
     }
 
     override suspend fun send(message: OutboundMessage): DeliveryResult {
+        val current = run ?: return DeliveryResult.Rejected("offline")
         var s = session ?: return DeliveryResult.Rejected("offline")
         var transport = s.transport ?: return DeliveryResult.Rejected("offline")
         var wait = limiter.tryAcquire(message.chatId)
@@ -163,6 +256,7 @@ class WecomConnection(
                 // 取消挂起的 JDK WebSocket send 后，下一次 sendText 可能抛 IllegalStateException
                 return DeliveryResult.Unknown(e.javaClass.name)
             } ?: return DeliveryResult.Unknown("no ack")
+        recordSendResult(current, ack)
         return when (ack.errcode) {
             0 -> DeliveryResult.Accepted
             // 服务端的会话限频（每会话 30 条/分钟、1000 条/小时）
@@ -172,8 +266,8 @@ class WecomConnection(
     }
 
     private suspend fun runLoop(
+        current: Run,
         sink: InboundSink,
-        listener: ConnectionListener,
     ) {
         val myJob = coroutineContext.job
         var attempt = 0
@@ -182,22 +276,22 @@ class WecomConnection(
         while (myJob.isActive) {
             val failure = lastFailure
             val status = if (attempt >= REPORT_RETRYING_AFTER && failure != null) ConnectionStatus.Retrying(failure) else ConnectionStatus.Connecting
-            if (myJob.isActive) listener.statusChanged(status)
+            reportLink(current, status)
             // 认证真正通过（上线）才清零失败计数；认证前的网络中断不算，否则“认证失败、断网”交替时永远到不了上限
             when (val end =
-                runSession(sink, listener) {
+                runSession(current, sink) {
                     attempt = 0
                     authFailures = 0
                 }) {
                 SessionEnd.Kicked -> {
-                    if (myJob.isActive) listener.statusChanged(ConnectionStatus.Kicked)
+                    reportLink(current, ConnectionStatus.Kicked)
                     return
                 }
                 is SessionEnd.AuthFailed -> {
                     lastFailure = end.reason
                     authFailures++
                     if (authFailures >= MAX_AUTH_FAILURES) {
-                        if (myJob.isActive) listener.statusChanged(ConnectionStatus.Failed(end.reason))
+                        reportLink(current, ConnectionStatus.Failed(end.reason))
                         return
                     }
                 }
@@ -209,8 +303,8 @@ class WecomConnection(
     }
 
     private suspend fun runSession(
+        current: Run,
         sink: InboundSink,
-        listener: ConnectionListener,
         onOnline: () -> Unit,
     ): SessionEnd {
         val state = SessionState()
@@ -244,8 +338,7 @@ class WecomConnection(
             coroutineContext.ensureActive()
             this@WecomConnection.session = state
             onOnline()
-            val myJob = coroutineContext.job
-            if (myJob.isActive) listener.statusChanged(ConnectionStatus.Online)
+            reportLink(current, ConnectionStatus.Online)
             return coroutineScope {
                 val heartbeat = launch { heartbeat(state, transport, ended) }
                 val end = ended.await()
