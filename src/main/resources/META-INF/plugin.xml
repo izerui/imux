@@ -34,7 +34,7 @@
       <p><b>Sessions</b></p>
       <ul>
         <li>The <b>AI Agents</b> tool window groups sessions by agent; running sessions show a spinner, sessions with new replies are shown in bold</li>
-        <li>Sessions run in <b>editor tabs</b> next to your code: split, reorder, or drag them to another window</li>
+        <li>Sessions run in <b>editor tabs</b> next to your code: reorder them or drag them to another window</li>
         <li>Double-click any past session to resume it</li>
         <li><b>Notifications</b> when a turn finishes or needs your input, with duration and session title</li>
         <li><b>Message navigation</b>: jump to any earlier prompt in a long session</li>

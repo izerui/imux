@@ -94,7 +94,7 @@ class SessionKeyMigrationTest {
         assertTrue(
             "如果重复目标正是用户刚点击的标签页，关闭它以后必须激活迁移后的源终端，" +
                 "否则界面会退回之前的代码编辑器，看起来仍像点击没有打开",
-            host.contains("if (activateMigrated) FileEditorManager.getInstance(project).openFile(file, true)"),
+            host.contains("if (activateMigrated) openSelected(file)"),
         )
     }
 

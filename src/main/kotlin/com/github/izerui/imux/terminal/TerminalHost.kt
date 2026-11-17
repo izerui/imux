@@ -394,7 +394,7 @@ class TerminalHost(
         file.sessionId = newKey
         updateTabTitle(file, newTitle)
         persistRestorableTabs()
-        if (activateMigrated) FileEditorManager.getInstance(project).openFile(file, true)
+        if (activateMigrated) openSelected(file)
 
         // 界面得知道 key 变了，否则列表的选中态会一直停在旧会话上——
         // `/clear`、`/new` 不产生标签页切换事件，selectionChanged 那条通路不会响。
@@ -578,13 +578,26 @@ class TerminalHost(
                     .also(::closeTabWhenTerminated)
             }
         if (selectAsCurrent) {
-            FileEditorManager.getInstance(project).openFile(file, true)
+            openSelected(file)
         } else {
             openWithoutSelecting(file)
         }
         persistRestorableTabs()
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedDispatcher.multicaster.sessionsChanged()
+    }
+
+    /**
+     * 选中并聚焦会话标签；还没打开就在当前编辑器组打开。
+     *
+     * 已开着时不能直接 `openFile(file, true)`：默认设置下它打开到当前编辑器组，而会话文件禁止分屏
+     * （见 [AgentTerminalVirtualFile]），标签若在另一组或另一个窗口，平台会先 `closeFile` 再到当前组重开。
+     * 这次关闭不带 `CLOSING_TO_REOPEN`，编辑器会当成真关闭而结束 CLI。所以先把它所在的组设为当前组，再打开就只是选中。
+     */
+    private fun openSelected(file: AgentTerminalVirtualFile) {
+        val manager = FileEditorManagerEx.getInstanceEx(project)
+        manager.windows.firstOrNull { it.isFileOpen(file) }?.let { manager.currentWindow = it }
+        manager.openFile(file, true)
     }
 
     /**
@@ -602,6 +615,8 @@ class TerminalHost(
      */
     private fun openWithoutSelecting(file: AgentTerminalVirtualFile) {
         val manager = FileEditorManagerEx.getInstanceEx(project)
+        // 已开着就什么都不做（原本两步下来也是原样），也避开 [openSelected] 里说的关闭再重开
+        if (manager.isFileOpen(file)) return
         val previous = manager.currentWindow?.selectedFile
         manager.openFile(file, false)
         if (previous != null && previous != file) manager.openFile(previous, false)

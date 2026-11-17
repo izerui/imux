@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentType
+import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.fileTypes.ex.FakeFileType
 import com.intellij.openapi.vfs.VirtualFile
@@ -31,8 +32,16 @@ class AgentTerminalVirtualFile(
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
 
-    /** 右上角会话轨迹面板是否展开。放在会话上：拖动标签页重建编辑器后保持，同一会话的多个编辑器实例一致。 */
+    /** 右上角会话轨迹面板是否展开。放在会话上：拖动标签页重建编辑器后保持。 */
     var trailExpanded: Boolean = false
+
+    init {
+        // 一个会话只对应一个编辑器：终端组件只有一份，分屏出的第二个编辑器会把它挪走，
+        // 让原分屏变空白；关掉任一分屏又会被当成关闭标签而结束会话。平台的分屏动作、
+        // 「在右侧分屏打开」、在另一窗口再打开同一文件都认这个标记（工具窗口标签页同样这么做）。
+        // 拖到边缘是移动而非复制，原编辑器带 CLOSING_TO_REOPEN 销毁，不受影响。
+        putUserData(FileEditorManagerKeys.FORBID_TAB_SPLIT, true)
+    }
 
     val displayName: String
         get() = "${agentType.cli}: $tabTitle"

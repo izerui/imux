@@ -833,12 +833,13 @@ class AgentTerminalFileEditor(
         // 同理：终端编辑器会被新实例沿用，收起监听要摘干净，免得点一下去调已销毁的面板
         trailOutsideClicks.dispose()
 
-        // 拖动标签页、分屏等操作会先销毁再重建编辑器，平台用这个标记区分。
+        // 拖动标签页等操作会先销毁再重建编辑器，平台用这个标记区分。
+        // 分屏已被禁止（见 AgentTerminalVirtualFile），所以走到下面就是这个会话唯一的编辑器在关闭。
         // 漏判会导致拖一下标签页就把会话杀了。
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return
 
         val sessionKey = virtualFile.sessionKey
-        // 会话真正关闭才取消轨迹生成；拖动标签页、分屏重建已在上面早退，任务继续。
+        // 会话真正关闭才取消轨迹生成；拖动标签页重建已在上面早退，任务继续。
         // 按 tabId 而不是当前 sessionKey 清理：/clear、/new 迁移前仍在跑的任务登记在旧 key 下
         com.github.izerui.imux.overview.ProgressOverviewService
             .getInstance(project)
