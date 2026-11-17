@@ -39,7 +39,8 @@ class AgentTerminalVirtualFile(
         // 一个会话只对应一个编辑器：终端组件只有一份，分屏出的第二个编辑器会把它挪走，
         // 让原分屏变空白；关掉任一分屏又会被当成关闭标签而结束会话。平台的分屏动作、
         // 「在右侧分屏打开」、在另一窗口再打开同一文件都认这个标记（工具窗口标签页同样这么做）。
-        // 拖到边缘是移动而非复制，原编辑器带 CLOSING_TO_REOPEN 销毁，不受影响。
+        // 拖到边缘是移动而非复制，原编辑器带 CLOSING_TO_REOPEN 销毁，不受影响；
+        // 右键的 Split and Move 也是移动但平台不带这个标记，由 AgentSplitAndMoveGuard 补上。
         putUserData(FileEditorManagerKeys.FORBID_TAB_SPLIT, true)
     }
 

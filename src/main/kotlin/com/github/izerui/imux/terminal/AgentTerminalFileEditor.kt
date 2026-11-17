@@ -841,7 +841,7 @@ class AgentTerminalFileEditor(
         // 同理：终端编辑器会被新实例沿用，收起监听要摘干净，免得点一下去调已销毁的面板
         trailOutsideClicks.dispose()
 
-        // 拖动标签页等操作会先销毁再重建编辑器，平台用这个标记区分。
+        // 拖动标签页、Split and Move（见 AgentSplitAndMoveGuard）会先销毁再重建编辑器，用这个标记区分。
         // 分屏已被禁止（见 AgentTerminalVirtualFile），所以走到下面就是这个会话唯一的编辑器在关闭。
         // 漏判会导致拖一下标签页就把会话杀了。
         if (virtualFile.getUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN) == true) return

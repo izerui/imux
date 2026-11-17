@@ -202,6 +202,12 @@
         <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
     </extensions>
 
+    <applicationListeners>
+        <!-- 标签右键 Split and Move 不认 FORBID_TAB_SPLIT，按移动处理，免得把会话关掉 -->
+        <listener class="com.github.izerui.imux.terminal.AgentSplitAndMoveGuard"
+                  topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
+    </applicationListeners>
+
     <actions>
         <group
                 id="imux.ProjectNewAgent"
