@@ -61,6 +61,7 @@ class TerminalHostWiringSourceTest {
      * - `piExtensions` 传空 → pi 的标签不跟随，也拿不到 IDEA MCP
      * - `ideaMcp` 传 null → Claude 与 Codex 不会获得 IDEA 能力，也拿不到项目定向请求头
      * - `ideaMcpGuidance` 传 null → 用户开启的提示词引导不生效
+     * - `newSession` 漏掉 → claude 把预分配的 id 当成旧会话 `--resume`，找不到会话直接退出
      *
      * 整段比对而不是逐条 `contains`：这些实参都是具名的，逐条 `contains("pidFile")`
      * 在改成 `pidFile = null` 之后照样命中。
@@ -89,6 +90,7 @@ class TerminalHostWiringSourceTest {
                     pidFile = tabPidFileFor(tabId),
                     additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
                     claudeSettings = launchContributions[tabId]?.claudeSettings,
+                    newSession = true,
                 )
             }
             """,

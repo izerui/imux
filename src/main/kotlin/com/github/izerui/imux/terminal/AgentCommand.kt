@@ -27,6 +27,9 @@ import com.google.gson.JsonObject
  *
  * [pidFile] 只在 Windows 上有值（由调用点按平台决定），用来让 shell 自报 pid；
  * POSIX 方言下 [pidFileRecordCommand] 恒为 null，macOS 与 Linux 的命令行一个字不加。
+ *
+ * [newSession] 为 true 时 [resumeId] 是新建前预分配的 id（见 [preassignedSessionId]），
+ * 而不是要续聊的旧会话：claude 据此改用 `--session-id` 创建，pi 两种情形同一条命令。
  */
 internal fun launchCommand(
     shell: String,
@@ -39,6 +42,7 @@ internal fun launchCommand(
     pidFile: String? = null,
     additionalMcpServers: List<TerminalMcpServer> = emptyList(),
     claudeSettings: String? = null,
+    newSession: Boolean = false,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = agentType.cli
@@ -69,6 +73,12 @@ internal fun launchCommand(
                     // 启动失败，而少一个集成扩展只会让对应能力降级。
                     piExtensions.forEach { append(" -e ${quote(dialect, it.toString())}") }
                 }
+            }
+
+            // claude 的 --session-id 只能创建：id 已存在会直接报错退出，所以只用于新建，
+            // 续聊仍走 --resume。
+            agentType == AgentType.CLAUDE && newSession -> {
+                listOfNotNull(cli, ideaMcpArgument, settingsArgument, "--session-id", quote(dialect, resumeId)).joinToString(" ")
             }
 
             agentType == AgentType.CODEX -> {
@@ -327,11 +337,12 @@ internal fun ideaMcpEnvironment(
 /**
  * 新建会话时预先定下的会话 id，没有则返回 null。
  *
- * 只有 pi 有：它的 `--session-id` 接受任意 id，不存在就以该 id 创建，于是标签页与会话
- * 从启动那一刻起就是确定的，不必等 CLI 落盘后再靠时间窗去猜是哪一个
+ * pi 的 `--session-id` 接受任意 id，claude 的 `--session-id` 接受任意 UUID（会话文件即以它命名），
+ * 于是标签页与会话从启动那一刻起就是确定的，不必等 CLI 落盘后再靠时间窗去猜是哪一个
  * （见 [com.github.izerui.imux.session.SessionListModel.registerPending]）。
+ * 时间窗猜测在同时新建两个会话、却先在后开的那个里发言时会把两边绑反，且绑反后无从纠正。
  *
- * claude 与 codex 没有对应能力，id 只能由 CLI 自己生成、插件事后认领。
+ * codex 没有对应能力，id 只能由 CLI 自己生成、插件事后认领。
  */
 internal fun preassignedSessionId(
     agentType: AgentType,
@@ -340,7 +351,7 @@ internal fun preassignedSessionId(
             .randomUUID()
             .toString()
     },
-): String? = if (agentType == AgentType.PI) newId() else null
+): String? = if (agentType == AgentType.PI || agentType == AgentType.CLAUDE) newId() else null
 
 /**
  * 交给终端或 `ProcessBuilder` 的 shell 可执行文件。

@@ -49,8 +49,12 @@ class TerminalBridgeService(
     private val tails =
         TailRegistry(
             bindingForTab = { hub.bindings.bindingForTab(it) },
+            // 终端还没换到这个 id 之前不认文件：新建时 id 是预分配的（claude、pi），扫描结果
+            // 先于换 key 可见；此时建起的尾随器从末尾读，又早于迁移登记，会漏掉首轮回复
             sessionFile = { id ->
-                SessionMonitor.getInstance(project).model.sessionOf(id)?.let { SessionFile(it.filePath, it.createdAt) }
+                id.takeIf { TerminalHost.getInstance(project).terminalViewOf(it) != null }
+                    ?.let { SessionMonitor.getInstance(project).model.sessionOf(it) }
+                    ?.let { SessionFile(it.filePath, it.createdAt) }
             },
             switchGeneration = { 0L },
         )

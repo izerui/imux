@@ -766,6 +766,7 @@ class TerminalHost(
             pidFile = tabPidFileFor(tabId),
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
             claudeSettings = launchContributions[tabId]?.claudeSettings,
+            newSession = true,
         )
     }
 

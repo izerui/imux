@@ -282,12 +282,47 @@ class AgentCommandTest {
     }
 
     @Test
-    fun `只有 pi 在新建时预先确定会话 id`() {
-        // claude 与 codex 的 id 由 CLI 自己生成，插件事后再认领；
-        // 替它们预分配 id 既做不到，也会让绑定逻辑凭空多一条假设。
-        assertNull(preassignedSessionId(AgentType.CLAUDE))
+    fun `claude 与 pi 在新建时预先确定会话 id，codex 不预分配`() {
+        // codex 没有指定 id 新建的参数，只能由 CLI 自己生成、插件事后认领
+        assertEquals("uuid-1", preassignedSessionId(AgentType.CLAUDE) { "uuid-1" })
+        assertEquals("uuid-2", preassignedSessionId(AgentType.PI) { "uuid-2" })
         assertNull(preassignedSessionId(AgentType.CODEX))
-        assertEquals("uuid-1", preassignedSessionId(AgentType.PI) { "uuid-1" })
+    }
+
+    @Test
+    fun `claude 新建时用 --session-id 创建，续聊仍用 --resume`() {
+        // --session-id 遇到已存在的 id 会报错退出，所以续聊绝不能走它
+        assertEquals(
+            "claude --session-id 'abc-123'",
+            launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = "abc-123", newSession = true).last(),
+        )
+        assertEquals("claude --resume 'abc-123'", launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = "abc-123").last())
+    }
+
+    @Test
+    fun `claude 新建时 --session-id 排在注入的配置之后、初始提示词之前`() {
+        val command =
+            launchCommand(
+                "/bin/zsh",
+                AgentType.CLAUDE,
+                resumeId = "abc-123",
+                ideaMcp = IDEA_MCP,
+                initialPrompt = "说 hi",
+                claudeSettings = "{}",
+                newSession = true,
+            ).last()
+
+        assertTrue(command, command.contains("--settings '{}' --session-id 'abc-123' -- '说 hi'"))
+        assertTrue(command, command.indexOf("--mcp-config") < command.indexOf("--session-id"))
+    }
+
+    @Test
+    fun `newSession 不改变 pi 与 codex 的命令`() {
+        assertEquals(
+            launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123").last(),
+            launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", newSession = true).last(),
+        )
+        assertEquals("codex", launchCommand("/bin/zsh", AgentType.CODEX, resumeId = null, newSession = true).last())
     }
 
     @Test
