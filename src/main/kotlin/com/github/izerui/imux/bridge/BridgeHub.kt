@@ -1,6 +1,7 @@
 package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.bridge.channel.ConnectionStatus
+import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.BindingRegistry
 import com.github.izerui.imux.bridge.core.BridgeRouter
 import com.github.izerui.imux.bridge.core.ChannelAdapter
@@ -109,10 +110,15 @@ class BridgeHub(parentScope: CoroutineScope) {
         if (owner != null) owners[adapter.robotId] = owner else owners.remove(adapter.robotId)
     }
 
+    /**
+     * 删除机器人：摘掉渠道与本人，解绑并做与断开相同的清理（[BridgeRouter.onReleased]）——推给这台手机还没答的确认交还电脑，
+     * 否则 CLI 一直等一台已经不存在的手机作答；标签的轮次状态也一并清掉。
+     * 先摘渠道再清理：机器人都删了，不再给它的手机发「已断开」。
+     */
     fun unregisterRobot(robotId: RobotId) {
-        bindings.unbind(robotId)
         channels.remove(robotId)
         owners.remove(robotId)
+        releaseDeletedRobot(robotId, bindings) { released -> scope.launch { router.onReleased(released, "") } }
     }
 
     /** 停止连接时调用：摘除渠道与本人，但保留绑定，重新连接后继续生效。 */
@@ -128,6 +134,15 @@ class BridgeHub(parentScope: CoroutineScope) {
 
         fun getInstance(): BridgeHub = ApplicationManager.getApplication().getService(BridgeHub::class.java)
     }
+}
+
+/** 删除机器人时解绑；原先确有绑定才交给 [release] 做断开的清理（见 [BridgeHub.unregisterRobot]）。 */
+internal fun releaseDeletedRobot(
+    robotId: RobotId,
+    bindings: BindingRegistry,
+    release: (Binding) -> Unit,
+) {
+    bindings.unbind(robotId)?.let(release)
 }
 
 /** 一条出站结果的日志。[warn] 为 false 时记 INFO。 */
