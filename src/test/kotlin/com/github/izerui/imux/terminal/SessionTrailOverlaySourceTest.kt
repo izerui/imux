@@ -158,14 +158,17 @@ class SessionTrailOverlaySourceTest {
     }
 
     @Test
-    fun `报告写入排队进行，轮到时已过期的那次不写，免得旧报告盖掉新的`() {
+    fun `报告写入按会话领号，过期的不写；切到非报告状态与面板释放都作废待写的`() {
         val show = overlay.bodyAfter("private fun showReport(", '{')
-        val lock = show.indexOf("synchronized(service.reportWriteLock)")
-        val stale = show.indexOf("request != reportRequest")
+        val ticket = show.indexOf("reportWrites.ticket(sessionKey)")
+        val gated = show.indexOf("reportWrites.runIfLatest(sessionKey, ticket)")
         val write = show.indexOf(".writeReport(")
-        assertTrue("写入要排队：$show", lock >= 0)
-        assertTrue("排到之后先看自己是不是过期了，再写：$show", stale > lock && write > stale)
-        assertTrue("请求序号跨线程读：要 @Volatile", overlay.normalized.contains("@Volatile private var reportRequest"))
+        assertTrue("按会话领号：$show", ticket >= 0)
+        assertTrue("号还是最新的才写：$show", gated > ticket && write > gated)
+        val content = overlay.bodyAfter("private fun contentFor(", '{')
+        assertTrue("切到非报告状态作废待写：$content", content.contains("reportWrites.ticket(key)"))
+        val dispose = overlay.bodyAfter("override fun dispose()", '{')
+        assertTrue("面板释放后写完也不再更新它：$dispose", dispose.contains("reportRequest++"))
     }
 
     @Test

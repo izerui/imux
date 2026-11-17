@@ -1,0 +1,57 @@
+package com.github.izerui.imux.overview.report
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/** 「只写同一会话最新的那次」按会话判断，不按面板：标签页拖动重建后，旧面板排队的写入不能把新报告盖回旧的。 */
+class LatestReportWritesTest {
+    @Test
+    fun `标签页重建后旧面板排队的写入晚执行时，不会把新报告盖回旧的`() {
+        val root = Files.createTempDirectory("project")
+        val writes = LatestReportWrites()
+        val oldPanel = writes.ticket("s1")
+        val newPanel = writes.ticket("s1")
+
+        assertTrue(writes.runIfLatest("s1", newPanel) { writeReportFile(root, "s1", "<html>新</html>") })
+        assertFalse("旧面板的号已过期，不写", writes.runIfLatest("s1", oldPanel) { writeReportFile(root, "s1", "<html>旧</html>") })
+
+        assertEquals("<html>新</html>", Files.readString(reportFile(root, "s1")))
+    }
+
+    @Test
+    fun `不同会话各自发号互不作废`() {
+        val writes = LatestReportWrites()
+        val a = writes.ticket("a")
+        writes.ticket("b")
+        assertTrue(writes.runIfLatest("a", a) {})
+    }
+
+    @Test
+    fun `作废之后排队中的写入都不再执行`() {
+        val writes = LatestReportWrites()
+        val pending = writes.ticket("s1")
+        writes.ticket("s1")
+        assertFalse(writes.runIfLatest("s1", pending) { error("不应执行") })
+    }
+
+    @Test
+    fun `并发的两次写入一次只进行一个，较早的号排到后面也会跳过`() {
+        val root = Files.createTempDirectory("project")
+        val writes = LatestReportWrites()
+        val oldTicket = writes.ticket("s1")
+        val newTicket = writes.ticket("s1")
+        val pool = Executors.newFixedThreadPool(2)
+        val newWritten = CountDownLatch(1)
+        pool.submit { writes.runIfLatest("s1", newTicket) { writeReportFile(root, "s1", "<html>新</html>") }; newWritten.countDown() }
+        pool.submit { newWritten.await(); writes.runIfLatest("s1", oldTicket) { writeReportFile(root, "s1", "<html>旧</html>") } }
+        pool.shutdown()
+        assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
+        assertEquals("<html>新</html>", Files.readString(reportFile(root, "s1")))
+    }
+}

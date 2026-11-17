@@ -10,6 +10,7 @@ import com.github.izerui.imux.agent.oneShotAgentInvocation
 import com.github.izerui.imux.agent.runOneShotAgent
 import com.github.izerui.imux.agent.runTracked
 import com.github.izerui.imux.monitor.SessionMonitor
+import com.github.izerui.imux.overview.report.LatestReportWrites
 import com.github.izerui.imux.overview.report.REPORT_TEMPLATE
 import com.github.izerui.imux.overview.report.ReportFacts
 import com.github.izerui.imux.overview.report.ReportSession
@@ -314,8 +315,8 @@ class ProgressOverviewService(
         return cachedView(cached, session.filePath)
     }
 
-    /** 报告文件的写入一次只进行一个（见 SessionTrailOverlay.showReport）。 */
-    internal val reportWriteLock = Any()
+    /** 报告文件的写入闸门：按会话只写最新那次，一次只写一个（见 SessionTrailOverlay.showReport）。 */
+    internal val reportWrites = LatestReportWrites()
 
     private val reportTemplate: String by lazy {
         ProgressOverviewService::class.java.getResourceAsStream(REPORT_TEMPLATE)!!.use { String(it.readAllBytes(), Charsets.UTF_8) }

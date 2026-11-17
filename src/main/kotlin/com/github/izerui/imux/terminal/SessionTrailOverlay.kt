@@ -154,8 +154,8 @@ internal class SessionTrailOverlay(
     /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。写入失败时为 null。 */
     private var shownReport: Path? = null
 
-    /** 写报告文件的请求序号：后台排到写入时、写完回到界面线程时，都只认最近一次。界面线程写、后台线程读。 */
-    @Volatile private var reportRequest = 0
+    /** 本面板的请求序号：写完回到界面线程时只认最近一次（写不写由服务按会话判断，见 [showReport]）。 */
+    private var reportRequest = 0
 
     private val updateAction =
         object : DumbAwareAction(AllIcons.Actions.Refresh) {
@@ -319,7 +319,8 @@ internal class SessionTrailOverlay(
     private fun contentFor(state: TrailState): JComponent {
         val regenerate = { store.generate(key, virtualFile.tabId) }
         if (showsReport(state)) return reportContent(state, regenerate)
-        // 不再显示报告：还在后台写的那次作废，写完也不再动按钮和视图
+        // 不再显示报告：还在后台排队的写入作废，写完也不再动按钮和视图
+        ProgressOverviewService.getInstance(project).reportWrites.ticket(key)
         reportRequest++
         shownReport = null
         return when (state) {
@@ -394,12 +395,13 @@ internal class SessionTrailOverlay(
         val request = ++reportRequest
         val sessionKey = key
         val service = ProgressOverviewService.getInstance(project)
+        // 按会话领号：同一会话后来的请求（含标签页重建后的新面板）一领号，这次就过期了
+        val ticket = service.reportWrites.ticket(sessionKey)
         ApplicationManager.getApplication().executeOnPooledThread {
             // 写入排队进行；排到时已有更新的请求就不写，免得较早的一次后写完，把新报告盖回旧的
-            val write = synchronized(service.reportWriteLock) {
-                if (request != reportRequest) return@executeOnPooledThread
-                service.writeReport(sessionKey, result)
-            }
+            var write: ReportWrite? = null
+            val wrote = service.reportWrites.runIfLatest(sessionKey, ticket) { write = service.writeReport(sessionKey, result) }
+            if (!wrote) return@executeOnPooledThread
             ApplicationManager.getApplication().invokeLater({
                 if (!disposed && request == reportRequest) applyReport(view, result, banners, write)
             }, ModalityState.any())
@@ -487,6 +489,8 @@ internal class SessionTrailOverlay(
 
     override fun dispose() {
         disposed = true
+        // 还在后台写的那次写完后不再更新这个面板（写不写由服务按会话判断，新面板一领号它就过期）
+        reportRequest++
         loadingTimer.stop()
     }
 
