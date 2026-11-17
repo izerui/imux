@@ -543,8 +543,8 @@ internal class SessionTrailOverlay(
             val size = dragSize ?: return
             start = null
             dragSize = null
-            // 两边都存眼前看到的：只拖宽时若高度仍存默认值，放不下时会被同比缩回去
-            TrailSizeSetting.save(JBUI.unscale(size.width), JBUI.unscale(size.height))
+            val height = heightToSave(resizeHeight, showsReport(renderedState), JBUI.unscale(size.height), TrailSizeSetting.height())
+            TrailSizeSetting.save(JBUI.unscale(size.width), height)
             relayout()
         }
 

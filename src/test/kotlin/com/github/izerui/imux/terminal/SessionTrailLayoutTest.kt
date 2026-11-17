@@ -170,4 +170,11 @@ class SessionTrailLayoutTest {
         assertTrue(layout.bodyAfter("fun reset(", '{').contains("unsetValue(WIDTH_KEY)"))
         assertTrue(layout.bodyAfter("fun reset(", '{').contains("unsetValue(HEIGHT_KEY)"))
     }
+
+    @Test
+    fun `在紧凑面板上只拖宽时不保存紧凑高度，拖了下边缘或正显示报告时保存`() {
+        assertEquals("紧凑面板上只拖宽：沿用已存的高度", 1127, heightToSave(resizedHeight = false, showingReport = false, shownHeight = 140, storedHeight = 1127))
+        assertEquals("拖了下边缘：存眼前的高度", 300, heightToSave(resizedHeight = true, showingReport = false, shownHeight = 300, storedHeight = 1127))
+        assertEquals("正显示报告时只拖宽：存眼前的高度，免得放不下时被缩回去", 800, heightToSave(resizedHeight = false, showingReport = true, shownHeight = 800, storedHeight = 1127))
+    }
 }

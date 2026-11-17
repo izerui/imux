@@ -167,4 +167,10 @@ class SessionTrailOverlaySourceTest {
         assertTrue("排到之后先看自己是不是过期了，再写：$show", stale > lock && write > stale)
         assertTrue("请求序号跨线程读：要 @Volatile", overlay.normalized.contains("@Volatile private var reportRequest"))
     }
+
+    @Test
+    fun `拖拽松手按 heightToSave 决定存不存高度`() {
+        val released = overlay.bodyAfter("override fun mouseReleased(", '{')
+        assertTrue(released, released.contains("heightToSave(resizeHeight, showsReport(renderedState),"))
+    }
 }

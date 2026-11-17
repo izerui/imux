@@ -84,6 +84,13 @@ internal fun fitKeepingRatio(
     return Dimension(width, (desiredHeight * scale).toInt())
 }
 
+/**
+ * 拖拽松手时要存的高度（未缩放）：拖了下边缘、或当时显示的就是报告页，存眼前的高度；
+ * 只在提示、加载、报错这类紧凑面板上拖了宽度时，眼前只是紧凑高度，沿用已存的高度，免得报告页以后一直被压成一条。
+ */
+internal fun heightToSave(resizedHeight: Boolean, showingReport: Boolean, shownHeight: Int, storedHeight: Int): Int =
+    if (resizedHeight || showingReport) shownHeight else storedHeight
+
 /** 夹在 [min, available] 之间；可用区域比下限还小时取可用区域。 */
 private fun fit(desired: Int, min: Int, available: Int): Int {
     val max = available.coerceAtLeast(0)

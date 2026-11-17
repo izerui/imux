@@ -26,7 +26,8 @@ import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * 把附件存到绑定会话所在项目的 `.imux/attachments/<日期>/`：Agent 读取项目内文件不会触发权限确认。
- * 顺带把 `.imux/` 写进本地 `.git/info/exclude`，并清理过期的日期目录。
+ * 顺带让 `.imux/` 不进 Git：写进本地 `.git/info/exclude`，并放一个内容为 `*` 的 `.imux/.gitignore`
+ * （工程只是大仓库里的子目录、根下没有 `.git` 时也有效；两者任一写不进去都不影响保存）。另外清理过期的日期目录。
  */
 class ProjectAttachmentStore(
     private val clock: () -> LocalDateTime = LocalDateTime::now,
