@@ -280,6 +280,9 @@ internal fun runTrailGeneration(
     val nodes = sanitizeNodeTimes(report.timeline, startedAt)
     // 时长与改动文件只是附加信息：统计出错（比如会话文件恰好被删）就当没有，不能把智能体写好的报告一起丢掉
     val reportFacts = runCatching { facts(cursor) }.getOrElse { ReportFacts() }
+    // 统计期间被取消时，中断让读文件抛错、上面当作「统计不出来」吞掉了；不能接着把这份缺了统计的报告存进缓存，
+    // 否则界面已恢复成旧报告，下次从缓存加载却是残缺的新报告，还按最新进度记着、不提示过期
+    if (isCancelled()) throw java.util.concurrent.CancellationException("Overview generation cancelled")
     val result = OverviewResult(nodes, Instant.now(), report = report.copy(timeline = nodes, facts = reportFacts))
     return storeOverview(cache, sessionKey, result, sessionFile, cursor)
 }
