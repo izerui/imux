@@ -13,12 +13,21 @@ import java.util.concurrent.atomic.AtomicLong
  * 不同会话互不阻塞。拿到锁后才比号：正在写的那次照常写完，排在后面的新请求随后覆盖，新报告不会被旧的盖掉。
  *
  * 谁写和谁显示分开：写好（或写失败）后通知所有监听者，同一会话在几个分屏里显示时，号过期没去写的面板也拿到最新的报告。
+ * 通知按会话只发号更新的：旧请求写完后线程被暂停、新请求先写好并通知了，旧的那条（比如「写入失败」）晚到就丢掉，
+ * 不会把已经显示好的新报告又盖成失败。判断与发出在同一把小锁里，这把锁只转一手通知，不碰磁盘，领号也不经过它。
  */
-internal class LatestReportWrites {
+internal class LatestReportWrites(
+    /** 测试钩子：写完、发通知之前调用，用来复现线程在这里被暂停。 */
+    private val beforeNotify: (sessionKey: String, ticket: Long) -> Unit = { _, _ -> },
+) {
     private val counter = AtomicLong()
     private val latest = ConcurrentHashMap<String, Long>()
     private val locks = ConcurrentHashMap<String, Any>()
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, ReportWrite?) -> Unit>()
+
+    /** 各会话已经通知到的号；只在 [notifyLocks] 里读写。 */
+    private val notified = ConcurrentHashMap<String, Long>()
+    private val notifyLocks = ConcurrentHashMap<String, Any>()
 
     /** 监听每次写好的报告（会话键与结果，写入失败为 null）；在后台线程回调。返回注销函数。 */
     fun addListener(listener: (String, ReportWrite?) -> Unit): () -> Unit {
@@ -41,7 +50,13 @@ internal class LatestReportWrites {
                 if (latest[sessionKey] != ticket) return false
                 write()
             }
-        listeners.forEach { it(sessionKey, result) }
+        beforeNotify(sessionKey, ticket)
+        synchronized(notifyLocks.computeIfAbsent(sessionKey) { Any() }) {
+            // 更新的那次已经通知过：这条是晚到的旧结果，丢掉
+            if (ticket <= (notified[sessionKey] ?: 0L)) return true
+            notified[sessionKey] = ticket
+            listeners.forEach { it(sessionKey, result) }
+        }
         return true
     }
 }

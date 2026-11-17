@@ -135,4 +135,30 @@ class LatestReportWritesTest {
 
         assertEquals(listOf<Pair<String, ReportWrite?>>("s1" to null), heard)
     }
+
+    @Test
+    fun `旧请求写失败后的通知晚于新请求的成功通知到达时被丢掉`() {
+        val root = Files.createTempDirectory("project")
+        val oldWritten = CountDownLatch(1)
+        val releaseOld = CountDownLatch(1)
+        var oldTicket = -1L
+        // 测试钩子：旧请求写完、发通知之前在这里卡住
+        val writes = LatestReportWrites(beforeNotify = { _, ticket -> if (ticket == oldTicket) { oldWritten.countDown(); releaseOld.await() } })
+        val heard = java.util.Collections.synchronizedList(mutableListOf<Pair<String, ReportWrite?>>())
+        writes.addListener { key, write -> heard += key to write }
+
+        oldTicket = writes.ticket("s1")
+        val old = daemonPool().apply {
+            submit { writes.runIfLatest("s1", oldTicket) { null } }
+            shutdown()
+        }
+        assertTrue("旧请求已写完（失败），停在通知前", oldWritten.await(5, TimeUnit.SECONDS))
+
+        val newWrite = writeReportFile(root, "s1", "<html>新</html>")
+        assertTrue(writes.runIfLatest("s1", writes.ticket("s1")) { newWrite })
+        releaseOld.countDown()
+        assertTrue(old.awaitTermination(5, TimeUnit.SECONDS))
+
+        assertEquals("只剩新请求的成功通知", listOf<Pair<String, ReportWrite?>>("s1" to newWrite), heard.toList())
+    }
 }
