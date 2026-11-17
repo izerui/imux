@@ -54,4 +54,52 @@ class LatestReportWritesTest {
         assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS))
         assertEquals("<html>新</html>", Files.readString(reportFile(root, "s1")))
     }
+
+    /** 模拟慢盘：写入在 [release] 放行前一直卡着。 */
+    private fun daemonPool() = Executors.newSingleThreadExecutor { Thread(it).apply { isDaemon = true } }
+
+    private fun slowWrite(writes: LatestReportWrites, key: String, started: CountDownLatch, release: CountDownLatch) =
+        daemonPool().apply {
+            val ticket = writes.ticket(key)
+            submit { writes.runIfLatest(key, ticket) { started.countDown(); release.await() } }
+            shutdown()
+        }
+
+    @Test
+    fun `后台正在写报告时，界面线程领号不用等磁盘`() {
+        val writes = LatestReportWrites()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val writer = slowWrite(writes, "s1", started, release)
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            val ticketing = daemonPool()
+            val sameSession = ticketing.submit<Long> { writes.ticket("s1") }
+            val otherSession = ticketing.submit<Long> { writes.ticket("s2") }
+            ticketing.shutdown()
+            assertTrue("同一会话正在写时领号也不能卡住", sameSession.get(1, TimeUnit.SECONDS) > 0)
+            assertTrue("别的会话领号同样不能卡住", otherSession.get(1, TimeUnit.SECONDS) > 0)
+        } finally {
+            release.countDown()
+            writer.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun `一个会话正在写时不挡住别的会话写入`() {
+        val writes = LatestReportWrites()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val writer = slowWrite(writes, "s1", started, release)
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+        try {
+            val other = daemonPool()
+            val wrote = other.submit<Boolean> { writes.runIfLatest("s2", writes.ticket("s2")) {} }
+            other.shutdown()
+            assertTrue(wrote.get(1, TimeUnit.SECONDS))
+        } finally {
+            release.countDown()
+            writer.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
 }
