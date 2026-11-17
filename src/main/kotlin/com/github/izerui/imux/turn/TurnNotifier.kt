@@ -23,12 +23,12 @@ object TurnNotifier {
     private const val GROUP_ID = "imux.turnCompleted"
 
     /**
-     * 尚未消失的通知，按会话 id 索引。
+     * 尚未消失的通知，按会话 id 索引，每个会话只留最新一条。
      *
      * 用途是「用户从别处打开了该会话」时把对应通知一并撤掉——
      * 提醒已经完成使命，留着就是噪音。
      */
-    private val active = ConcurrentHashMap<String, Notification>()
+    private val active = LatestPerSession<Notification> { it.expire() }
 
     /**
      * [openSession] 必须是**无捕获**的函数引用（顶层函数），不能传捕获了 Project
@@ -84,14 +84,16 @@ object TurnNotifier {
         // 气泡这边捕获 project 无妨：Notification 的生命周期本就跟着项目走
         notification.addAction(
             NotificationAction.createSimpleExpiring(ImuxBundle.message("action.open.session.text")) {
-                active.remove(sessionId)
+                active.forget(sessionId, notification)
                 openSession(project, sessionId)
             },
         )
 
-        notification.whenExpired { active.remove(sessionId) }
+        notification.whenExpired { active.forget(sessionId, notification) }
 
-        active[sessionId] = notification
+        // 同一会话先弹「等待确认」、再弹「已完成」时，旧的那条先撤掉：否则看过会话后只撤得掉最新一条，
+        // 过时的「等待确认」一直留在通知面板里
+        active.replace(sessionId, notification)
         notification.notify(project)
 
         notifyOutsideIde(project, sessionId, title, subtitle, openSession)
@@ -212,6 +214,35 @@ object TurnNotifier {
 
     /** 用户已经通过别的途径看到该会话，撤掉对应通知。 */
     fun dismiss(sessionId: String) {
-        active.remove(sessionId)?.expire()
+        active.dismiss(sessionId)
+    }
+}
+
+/**
+ * 每个会话只留最新一条：新的进来先让旧的 [expire]；按「记录里仍是这一条」才移除，
+ * 旧通知晚到的过期回调不会把新通知从表里删掉（否则新通知再也撤不掉）。
+ */
+internal class LatestPerSession<T : Any>(
+    private val expire: (T) -> Unit,
+) {
+    private val active = ConcurrentHashMap<String, T>()
+
+    fun replace(
+        sessionId: String,
+        value: T,
+    ) {
+        active.put(sessionId, value)?.takeIf { it !== value }?.let(expire)
+    }
+
+    /** [value] 自己过期或被点击时调用。 */
+    fun forget(
+        sessionId: String,
+        value: T,
+    ) {
+        active.remove(sessionId, value)
+    }
+
+    fun dismiss(sessionId: String) {
+        active.remove(sessionId)?.let(expire)
     }
 }
