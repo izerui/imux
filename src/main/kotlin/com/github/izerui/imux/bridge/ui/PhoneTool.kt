@@ -269,9 +269,13 @@ class PhoneTool(
             )
         })
         group.addSeparator()
+        group.add(helpAction())
         group.add(phoneAction(ImuxBundle.message("bridge.banner.manage")) { showRobotSettings(project) })
         popup(group, anchor)
     }
+
+    /** 手机上能发什么：停止词、确认的回法都只在聊天里生效，从连接手机的菜单就能查到。 */
+    private fun helpAction() = phoneAction(ImuxBundle.message("bridge.help.menu")) { PhoneHelpDialog(project).show() }
 
     /** 顶部异常提示上的「换绑」：直接弹出可选的机器人，选一个就换。 */
     private fun showRebindMenu(anchor: JComponent) {
@@ -313,6 +317,7 @@ class PhoneTool(
                 is PhoneMenuEntry.Disconnect -> Unit
             }
         }
+        group.add(helpAction())
         group.add(phoneAction(ImuxBundle.message("bridge.banner.manage")) { showRobotSettings(project) })
         popup(group, anchor)
     }
