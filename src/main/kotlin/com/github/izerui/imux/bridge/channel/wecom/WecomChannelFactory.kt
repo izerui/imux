@@ -10,6 +10,9 @@ import kotlinx.coroutines.CoroutineScope
 object WecomChannelFactory : ChannelFactory {
     override val kind: ChannelKind = ChannelKind.WECOM
 
+    /** 步骤后附建议：自建一个只有自己的组织再扫码，免得公司组织的管理员策略拦下创建（见 docs/channel-comparison.md 权限前提）。 */
+    override val scanStepsKey: String = "bridge.add.scan.steps.wecom"
+
     override fun onboarding(): ChannelOnboarding = WecomOnboarding()
 
     override fun connect(

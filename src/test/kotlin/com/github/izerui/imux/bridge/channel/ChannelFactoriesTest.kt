@@ -23,7 +23,7 @@ class ChannelFactoriesTest {
     fun `飞书已登记，扫码说明用自己的文案`() {
         assertEquals(FeishuChannelFactory, ChannelFactories.forKind(ChannelKind.FEISHU))
         assertEquals("bridge.add.scan.steps.feishu", FeishuChannelFactory.scanStepsKey)
-        assertEquals("bridge.add.scan.steps", WecomChannelFactory.scanStepsKey)
+        assertEquals("bridge.add.scan.steps.wecom", WecomChannelFactory.scanStepsKey)
         assertTrue(FeishuChannelFactory.onboarding() is FeishuOnboarding)
     }
 
