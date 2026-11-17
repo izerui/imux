@@ -48,6 +48,21 @@ class TerminalHostWiringSourceTest {
     }
 
     /**
+     * 会话标签禁止分屏，已开着时只能在它所在的编辑器组里选中：交给 openFile 会被平台关闭再重开（进程随之结束），
+     * 先设 currentWindow 则对独立窗口里的组抛 IllegalArgumentException（双击面板里的会话报错、跳不过去）。
+     */
+    @Test
+    fun `激活已开着的会话标签在它所在的组里选中，不经 currentWindow`() {
+        val select = host.bodyAfter("private fun openSelected(", '{')
+
+        assertFalse(select, select.contains("currentWindow ="))
+        assertTrue(select, select.contains("window.setSelectedComposite(file, true)"))
+        assertTrue(select, select.contains("window.toFront()"))
+        assertTrue(host.bodyAfter("fun rebindKey(", '{').contains("if (activateMigrated) openSelected(file)"))
+        assertTrue(host.bodyAfter("private fun open(", '{').contains("openSelected(file)"))
+    }
+
+    /**
      * 新建会话那条命令的**每一个实参**都被钉住。
      *
      * 这个函数是「三平台支持」在新建路径上的唯一落点，而它的每一项失败都是静默的：

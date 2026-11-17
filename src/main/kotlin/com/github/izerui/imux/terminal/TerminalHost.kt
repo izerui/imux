@@ -590,14 +590,24 @@ class TerminalHost(
     /**
      * 选中并聚焦会话标签；还没打开就在当前编辑器组打开。
      *
-     * 已开着时不能直接 `openFile(file, true)`：默认设置下它打开到当前编辑器组，而会话文件禁止分屏
-     * （见 [AgentTerminalVirtualFile]），标签若在另一组或另一个窗口，平台会先 `closeFile` 再到当前组重开。
-     * 这次关闭不带 `CLOSING_TO_REOPEN`，编辑器会当成真关闭而结束 CLI。所以先把它所在的组设为当前组，再打开就只是选中。
+     * 已开着时不能经 `openFile`：它打开到活动窗口的当前编辑器组，而会话文件禁止分屏
+     * （见 [AgentTerminalVirtualFile]），标签若在另一组或独立窗口，平台会先 `closeFile` 再到当前组重开。
+     * 这次关闭不带 `CLOSING_TO_REOPEN`，编辑器会当成真关闭而结束 CLI。
+     * 也不能先 `currentWindow = 它所在的组`：那只接受活动窗口里的组，独立窗口里的会抛 IllegalArgumentException。
+     * 所以直接在它所在的组里选中，再把那个窗口提到前面——平台复用已开着的独立窗口时也是这三步。
      */
     private fun openSelected(file: AgentTerminalVirtualFile) {
         val manager = FileEditorManagerEx.getInstanceEx(project)
-        manager.windows.firstOrNull { it.isFileOpen(file) }?.let { manager.currentWindow = it }
-        manager.openFile(file, true)
+        selectOpenedTab(
+            windows = manager.windows.asList(),
+            isOpenIn = { it.isFileOpen(file) },
+            select = { window ->
+                window.setSelectedComposite(file, true)
+                window.requestFocus(true)
+                window.toFront()
+            },
+            open = { manager.openFile(file, true) },
+        )
     }
 
     /**
@@ -938,3 +948,17 @@ internal fun isViewportAtBottom(
     visibleHeight: Int,
     contentHeight: Int,
 ): Boolean = visibleTop.toLong() + visibleHeight >= contentHeight.toLong() - 1L
+
+/**
+ * 标签已在某个编辑器组（含独立窗口里的组）开着，就在那个组里 [select]；哪儿都没开着才 [open]。
+ * 见 [TerminalHost.openSelected]：已开着的会话标签一旦交给 [open]，会被平台关闭再重开，进程随之结束。
+ */
+internal fun <W> selectOpenedTab(
+    windows: List<W>,
+    isOpenIn: (W) -> Boolean,
+    select: (W) -> Unit,
+    open: () -> Unit,
+) {
+    val window = windows.firstOrNull(isOpenIn)
+    if (window != null) select(window) else open()
+}
