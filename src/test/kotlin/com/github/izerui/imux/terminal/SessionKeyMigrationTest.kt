@@ -205,4 +205,15 @@ class SessionKeyMigrationTest {
             factory.contains("migrateSelection("),
         )
     }
+
+    /** 进程探测直接把新建终端从 pending key 迁走时，列表若不跟着认领，就会同时留着「新会话」占位和真实会话两行。 */
+    @Test
+    fun `探测迁移落地时让列表认领对应的 pending`() {
+        val code = com.github.izerui.imux.SourceCode("src/main/kotlin/com/github/izerui/imux/monitor/DriftCoordinator.kt")
+        val apply = code.compact(code.bodyAfter("fun applyDrifts(drifts: List<KeyDrift>): Boolean", '{'))
+
+        val claim = apply.indexOf("drifts.forEach{model.claimPending(it.from,it.to)}")
+        assertTrue(apply, claim >= 0)
+        assertTrue(apply, claim < apply.indexOf("driftApplier.apply(drifts)"))
+    }
 }

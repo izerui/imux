@@ -400,4 +400,15 @@ class LiveSessionProbeTest {
 
         assertEquals(listOf(LiveTab("tab-2", newThread)), probe.probe())
     }
+
+    /** 多个 codex 新会话同时等认领时，列表不再按时间猜，靠这里把还挂在 pending key 上的终端迁到它进程正在写的会话。 */
+    @Test
+    fun `新建终端还挂在 pending key 上时，迁到它进程正在写的会话`() {
+        val drift = driftOf(
+            openTabs = mapOf("tab-a" to "pending-0", "tab-b" to "pending-1"),
+            live = listOf(LiveTab("tab-a", "X")),
+        )
+
+        assertEquals(listOf(KeyDrift("tab-a", from = "pending-0", to = "X")), drift)
+    }
 }

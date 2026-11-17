@@ -295,7 +295,9 @@ class CodexSessionReaderTest {
         val sessions = reader().read("/Users/demo/proj")
         assertEquals(listOf("uuid-new"), sessions.map { it.id })
         assertEquals("新任务", sessions.single().title)
-        assertEquals("uuid-new", model.boundIdFor(pending.key))
+        // codex 新会话不按时间猜给新标签，交给进程探测认领；这里只要它进了扫描、报成无主
+        assertEquals(null, model.boundIdFor(pending.key))
+        assertEquals(listOf("uuid-new"), model.drainUnclaimedSessions())
     }
 
     // ---- 最后活动时刻 ----

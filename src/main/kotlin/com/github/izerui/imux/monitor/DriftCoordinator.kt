@@ -177,6 +177,8 @@ internal class DriftCoordinator(
      */
     fun applyDrifts(drifts: List<KeyDrift>): Boolean {
         if (project.isDisposed) return false
+        // 进程探测直接把新建终端从 pending key 迁走时（多个新会话同时等认领），列表的占位也要随之认领
+        drifts.forEach { model.claimPending(it.from, it.to) }
         val allMigrated = driftApplier.apply(drifts)
         notifyListeners()
         return allMigrated

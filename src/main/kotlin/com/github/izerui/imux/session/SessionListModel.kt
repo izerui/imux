@@ -30,10 +30,11 @@ sealed interface ListEntry {
  *
  * 依赖以函数形式注入（scan / clock），使本类完全脱离文件系统与墙钟，便于测试。
  *
- * 绑定规则（消除歧义，见设计文档 6.3）：
- * 1. 扫描到的会话若 id 未在上轮出现、agentType 相同、且 lastActiveAt >= pending.startedAt，
- *    则它是该 pending 的候选
- * 2. 多个 pending 竞争同一会话时，绑定到 startedAt 最晚且不迟于该会话活动时刻的那个
+ * 绑定规则：只认确定的身份，不猜。
+ * 1. 启动前就定下 id 的 pending（claude、pi 用 `--session-id`）只认领同 id 的会话
+ * 2. 定不下 id 的（codex 没有这个参数）不在这里认领：新会话一律报成无主，由进程探测按终端身份迁移，
+ *    迁移落地时经 [claimPending] 认领。原先按「时间窗内启动最晚的 pending」猜，同时新建两个会话、
+ *    在另一个标签里 `/new`、或在 IDE 外开会话时都会认错，认错后也不会再有无主会话触发纠正
  * 3. 一个 pending 一旦绑定就不再参与后续绑定
  * 4. 超过 PENDING_TTL 仍未绑定的 pending 在 refresh 时被清除
  */
@@ -105,6 +106,21 @@ class SessionListModel(
         return removed
     }
 
+    /**
+     * 进程探测把 [pendingKey] 的终端迁到了 [sessionId]（见 DriftCoordinator.applyDrifts）：记为已认领，
+     * 列表不再显示这条「新会话」占位。终端那边已经换过 key，所以不再产出换 key 信息。
+     * [pendingKey] 不是未认领的 pending 时什么也不做。
+     */
+    fun claimPending(
+        pendingKey: String,
+        sessionId: String,
+    ) {
+        ApplicationManager.getApplication()?.assertIsDispatchThread()
+        if (pendings.none { it.key == pendingKey } || pendingKey in bindings) return
+        bindings[pendingKey] = sessionId
+        notifyListeners()
+    }
+
     /** 取走并清空尚未处理的绑定，供终端宿主据此换 key。 */
     fun drainNewBindings(): List<Pair<String, String>> {
         val drained = newBindings.toList()
@@ -173,19 +189,12 @@ class SessionListModel(
         val fresh = scanned.filter { it.id !in knownIds }
         for (session in fresh.sortedBy { it.lastActiveAt }) {
             val free = pendings.filter { it.key !in bindings }
-            // 预知 id 的 pending（pi）走精确匹配，不参与下面的时间窗竞争：
-            // id 在启动前就定了，没有可猜的余地，也不该被别的会话抢走。
-            val candidate =
-                free.firstOrNull { it.sessionId == session.id }
-                    ?: free
-                        .filter { it.sessionId == null }
-                        .filter { it.agentType == session.agentType }
-                        .filter { !it.startedAt.isAfter(session.lastActiveAt) }
-                        .maxByOrNull { it.startedAt }
+            // 只认预知的 id；其余交给进程探测按终端身份认领（见类说明的绑定规则）
+            val candidate = free.firstOrNull { it.sessionId == session.id }
             if (candidate == null) {
                 // 恢复阶段的首次扫描只是在建立基线，历史会话不能触发漂移探测。
                 if (!detectUnclaimedSessions) continue
-                // 没人在等这个会话。两种可能：某个已打开的终端在 /clear、/new 之后
+                // 没有预知它 id 的终端。几种可能：codex 新建的终端刚落盘、某个已打开的终端在 /clear、/new 之后
                 // 换了会话 id（进程没变），或者用户在 IDE 外面自己开了一个。
                 // 分辨要靠进程探测，这里只负责报告。
                 unclaimed.add(session.id)

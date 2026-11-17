@@ -39,10 +39,10 @@ class SessionListModelTest {
     }
 
     @Test
-    fun `晚于启动时刻出现的同类型新会话被绑定`() {
+    fun `预知 id 的新会话落盘后被绑定，并显示为真实会话`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        val pending = model.registerPending(AgentType.CLAUDE)
+        val pending = model.registerPending(AgentType.CLAUDE, sessionId = "新id")
 
         clock.now = base.plusSeconds(30)
         scanResult = listOf(session("新id", AgentType.CLAUDE, base.plusSeconds(20)))
@@ -123,7 +123,7 @@ class SessionListModelTest {
     fun `被 pending 认领的新会话不算无主`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        model.registerPending(AgentType.CLAUDE)
+        model.registerPending(AgentType.CLAUDE, sessionId = "新id")
 
         clock.now = base.plusSeconds(30)
         scanResult = listOf(session("新id", AgentType.CLAUDE, base.plusSeconds(20)))
@@ -132,17 +132,23 @@ class SessionListModelTest {
         assertTrue(model.drainUnclaimedSessions().isEmpty())
     }
 
+    /**
+     * 只有一个 codex 新标签在等时也不猜：它可能是别的标签 `/new` 出来的，也可能是 IDE 外开的，
+     * 按时间窗认给这个新标签就认错了。报成无主，由进程探测按终端身份认领。
+     */
     @Test
-    fun `早于启动时刻的会话不被绑定`() {
+    fun `只有一个没有预知 id 的 pending 在等时也不认领，会话报成无主`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        val pending = model.registerPending(AgentType.CLAUDE)
+        val pending = model.registerPending(AgentType.CODEX)
 
-        scanResult = listOf(session("老id", AgentType.CLAUDE, base.minusSeconds(60)))
+        clock.now = base.plusSeconds(30)
+        scanResult = listOf(session("别的标签 /new 出来的", AgentType.CODEX, base.plusSeconds(20)))
         model.refresh()
 
         assertNull(model.boundIdFor(pending.key))
-        assertEquals(2, model.entries(AgentType.CLAUDE).size)
+        assertEquals(listOf("别的标签 /new 出来的"), model.drainUnclaimedSessions())
+        assertEquals(2, model.entries(AgentType.CODEX).size)
     }
 
     @Test
@@ -157,34 +163,78 @@ class SessionListModelTest {
         assertNull(model.boundIdFor(pending.key))
     }
 
+    /**
+     * 原规则挑启动最晚的那个：同时新建两个 codex 会话、先在早开的那个里说话，会把两边绑反，
+     * 且都认领了就没有无主会话触发纠正。现在不猜，报成无主交给进程探测精确迁移。
+     */
     @Test
-    fun `多个同类型 pending 竞争时绑定到启动时刻最晚的那个`() {
+    fun `多个同类型 pending 竞争时不猜，两个都不认领，会话报成无主`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        val early = model.registerPending(AgentType.CLAUDE)
+        val early = model.registerPending(AgentType.CODEX)
         clock.now = base.plusSeconds(10)
-        val late = model.registerPending(AgentType.CLAUDE)
+        val late = model.registerPending(AgentType.CODEX)
 
         clock.now = base.plusSeconds(40)
-        scanResult = listOf(session("新id", AgentType.CLAUDE, base.plusSeconds(30)))
+        scanResult = listOf(session("新id", AgentType.CODEX, base.plusSeconds(30)))
         model.refresh()
 
-        assertEquals("新id", model.boundIdFor(late.key))
         assertNull(model.boundIdFor(early.key))
+        assertNull(model.boundIdFor(late.key))
+        assertEquals(listOf("新id"), model.drainUnclaimedSessions())
+        assertEquals(emptyList<Pair<String, String>>(), model.drainNewBindings())
+    }
+
+    @Test
+    fun `进程探测迁走 pending 后认领它，列表不再显示占位，也不再产出换 key`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val early = model.registerPending(AgentType.CODEX)
+        val late = model.registerPending(AgentType.CODEX)
+        clock.now = base.plusSeconds(40)
+        scanResult = listOf(session("新id", AgentType.CODEX, base.plusSeconds(30)))
+        model.refresh()
+
+        model.claimPending(early.key, "新id")
+
+        assertEquals("新id", model.boundIdFor(early.key))
+        assertNull(model.boundIdFor(late.key))
+        val pendingKeys = model.entries(AgentType.CODEX).filterIsInstance<ListEntry.Pending>().map { it.pending.key }
+        assertEquals(listOf(late.key), pendingKeys)
+        assertEquals(emptyList<Pair<String, String>>(), model.drainNewBindings())
+    }
+
+    @Test
+    fun `认领不存在或已认领的 pending 时什么也不做`() {
+        val clock = FakeClock(base)
+        val model = model(clock)
+        val pending = model.registerPending(AgentType.CODEX)
+        scanResult = listOf(session("第一个", AgentType.CODEX, base.plusSeconds(10)))
+        model.refresh()
+        model.claimPending(pending.key, "第一个")
+
+        model.claimPending(pending.key, "别的id")
+        model.claimPending("不存在", "别的id")
+
+        assertEquals("第一个", model.boundIdFor(pending.key))
+        assertNull(model.boundIdFor("不存在"))
     }
 
     @Test
     fun `已绑定的 pending 不再参与后续绑定`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        val pending = model.registerPending(AgentType.CLAUDE)
+        val pending = model.registerPending(AgentType.CODEX)
 
-        scanResult = listOf(session("第一个", AgentType.CLAUDE, base.plusSeconds(10)))
+        scanResult = listOf(session("第一个", AgentType.CODEX, base.plusSeconds(10)))
         model.refresh()
-        scanResult = scanResult + session("第二个", AgentType.CLAUDE, base.plusSeconds(20))
+        model.claimPending(pending.key, "第一个")
+        model.drainUnclaimedSessions()
+        scanResult = scanResult + session("第二个", AgentType.CODEX, base.plusSeconds(20))
         model.refresh()
 
         assertEquals("第一个", model.boundIdFor(pending.key))
+        assertEquals(listOf("第二个"), model.drainUnclaimedSessions())
     }
 
     @Test
@@ -242,7 +292,7 @@ class SessionListModelTest {
     fun `取消已绑定 pending 不影响真实会话并返回 false`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        val pending = model.registerPending(AgentType.CLAUDE)
+        val pending = model.registerPending(AgentType.CLAUDE, sessionId = "真实id")
 
         scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
         model.refresh()
@@ -307,7 +357,7 @@ class SessionListModelTest {
     fun `绑定发生时产出待处理的换 key 信息`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        val pending = model.registerPending(AgentType.CLAUDE)
+        val pending = model.registerPending(AgentType.CLAUDE, sessionId = "真实id")
 
         scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
         model.refresh()
@@ -319,11 +369,11 @@ class SessionListModelTest {
     fun `换 key 信息取走后不再重复产出`() {
         val clock = FakeClock(base)
         val model = model(clock)
-        model.registerPending(AgentType.CLAUDE)
+        model.registerPending(AgentType.CLAUDE, sessionId = "真实id")
 
         scanResult = listOf(session("真实id", AgentType.CLAUDE, base.plusSeconds(10)))
         model.refresh()
-        model.drainNewBindings()
+        assertEquals(1, model.drainNewBindings().size)
         model.refresh()
 
         assertTrue(model.drainNewBindings().isEmpty())
