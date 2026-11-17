@@ -37,6 +37,15 @@ internal class UnreadTracker(
         }
     }
 
+    /** 会话已经不在了（在 imux 之外被删）：清掉它们的未读，否则窗口标题一直显示未读，列表里又找不到可点的那一行。 */
+    fun forget(sessionIds: Collection<String>) {
+        val gone = sessionIds.filterTo(mutableSetOf()) { unread.remove(it) }
+        if (gone.isEmpty()) return
+        updateOpenTabIcons(gone)
+        updateFrameTitle()
+        notifyListeners()
+    }
+
     fun clearUnread(sessionId: String) {
         TurnNotifier.dismiss(sessionId)
         if (unread.remove(sessionId)) {

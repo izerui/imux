@@ -429,6 +429,37 @@ class SessionListModelTest {
     }
 
     @Test
+    fun `上一轮还在、这一轮没了的会话报成已消失，取走即清空`() {
+        val model = model(FakeClock(base))
+        scanResult = listOf(session("a", AgentType.CODEX, base), session("b", AgentType.CODEX, base))
+        model.refresh()
+        assertEquals(emptyList<String>(), model.drainRemovedSessions())
+
+        scanResult = listOf(session("b", AgentType.CODEX, base))
+        model.refresh()
+
+        assertEquals(listOf("a"), model.drainRemovedSessions())
+        assertEquals(emptyList<String>(), model.drainRemovedSessions())
+    }
+
+    /** 扫描在后台跑：新会话刚标上未读、扫描结果里还没有它，不能当成消失，否则刚标的未读被误清。 */
+    @Test
+    fun `从没被扫描到过的会话不算消失，它刚标上的未读保留`() {
+        val model = model(FakeClock(base))
+        val tracker = com.github.izerui.imux.monitor.UnreadTracker({}, {}, {})
+        scanResult = listOf(session("a", AgentType.CODEX, base))
+        model.refresh()
+
+        // 后台扫描开始时新会话文件还没写出来；扫描期间它第一轮跑完、标上未读
+        tracker.markUnread("new")
+        scanResult = listOf(session("a", AgentType.CODEX, base))
+        model.refresh()
+        tracker.forget(model.drainRemovedSessions())
+
+        assertTrue(tracker.isUnread("new"))
+    }
+
+    @Test
     fun `没有绑定时换 key 信息为空`() {
         val model = model(FakeClock(base))
         scanResult = listOf(session("无人认领", AgentType.CLAUDE, base))

@@ -62,6 +62,12 @@ class SessionListModel(
      * 与 [newBindings] 一样是破坏性读取。
      */
     private val unclaimed = mutableListOf<String>()
+
+    /**
+     * 上一轮扫描还在、这一轮没了的会话：在 imux 之外被删掉了（手动删文件、`codex delete` 等）。
+     * 只认「上一轮有」：刚出现、还没被扫描到的新会话不算，免得把它刚标上的未读误清。与 [unclaimed] 一样是破坏性读取。
+     */
+    private val removed = mutableListOf<String>()
     private var knownIds: Set<String> = emptySet()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
@@ -132,6 +138,13 @@ class SessionListModel(
         return drained
     }
 
+    /** 取走并清空刚消失的会话，见 [removed]。 */
+    fun drainRemovedSessions(): List<String> {
+        val drained = removed.toList()
+        removed.clear()
+        return drained
+    }
+
     /** 取走并清空本轮的无主新会话，见 [unclaimed]。 */
     fun drainUnclaimedSessions(): List<String> {
         val drained = unclaimed.toList()
@@ -162,7 +175,9 @@ class SessionListModel(
         val changed = scanned != sessions || visiblePendingKeys() != pendingsBefore
 
         sessions = scanned
-        knownIds = scanned.mapTo(mutableSetOf()) { it.id }
+        val scannedIds = scanned.mapTo(mutableSetOf()) { it.id }
+        removed += knownIds - scannedIds
+        knownIds = scannedIds
 
         // 无变化就不通知：每次通知都会重建整棵树。工具窗口状态变化等事件
         // 会频繁触发刷新，无谓重建既费 EDT 又会丢失选中与展开状态。

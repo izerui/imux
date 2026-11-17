@@ -579,6 +579,7 @@ class SessionMonitor(
         // 接在 start 而非构造函数里：这两件都是运行时行为，需要 TerminalHost 服务已经可用。
         // 顺序有意义：先把 key 迁到真实 id，标题同步才查得到对应的会话。
         model.addListener {
+            unreadTracker.forget(model.drainRemovedSessions())
             driftCoordinator.applyNewBindings()
             // 必须在绑定之后：上一轮迁过去却因当时查不到文件路径而没挂上监控的会话，
             // 以及没迁成的那些，都等这次扫描的结果补齐
