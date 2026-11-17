@@ -37,7 +37,7 @@ private const val PLACEHOLDER = """<script id="imux-data" type="application/json
 
 private val GSON = GsonBuilder().disableHtmlEscaping().create()
 
-/** 页面数据：插件字段（版本、语言、会话、时长、改动文件）加上智能体写的各节。时长未知时不写 `stats`。 */
+/** 页面数据：插件字段（版本、语言、会话、时长、改动文件）加上智能体写的各节。时长、改动文件没统计到时都不写。 */
 internal fun pageDataJson(report: SessionReport, lang: String, session: ReportSession): String {
     val data = JsonObject().apply {
         addProperty("version", 1)
@@ -49,7 +49,8 @@ internal fun pageDataJson(report: SessionReport, lang: String, session: ReportSe
             addProperty("generatedAt", session.generatedAt.toString())
         })
         report.facts.durationMinutes?.let { minutes -> add("stats", JsonObject().apply { addProperty("durationMinutes", minutes) }) }
-        add("files", GSON.toJsonTree(report.facts.files))
+        // 没统计到就不写：页面不显示改动文件数与列表，不把「不知道」显示成 0
+        report.facts.files?.let { add("files", GSON.toJsonTree(it)) }
         agentReportJson(report).entrySet().forEach { (key, value) -> add(key, value) }
     }
     return GSON.toJson(data)

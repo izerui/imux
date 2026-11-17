@@ -133,10 +133,13 @@ class ReportJsonTest {
     }
 
     @Test
-    fun `facts 往返不变且缺省时为空`() {
+    fun `facts 往返不变，缺省与未统计读回仍是未统计，统计到零个文件读回仍是零`() {
         val facts = ReportFacts(135, listOf("src/A.kt", "/tmp/b.md"))
         assertEquals(facts, factsFromJson(factsJson(facts)))
-        assertEquals(ReportFacts(), factsFromJson(null))
+        assertEquals("缺省就是未统计", ReportFacts(null, null), ReportFacts())
+        assertEquals(ReportFacts(null, null), factsFromJson(null))
+        assertEquals("未统计存进缓存再读出，不能变成零个文件", ReportFacts(null, null), factsFromJson(factsJson(ReportFacts(null, null))))
+        assertEquals(ReportFacts(3, emptyList()), factsFromJson(factsJson(ReportFacts(3, emptyList()))))
     }
 
     @Test

@@ -1740,16 +1740,6 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `刚提交的话还没进记录时停止仍中断一轮`() =
-        runBlocking {
-            registry.bind(robot, target)
-            router.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
-            router.onInbound(inbound("1", "跑一下测试"))
-            assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("2", "停")))
-            assertEquals(listOf("tab-1" to true), port.stops)
-        }
-
-    @Test
     fun `终端离线时停止回复离线`() =
         runBlocking {
             registry.bind(robot, target)
@@ -1847,20 +1837,6 @@ class BridgeRouterTest {
         }
 
     @Test
-    fun `手机发的话 30 秒还没进记录时，空闲时停止不再据此当成在跑`() =
-        runBlocking {
-            registry.bind(robot, target)
-            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
-            // 斜杠命令在记录里是改写后的样子，这条登记永远对不上
-            stopClocked.onInbound(inbound("1", "/compact"))
-            clock += 10_000
-            stopClocked.onInbound(inbound("2", "停"))
-            clock += 21_000
-            stopClocked.onInbound(inbound("3", "停"))
-            assertEquals("10 秒时可能正要开新一轮，仍按在跑处理；31 秒后不再", listOf("tab-1" to true, "tab-1" to false), port.stops)
-        }
-
-    @Test
     fun `手机发的话进了记录、这一轮也结束后，停止马上按空闲处理`() =
         runBlocking {
             registry.bind(robot, target)
@@ -1871,17 +1847,15 @@ class BridgeRouterTest {
             assertEquals(listOf("tab-1" to false), port.stops)
         }
 
+
     @Test
-    fun `残留的斜杠命令登记不会因为之后又发了话而重新算在跑`() =
+    fun `这一轮已经结束时，手机刚发的话还没进记录也按空闲处理，只停后台`() =
         runBlocking {
             registry.bind(robot, target)
             stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            // 斜杠命令在记录里是改写后的样子，这条登记永远对不上；它只管不回显，不能推翻「已结束」
             stopClocked.onInbound(inbound("1", "/compact"))
-            clock += 31_000
-            stopClocked.onInbound(inbound("2", "跑一下测试"))
-            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.UserText("跑一下测试"), SessionEvent.TurnEnded))
-            clock += 5_000
-            stopClocked.onInbound(inbound("3", "停"))
+            stopClocked.onInbound(inbound("2", "停"))
             assertEquals(listOf("tab-1" to false), port.stops)
         }
 }

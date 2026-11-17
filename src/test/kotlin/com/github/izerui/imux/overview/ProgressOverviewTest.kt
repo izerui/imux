@@ -835,7 +835,7 @@ class ProgressOverviewTest {
             facts = { throw java.nio.file.NoSuchFileException("会话文件被删") },
         )
         assertEquals("完成", result.report!!.timeline.single().text)
-        assertEquals(com.github.izerui.imux.overview.report.ReportFacts(), result.report!!.facts)
+        assertEquals("未统计：时长与改动文件都是不知道，不是零", com.github.izerui.imux.overview.report.ReportFacts(null, null), result.report!!.facts)
         assertEquals("完成", cache.get("s1")!!.result.report!!.timeline.single().text)
     }
 

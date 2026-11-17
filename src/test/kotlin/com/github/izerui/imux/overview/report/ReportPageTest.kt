@@ -104,4 +104,12 @@ class ReportPageTest {
             Files.setPosixFilePermissions(imux, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
         }
     }
+
+    @Test
+    fun `未统计时页面数据不写改动文件，统计到零个文件时照写空列表`() {
+        val unknown = JsonParser.parseString(pageDataJson(report.copy(facts = ReportFacts(null, null)), "zh-CN", session)).asJsonObject
+        assertFalse("不知道就不给数字", unknown.has("files"))
+        val none = JsonParser.parseString(pageDataJson(report.copy(facts = ReportFacts(10, emptyList())), "zh-CN", session)).asJsonObject
+        assertEquals("确实没改文件就是 0", 0, none.getAsJsonArray("files").size())
+    }
 }

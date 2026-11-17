@@ -37,5 +37,8 @@ data class ReportIssue(val severity: Severity, val text: String)
 
 enum class Severity(val wire: String) { HIGH("high"), MEDIUM("medium"), LOW("low") }
 
-/** 插件扫描会话记录得出的事实：会话时长（分钟）与改动过的文件。 */
-data class ReportFacts(val durationMinutes: Long? = null, val files: List<String> = emptyList())
+/**
+ * 插件扫描会话记录得出的事实：会话时长（分钟）与改动过的文件。为 null 表示没统计到（不知道），与「零个文件」不同：
+ * 页面不知道就不显示这项，不能给出 0 这样的错误数字。
+ */
+data class ReportFacts(val durationMinutes: Long? = null, val files: List<String>? = null)

@@ -112,13 +112,14 @@ internal fun agentReportJson(report: SessionReport): JsonObject =
 internal fun factsJson(facts: ReportFacts): JsonObject =
     JsonObject().apply {
         facts.durationMinutes?.let { addProperty("durationMinutes", it) }
-        add("files", JsonArray().apply { facts.files.forEach(::add) })
+        facts.files?.let { files -> add("files", JsonArray().apply { files.forEach(::add) }) }
     }
 
 internal fun factsFromJson(obj: JsonObject?): ReportFacts {
     obj ?: return ReportFacts()
     val duration = obj.get("durationMinutes")?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asLong
-    return ReportFacts(duration, obj.strings("files"))
+    // 没有 files 就是没统计到，不是零个文件
+    return ReportFacts(duration, if (obj.get("files") is JsonArray) obj.strings("files") else null)
 }
 
 /** 候选的 JSON 对象：整体是对象先给它；再从每个 `{` 起按括号配对（跳过字符串里的括号）截出一段试着解析。由调用方取第一个是报告的。 */
