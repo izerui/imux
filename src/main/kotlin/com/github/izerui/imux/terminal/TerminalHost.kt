@@ -569,13 +569,20 @@ class TerminalHost(
             return
         }
         val file =
-            files.getOrPut(key) {
-                // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
-                // 之后从进程 env 里读回来才认得出这个终端。
-                val tabId = preparedTabId ?: newTabId()
-                val view = views.getOrPut(key) { createView(agentType, command(tabId), tabTitle, tabId) }
-                AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId, sessionId)
-                    .also(::closeTabWhenTerminated)
+            try {
+                files.getOrPut(key) {
+                    // tabId 必须在建 view 之前定下：它要作为环境变量随进程启动，
+                    // 之后从进程 env 里读回来才认得出这个终端。
+                    val tabId = preparedTabId ?: newTabId()
+                    val view = views.getOrPut(key) { createView(agentType, command(tabId), tabTitle, tabId) }
+                    AgentTerminalVirtualFile(tabTitle, view, key, agentType, tabId, sessionId)
+                        .also(::closeTabWhenTerminated)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                launchFailed(key, tabTitle, e)
+                return
             }
         if (selectAsCurrent) {
             openSelected(file)
@@ -585,6 +592,26 @@ class TerminalHost(
         persistRestorableTabs()
         // 与 closeSession 对称。缺了这一下，标记就只能等下一轮 3 秒轮询才亮。
         sessionsChangedDispatcher.multicaster.sessionsChanged()
+    }
+
+    /**
+     * 终端没建起来（平台终端 API 变化、环境异常）：原先异常冒出去，只在状态栏留个内部错误，新建的占位行挂到 30 分钟超时，
+     * 恢复标签时挂上的轮次监控也不撤。现在当作这个会话已关闭来收拾，并告诉用户哪个会话没开起来、为什么。
+     * 异步启动时外层看到没挂上，会照常释放已准备好的附加工具。
+     */
+    private fun launchFailed(
+        key: String,
+        tabTitle: String,
+        error: Exception,
+    ) {
+        LOG.warn("会话终端启动失败 key=$key", error)
+        turnWatcher.unwatch(key)
+        com.github.izerui.imux.monitor.SessionMonitor.getInstance(project).sessionClosed(key)
+        NotificationGroupManager.getInstance().getNotificationGroup("imux.terminal")
+            .createNotification(
+                ImuxBundle.message("terminal.launch.failed", tabTitle, error.message ?: error.javaClass.simpleName),
+                NotificationType.ERROR,
+            ).notify(project)
     }
 
     /**

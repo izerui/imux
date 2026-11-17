@@ -162,6 +162,8 @@
         <notificationGroup id="imux.turnCompleted" displayType="BALLOON"/>
         <notificationGroup id="imux.ideaMcp" displayType="BALLOON"/>
         <notificationGroup id="imux.phoneBridge" displayType="BALLOON"/>
+        <!-- 会话终端没能启动；与完成提醒分开，关掉完成提醒不会连失败一起关掉 -->
+        <notificationGroup id="imux.terminal" displayType="BALLOON"/>
         <!-- Marketplace 有兼容的新版本时提醒升级；用户可在 IDE 通知设置里关闭 -->
         <notificationGroup id="imux.update" displayType="BALLOON"/>
 

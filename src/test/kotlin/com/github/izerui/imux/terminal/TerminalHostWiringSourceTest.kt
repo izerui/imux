@@ -48,6 +48,24 @@ class TerminalHostWiringSourceTest {
     }
 
     /**
+     * 终端没建起来时，原先异常直接冒出去：没有提示是哪个会话没开起来，新建的占位行挂到 30 分钟超时，恢复标签时挂上的轮次监控也不撤。
+     */
+    @Test
+    fun `终端建不起来时撤掉占位与轮次监控，并提示哪个会话没能启动`() {
+        val open = host.compact(host.bodyAfter("private fun open(", '{'))
+        assertTrue(open.contains("catch(e:CancellationException){throwe}catch(e:Exception){launchFailed(key,tabTitle,e)return}"))
+
+        val failed = host.compact(host.bodyAfter("private fun launchFailed(", '{'))
+        assertTrue(failed, failed.contains("turnWatcher.unwatch(key)"))
+        assertTrue(failed, failed.contains("SessionMonitor.getInstance(project).sessionClosed(key)"))
+        assertTrue(failed, failed.contains("getNotificationGroup(\"imux.terminal\")"))
+        assertTrue(failed, failed.contains("ImuxBundle.message(\"terminal.launch.failed\",tabTitle,"))
+
+        val pluginXml = SourceCode("src/main/resources/META-INF/plugin.xml")
+        assertTrue(pluginXml.normalized.contains("<notificationGroup id=\"imux.terminal\" displayType=\"BALLOON\"/>"))
+    }
+
+    /**
      * 会话标签禁止分屏，已开着时只能在它所在的编辑器组里选中：交给 openFile 会被平台关闭再重开（进程随之结束），
      * 先设 currentWindow 则对独立窗口里的组抛 IllegalArgumentException（双击面板里的会话报错、跳不过去）。
      */
