@@ -9,6 +9,8 @@ import com.github.izerui.imux.overview.TrailState
 import com.github.izerui.imux.overview.buildErrorPanel
 import com.github.izerui.imux.overview.OverviewResult
 import com.github.izerui.imux.overview.report.ReportWrite
+import com.github.izerui.imux.overview.report.ShownReport
+import com.github.izerui.imux.overview.report.needsReload
 import com.github.izerui.imux.overview.buildFailedBanner
 import com.github.izerui.imux.overview.buildProgressBanner
 import com.github.izerui.imux.overview.buildSaveFailedBanner
@@ -151,8 +153,8 @@ internal class SessionTrailOverlay(
     /** 显示报告页的视图，第一次需要时创建（见 [reportView]）。 */
     private var reportView: ReportView? = null
 
-    /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。写入失败时为 null。 */
-    private var shownReport: Path? = null
+    /** 视图上正在显示的报告（文件与内容摘要）：换了文件或内容不同才重新加载（见 [needsReload]）。写入失败时为 null。 */
+    private var shownReport: ShownReport? = null
 
     /** 当前报告页顶部的横幅区：写入失败横幅加在这里。不显示报告页时为 null。 */
     private var reportBanners: JPanel? = null
@@ -181,7 +183,7 @@ internal class SessionTrailOverlay(
             }
 
             override fun actionPerformed(event: AnActionEvent) {
-                shownReport?.let { BrowserUtil.browse(it.toUri()) }
+                shownReport?.let { BrowserUtil.browse(it.path.toUri()) }
             }
         }
 
@@ -440,9 +442,10 @@ internal class SessionTrailOverlay(
             return
         }
         banners.revalidate()
-        if (write.changed || shownReport != write.path) {
+        // 按内容判断：别的请求可能刚把文件改成同样的内容，这次通知的 changed 才是 false，面板上却仍是旧版
+        if (needsReload(shownReport, write)) {
             view.show(write.path)
-            shownReport = write.path
+            shownReport = ShownReport(write.path, write.digest)
         }
     }
 

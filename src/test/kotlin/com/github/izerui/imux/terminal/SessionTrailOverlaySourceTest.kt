@@ -166,4 +166,11 @@ class SessionTrailOverlaySourceTest {
         val content = overlay.bodyAfter("private fun contentFor(", '{')
         assertTrue("切到非报告状态作废待写：$content", content.contains("reportWrites.ticket(key)"))
     }
+
+    @Test
+    fun `面板按显示的内容决定重新加载，不看这一次写入有没有改文件`() {
+        val apply = overlay.bodyAfter("private fun applyReport(", '{')
+        assertTrue(apply, apply.contains("if (needsReload(shownReport, write))"))
+        assertTrue("不能看 changed：别的请求可能刚把文件改成同样的内容", !apply.contains("write.changed"))
+    }
 }

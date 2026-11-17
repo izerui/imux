@@ -117,7 +117,7 @@ class LatestReportWritesTest {
         assertFalse("左边号已过期，不写", writes.runIfLatest("s1", leftTicket) { writeReportFile(root, "s1", "<html>旧</html>") })
         assertTrue(writes.runIfLatest("s1", rightTicket) { writeReportFile(root, "s1", "<html>新</html>") })
 
-        val expected = listOf("s1" to ReportWrite(reportFile(root, "s1"), changed = true))
+        val expected = listOf("s1" to ReportWrite(reportFile(root, "s1"), changed = true, digest = contentDigest("<html>新</html>")))
         assertEquals("左边面板也要拿到写好的报告", expected, left)
         assertEquals(expected, right)
         assertEquals("<html>新</html>", Files.readString(reportFile(root, "s1")))
@@ -160,5 +160,42 @@ class LatestReportWritesTest {
         assertTrue(old.awaitTermination(5, TimeUnit.SECONDS))
 
         assertEquals("只剩新请求的成功通知", listOf<Pair<String, ReportWrite?>>("s1" to newWrite), heard.toList())
+    }
+
+    @Test
+    fun `旧请求改了文件后停在通知前，新请求写同样内容没改文件也先通知时，面板仍按内容知道要重新加载`() {
+        val root = Files.createTempDirectory("project")
+        writeReportFile(root, "s1", "<html>旧</html>")
+        val shownBefore = ShownReport(reportFile(root, "s1"), contentDigest("<html>旧</html>"))
+        val oldWritten = CountDownLatch(1)
+        val releaseOld = CountDownLatch(1)
+        var oldTicket = -1L
+        val writes = LatestReportWrites(beforeNotify = { _, ticket -> if (ticket == oldTicket) { oldWritten.countDown(); releaseOld.await() } })
+        val heard = java.util.Collections.synchronizedList(mutableListOf<ReportWrite?>())
+        writes.addListener { _, write -> heard += write }
+
+        oldTicket = writes.ticket("s1")
+        val old = daemonPool().apply {
+            submit { writes.runIfLatest("s1", oldTicket) { writeReportFile(root, "s1", "<html>新</html>") } }
+            shutdown()
+        }
+        assertTrue("旧请求已把文件改成新版，停在通知前", oldWritten.await(5, TimeUnit.SECONDS))
+        assertTrue(writes.runIfLatest("s1", writes.ticket("s1")) { writeReportFile(root, "s1", "<html>新</html>") })
+        releaseOld.countDown()
+        assertTrue(old.awaitTermination(5, TimeUnit.SECONDS))
+
+        val delivered = heard.single()!!
+        assertFalse("新请求没再改文件", delivered.changed)
+        assertTrue("但面板显示的是旧版，按内容判断仍要重新加载", needsReload(shownBefore, delivered))
+    }
+
+    @Test
+    fun `面板按路径和内容摘要决定要不要重新加载`() {
+        val path = java.nio.file.Path.of("/p/.imux/reports/s1.html")
+        val write = ReportWrite(path, changed = false, digest = "b")
+        assertTrue("还没显示过", needsReload(null, write))
+        assertTrue("显示的内容不同", needsReload(ShownReport(path, "a"), write))
+        assertTrue("换了文件", needsReload(ShownReport(java.nio.file.Path.of("/p/.imux/reports/s2.html"), "b"), write))
+        assertFalse("同一文件同一内容", needsReload(ShownReport(path, "b"), write.copy(changed = true)))
     }
 }

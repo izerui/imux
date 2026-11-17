@@ -16,8 +16,22 @@ internal const val REPORT_TEMPLATE = "/report/session-report.html"
 /** 报告页里由插件填的会话信息。 */
 internal data class ReportSession(val title: String, val agent: String, val project: String, val generatedAt: Instant)
 
-/** 一次写报告文件的结果：[changed] 为 false 表示内容与已有文件相同，没有重写。 */
-internal data class ReportWrite(val path: Path, val changed: Boolean)
+/**
+ * 一次写报告文件的结果：[changed] 为 false 表示内容与已有文件相同，没有重写；[digest] 是文件此刻内容的摘要。
+ * 面板要不要重新加载看 [digest]，不看 [changed]：别的请求可能刚把文件改成同样的内容，这一次才没改动，但面板上仍是旧版。
+ */
+internal data class ReportWrite(val path: Path, val changed: Boolean, val digest: String)
+
+/** 面板上正在显示的报告：哪个文件、哪一版内容。 */
+internal data class ShownReport(val path: Path, val digest: String)
+
+/** 面板要不要重新加载：还没显示过、换了文件，或显示的内容与文件此刻的内容不同。 */
+internal fun needsReload(shown: ShownReport?, write: ReportWrite): Boolean =
+    shown == null || shown.path != write.path || shown.digest != write.digest
+
+/** 报告内容的摘要（SHA-256）。 */
+internal fun contentDigest(html: String): String =
+    MessageDigest.getInstance("SHA-256").digest(html.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
 private const val PLACEHOLDER = """<script id="imux-data" type="application/json">{}</script>"""
 
@@ -67,7 +81,8 @@ internal fun writeReportFile(projectRoot: Path, sessionKey: String, html: String
     ensureImuxIgnored(projectRoot)
     val target = reportFile(projectRoot, sessionKey)
     val bytes = html.toByteArray(Charsets.UTF_8)
-    if (Files.isRegularFile(target) && Files.readAllBytes(target).contentEquals(bytes)) return ReportWrite(target, changed = false)
+    val digest = contentDigest(html)
+    if (Files.isRegularFile(target) && Files.readAllBytes(target).contentEquals(bytes)) return ReportWrite(target, changed = false, digest)
     Files.createDirectories(target.parent)
     val tmp = Files.createTempFile(target.parent, "report-", ".tmp")
     try {
@@ -77,5 +92,5 @@ internal fun writeReportFile(projectRoot: Path, sessionKey: String, html: String
         runCatching { Files.deleteIfExists(tmp) }
         throw e
     }
-    return ReportWrite(target, changed = true)
+    return ReportWrite(target, changed = true, digest)
 }
