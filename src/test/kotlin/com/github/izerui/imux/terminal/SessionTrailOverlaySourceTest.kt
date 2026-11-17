@@ -135,45 +135,35 @@ class SessionTrailOverlaySourceTest {
     }
 
     @Test
-    fun `报告文件在后台线程渲染写入，回到界面线程再显示`() {
-        val show = overlay.bodyAfter("private fun showReport(", '{')
-        val background = show.indexOf("executeOnPooledThread")
-        val write = show.indexOf(".writeReport(")
-        val back = show.indexOf("invokeLater")
-        assertTrue("写文件要在后台线程：$show", background >= 0 && write > background)
-        assertTrue("显示要回到界面线程：$show", back > write)
-    }
-
-    @Test
     fun `报告写入失败时显示错误横幅并可重试`() {
         assertTrue(overlay.normalized.contains("action.overview.report.writeFailed"))
-    }
-
-    @Test
-    fun `切到不显示报告的状态时作废还没写完的报告`() {
-        val content = overlay.bodyAfter("private fun contentFor(", '{')
-        val invalidate = content.indexOf("reportRequest++")
-        val report = content.indexOf("return reportContent(")
-        assertTrue("非报告分支要作废上一次请求：$content", invalidate > report)
-    }
-
-    @Test
-    fun `报告写入按会话领号，过期的不写；切到非报告状态与面板释放都作废待写的`() {
-        val show = overlay.bodyAfter("private fun showReport(", '{')
-        val ticket = show.indexOf("reportWrites.ticket(sessionKey)")
-        val gated = show.indexOf("reportWrites.runIfLatest(sessionKey, ticket)")
-        val write = show.indexOf(".writeReport(")
-        assertTrue("按会话领号：$show", ticket >= 0)
-        assertTrue("号还是最新的才写：$show", gated > ticket && write > gated)
-        val content = overlay.bodyAfter("private fun contentFor(", '{')
-        assertTrue("切到非报告状态作废待写：$content", content.contains("reportWrites.ticket(key)"))
-        val dispose = overlay.bodyAfter("override fun dispose()", '{')
-        assertTrue("面板释放后写完也不再更新它：$dispose", dispose.contains("reportRequest++"))
     }
 
     @Test
     fun `拖拽松手按 heightToSave 决定存不存高度`() {
         val released = overlay.bodyAfter("override fun mouseReleased(", '{')
         assertTrue(released, released.contains("heightToSave(resizeHeight, showsReport(renderedState),"))
+    }
+
+    @Test
+    fun `报告文件在后台线程按会话领号写入，写好的通知回到界面线程再显示`() {
+        val show = overlay.bodyAfter("private fun showReport(", '{')
+        val ticket = show.indexOf("reportWrites.ticket(sessionKey)")
+        val background = show.indexOf("executeOnPooledThread")
+        val gated = show.indexOf("reportWrites.runIfLatest(sessionKey, ticket)")
+        val write = show.indexOf(".writeReport(")
+        assertTrue("先领号再到后台排队写，号最新才写：$show", ticket >= 0 && background > ticket && gated > background && write > gated)
+        assertTrue("显示不在这里：$show", !show.contains("view.show("))
+        assertTrue(overlay.normalized.contains("reportWrites.addListener {"))
+        assertTrue("通知回到界面线程", overlay.normalized.contains("invokeLater({ onReportWritten(sessionKey, write) }"))
+        assertTrue("监听随面板释放注销", overlay.normalized.contains("Disposer.register(this) { removeReportListener() }"))
+    }
+
+    @Test
+    fun `写好的通知只更新正显示这个会话报告页的面板`() {
+        val written = overlay.bodyAfter("private fun onReportWritten(", '{')
+        assertTrue(written, written.contains("if (disposed || sessionKey != key || !showsReport(renderedState)) return"))
+        val content = overlay.bodyAfter("private fun contentFor(", '{')
+        assertTrue("切到非报告状态作废待写：$content", content.contains("reportWrites.ticket(key)"))
     }
 }

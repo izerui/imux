@@ -29,7 +29,7 @@ class LatestReportWritesTest {
         val writes = LatestReportWrites()
         val a = writes.ticket("a")
         writes.ticket("b")
-        assertTrue(writes.runIfLatest("a", a) {})
+        assertTrue(writes.runIfLatest("a", a) { null })
     }
 
     @Test
@@ -61,7 +61,7 @@ class LatestReportWritesTest {
     private fun slowWrite(writes: LatestReportWrites, key: String, started: CountDownLatch, release: CountDownLatch) =
         daemonPool().apply {
             val ticket = writes.ticket(key)
-            submit { writes.runIfLatest(key, ticket) { started.countDown(); release.await() } }
+            submit { writes.runIfLatest(key, ticket) { started.countDown(); release.await(); null } }
             shutdown()
         }
 
@@ -94,12 +94,45 @@ class LatestReportWritesTest {
         assertTrue(started.await(5, TimeUnit.SECONDS))
         try {
             val other = daemonPool()
-            val wrote = other.submit<Boolean> { writes.runIfLatest("s2", writes.ticket("s2")) {} }
+            val wrote = other.submit<Boolean> { writes.runIfLatest("s2", writes.ticket("s2")) { null } }
             other.shutdown()
             assertTrue(wrote.get(1, TimeUnit.SECONDS))
         } finally {
             release.countDown()
             writer.awaitTermination(5, TimeUnit.SECONDS)
         }
+    }
+
+    @Test
+    fun `同一会话两个分屏同时请求时，号过期的面板也收到写好的最新报告`() {
+        val root = Files.createTempDirectory("project")
+        val writes = LatestReportWrites()
+        val left = mutableListOf<Pair<String, ReportWrite?>>()
+        val right = mutableListOf<Pair<String, ReportWrite?>>()
+        writes.addListener { key, write -> left += key to write }
+        writes.addListener { key, write -> right += key to write }
+
+        val leftTicket = writes.ticket("s1")
+        val rightTicket = writes.ticket("s1")
+        assertFalse("左边号已过期，不写", writes.runIfLatest("s1", leftTicket) { writeReportFile(root, "s1", "<html>旧</html>") })
+        assertTrue(writes.runIfLatest("s1", rightTicket) { writeReportFile(root, "s1", "<html>新</html>") })
+
+        val expected = listOf("s1" to ReportWrite(reportFile(root, "s1"), changed = true))
+        assertEquals("左边面板也要拿到写好的报告", expected, left)
+        assertEquals(expected, right)
+        assertEquals("<html>新</html>", Files.readString(reportFile(root, "s1")))
+    }
+
+    @Test
+    fun `写入失败也通知所有面板，注销后不再通知`() {
+        val writes = LatestReportWrites()
+        val heard = mutableListOf<Pair<String, ReportWrite?>>()
+        val remove = writes.addListener { key, write -> heard += key to write }
+
+        assertTrue(writes.runIfLatest("s1", writes.ticket("s1")) { null })
+        remove()
+        writes.runIfLatest("s1", writes.ticket("s1")) { null }
+
+        assertEquals(listOf<Pair<String, ReportWrite?>>("s1" to null), heard)
     }
 }

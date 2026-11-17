@@ -154,8 +154,11 @@ internal class SessionTrailOverlay(
     /** 视图上正在显示的报告文件：文件重写过或换了文件才重新加载。写入失败时为 null。 */
     private var shownReport: Path? = null
 
-    /** 本面板的请求序号：写完回到界面线程时只认最近一次（写不写由服务按会话判断，见 [showReport]）。 */
-    private var reportRequest = 0
+    /** 当前报告页顶部的横幅区：写入失败横幅加在这里。不显示报告页时为 null。 */
+    private var reportBanners: JPanel? = null
+
+    /** 当前显示着的写入失败横幅；同一时刻只留一条。 */
+    private var writeFailedBanner: JComponent? = null
 
     private val updateAction =
         object : DumbAwareAction(AllIcons.Actions.Refresh) {
@@ -220,6 +223,11 @@ internal class SessionTrailOverlay(
         SessionMonitor.getInstance(project).addListener(this) {
             if (monitorAlarm.isEmpty) monitorAlarm.addRequest(::refresh, MONITOR_REFRESH_MS)
         }
+        // 这个会话的报告写好了：不论是哪个面板请求的，显示着它的面板都更新（同一会话可能在几个分屏里）
+        val removeReportListener = ProgressOverviewService.getInstance(project).reportWrites.addListener { sessionKey, write ->
+            ApplicationManager.getApplication().invokeLater({ onReportWritten(sessionKey, write) }, ModalityState.any())
+        }
+        Disposer.register(this) { removeReportListener() }
         // 报告页的深浅色跟随 IDE 主题
         ApplicationManager.getApplication().messageBus.connect(this)
             .subscribe(LafManagerListener.TOPIC, LafManagerListener { reportView?.setDark(!JBColor.isBright()) })
@@ -319,9 +327,10 @@ internal class SessionTrailOverlay(
     private fun contentFor(state: TrailState): JComponent {
         val regenerate = { store.generate(key, virtualFile.tabId) }
         if (showsReport(state)) return reportContent(state, regenerate)
-        // 不再显示报告：还在后台排队的写入作废，写完也不再动按钮和视图
+        // 不再显示报告：还在后台排队的写入作废；之后写好的通知因为不在报告页，也不会再动按钮和视图
         ProgressOverviewService.getInstance(project).reportWrites.ticket(key)
-        reportRequest++
+        reportBanners = null
+        writeFailedBanner = null
         shownReport = null
         return when (state) {
             TrailState.Unavailable -> buildHintPanel(ImuxBundle.message("action.overview.pending"), null)
@@ -371,8 +380,10 @@ internal class SessionTrailOverlay(
             layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS)
             banner?.let(::add)
         }
+        reportBanners = banners
+        writeFailedBanner = null
         val view = reportView()
-        showReport(view, result, banners)
+        showReport(result)
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             add(banners, BorderLayout.NORTH)
@@ -388,42 +399,47 @@ internal class SessionTrailOverlay(
         }
 
     /**
-     * 在后台线程渲染并写报告文件（读写磁盘不占界面线程），写完回到界面线程交给视图；只认最近一次请求。
-     * 内容变了或换了文件才让视图重新加载，同一份报告切换状态时不闪。
+     * 请求把 [result] 写成报告文件：在后台线程按会话排队写（读写磁盘不占界面线程），同一会话只写最新那次。
+     * 这里不负责显示：写好后服务通知这个会话的所有面板（见 [onReportWritten]），号过期没去写的面板也拿到最新的报告。
      */
-    private fun showReport(view: ReportView, result: OverviewResult, banners: JPanel) {
-        val request = ++reportRequest
+    private fun showReport(result: OverviewResult) {
         val sessionKey = key
         val service = ProgressOverviewService.getInstance(project)
-        // 按会话领号：同一会话后来的请求（含标签页重建后的新面板）一领号，这次就过期了
+        // 按会话领号：同一会话后来的请求（含标签页重建、另一个分屏）一领号，这次就过期了
         val ticket = service.reportWrites.ticket(sessionKey)
         ApplicationManager.getApplication().executeOnPooledThread {
-            // 写入排队进行；排到时已有更新的请求就不写，免得较早的一次后写完，把新报告盖回旧的
-            var write: ReportWrite? = null
-            val wrote = service.reportWrites.runIfLatest(sessionKey, ticket) { write = service.writeReport(sessionKey, result) }
-            if (!wrote) return@executeOnPooledThread
-            ApplicationManager.getApplication().invokeLater({
-                if (!disposed && request == reportRequest) applyReport(view, result, banners, write)
-            }, ModalityState.any())
+            service.reportWrites.runIfLatest(sessionKey, ticket) { service.writeReport(sessionKey, result) }
         }
     }
 
-    /** 写入失败（没有工程目录、磁盘满、没有权限）时顶部加一条横幅，点「更新报告」再写一次；「在浏览器中打开」随之隐藏。 */
-    private fun applyReport(view: ReportView, result: OverviewResult, banners: JPanel, write: ReportWrite?) {
+    /** 这个会话的报告写好了（[write] 为 null 表示写入失败）：面板此刻显示的正是它的报告页才更新。 */
+    private fun onReportWritten(sessionKey: String, write: ReportWrite?) {
+        if (disposed || sessionKey != key || !showsReport(renderedState)) return
+        applyReport(write)
+    }
+
+    /**
+     * 写入失败（没有工程目录、磁盘满、没有权限）时顶部加一条横幅，点「更新报告」按面板当前的报告再写一次；「在浏览器中打开」随之隐藏。
+     * 内容变了或换了文件才让视图重新加载，同一份报告切换状态时不闪。
+     */
+    private fun applyReport(write: ReportWrite?) {
+        val view = reportView ?: return
+        val banners = reportBanners ?: return
         reportButtons[1].isVisible = write != null
+        writeFailedBanner?.let(banners::remove)
+        writeFailedBanner = null
         if (write == null) {
             shownReport = null
-            lateinit var failed: JComponent
-            failed = buildFailedBanner(ImuxBundle.message("action.overview.report.writeFailed")) {
-                banners.remove(failed)
-                banners.revalidate()
-                showReport(view, result, banners)
+            val failed = buildFailedBanner(ImuxBundle.message("action.overview.report.writeFailed")) {
+                currentReport(renderedState)?.let(::showReport)
             }
+            writeFailedBanner = failed
             banners.add(failed)
             banners.revalidate()
             banners.repaint()
             return
         }
+        banners.revalidate()
         if (write.changed || shownReport != write.path) {
             view.show(write.path)
             shownReport = write.path
@@ -489,8 +505,6 @@ internal class SessionTrailOverlay(
 
     override fun dispose() {
         disposed = true
-        // 还在后台写的那次写完后不再更新这个面板（写不写由服务按会话判断，新面板一领号它就过期）
-        reportRequest++
         loadingTimer.stop()
     }
 
@@ -653,4 +667,13 @@ internal fun showsReport(state: TrailState?): Boolean =
         is TrailState.Loading -> state.previous?.report?.timeline?.isNotEmpty() == true
         is TrailState.Failed -> state.previous?.report?.timeline?.isNotEmpty() == true
         else -> false
+    }
+
+/** 状态里正在显示的报告结果：就绪时是它本身，生成中、失败时是旧报告。 */
+internal fun currentReport(state: TrailState?): com.github.izerui.imux.overview.OverviewResult? =
+    when (state) {
+        is TrailState.Ready -> state.result
+        is TrailState.Loading -> state.previous
+        is TrailState.Failed -> state.previous
+        else -> null
     }
