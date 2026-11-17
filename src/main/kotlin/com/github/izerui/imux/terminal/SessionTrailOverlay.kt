@@ -227,7 +227,7 @@ internal class SessionTrailOverlay(
         SessionMonitor.getInstance(project).addListener(this) {
             if (monitorAlarm.isEmpty) monitorAlarm.addRequest(::refresh, MONITOR_REFRESH_MS)
         }
-        // 这个会话的报告写好了：不论是哪个面板请求的，显示着它的面板都更新（同一会话可能在几个分屏里）
+        // 这个会话的报告写好了：不论是谁请求的（本面板、服务在生成完成时、拖动标签页前的旧面板），显示着它的面板都更新
         val removeReportListener = ProgressOverviewService.getInstance(project).reportWrites.addListener { sessionKey, ticket, write ->
             ApplicationManager.getApplication().invokeLater({ onReportWritten(sessionKey, ticket, write) }, ModalityState.any())
         }
@@ -418,7 +418,7 @@ internal class SessionTrailOverlay(
     private fun showReport(result: OverviewResult): Long {
         val sessionKey = key
         val service = ProgressOverviewService.getInstance(project)
-        // 按会话领号：同一会话后来的请求（含标签页重建、另一个分屏）一领号，这次就过期了
+        // 按会话领号：同一会话后来的请求（含拖动标签页后重建的面板、服务在生成完成时的写入）一领号，这次就过期了
         val ticket = service.reportWrites.ticket(sessionKey)
         ApplicationManager.getApplication().executeOnPooledThread {
             service.reportWrites.runIfLatest(sessionKey, ticket) { service.writeReport(sessionKey, result) }

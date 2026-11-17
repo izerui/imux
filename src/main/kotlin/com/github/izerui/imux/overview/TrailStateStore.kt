@@ -162,8 +162,8 @@ internal class TrailStateStore(
      * 缓存仍保留在磁盘上。
      */
     fun releaseOwner(owner: String) {
-        // 清掉后要通知：还有面板在监听这些会话（比如对同一会话「向右拆分」出的另一个编辑器）时，
-        // 不通知它就会一直停在「加载中」
+        // 清掉后照常通知，与其它状态变化一致。会话标签禁止分屏，一个会话只有一个编辑器，标签关了通常没有面板再看这些 key；
+        // 但还有监听者时，不通知它就会一直停在「加载中」
         owners.filterValues { it == owner }.keys.forEach { key ->
             forget(key)
             notifyChanged(key)

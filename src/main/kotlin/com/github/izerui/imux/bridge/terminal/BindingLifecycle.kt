@@ -15,7 +15,7 @@ sealed interface TabChange {
  *
  * TerminalHost.closeSession 不区分"用户关标签""CLI 退出""项目关闭"，这里按
  * [projectClosing] 与 [seenTabs]（本服务实例亲眼见过打开的标签）自行区分，
- * 不改 closeSession 的语义。拖动、分屏由平台的 CLOSING_TO_REOPEN 保证不触发关闭。
+ * 不改 closeSession 的语义。拖动标签页由平台的 CLOSING_TO_REOPEN 保证不触发关闭（会话标签禁止分屏）。
  * 标签还开着但 CLI 已退出（[terminatedTabs]）同关标签一样解绑；项目关闭时进程随之结束，不算。
  *
  * @param openTabs 当前打开的 tabId → sessionKey
