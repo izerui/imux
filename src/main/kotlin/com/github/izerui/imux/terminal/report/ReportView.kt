@@ -32,18 +32,20 @@ internal object ReportViews {
     /**
      * JCEF 插件已启用且当前环境支持时返回内嵌浏览器视图，否则返回只提示「在系统浏览器中打开」的退路视图。
      * 先确认插件启用才去碰 [JcefReportView]：插件被禁用时 JCEF 的类不在 imux 的类加载器里。
+     * [onOpenReport] 是「在系统浏览器中打开报告」：由弹窗先补写报告再打开；[openExternal] 只给页面里点到的其他文件用。
      */
-    fun create(onEscape: () -> Unit, openExternal: (Path) -> Unit): ReportView {
+    fun create(onEscape: () -> Unit, onOpenReport: () -> Unit, openExternal: (Path) -> Unit): ReportView {
         val jcefEnabled = PluginManagerCore.isPluginInstalled(JCEF_PLUGIN) && !PluginManagerCore.isDisabled(JCEF_PLUGIN)
         if (jcefEnabled) JcefReportView.createIfSupported(onEscape, openExternal)?.let { return it }
-        return FallbackReportView(openExternal)
+        return FallbackReportView(onOpenReport)
     }
 }
 
-/** 无法内嵌浏览器时的退路：一句说明加「在系统浏览器中打开」。报告文件照常生成。 */
-private class FallbackReportView(private val openExternal: (Path) -> Unit) : ReportView {
-    private var file: Path? = null
-
+/**
+ * 无法内嵌浏览器时的退路：一句说明加「在系统浏览器中打开」。报告文件照常生成。
+ * 链接不记路径、不自己打开：文件可能已被删掉，交给弹窗先补写再打开（与标题栏按钮同一入口）。
+ */
+private class FallbackReportView(private val onOpenReport: () -> Unit) : ReportView {
     override val component: JComponent =
         JPanel(GridBagLayout()).apply {
             isOpaque = false
@@ -52,16 +54,14 @@ private class FallbackReportView(private val openExternal: (Path) -> Unit) : Rep
                 isOpaque = false
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 add(JBLabel(ImuxBundle.message("action.overview.report.noBrowser"), SwingConstants.CENTER).apply { alignmentX = 0.5f })
-                add(ActionLink(ImuxBundle.message("action.overview.report.openInBrowser")) { file?.let(openExternal) }.apply {
+                add(ActionLink(ImuxBundle.message("action.overview.report.openInBrowser")) { onOpenReport() }.apply {
                     alignmentX = 0.5f
                     isFocusable = false
                 })
             })
         }
 
-    override fun show(file: Path) {
-        this.file = file
-    }
+    override fun show(file: Path) = Unit
 
     override fun setDark(dark: Boolean) = Unit
 

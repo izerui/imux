@@ -178,10 +178,24 @@ class SessionTrailOverlaySourceTest {
     fun `展开弹窗与在浏览器中打开都先补写报告文件，被删了也能补回`() {
         val refresh = overlay.bodyAfter("private fun refresh()", '{')
         assertTrue(refresh, refresh.contains("if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let(::showReport)"))
-        val open = overlay.normalized.substringAfter("private val openAction").substringBefore("private val reportButtons")
+        val open = overlay.bodyAfter("private fun openReportInBrowser()", '{')
         assertTrue("打开前先请求写好：$open", open.contains("pendingOpen = true") && open.contains("showReport(it)"))
         assertTrue("不直接打开记下的路径：$open", !open.contains("BrowserUtil.browse("))
         val apply = overlay.bodyAfter("private fun applyReport(", '{')
         assertTrue("写好后再打开：$apply", apply.contains("if (pendingOpen)") && apply.contains("BrowserUtil.browse(write.path.toUri())"))
+    }
+
+    @Test
+    fun `标题栏按钮与无 JCEF 时的备用链接都走先补写再打开的同一入口`() {
+        val open = overlay.normalized.substringAfter("private val openAction").substringBefore("private val reportButtons")
+        assertTrue("标题栏按钮：$open", open.contains("openReportInBrowser()"))
+        val entry = overlay.bodyAfter("private fun openReportInBrowser()", '{')
+        assertTrue("先请求写好再打开：$entry", entry.contains("pendingOpen = true") && entry.contains("showReport(it)"))
+        assertTrue("备用视图拿到的是这个入口", overlay.normalized.contains("onOpenReport = ::openReportInBrowser"))
+
+        val views = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/report/ReportView.kt").normalized
+        val fallback = views.substringAfter("private class FallbackReportView")
+        assertTrue("备用链接只通知弹窗打开：$fallback", fallback.contains("ActionLink(ImuxBundle.message(\"action.overview.report.openInBrowser\")) { onOpenReport() }"))
+        assertTrue("备用视图不记旧路径、不自己打开：$fallback", !fallback.contains("openExternal") && !fallback.contains("private var file"))
     }
 }

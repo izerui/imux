@@ -185,13 +185,7 @@ internal class SessionTrailOverlay(
                 event.presentation.text = ImuxBundle.message("action.overview.report.openInBrowser")
             }
 
-            // 不直接打开记下的路径：文件可能已被删掉。先请求写好（没变就不重写），写好的通知到了再打开（见 applyReport）
-            override fun actionPerformed(event: AnActionEvent) {
-                currentReport(renderedState)?.let {
-                    pendingOpen = true
-                    showReport(it)
-                }
-            }
+            override fun actionPerformed(event: AnActionEvent) = openReportInBrowser()
         }
 
     /** 标题栏上的「更新报告」「在系统浏览器中打开」：有报告页时才显示。 */
@@ -404,7 +398,11 @@ internal class SessionTrailOverlay(
     }
 
     private fun reportView(): ReportView =
-        reportView ?: ReportViews.create(onEscape = { setExpanded(false) }, openExternal = { BrowserUtil.browse(it.toUri()) }).also { view ->
+        reportView ?: ReportViews.create(
+            onEscape = { setExpanded(false) },
+            onOpenReport = ::openReportInBrowser,
+            openExternal = { BrowserUtil.browse(it.toUri()) },
+        ).also { view ->
             Disposer.register(this, view)
             view.setDark(!JBColor.isBright())
             reportView = view
@@ -421,6 +419,17 @@ internal class SessionTrailOverlay(
         val ticket = service.reportWrites.ticket(sessionKey)
         ApplicationManager.getApplication().executeOnPooledThread {
             service.reportWrites.runIfLatest(sessionKey, ticket) { service.writeReport(sessionKey, result) }
+        }
+    }
+
+    /**
+     * 在系统浏览器中打开报告：标题栏按钮与无 JCEF 时的备用链接共用。不直接打开记下的路径（文件可能已被删掉），
+     * 先请求写好（没变就不重写），写好的通知到了再打开（见 [applyReport]）。
+     */
+    private fun openReportInBrowser() {
+        currentReport(renderedState)?.let {
+            pendingOpen = true
+            showReport(it)
         }
     }
 
