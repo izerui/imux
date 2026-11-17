@@ -154,10 +154,7 @@ class BridgeRouter(
                     Gate.Open -> Unit
                 }
                 // 先登记再提交：CLI 可能在 submit 返回前就把这句写进记录
-                tab(tabId) {
-                    expectEcho(text)
-                    remoteSubmitted(now())
-                }
+                tab(tabId) { expectEcho(text, at = now()) }
                 try {
                     val phase = submitWithRetry(message.robotId, current, text)
                     // 未提交成功，清除回显登记

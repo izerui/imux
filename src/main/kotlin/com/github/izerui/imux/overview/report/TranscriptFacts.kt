@@ -14,48 +14,72 @@ import java.time.Instant
  * 逐行扫会话记录到 [limitBytes]（只认以换行结束的完整行，与轨迹的截止位置一致），得出报告里由插件统计的事实：
  * 首末时间戳之差（分钟，向下取整）与改动过的文件。坏行跳过。
  *
- * 改动文件只认编辑工具：Claude Code 的 Edit / MultiEdit / Write / NotebookEdit，Codex 的 apply_patch，Pi 的 edit / write。
+ * 改动文件只认编辑工具：Claude Code 的 Edit / MultiEdit / Write / NotebookEdit，Codex 的 apply_patch，Pi 的 edit / write；
+ * Claude Code 与 Pi 被拒绝或执行失败的编辑不算（Codex 的失败结果格式未核对，暂都算）。
  * 经 shell 命令改的文件统计不到，是已知的低估。工程目录内的写相对路径，其余保留原样。
  */
 internal fun transcriptFacts(agentType: AgentType, file: Path, limitBytes: Long, projectRoot: Path?): ReportFacts {
     var first: Instant? = null
     var last: Instant? = null
-    val files = LinkedHashSet<String>()
+    // 按出现顺序记下每次编辑（调用 id 与路径）；失败的调用 id 另记，最后剔除
+    val edits = ArrayList<Pair<String?, String>>()
+    val failed = HashSet<String>()
     forEachCompleteLine(file, limitBytes) { line ->
         val root = runCatching { JsonParser.parseString(line) }.getOrNull() as? JsonObject ?: return@forEachCompleteLine
         root.string("timestamp")?.let { runCatching { Instant.parse(it) }.getOrNull() }?.let { time ->
             if (first == null) first = time
             last = time
         }
-        val paths = when (agentType) {
-            AgentType.CLAUDE -> claudeEdits(root)
-            AgentType.CODEX -> codexEdits(root)
-            AgentType.PI -> piEdits(root)
+        when (agentType) {
+            AgentType.CLAUDE -> {
+                edits += claudeEdits(root)
+                failed += claudeFailures(root)
+            }
+            AgentType.CODEX -> codexEdits(root).forEach { edits += null to it }
+            AgentType.PI -> {
+                edits += piEdits(root)
+                piFailure(root)?.let { failed += it }
+            }
         }
-        paths.forEach { files += display(it, projectRoot) }
     }
     val duration = first?.let { start -> last?.let { end -> Duration.between(start, end).toMinutes() } }
-    return ReportFacts(duration, files.toList())
+    val files = edits.filter { (id, _) -> id == null || id !in failed }.map { (_, path) -> display(path, projectRoot) }.distinct()
+    return ReportFacts(duration, files)
 }
 
 private val CLAUDE_EDIT_TOOLS = setOf("Edit", "MultiEdit", "Write")
 private val PI_EDIT_TOOLS = setOf("edit", "write")
 private val PATCH_HEADERS = listOf("*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: ")
 
-private fun claudeEdits(root: JsonObject): List<String> =
+private fun claudeEdits(root: JsonObject): List<Pair<String?, String>> =
     contentBlocks(root, "tool_use").mapNotNull { block ->
         val input = block.get("input") as? JsonObject ?: return@mapNotNull null
-        when (block.string("name")) {
+        val path = when (block.string("name")) {
             in CLAUDE_EDIT_TOOLS -> input.string("file_path")
             "NotebookEdit" -> input.string("notebook_path")
             else -> null
-        }
+        } ?: return@mapNotNull null
+        block.string("id") to path
     }
 
-private fun piEdits(root: JsonObject): List<String> =
+/** 被拒绝或执行失败的工具调用：user 行里 is_error 为 true 的 tool_result。 */
+private fun claudeFailures(root: JsonObject): List<String> =
+    contentBlocks(root, "tool_result")
+        .filter { it.get("is_error")?.takeIf(JsonElement::isJsonPrimitive)?.asBoolean == true }
+        .mapNotNull { it.string("tool_use_id") }
+
+private fun piEdits(root: JsonObject): List<Pair<String?, String>> =
     contentBlocks(root, "toolCall")
         .filter { it.string("name") in PI_EDIT_TOOLS }
-        .mapNotNull { (it.get("arguments") as? JsonObject)?.string("path") }
+        .mapNotNull { call -> (call.get("arguments") as? JsonObject)?.string("path")?.let { call.string("id") to it } }
+
+/** 失败的工具调用：role 为 toolResult、isError 为 true 的消息。 */
+private fun piFailure(root: JsonObject): String? {
+    val message = root.get("message") as? JsonObject ?: return null
+    if (message.string("role") != "toolResult") return null
+    if (message.get("isError")?.takeIf(JsonElement::isJsonPrimitive)?.asBoolean != true) return null
+    return message.string("toolCallId")
+}
 
 /** apply_patch 的补丁正文：custom_tool_call 在 `input`，function_call 在 `arguments`（JSON 字符串，取其 `input`）。 */
 private fun codexEdits(root: JsonObject): List<String> {

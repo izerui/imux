@@ -14,11 +14,19 @@ class TranscriptFactsTest {
 
     private fun facts(agent: AgentType, path: Path, root: Path? = null) = transcriptFacts(agent, path, Files.size(path), root)
 
-    private fun claudeTool(name: String, input: String, ts: String = "2026-11-16T09:00:00Z") =
-        """{"type":"assistant","timestamp":"$ts","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"$name","input":$input}]}}"""
+    private fun claudeTool(name: String, input: String, ts: String = "2026-11-16T09:00:00Z", id: String = "t") =
+        """{"type":"assistant","timestamp":"$ts","message":{"role":"assistant","content":[{"type":"tool_use","id":"$id","name":"$name","input":$input}]}}"""
 
-    private fun piTool(name: String, args: String, ts: String = "2026-11-16T09:00:00Z") =
-        """{"type":"message","timestamp":"$ts","message":{"role":"assistant","content":[{"type":"toolCall","id":"t","name":"$name","arguments":$args}]}}"""
+    /** 与真实记录一致：失败结果在 user 行的 content 里，tool_result 带 tool_use_id 与 is_error。 */
+    private fun claudeResult(id: String, error: Boolean) =
+        """{"type":"user","timestamp":"2026-11-16T09:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"$id","is_error":$error,"content":"x"}]}}"""
+
+    private fun piTool(name: String, args: String, ts: String = "2026-11-16T09:00:00Z", id: String = "t") =
+        """{"type":"message","timestamp":"$ts","message":{"role":"assistant","content":[{"type":"toolCall","id":"$id","name":"$name","arguments":$args}]}}"""
+
+    /** 与真实记录一致：结果是 role 为 toolResult 的消息，带 toolCallId 与 isError。 */
+    private fun piResult(id: String, error: Boolean) =
+        """{"type":"message","timestamp":"2026-11-16T09:00:01Z","message":{"role":"toolResult","toolCallId":"$id","toolName":"edit","isError":$error,"content":[]}}"""
 
     private fun codexPatch(patch: String, ts: String = "2026-11-16T09:00:00Z") =
         """{"timestamp":"$ts","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c","name":"apply_patch","input":${com.google.gson.JsonPrimitive(patch)}}}"""
@@ -104,6 +112,38 @@ class TranscriptFactsTest {
     @Test
     fun `坏行跳过不影响其他行`() {
         val path = file("这不是 JSON", claudeTool("Edit", """{"file_path":"/p/a.kt"}"""), "{\"半截\":")
+        assertEquals(listOf("/p/a.kt"), facts(AgentType.CLAUDE, path).files)
+    }
+
+    @Test
+    fun `Claude 被拒绝或失败的编辑不计入改动文件`() {
+        val path = file(
+            claudeTool("Edit", """{"file_path":"/p/rejected.kt"}""", id = "a"),
+            claudeResult("a", error = true),
+            claudeTool("Edit", """{"file_path":"/p/ok.kt"}""", id = "b"),
+            claudeResult("b", error = false),
+        )
+        assertEquals(listOf("/p/ok.kt"), facts(AgentType.CLAUDE, path).files)
+    }
+
+    @Test
+    fun `Pi 失败的编辑不计入改动文件`() {
+        val path = file(
+            piTool("edit", """{"path":"/p/failed.kt"}""", id = "a"),
+            piResult("a", error = true),
+            piTool("write", """{"path":"/p/ok.kt"}""", id = "b"),
+            piResult("b", error = false),
+        )
+        assertEquals(listOf("/p/ok.kt"), facts(AgentType.PI, path).files)
+    }
+
+    @Test
+    fun `同一文件先失败后成功仍计入`() {
+        val path = file(
+            claudeTool("Edit", """{"file_path":"/p/a.kt"}""", id = "a"),
+            claudeResult("a", error = true),
+            claudeTool("Edit", """{"file_path":"/p/a.kt"}""", id = "b"),
+        )
         assertEquals(listOf("/p/a.kt"), facts(AgentType.CLAUDE, path).files)
     }
 }

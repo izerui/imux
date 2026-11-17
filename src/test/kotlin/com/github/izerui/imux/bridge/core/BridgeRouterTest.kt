@@ -1870,4 +1870,18 @@ class BridgeRouterTest {
             stopClocked.onInbound(inbound("2", "停"))
             assertEquals(listOf("tab-1" to false), port.stops)
         }
+
+    @Test
+    fun `残留的斜杠命令登记不会因为之后又发了话而重新算在跑`() =
+        runBlocking {
+            registry.bind(robot, target)
+            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.TurnStarted, SessionEvent.TurnEnded))
+            stopClocked.onInbound(inbound("1", "/compact"))
+            clock += 31_000
+            stopClocked.onInbound(inbound("2", "跑一下测试"))
+            stopClocked.onSessionEvents("tab-1", listOf(SessionEvent.UserText("跑一下测试"), SessionEvent.TurnEnded))
+            clock += 5_000
+            stopClocked.onInbound(inbound("3", "停"))
+            assertEquals(listOf("tab-1" to false), port.stops)
+        }
 }

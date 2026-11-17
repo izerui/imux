@@ -368,7 +368,7 @@
       app.appendChild(heading(T.sections.changes));
       var tabs = el("div", "tabs"), diff = el("div", "diff");
       changes.forEach(function (change, i) {
-        var name = (change.file || "").split("/").pop() || fill(T.change, { n: i + 1 });
+        var name = (change.file || "").split(/[\\/]/).pop() || fill(T.change, { n: i + 1 });
         var tab = el("button", "tab" + (i === 0 ? " on" : ""), name);
         var pane = el("div", "pane" + (i === 0 ? " on" : ""));
         pane.appendChild(el("div", "file", change.file || ""));

@@ -50,4 +50,10 @@ class ReportTemplateTest {
         assertEquals(1, template.split(placeholder).size - 1)
         assertEquals(1, template.split("id=\"imux-data\"").size - 1)
     }
+
+    @Test
+    fun `改动标签取文件名时斜杠和反斜杠都认，Windows 路径不会整条显示`() {
+        org.junit.Assert.assertFalse(template.contains(""".split("/")"""))
+        assertTrue(template.contains(""".split(/[\\/]/)"""))
+    }
 }

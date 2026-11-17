@@ -31,10 +31,8 @@ internal class TabState {
     /** 本轮已由记录里的结束标记结算，IDE 的完成信号不再重复结算。 */
     private var endedByMarker = false
 
-    private val remoteEchoes = ArrayDeque<String>()
-
-    /** 最近一次手机提交的时刻；用来判断还没进记录的话是不是可能正要开新一轮（见 [idle]）。 */
-    private var lastRemoteSubmitAt: Long? = null
+    /** 手机提交、还没在记录里出现的话（空白归一后）与提交时刻；时刻用来判断它是否可能正要开新一轮（见 [idle]）。 */
+    private val remoteEchoes = ArrayDeque<Pair<String, Long>>()
 
     /** 后台调用的说明，按工具调用 id；等结果给出任务 id 时取走。调用失败就等不到结果，所以限量。 */
     private val launches = boundedMap<String, String>()
@@ -215,12 +213,7 @@ internal class TabState {
      * 刚绑定、还没读到轮次时不算空闲：可能绑在一轮的半路上。
      */
     fun idle(now: Long): Boolean =
-        settled && (remoteEchoes.isEmpty() || lastRemoteSubmitAt?.let { now - it >= ECHO_RUNNING_GRACE_MS } == true)
-
-    /** 手机提交了一句话（回显登记见 [expectEcho]）。 */
-    fun remoteSubmitted(at: Long) {
-        lastRemoteSubmitAt = at
-    }
+        settled && remoteEchoes.none { (_, at) -> now - at < ECHO_RUNNING_GRACE_MS }
 
     /** 已结算时交出待发的回复，未结算返回 null。 */
     fun takeIfSettled(): PendingReply? = if (settled) takeReply() else null
@@ -244,17 +237,26 @@ internal class TabState {
     }
 
     /** 手机发来的输入提交到终端后，会在记录里再次出现，届时不回显到手机。 */
-    fun expectEcho(text: String) {
-        remoteEchoes.addLast(normalize(text))
+    fun expectEcho(text: String, at: Long = 0L) {
+        remoteEchoes.addLast(normalize(text) to at)
         while (remoteEchoes.size > ECHO_CAPACITY) remoteEchoes.removeFirst()
     }
 
     fun forgetEcho(text: String) {
-        remoteEchoes.remove(normalize(text))
+        removeEcho(text)
     }
 
     /** 这条用户输入是不是刚从手机提交的；是就消耗掉登记。 */
-    fun consumeEcho(text: String): Boolean = remoteEchoes.remove(normalize(text))
+    fun consumeEcho(text: String): Boolean = removeEcho(text)
+
+    /** 去掉最早一条与 [text] 相同的登记。 */
+    private fun removeEcho(text: String): Boolean {
+        val key = normalize(text)
+        val index = remoteEchoes.indexOfFirst { it.first == key }
+        if (index < 0) return false
+        remoteEchoes.removeAt(index)
+        return true
+    }
 
     /** CLI 写入记录时可能调整空白；只按空白归一后的全文匹配，匹配不上就当电脑输入。 */
     private fun normalize(text: String): String = text.trim().replace(WHITESPACE, " ")
