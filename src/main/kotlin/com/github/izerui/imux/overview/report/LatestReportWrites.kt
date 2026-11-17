@@ -23,14 +23,14 @@ internal class LatestReportWrites(
     private val counter = AtomicLong()
     private val latest = ConcurrentHashMap<String, Long>()
     private val locks = ConcurrentHashMap<String, Any>()
-    private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, ReportWrite?) -> Unit>()
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, Long, ReportWrite?) -> Unit>()
 
     /** 各会话已经通知到的号；只在 [notifyLocks] 里读写。 */
     private val notified = ConcurrentHashMap<String, Long>()
     private val notifyLocks = ConcurrentHashMap<String, Any>()
 
-    /** 监听每次写好的报告（会话键与结果，写入失败为 null）；在后台线程回调。返回注销函数。 */
-    fun addListener(listener: (String, ReportWrite?) -> Unit): () -> Unit {
+    /** 监听每次写好的报告（会话键、这次请求的号、结果，写入失败为 null）；在后台线程回调。返回注销函数。 */
+    fun addListener(listener: (String, Long, ReportWrite?) -> Unit): () -> Unit {
         listeners += listener
         return { listeners -= listener }
     }
@@ -55,8 +55,22 @@ internal class LatestReportWrites(
             // 更新的那次已经通知过：这条是晚到的旧结果，丢掉
             if (ticket <= (notified[sessionKey] ?: 0L)) return true
             notified[sessionKey] = ticket
-            listeners.forEach { it(sessionKey, result) }
+            listeners.forEach { it(sessionKey, ticket, result) }
         }
         return true
     }
 }
+
+/** 收到一条写好的通知后，「在浏览器中打开」的意图怎么办：[openNow] 现在打开，[pending] 还在等的点击号。 */
+internal data class OpenDecision(val openNow: Boolean, val pending: Long?)
+
+/**
+ * 打开意图绑定在点击时发起的那次请求（号 [pending]）上：号比它小的通知是点击之前的请求，成功失败都不结算；
+ * 号不小于它的才结算——写好就打开，写失败就放弃。否则点击前的失败通知晚到，会把点击后的打开意图提前清掉。
+ */
+internal fun settleOpen(pending: Long?, noticeTicket: Long, written: Boolean): OpenDecision =
+    when {
+        pending == null -> OpenDecision(openNow = false, pending = null)
+        noticeTicket < pending -> OpenDecision(openNow = false, pending = pending)
+        else -> OpenDecision(openNow = written, pending = null)
+    }

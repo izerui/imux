@@ -155,7 +155,7 @@ class SessionTrailOverlaySourceTest {
         assertTrue("先领号再到后台排队写，号最新才写：$show", ticket >= 0 && background > ticket && gated > background && write > gated)
         assertTrue("显示不在这里：$show", !show.contains("view.show("))
         assertTrue(overlay.normalized.contains("reportWrites.addListener {"))
-        assertTrue("通知回到界面线程", overlay.normalized.contains("invokeLater({ onReportWritten(sessionKey, write) }"))
+        assertTrue("通知回到界面线程", overlay.normalized.contains("invokeLater({ onReportWritten(sessionKey, ticket, write) }"))
         assertTrue("监听随面板释放注销", overlay.normalized.contains("Disposer.register(this) { removeReportListener() }"))
     }
 
@@ -177,12 +177,13 @@ class SessionTrailOverlaySourceTest {
     @Test
     fun `展开弹窗与在浏览器中打开都先补写报告文件，被删了也能补回`() {
         val refresh = overlay.bodyAfter("private fun refresh()", '{')
-        assertTrue(refresh, refresh.contains("if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let(::showReport)"))
+        assertTrue(refresh, refresh.contains("if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let { showReport(it) }"))
         val open = overlay.bodyAfter("private fun openReportInBrowser()", '{')
-        assertTrue("打开前先请求写好：$open", open.contains("pendingOpen = true") && open.contains("showReport(it)"))
+        assertTrue("打开前先请求写好：$open", open.contains("pendingOpen = showReport(it)"))
         assertTrue("不直接打开记下的路径：$open", !open.contains("BrowserUtil.browse("))
         val apply = overlay.bodyAfter("private fun applyReport(", '{')
-        assertTrue("写好后再打开：$apply", apply.contains("if (pendingOpen)") && apply.contains("BrowserUtil.browse(write.path.toUri())"))
+        assertTrue("按点击那次请求结算打开意图：$apply", apply.contains("settleOpen(pendingOpen, ticket, written = write != null)"))
+        assertTrue("写好后再打开：$apply", apply.contains("if (open.openNow) BrowserUtil.browse(write.path.toUri())"))
     }
 
     @Test
@@ -190,7 +191,7 @@ class SessionTrailOverlaySourceTest {
         val open = overlay.normalized.substringAfter("private val openAction").substringBefore("private val reportButtons")
         assertTrue("标题栏按钮：$open", open.contains("openReportInBrowser()"))
         val entry = overlay.bodyAfter("private fun openReportInBrowser()", '{')
-        assertTrue("先请求写好再打开：$entry", entry.contains("pendingOpen = true") && entry.contains("showReport(it)"))
+        assertTrue("先请求写好再打开，记下这次请求的号：$entry", entry.contains("pendingOpen = showReport(it)"))
         assertTrue("备用视图拿到的是这个入口", overlay.normalized.contains("onOpenReport = ::openReportInBrowser"))
 
         val views = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/report/ReportView.kt").normalized

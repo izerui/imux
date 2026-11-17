@@ -109,8 +109,8 @@ class LatestReportWritesTest {
         val writes = LatestReportWrites()
         val left = mutableListOf<Pair<String, ReportWrite?>>()
         val right = mutableListOf<Pair<String, ReportWrite?>>()
-        writes.addListener { key, write -> left += key to write }
-        writes.addListener { key, write -> right += key to write }
+        writes.addListener { key, _, write -> left += key to write }
+        writes.addListener { key, _, write -> right += key to write }
 
         val leftTicket = writes.ticket("s1")
         val rightTicket = writes.ticket("s1")
@@ -127,7 +127,7 @@ class LatestReportWritesTest {
     fun `写入失败也通知所有面板，注销后不再通知`() {
         val writes = LatestReportWrites()
         val heard = mutableListOf<Pair<String, ReportWrite?>>()
-        val remove = writes.addListener { key, write -> heard += key to write }
+        val remove = writes.addListener { key, _, write -> heard += key to write }
 
         assertTrue(writes.runIfLatest("s1", writes.ticket("s1")) { null })
         remove()
@@ -145,7 +145,7 @@ class LatestReportWritesTest {
         // 测试钩子：旧请求写完、发通知之前在这里卡住
         val writes = LatestReportWrites(beforeNotify = { _, ticket -> if (ticket == oldTicket) { oldWritten.countDown(); releaseOld.await() } })
         val heard = java.util.Collections.synchronizedList(mutableListOf<Pair<String, ReportWrite?>>())
-        writes.addListener { key, write -> heard += key to write }
+        writes.addListener { key, _, write -> heard += key to write }
 
         oldTicket = writes.ticket("s1")
         val old = daemonPool().apply {
@@ -172,7 +172,7 @@ class LatestReportWritesTest {
         var oldTicket = -1L
         val writes = LatestReportWrites(beforeNotify = { _, ticket -> if (ticket == oldTicket) { oldWritten.countDown(); releaseOld.await() } })
         val heard = java.util.Collections.synchronizedList(mutableListOf<ReportWrite?>())
-        writes.addListener { _, write -> heard += write }
+        writes.addListener { _, _, write -> heard += write }
 
         oldTicket = writes.ticket("s1")
         val old = daemonPool().apply {
@@ -197,5 +197,47 @@ class LatestReportWritesTest {
         assertTrue("显示的内容不同", needsReload(ShownReport(path, "a"), write))
         assertTrue("换了文件", needsReload(ShownReport(java.nio.file.Path.of("/p/.imux/reports/s2.html"), "b"), write))
         assertFalse("同一文件同一内容", needsReload(ShownReport(path, "b"), write.copy(changed = true)))
+    }
+
+    @Test
+    fun `点击前的请求不结算打开意图，点击之后的请求成功才打开、失败才放弃`() {
+        assertEquals("没有打开意图", OpenDecision(openNow = false, pending = null), settleOpen(pending = null, noticeTicket = 5, written = true))
+        assertEquals("点击前的失败通知：意图留着", OpenDecision(openNow = false, pending = 5), settleOpen(pending = 5, noticeTicket = 4, written = false))
+        assertEquals("点击前的成功通知：也不算，等点击那次", OpenDecision(openNow = false, pending = 5), settleOpen(pending = 5, noticeTicket = 4, written = true))
+        assertEquals("点击那次写好：打开", OpenDecision(openNow = true, pending = null), settleOpen(pending = 5, noticeTicket = 5, written = true))
+        assertEquals("更新的请求写好：同样打开", OpenDecision(openNow = true, pending = null), settleOpen(pending = 5, noticeTicket = 7, written = true))
+        assertEquals("点击那次写失败：放弃", OpenDecision(openNow = false, pending = null), settleOpen(pending = 5, noticeTicket = 5, written = false))
+    }
+
+    @Test
+    fun `点击前的失败通知在点击后才到、新请求随后成功时，仍会打开浏览器`() {
+        val root = Files.createTempDirectory("project")
+        val oldFailed = CountDownLatch(1)
+        val releaseOld = CountDownLatch(1)
+        var oldTicket = -1L
+        val writes = LatestReportWrites(beforeNotify = { _, ticket -> if (ticket == oldTicket) { oldFailed.countDown(); releaseOld.await() } })
+        val notices = java.util.Collections.synchronizedList(mutableListOf<Pair<Long, ReportWrite?>>())
+        writes.addListener { _, ticket, write -> notices += ticket to write }
+
+        oldTicket = writes.ticket("s1")
+        val old = daemonPool().apply {
+            submit { writes.runIfLatest("s1", oldTicket) { null } }
+            shutdown()
+        }
+        assertTrue("旧请求写失败，停在通知前", oldFailed.await(5, TimeUnit.SECONDS))
+        val clickTicket = writes.ticket("s1")
+        releaseOld.countDown()
+        assertTrue(old.awaitTermination(5, TimeUnit.SECONDS))
+        assertTrue(writes.runIfLatest("s1", clickTicket) { writeReportFile(root, "s1", "<html>新</html>") })
+
+        var pending: Long? = clickTicket
+        var opened = false
+        for ((ticket, write) in notices.toList()) {
+            val decision = settleOpen(pending, ticket, written = write != null)
+            pending = decision.pending
+            if (decision.openNow) opened = true
+        }
+        assertEquals("旧失败先到、新成功后到", listOf(oldTicket to null, clickTicket to notices.last().second), notices.toList())
+        assertTrue("打开意图没被点击前的请求结算掉", opened)
     }
 }

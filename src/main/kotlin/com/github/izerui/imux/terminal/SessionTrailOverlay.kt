@@ -11,6 +11,7 @@ import com.github.izerui.imux.overview.OverviewResult
 import com.github.izerui.imux.overview.report.ReportWrite
 import com.github.izerui.imux.overview.report.ShownReport
 import com.github.izerui.imux.overview.report.needsReload
+import com.github.izerui.imux.overview.report.settleOpen
 import com.github.izerui.imux.overview.buildFailedBanner
 import com.github.izerui.imux.overview.buildProgressBanner
 import com.github.izerui.imux.overview.buildSaveFailedBanner
@@ -160,7 +161,7 @@ internal class SessionTrailOverlay(
     private var reportBanners: JPanel? = null
 
     /** 点了「在浏览器中打开」，等报告写好就打开。 */
-    private var pendingOpen = false
+    private var pendingOpen: Long? = null
 
     /** 当前显示着的写入失败横幅；同一时刻只留一条。 */
     private var writeFailedBanner: JComponent? = null
@@ -227,8 +228,8 @@ internal class SessionTrailOverlay(
             if (monitorAlarm.isEmpty) monitorAlarm.addRequest(::refresh, MONITOR_REFRESH_MS)
         }
         // 这个会话的报告写好了：不论是哪个面板请求的，显示着它的面板都更新（同一会话可能在几个分屏里）
-        val removeReportListener = ProgressOverviewService.getInstance(project).reportWrites.addListener { sessionKey, write ->
-            ApplicationManager.getApplication().invokeLater({ onReportWritten(sessionKey, write) }, ModalityState.any())
+        val removeReportListener = ProgressOverviewService.getInstance(project).reportWrites.addListener { sessionKey, ticket, write ->
+            ApplicationManager.getApplication().invokeLater({ onReportWritten(sessionKey, ticket, write) }, ModalityState.any())
         }
         Disposer.register(this) { removeReportListener() }
         // 报告页的深浅色跟随 IDE 主题
@@ -293,7 +294,7 @@ internal class SessionTrailOverlay(
         updateNotices(state, expanded)
         if (expanded) render(state) else loadingTimer.stop()
         // 状态没变时 render 不重建内容：收起再展开也要补写一次，报告文件被删了能补回来（内容没变不重写、页面不重载）
-        if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let(::showReport)
+        if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let { showReport(it) }
         relayout()
     }
 
@@ -338,6 +339,8 @@ internal class SessionTrailOverlay(
         reportBanners = null
         writeFailedBanner = null
         shownReport = null
+        // 不在报告页了：点过的「在浏览器中打开」作废，免得之后某次写好时突然弹出浏览器
+        pendingOpen = null
         return when (state) {
             TrailState.Unavailable -> buildHintPanel(ImuxBundle.message("action.overview.pending"), null)
             TrailState.Empty -> buildHintPanel(
@@ -412,7 +415,7 @@ internal class SessionTrailOverlay(
      * 请求把 [result] 写成报告文件：在后台线程按会话排队写（读写磁盘不占界面线程），同一会话只写最新那次。
      * 这里不负责显示：写好后服务通知这个会话的所有面板（见 [onReportWritten]），号过期没去写的面板也拿到最新的报告。
      */
-    private fun showReport(result: OverviewResult) {
+    private fun showReport(result: OverviewResult): Long {
         val sessionKey = key
         val service = ProgressOverviewService.getInstance(project)
         // 按会话领号：同一会话后来的请求（含标签页重建、另一个分屏）一领号，这次就过期了
@@ -420,6 +423,7 @@ internal class SessionTrailOverlay(
         ApplicationManager.getApplication().executeOnPooledThread {
             service.reportWrites.runIfLatest(sessionKey, ticket) { service.writeReport(sessionKey, result) }
         }
+        return ticket
     }
 
     /**
@@ -427,33 +431,32 @@ internal class SessionTrailOverlay(
      * 先请求写好（没变就不重写），写好的通知到了再打开（见 [applyReport]）。
      */
     private fun openReportInBrowser() {
-        currentReport(renderedState)?.let {
-            pendingOpen = true
-            showReport(it)
-        }
+        // 记下这次请求的号：只有它或更新的请求写好才打开，点击前的请求晚到的通知不算数（见 settleOpen）
+        currentReport(renderedState)?.let { pendingOpen = showReport(it) }
     }
 
     /** 这个会话的报告写好了（[write] 为 null 表示写入失败）：面板此刻显示的正是它的报告页才更新。 */
-    private fun onReportWritten(sessionKey: String, write: ReportWrite?) {
+    private fun onReportWritten(sessionKey: String, ticket: Long, write: ReportWrite?) {
         if (disposed || sessionKey != key || !showsReport(renderedState)) return
-        applyReport(write)
+        applyReport(ticket, write)
     }
 
     /**
      * 写入失败（没有工程目录、磁盘满、没有权限）时顶部加一条横幅，点「更新报告」按面板当前的报告再写一次；「在浏览器中打开」随之隐藏。
      * 内容变了或换了文件才让视图重新加载，同一份报告切换状态时不闪。
      */
-    private fun applyReport(write: ReportWrite?) {
+    private fun applyReport(ticket: Long, write: ReportWrite?) {
         val view = reportView ?: return
         val banners = reportBanners ?: return
+        val open = settleOpen(pendingOpen, ticket, written = write != null)
+        pendingOpen = open.pending
         reportButtons[1].isVisible = write != null
         writeFailedBanner?.let(banners::remove)
         writeFailedBanner = null
         if (write == null) {
             shownReport = null
-            pendingOpen = false
             val failed = buildFailedBanner(ImuxBundle.message("action.overview.report.writeFailed")) {
-                currentReport(renderedState)?.let(::showReport)
+                currentReport(renderedState)?.let { showReport(it) }
             }
             writeFailedBanner = failed
             banners.add(failed)
@@ -467,10 +470,7 @@ internal class SessionTrailOverlay(
             view.show(write.path)
             shownReport = ShownReport(write.path, write.digest)
         }
-        if (pendingOpen) {
-            pendingOpen = false
-            BrowserUtil.browse(write.path.toUri())
-        }
+        if (open.openNow) BrowserUtil.browse(write.path.toUri())
     }
 
     /** 第一次生成、还没有旧报告：进度居中。 */
