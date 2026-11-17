@@ -173,4 +173,15 @@ class SessionTrailOverlaySourceTest {
         assertTrue(apply, apply.contains("if (needsReload(shownReport, write))"))
         assertTrue("不能看 changed：别的请求可能刚把文件改成同样的内容", !apply.contains("write.changed"))
     }
+
+    @Test
+    fun `展开弹窗与在浏览器中打开都先补写报告文件，被删了也能补回`() {
+        val refresh = overlay.bodyAfter("private fun refresh()", '{')
+        assertTrue(refresh, refresh.contains("if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let(::showReport)"))
+        val open = overlay.normalized.substringAfter("private val openAction").substringBefore("private val reportButtons")
+        assertTrue("打开前先请求写好：$open", open.contains("pendingOpen = true") && open.contains("showReport(it)"))
+        assertTrue("不直接打开记下的路径：$open", !open.contains("BrowserUtil.browse("))
+        val apply = overlay.bodyAfter("private fun applyReport(", '{')
+        assertTrue("写好后再打开：$apply", apply.contains("if (pendingOpen)") && apply.contains("BrowserUtil.browse(write.path.toUri())"))
+    }
 }

@@ -177,4 +177,19 @@ class SessionTrailLayoutTest {
         assertEquals("拖了下边缘：存眼前的高度", 300, heightToSave(resizedHeight = true, showingReport = false, shownHeight = 300, storedHeight = 1127))
         assertEquals("正显示报告时只拖宽：存眼前的高度，免得放不下时被缩回去", 800, heightToSave(resizedHeight = false, showingReport = true, shownHeight = 800, storedHeight = 1127))
     }
+
+    @Test
+    fun `展开弹窗且显示报告页时重新请求写报告，其余情况不请求`() {
+        val node = com.github.izerui.imux.overview.OverviewNode(com.github.izerui.imux.overview.NodeSymbol.MAIN, "一")
+        val ready = com.github.izerui.imux.overview.TrailState.Ready(
+            com.github.izerui.imux.overview.OverviewResult(
+                listOf(node), java.time.Instant.now(), report = com.github.izerui.imux.overview.report.SessionReport(timeline = listOf(node)),
+            ),
+            false,
+        )
+        assertTrue("收起后再展开：文件可能被删了，补回", shouldRewriteOnExpand(wasExpanded = false, expanded = true, state = ready))
+        assertFalse("一直展开着：照常由状态变化驱动", shouldRewriteOnExpand(wasExpanded = true, expanded = true, state = ready))
+        assertFalse("收起时不写", shouldRewriteOnExpand(wasExpanded = true, expanded = false, state = ready))
+        assertFalse("展开的不是报告页", shouldRewriteOnExpand(wasExpanded = false, expanded = true, state = com.github.izerui.imux.overview.TrailState.Empty))
+    }
 }

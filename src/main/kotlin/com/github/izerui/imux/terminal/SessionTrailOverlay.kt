@@ -159,6 +159,9 @@ internal class SessionTrailOverlay(
     /** 当前报告页顶部的横幅区：写入失败横幅加在这里。不显示报告页时为 null。 */
     private var reportBanners: JPanel? = null
 
+    /** 点了「在浏览器中打开」，等报告写好就打开。 */
+    private var pendingOpen = false
+
     /** 当前显示着的写入失败横幅；同一时刻只留一条。 */
     private var writeFailedBanner: JComponent? = null
 
@@ -182,8 +185,12 @@ internal class SessionTrailOverlay(
                 event.presentation.text = ImuxBundle.message("action.overview.report.openInBrowser")
             }
 
+            // 不直接打开记下的路径：文件可能已被删掉。先请求写好（没变就不重写），写好的通知到了再打开（见 applyReport）
             override fun actionPerformed(event: AnActionEvent) {
-                shownReport?.let { BrowserUtil.browse(it.path.toUri()) }
+                currentReport(renderedState)?.let {
+                    pendingOpen = true
+                    showReport(it)
+                }
             }
         }
 
@@ -283,13 +290,16 @@ internal class SessionTrailOverlay(
     private fun refresh() {
         if (disposed || project.isDisposed) return
         val expanded = virtualFile.trailExpanded
-        if (shownExpanded && !expanded) returnFocusIfInside()
+        val wasExpanded = shownExpanded
+        if (wasExpanded && !expanded) returnFocusIfInside()
         shownExpanded = expanded
 
         if (expanded) store.generateIfNeeded(key, virtualFile.tabId)
         val state = store.state(key)
         updateNotices(state, expanded)
         if (expanded) render(state) else loadingTimer.stop()
+        // 状态没变时 render 不重建内容：收起再展开也要补写一次，报告文件被删了能补回来（内容没变不重写、页面不重载）
+        if (shouldRewriteOnExpand(wasExpanded, expanded, state)) currentReport(state)?.let(::showReport)
         relayout()
     }
 
@@ -432,6 +442,7 @@ internal class SessionTrailOverlay(
         writeFailedBanner = null
         if (write == null) {
             shownReport = null
+            pendingOpen = false
             val failed = buildFailedBanner(ImuxBundle.message("action.overview.report.writeFailed")) {
                 currentReport(renderedState)?.let(::showReport)
             }
@@ -446,6 +457,10 @@ internal class SessionTrailOverlay(
         if (needsReload(shownReport, write)) {
             view.show(write.path)
             shownReport = ShownReport(write.path, write.digest)
+        }
+        if (pendingOpen) {
+            pendingOpen = false
+            BrowserUtil.browse(write.path.toUri())
         }
     }
 
@@ -680,3 +695,7 @@ internal fun currentReport(state: TrailState?): com.github.izerui.imux.overview.
         is TrailState.Failed -> state.previous
         else -> null
     }
+
+/** 收起后再展开、且显示的是报告页：要重新请求写报告（文件可能已被删）。一直展开着时由状态变化驱动。 */
+internal fun shouldRewriteOnExpand(wasExpanded: Boolean, expanded: Boolean, state: TrailState): Boolean =
+    !wasExpanded && expanded && showsReport(state)
