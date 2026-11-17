@@ -298,7 +298,7 @@ class ProgressOverviewService(
         scope = coroutineScope,
         loadCached = ::cachedOverview,
         isAvailable = { SessionMonitor.getInstance(project).model.sessionOf(it) != null },
-        generate = { key, onProgress -> generateOverview(key, onProgress) },
+        generate = { key, onProgress -> generateOverview(key, onProgress).also { writeGeneratedReport(key, it, reportWrites, ::writeReport) } },
         errorText = ::overviewErrorText,
         onEdt = { action -> ApplicationManager.getApplication().invokeLater(action, ModalityState.any()) },
     )
@@ -401,6 +401,21 @@ class ProgressOverviewService(
         /** 长会话需要智能体分多次读取，实测 6000 万字节的会话约 2 分钟。 */
         internal const val AGENT_TIMEOUT_SECONDS = 600L
     }
+}
+
+/**
+ * 生成完成就把报告写成文件，不等面板展开：面板收着时生成完、或者从没展开过，`.imux/reports/` 里也是最新的。
+ * 经同一个写入闸门 [writes] 领号再写，与面板的写入按会话排队；写好后照常通知各面板（开着的面板据此更新）。
+ * 没有报告（会话太短、总结不出东西）时不写：闸门会把「没写成」当作写入失败通知出去，正显示旧报告的面板会误报保存失败。
+ */
+internal fun writeGeneratedReport(
+    sessionKey: String,
+    result: OverviewResult,
+    writes: LatestReportWrites,
+    write: (String, OverviewResult) -> ReportWrite?,
+) {
+    if (result.report == null) return
+    writes.runIfLatest(sessionKey, writes.ticket(sessionKey)) { write(sessionKey, result) }
 }
 
 /**
