@@ -3,8 +3,11 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.peer.PeerFeedbackHint
+import com.github.izerui.imux.peer.screenTopOffset
 import com.github.izerui.imux.session.NavigationTranscriptIndex
 import com.github.izerui.imux.session.SessionExchange
+import org.jetbrains.plugins.terminal.view.TerminalLineIndex
+import org.jetbrains.plugins.terminal.view.TerminalOffset
 import org.jetbrains.plugins.terminal.view.TerminalOutputModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -61,6 +64,52 @@ class SessionMessageNavigatorTest {
         val anchors = peerFeedbackAnchors(listOf(native), listOf(hint), 1_000L, 1_050L)
 
         assertEquals(listOf(native), anchors)
+    }
+
+    /**
+     * 实测：Claude Code 提交后把反馈画在原输入框处，比发送时记下的终端末尾靠前一截（输入框与底栏）。
+     * 只认末尾之后的原生锚点时，同一条反馈多出一根无回复的横线，卡片序号也跟着错位（18 轮显示成 x/19）。
+     */
+    @Test
+    fun `副驾驶反馈落在发送时末尾之前但在屏幕内时仍认原生锚点而不重复`() {
+        val native = UserMessageAnchor(30, "流式响应仍漏在保护之外", "先核对流式处理这块的代码。", 1_030L)
+        val hint = PeerFeedbackHint("流式响应仍漏在保护之外", 1_045L, outputModel, earliestOffset = 1_010L)
+
+        val anchors = peerFeedbackAnchors(listOf(native), listOf(hint), 1_000L, 1_050L)
+
+        assertEquals(listOf(native), anchors)
+    }
+
+    @Test
+    fun `发送前屏幕顶端之前的相同原生锚点不替代新反馈`() {
+        val oldNative = UserMessageAnchor(5, "检查并发边界", "第一轮回复", 1_005L)
+        val hint = PeerFeedbackHint("检查并发边界", 1_045L, outputModel, earliestOffset = 1_010L)
+
+        val anchors = peerFeedbackAnchors(listOf(oldNative), listOf(hint), 1_000L, 1_050L)
+
+        assertEquals(listOf(1_005L, 1_045L), anchors.map(UserMessageAnchor::absoluteOffset))
+        assertEquals("新反馈保留独立合成锚点", "", anchors.last().replyPreview)
+    }
+
+    /** 行 [firstLine]..9，第 i 行从 i*10 开始，末尾在 100。 */
+    private fun linedModel(firstLine: Long) = Proxy.newProxyInstance(
+        TerminalOutputModel::class.java.classLoader,
+        arrayOf(TerminalOutputModel::class.java),
+    ) { _, method, args ->
+        when (method.name) {
+            "getFirstLineIndex" -> TerminalLineIndex.of(firstLine)
+            "getLastLineIndex" -> TerminalLineIndex.of(9)
+            "getStartOfLine" -> TerminalOffset.of((args[0] as TerminalLineIndex).toAbsolute() * 10)
+            "getEndOffset" -> TerminalOffset.of(100)
+            else -> null
+        }
+    } as TerminalOutputModel
+
+    @Test
+    fun `屏幕顶端取倒数第 rows 行行首，不足一屏取首行，不知行数退回末尾`() {
+        assertEquals("倒数第 3 行是第 7 行", 70L, screenTopOffset(linedModel(firstLine = 0), rows = 3))
+        assertEquals("内容不足一屏取首行", 20L, screenTopOffset(linedModel(firstLine = 2), rows = 32))
+        assertEquals("不知行数退回末尾", 100L, screenTopOffset(linedModel(firstLine = 0), rows = null))
     }
 
     @Test

@@ -332,8 +332,9 @@ internal fun peerFeedbackAnchors(
         // 原生预览来自 transcript，已去掉 markdown；hint 是注入原文，带反引号等标记。
         // 不按同一套规则归一化就对不上，同一条反馈会多出一个无回复的重复圆点。
         val preview = truncated(normalizeWhitespace(stripMarkdownForMatching(hint.text)), USER_PREVIEW_CHARS)
+        // 下界是发送时的屏幕顶端而不是终端末尾：提交后消息画在原输入框处，比发送时的末尾靠前
         val match = availableNative.indexOfLast {
-            it.userPreview == preview && it.absoluteOffset >= hint.absoluteOffset
+            it.userPreview == preview && it.absoluteOffset >= hint.earliestOffset
         }
         if (match >= 0) {
             availableNative.removeAt(match)

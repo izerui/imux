@@ -137,9 +137,25 @@ fun interface PeerStateListener : EventListener {
 
 internal data class PeerFeedbackHint(
     val text: String,
+    /** 发送时终端末尾，合成锚点画在这里。 */
     val absoluteOffset: Long,
     val outputModel: TerminalOutputModel,
+    /**
+     * 反馈最早可能落屏的位置：发送时屏幕顶端。TUI 提交后把消息画在原输入框处，比 [absoluteOffset]
+     * 靠前（中间隔着输入框与底栏）；但它只能改写屏幕内的内容，不会早于这里。认原生锚点按这个下界。
+     */
+    val earliestOffset: Long = absoluteOffset,
 )
+
+/** 屏幕顶端（倒数第 [rows] 行行首）的绝对位置；不知道行数时退回终端末尾。 */
+internal fun screenTopOffset(
+    outputModel: TerminalOutputModel,
+    rows: Int?,
+): Long {
+    if (rows == null || rows <= 0) return outputModel.endOffset.toAbsolute()
+    val top = outputModel.lastLineIndex.minus((rows - 1).toLong()).coerceAtLeast(outputModel.firstLineIndex)
+    return outputModel.getStartOfLine(top).toAbsolute()
+}
 
 class PeerCoordinator internal constructor(
     private val project: Project,
@@ -808,8 +824,9 @@ class PeerCoordinator internal constructor(
                     }
                     val outputModel = view.outputModels.active.value
                     val sendOffset = outputModel.endOffset.toAbsolute()
+                    val screenTop = screenTopOffset(outputModel, view.gridSize?.rows)
                     trySendPeerFeedback(view.createSendTextBuilder(), prompt).also { accepted ->
-                        if (accepted) hint = PeerFeedbackHint(prompt, sendOffset, outputModel)
+                        if (accepted) hint = PeerFeedbackHint(prompt, sendOffset, outputModel, screenTop)
                     }
                 }
             if (delivered) break
