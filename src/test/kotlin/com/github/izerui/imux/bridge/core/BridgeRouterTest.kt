@@ -337,6 +337,24 @@ class BridgeRouterTest {
         }
 
     @Test
+    fun `并入这一轮的电脑输入带标签转发、手机发的不回显，且不丢这一轮攒着的回复`() =
+        runBlocking {
+            registry.bind(robot, target)
+            router.onSessionEvents("tab-1", listOf(SessionEvent.UserText("开始")))
+            router.onInbound(inbound("1", "手机插一句"))
+            router.onSessionEvents(
+                "tab-1",
+                listOf(
+                    SessionEvent.AssistantText("结论"),
+                    SessionEvent.MidTurnUserText("电脑插一句"),
+                    SessionEvent.MidTurnUserText("手机插一句"),
+                    SessionEvent.TurnEnded,
+                ),
+            )
+            assertEquals(listOf("LOCAL:\n开始", "LOCAL:\n电脑插一句", "结论"), sentTexts())
+        }
+
+    @Test
     fun `一轮结束时还有后台任务：回复之后补一条；任务结束后的那一轮不再提示`() =
         runBlocking {
             registry.bind(robot, target)

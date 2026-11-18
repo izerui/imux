@@ -33,6 +33,7 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
         val root = parseObject(line) ?: return emptyList()
         // 后台任务在主会话忙时结束：通知先排进队列，这一刻任务已经结束
         if (root.string("type") == "queue-operation") return listOfNotNull(root.string("content")?.let(::backgroundEnded))
+        if (root.string("type") == "attachment") return if (root.flag("isSidechain")) emptyList() else listOfNotNull(midTurnInput(root.obj("attachment")))
         // 只认对话行：api-request-blob 等是 Claude Code 记下的发给模型的请求内容，会把已有消息（含中断标记）再抄一遍
         if (root.string("type") !in CLAUDE_MESSAGE_TYPES) return emptyList()
         // 子代理、注入的元数据与压缩摘要都不是这条会话里人和助手说的话
@@ -63,6 +64,18 @@ object ClaudeTranscriptDecoder : TranscriptDecoder {
      * 输入是 `human`；后台任务通知、命令输出等是别的值或没有。不兼容 2.1.28 以前还没有这个字段的版本。
      */
     private fun humanOrigin(root: JsonObject): Boolean = root.obj("origin")?.string("kind") == "human"
+
+    /**
+     * 这一轮进行中从输入框提交、被当场并入这一轮的话：Claude Code 不写 user 行，而是记一条
+     * `queued_command` 附件（`commandMode: prompt`，`origin.kind: human`）。后台任务通知、
+     * 其它代理发来的消息也走这种附件，但来源不是 human，不算输入。带图时 prompt 是内容块数组，只取文字。
+     */
+    private fun midTurnInput(attachment: JsonObject?): SessionEvent? {
+        if (attachment?.string("type") != "queued_command" || attachment.string("commandMode") != "prompt") return null
+        if (attachment.obj("origin")?.string("kind") != "human") return null
+        val prompt = attachment.get("prompt") ?: return null
+        return plainText(prompt).trim().takeIf(String::isNotEmpty)?.let(SessionEvent::MidTurnUserText)
+    }
 
     private fun userEvents(
         content: JsonElement,
@@ -278,13 +291,7 @@ object PiTranscriptDecoder : TranscriptDecoder {
         return when (message.string("role")) {
             "user" -> {
                 val content = message.get("content") ?: return emptyList()
-                val text =
-                    if (content.isJsonPrimitive) {
-                        content.asString
-                    } else {
-                        blocks(content).filter { it.string("type") == "text" }.mapNotNull { it.string("text") }.joinToString("\n")
-                    }
-                listOfNotNull(text.trim().takeIf(String::isNotEmpty)?.let(SessionEvent::UserText))
+                listOfNotNull(plainText(content).trim().takeIf(String::isNotEmpty)?.let(SessionEvent::UserText))
             }
             "assistant" -> {
                 val events =
@@ -322,4 +329,12 @@ private fun parseObject(line: String): JsonObject? =
     runCatching { JsonParser.parseString(line) }.getOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
 
 private fun blocks(content: JsonElement?): List<JsonObject> = content.objects()
+
+/** 字符串内容原样返回；内容块数组只取文字块，按行拼接。 */
+private fun plainText(content: JsonElement): String =
+    if (content.isJsonPrimitive) {
+        content.asString
+    } else {
+        blocks(content).filter { it.string("type") == "text" }.mapNotNull { it.string("text") }.joinToString("\n")
+    }
 

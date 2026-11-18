@@ -21,6 +21,7 @@ import com.github.izerui.imux.bridge.core.InboundMessage
 import com.github.izerui.imux.bridge.core.InboundSink
 import com.github.izerui.imux.bridge.core.OutboundMessage
 import com.github.izerui.imux.bridge.core.RobotId
+import com.github.izerui.imux.bridge.core.TextSegmenter
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -231,6 +232,22 @@ class WecomConnection(
     }
 
     override suspend fun send(message: OutboundMessage): DeliveryResult {
+        // think 标记转换会增加 UTF-8 字节数，路由器切好的正文仍需按实际发送内容检查。
+        val parts = TextSegmenter.split(WecomProtocol.defuseThinkTags(message.text), maxTextBytes)
+        for ((index, part) in parts.withIndex()) {
+            val result = sendPart(message.copy(text = part))
+            if (result != DeliveryResult.Accepted) {
+                return if (index > 0 && result == DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)) {
+                    DeliveryResult.RetryRemaining(parts.drop(index).joinToString("\n"))
+                } else {
+                    result
+                }
+            }
+        }
+        return DeliveryResult.Accepted
+    }
+
+    private suspend fun sendPart(message: OutboundMessage): DeliveryResult {
         val current = run ?: return DeliveryResult.Rejected("offline")
         var s = session ?: return DeliveryResult.Rejected("offline")
         var transport = s.transport ?: return DeliveryResult.Rejected("offline")

@@ -66,6 +66,9 @@ sealed interface SessionEvent {
     /** 从输入框提交的内容（人、副驾驶或手机）。开启新一轮。 */
     data class UserText(val text: String) : SessionEvent
 
+    /** 这一轮进行中提交、被并入这一轮的输入（人、副驾驶或手机）。不开启新一轮。 */
+    data class MidTurnUserText(val text: String) : SessionEvent
+
     /** 助手的正文。工具调用之前的只是过程说明。 */
     data class AssistantText(val text: String) : SessionEvent
 

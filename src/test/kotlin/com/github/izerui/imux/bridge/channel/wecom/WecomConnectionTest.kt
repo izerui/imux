@@ -113,6 +113,43 @@ class WecomConnectionTest {
     ) = """{"cmd":"aibot_msg_callback","headers":{"req_id":"R"},"body":{"msgid":"$msgId","chattype":"$chat","from":{"userid":"$user"},"msgtype":"text","text":{"content":"$text"}}}"""
 
     @Test
+    fun `think 转换后超长的正文分段发送且内容完整`() = runBlocking {
+        val conn = connection()
+        startAndAwaitOnline(conn)
+        val text = "<think>".repeat(200) + "a".repeat(18_600)
+        assertEquals(DeliveryResult.Accepted, conn.send(OutboundMessage(RobotId("r"), "u1", text)))
+        val contents = sentMarkdown()
+        assertTrue("转换后应分成多段", contents.size > 1)
+        contents.forEach { assertTrue(it.toByteArray(Charsets.UTF_8).size <= conn.maxTextBytes) }
+        assertEquals("<\u200Bthink>".repeat(200) + "a".repeat(18_600), contents.joinToString(""))
+    }
+
+    @Test
+    fun `think 长消息部分发送后限频只续发剩余正文`() = runBlocking {
+        var clock = 0L
+        val conn = connection(limiter = SlidingWindowLimiter(1, 60_000) { clock })
+        startAndAwaitOnline(conn)
+        val text = "</THINK>中😀".repeat(1_300)
+        val result = conn.send(OutboundMessage(RobotId("r"), "u1", text))
+        assertTrue(result is DeliveryResult.RetryRemaining)
+        assertEquals(1, sentMarkdown().size)
+        clock = 60_001
+        assertEquals(
+            DeliveryResult.Accepted,
+            conn.send(OutboundMessage(RobotId("r"), "u1", (result as DeliveryResult.RetryRemaining).text)),
+        )
+        val contents = sentMarkdown()
+        assertEquals(2, contents.size)
+        contents.forEach { assertTrue(it.toByteArray(Charsets.UTF_8).size <= conn.maxTextBytes) }
+        assertEquals("<\u200B/THINK>中😀".repeat(1_300), contents.joinToString(""))
+    }
+
+    private fun sentMarkdown(): List<String> = transports.first().sent
+        .map { JsonParser.parseString(it).asJsonObject }
+        .filter { it["cmd"].asString == "aibot_send_msg" }
+        .map { it["body"].asJsonObject["markdown"].asJsonObject["content"].asString }
+
+    @Test
     fun `连接后订阅并上线`() {
         startAndAwaitOnline(connection())
         val subscribe = JsonParser.parseString(transports.first().sent.first()).asJsonObject

@@ -83,8 +83,17 @@ object WecomProtocol {
             addProperty("chatid", userId)
             addProperty("chat_type", 1)
             addProperty("msgtype", "markdown")
-            add("markdown", JsonObject().apply { addProperty("content", content) })
+            add("markdown", JsonObject().apply { addProperty("content", defuseThinkTags(content)) })
         }
+
+    /**
+     * 企业微信客户端把 markdown 里的 `<think>` / `</think>` 当作思考块标记：标记前的正文被丢弃，
+     * 之后的全部折进「已完成思考」。回复只是在谈论这个字样时（如代码里的 `<think>`）也会中招，
+     * 所以在 `<` 后插一个零宽空格，显示不变，客户端不再识别。
+     */
+    internal fun defuseThinkTags(content: String): String = THINK_TAG.replace(content, "<\u200B$1")
+
+    private val THINK_TAG = Regex("<(/?think\\b)", RegexOption.IGNORE_CASE)
 
     /** 回复进入会话事件的欢迎语，[reqId] 必须是该事件的 req_id；只支持纯文本。 */
     fun respondWelcome(

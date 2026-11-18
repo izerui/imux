@@ -30,6 +30,13 @@ class WecomProtocolTest {
     }
 
     @Test
+    fun `正文里的 think 开闭标记都被拆开，其余字符原样保留`() {
+        val content = obj(WecomProtocol.sendMarkdown("r3", "u", "出现 `<think>` 字样，<THINK x> 与 </think> 也算；<thinking> 不动"))
+            .getAsJsonObject("body").getAsJsonObject("markdown")["content"].asString
+        assertEquals("出现 `<\u200Bthink>` 字样，<\u200BTHINK x> 与 <\u200B/think> 也算；<thinking> 不动", content)
+    }
+
+    @Test
     fun `req_id 以命令名开头且唯一`() {
         val random = Random(1)
         val a = WecomProtocol.reqId("ping", 1000, random)

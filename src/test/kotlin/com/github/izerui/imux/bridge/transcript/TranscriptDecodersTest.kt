@@ -51,6 +51,30 @@ class TranscriptDecodersTest {
     }
 
     @Test
+    fun `Claude 并入这一轮的输入解成 MidTurnUserText，纯文字与带图两种 prompt 都取出文字`() {
+        val plain =
+            """{"type":"attachment","isSidechain":false,"attachment":{"type":"queued_command","prompt":" 电脑上插一句 ",""" +
+                """"commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true}}"""
+        val withImage =
+            """{"type":"attachment","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"[Image #3] 看这里"},""" +
+                """{"type":"image","source":{"type":"base64","data":"AA=="}}],"commandMode":"prompt","origin":{"kind":"human"}}}"""
+        assertEquals(listOf(SessionEvent.MidTurnUserText("电脑上插一句")), ClaudeTranscriptDecoder.decode(plain))
+        assertEquals(listOf(SessionEvent.MidTurnUserText("[Image #3] 看这里")), ClaudeTranscriptDecoder.decode(withImage))
+    }
+
+    @Test
+    fun `Claude 后台任务通知与其它代理消息的 queued_command 附件都不算输入`() {
+        val notification =
+            """{"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>b1</task-id>",""" +
+                """"commandMode":"task-notification","origin":{"kind":"task-notification"}}}"""
+        val peer =
+            """{"type":"attachment","attachment":{"type":"queued_command","prompt":"<agent-message from=\"a1\">hi</agent-message>",""" +
+                """"commandMode":"prompt","origin":{"kind":"peer"}}}"""
+        assertTrue("后台任务通知", ClaudeTranscriptDecoder.decode(notification).isEmpty())
+        assertTrue("其它代理消息", ClaudeTranscriptDecoder.decode(peer).isEmpty())
+    }
+
+    @Test
     fun `Claude 工具调用带规范化参数，工具结果带行时间与是否出错`() {
         val call =
             """{"type":"assistant","message":{"role":"assistant","content":[""" +

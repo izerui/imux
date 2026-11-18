@@ -732,6 +732,9 @@ class BridgeRouter(
                         }
                     if (!echo) send(binding, texts.localInputLabel() + "\n" + event.text)
                 }
+                // 并入这一轮的输入：只转告手机，攒着的回复与轮次照旧
+                is SessionEvent.MidTurnUserText ->
+                    if (!tab(tabId) { consumeEcho(event.text) }) send(binding, texts.localInputLabel() + "\n" + event.text)
                 SessionEvent.ToolStarted -> tab(tabId) { toolStarted() }
                 is SessionEvent.ToolCalled -> tab(tabId) { toolCalled(event.toolUseId, HookToolDone(null, event.toolName, event.input, event.toolUseId)) }
                 is SessionEvent.ToolResulted -> onToolResulted(tabId, event)
