@@ -148,6 +148,10 @@
         <virtualFilePreCloseCheck
                 implementation="com.github.izerui.imux.terminal.AgentSessionPreCloseCheck"/>
 
+        <!-- 会话窗口不支持分屏：标签右键的 Split and Move 不认 FORBID_TAB_SPLIT，对会话标签隐藏 -->
+        <dynamicActionConfigurationCustomizer
+                implementation="com.github.izerui.imux.terminal.SessionSplitMoveBlocker"/>
+
         <!--
           覆盖平台的窗口标题构建器，给有未读会话的项目名加星号前缀。
           macOS 把多个项目窗口合并成标签栏后，标签上只有 NSWindow title，
@@ -201,12 +205,6 @@
         <terminalLaunchContributor implementation="com.github.izerui.imux.peer.mcp.PeerLaunchContributor"/>
         <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
     </extensions>
-
-    <applicationListeners>
-        <!-- 标签右键 Split and Move 不认 FORBID_TAB_SPLIT，按移动处理，免得把会话关掉 -->
-        <listener class="com.github.izerui.imux.terminal.AgentSplitAndMoveGuard"
-                  topic="com.intellij.openapi.actionSystem.ex.AnActionListener"/>
-    </applicationListeners>
 
     <actions>
         <group
