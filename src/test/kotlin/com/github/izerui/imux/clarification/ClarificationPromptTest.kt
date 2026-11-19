@@ -267,6 +267,14 @@ class ClarificationPromptTest {
                 "$chinese：交付前核对遗漏",
                 opening.contains(if (chinese) "交付前核对是否遗漏用户的目标与明确要求" else "check that none of the user's goals or explicit requirements were omitted"),
             )
+            assertTrue(
+                "$chinese：交付前核对业务和逻辑闭环",
+                opening.contains(if (chinese) "业务和逻辑是否闭环" else "closed-loop in both business flow and logic"),
+            )
+            assertTrue(
+                "$chinese：交付前核对没有捡了芝麻丢了西瓜",
+                opening.contains(if (chinese) "有没有捡了芝麻丢了西瓜，让次要细节挤占或带偏了主要目标" else "minor details have not crowded out or diverted the main goal"),
+            )
         }
     }
 

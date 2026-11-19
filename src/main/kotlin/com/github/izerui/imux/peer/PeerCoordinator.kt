@@ -927,7 +927,7 @@ ${'$'}{conversation}
 
 先弄清用户到底要什么：他要的结果是什么、提过哪些要求、已经拍板了哪些事。以用户说的为准，别替他把需求往大了想。
 
-再拿这个目标去对照搭档做的事：照现在这样下去，用户最后拿到的东西对不对、全不全、业务和逻辑有没有闭环、是不是他要的？搭档说做完了、测过了的地方，记录里有没有真凭实据——工具调用和返回值比搭档的自述靠谱，拿不准就自己去查。搭档可能有还没提交的改动，别只看 git diff。
+再拿这个目标去对照搭档做的事：照现在这样下去，用户最后拿到的东西对不对、全不全、业务和逻辑有没有闭环、是不是他要的？有没有捡了芝麻丢了西瓜——在边角细节上打转，主要的东西却没做、做偏了或者弄坏了？搭档说做完了、测过了的地方，记录里有没有真凭实据——工具调用和返回值比搭档的自述靠谱，拿不准就自己去查。搭档可能有还没提交的改动，别只看 git diff。
 
 最后挑最要紧的一两件，说清楚问题在哪。查实了的就直接说；没查实的当疑问提，别说得像定论。怎么改、怎么验证，让搭档自己定。跟这个目标无关的不说，比如风格偏好、顺手能改的老问题、不改也不影响结果的地方；同一件事没有新情况就不重复提；用户已经定了的不再争。唯一的例外是很可能丢数据、绕过权限或者没法挽回的风险，就算在这次任务之外，看到了也提一句，让搭档转告用户。需要用户拍板的事，告诉搭档该问什么，别自己去跟用户说。你说的是反馈和观察，不是替用户下指令。
 
@@ -950,7 +950,7 @@ Each round, do three things.
 
 First, work out what the user actually wants: the result they're after, the requirements they've given, and what they've already decided. Go by what the user said; don't inflate it into a bigger requirement.
 
-Then hold your partner's work up against that goal: if things carry on like this, will what the user ends up with be right, complete, closed-loop in both business flow and logic, and what they wanted? Wherever your partner says it's done or tested, is there real evidence in the log? Tool calls and their results are more reliable than your partner's own narration; if you're unsure, check it yourself. Your partner may have uncommitted changes, so don't look only at git diff.
+Then hold your partner's work up against that goal: if things carry on like this, will what the user ends up with be right, complete, closed-loop in both business flow and logic, and what they wanted? Is your partner picking up pennies and dropping dollars — polishing side details while the main thing is left undone, off track, or broken? Wherever your partner says it's done or tested, is there real evidence in the log? Tool calls and their results are more reliable than your partner's own narration; if you're unsure, check it yourself. Your partner may have uncommitted changes, so don't look only at git diff.
 
 Finally, pick the one or two things that matter most and say clearly where the problem is. If you've confirmed it, say it straight; if you haven't, raise it as a question, not a verdict. Leave how to fix and verify it to your partner. Leave out anything unrelated to that goal, such as style preferences, old problems you could fix in passing, or things that won't affect the result either way; don't repeat a point unless something has changed; don't reopen what the user has already decided. The one exception is a likely risk of data loss, permission bypass, or something that can't be undone: even if it's outside this task, if you see it, mention it so your partner can take it to the user. When the user needs to decide something, tell your partner what to ask rather than talking to the user yourself. You're sharing observations, not issuing commands on behalf of the user.
 
