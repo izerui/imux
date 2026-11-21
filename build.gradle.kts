@@ -152,6 +152,7 @@ intellijPlatform {
 // withType 覆盖全部实例，脚本在所有沙箱里都在。
 tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> {
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
+    from("src/main/cli-capabilities") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-idea-mcp.js") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-mcp.js") { into("${project.name}/scripts") }
 }
@@ -170,6 +171,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
 // 把这三个源码目录显式声明成 `:test` 的输入，源文件一变（哪怕只变注释）就重跑。
 // 代价是注释改动也会触发一次测试，相对于假绿是划算的。
 tasks.test {
+    inputs.dir("src/main/cli-capabilities")
     listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
         inputs
             .dir(dir)

@@ -100,3 +100,9 @@ private fun pluginScriptRoots(): Pair<Path?, Path?> {
         }.getOrNull()
     return pluginPath to classPathEntry
 }
+
+internal fun capabilityScript(dialect: ShellDialect): Path? {
+    val relative = if (dialect == ShellDialect.POSIX) "scripts/cli-help.sh" else "scripts/cli-help.ps1"
+    val (plugin, classes) = pluginScriptRoots()
+    return pluginScriptIn(plugin, relative) ?: pluginScriptNear(classes, relative)
+}

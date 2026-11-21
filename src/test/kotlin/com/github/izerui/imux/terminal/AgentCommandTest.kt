@@ -15,6 +15,9 @@ import java.nio.file.Path
 class AgentCommandTest {
     private companion object {
         val IDEA_MCP = IdeaMcpEndpoint(port = 64342, projectPath = "/workspace")
+        val CODEX_POSIX = "codex \$( ${cliHelpCommand(ShellDialect.POSIX, "codex")} | grep -E '^[[:space:]]*--no-alt-screen([[:space:]]|$)' >/dev/null && printf '%s\\n' '--no-alt-screen' )"
+        val PI_POSIX = "pi \$( ${cliHelpCommand(ShellDialect.POSIX, "pi")} | grep -E '^[[:space:]]*--tui-mode([[:space:]]|$)' >/dev/null && printf '%s\\n' '--tui-mode' 'regular' )"
+        val CODEX_WINDOWS = "\$imuxDisplayArgs = @(); if ((${cliHelpCommand(ShellDialect.POWERSHELL, "codex")}) -match '^\\s*--no-alt-screen(\\s|$)') { \$imuxDisplayArgs = @('--no-alt-screen') }; codex @imuxDisplayArgs"
     }
 
     @Test
@@ -36,9 +39,9 @@ class AgentCommandTest {
 
     @Test
     fun `codex 的 resume 子命令与 claude 不同`() {
-        assertEquals("codex", launchCommand("/bin/zsh", AgentType.CODEX, null).last())
+        assertEquals("$CODEX_POSIX", launchCommand("/bin/zsh", AgentType.CODEX, null).last())
         assertEquals(
-            "codex resume 'abc-123'",
+            "$CODEX_POSIX resume 'abc-123'",
             launchCommand("/bin/zsh", AgentType.CODEX, "abc-123").last(),
         )
     }
@@ -66,11 +69,11 @@ class AgentCommandTest {
                 """-c 'mcp_servers.idea.http_headers.IJ_MCP_SERVER_PROJECT_PATH="/workspace"'"""
 
         assertEquals(
-            "codex $args",
+            "$CODEX_POSIX $args",
             launchCommand("/bin/zsh", AgentType.CODEX, null, ideaMcp = IDEA_MCP).last(),
         )
         assertEquals(
-            "codex $args resume 'abc-123'",
+            "$CODEX_POSIX $args resume 'abc-123'",
             launchCommand("/bin/zsh", AgentType.CODEX, "abc-123", ideaMcp = IDEA_MCP).last(),
         )
     }
@@ -214,7 +217,7 @@ class AgentCommandTest {
             evaluatePowerShellLiterals(
                 launchCommand("powershell.exe", AgentType.CODEX, null, ideaMcp = IDEA_MCP)
                     .last()
-                    .removePrefix("codex "),
+                    .removePrefix("$CODEX_WINDOWS "),
             ),
         )
     }
@@ -258,7 +261,7 @@ class AgentCommandTest {
 
         assertTrue("少了上报扩展，pi 标签的标题与未读状态会整个停更：$script", script.contains("-e '$reporter'"))
         assertTrue("少了 IDEA MCP 扩展，pi 拿不到任何 IDE 能力：$script", script.contains("-e '$idea'"))
-        assertEquals("pi --session-id 'abc-123' -e '$reporter' -e '$idea'", script)
+        assertEquals("$PI_POSIX --session-id 'abc-123' -e '$reporter' -e '$idea'", script)
     }
 
     /**
@@ -269,16 +272,16 @@ class AgentCommandTest {
     @Test
     fun `pi 新建与续聊都用 session-id 预绑定`() {
         assertEquals(
-            "pi --session-id 'abc-123'",
+            "$PI_POSIX --session-id 'abc-123'",
             launchCommand("/bin/zsh", AgentType.PI, "abc-123").last(),
         )
     }
 
     @Test
-    fun `pi 缺少会话 id 时退回裸命令`() {
+    fun `pi 缺少会话 id 时仍以普通终端启动`() {
         // 正常路径不会走到这里（新建也会给 id），但缺了 id 也得能起得来，
         // 让 pi 自己生成 id，总好过拼出 `pi --session-id` 这种残命令。
-        assertEquals("pi", launchCommand("/bin/zsh", AgentType.PI, null).last())
+        assertEquals("$PI_POSIX", launchCommand("/bin/zsh", AgentType.PI, null).last())
     }
 
     @Test
@@ -322,7 +325,32 @@ class AgentCommandTest {
             launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123").last(),
             launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", newSession = true).last(),
         )
-        assertEquals("codex", launchCommand("/bin/zsh", AgentType.CODEX, resumeId = null, newSession = true).last())
+        assertEquals("$CODEX_POSIX", launchCommand("/bin/zsh", AgentType.CODEX, resumeId = null, newSession = true).last())
+    }
+
+    @Test
+    fun `Claude 标签强制使用普通终端`() {
+        assertEquals("1", launchEnvironment(AgentType.CLAUDE, "tab-1")["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"])
+    }
+
+    @Test
+    fun `按实际帮助选择普通显示参数并保留续聊输入`() {
+        val shell = "/bin/sh"
+        org.junit.Assume.assumeTrue(java.io.File(shell).canExecute())
+        fun received(agent: AgentType, help: String): List<String> {
+            val fakeCli = "${agent.cli}() { if [ \"\$1\" = --help ]; then printf '%s\\n' ${quote(ShellDialect.POSIX, help)}; else printf '%s\\n' \"\$@\"; fi; }"
+            val command = launchCommand(shell, agent, "id", initialPrompt = "say hi").last()
+            val process = ProcessBuilder(shell, "-c", "$fakeCli\n$command").redirectErrorStream(true).start()
+            val lines = process.inputStream.bufferedReader().use { it.readLines() }
+            assertEquals(lines.toString(), 0, process.waitFor())
+            return lines
+        }
+        val codexResume = listOf("resume", "id", "--", "say hi")
+        val piResume = listOf("--session-id", "id", "--", "say hi")
+        assertEquals(listOf("--no-alt-screen") + codexResume, received(AgentType.CODEX, "  --no-alt-screen"))
+        assertEquals(codexResume, received(AgentType.CODEX, "  --other"))
+        assertEquals(listOf("--tui-mode", "regular") + piResume, received(AgentType.PI, "  --tui-mode <mode>"))
+        assertEquals(piResume, received(AgentType.PI, "  --other"))
     }
 
     @Test
@@ -401,7 +429,7 @@ class AgentCommandTest {
     @Test
     fun `新会话可携带安全转义的初始提示`() {
         assertEquals(
-            "codex -- 'Read session '\\''abc'",
+            "$CODEX_POSIX -- 'Read session '\\''abc'",
             launchCommand(
                 "/bin/zsh",
                 AgentType.CODEX,
@@ -410,7 +438,7 @@ class AgentCommandTest {
             ).last(),
         )
         assertEquals(
-            "pi --session-id 'new-id' -e '${java.nio.file.Paths.get("/tmp/reporter.js")}' -- 'Continue the work'",
+            "$PI_POSIX --session-id 'new-id' -e '${java.nio.file.Paths.get("/tmp/reporter.js")}' -- 'Continue the work'",
             launchCommand(
                 "/bin/zsh",
                 AgentType.PI,
@@ -533,15 +561,15 @@ class AgentCommandTest {
             launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = "abc-123"),
         )
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "codex resume 'abc-123'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "$CODEX_POSIX resume 'abc-123'"),
             launchCommand("/bin/zsh", AgentType.CODEX, resumeId = "abc-123"),
         )
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "$PI_POSIX --session-id 'abc-123'"),
             launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123"),
         )
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "pi --session-id 'abc-123' -e '${Path.of("/tmp/r.js")}'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "$PI_POSIX --session-id 'abc-123' -e '${Path.of("/tmp/r.js")}'"),
             launchCommand("/bin/zsh", AgentType.PI, resumeId = "abc-123", piExtensions = listOf(Path.of("/tmp/r.js"))),
         )
         assertEquals(
@@ -584,7 +612,7 @@ class AgentCommandTest {
                 .get("/plugins/imux/scripts/pi-imux-reporter.js")
 
         assertEquals(
-            "pi --session-id 'abc-123' -e '$script'",
+            "$PI_POSIX --session-id 'abc-123' -e '$script'",
             launchCommand("/bin/zsh", AgentType.PI, "abc-123", listOf(script)).last(),
         )
     }
@@ -596,7 +624,7 @@ class AgentCommandTest {
     @Test
     fun `扩展脚本缺失时不加 -e`() {
         assertEquals(
-            "pi --session-id 'abc-123'",
+            "$PI_POSIX --session-id 'abc-123'",
             launchCommand("/bin/zsh", AgentType.PI, "abc-123", emptyList()).last(),
         )
     }
@@ -608,7 +636,7 @@ class AgentCommandTest {
                 .get("/plugins/imux/scripts/pi-imux-reporter.js")
 
         assertEquals("claude --resume 'x'", launchCommand("/bin/zsh", AgentType.CLAUDE, "x", listOf(script)).last())
-        assertEquals("codex resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", listOf(script)).last())
+        assertEquals("$CODEX_POSIX resume 'x'", launchCommand("/bin/zsh", AgentType.CODEX, "x", listOf(script)).last())
     }
 
     @Test
@@ -619,7 +647,7 @@ class AgentCommandTest {
             launchCommand("/bin/zsh", AgentType.CLAUDE, resumeId = null, pidFile = "/tmp/x.pid"),
         )
         assertEquals(
-            listOf("/bin/zsh", "-l", "-i", "-c", "codex resume 'abc-123'"),
+            listOf("/bin/zsh", "-l", "-i", "-c", "$CODEX_POSIX resume 'abc-123'"),
             launchCommand("/bin/zsh", AgentType.CODEX, resumeId = "abc-123", pidFile = "/tmp/x.pid"),
         )
     }
@@ -815,7 +843,7 @@ class AgentCommandTest {
     fun `codex 的 pid 自报与初始 prompt 共存`() {
         assertEquals(
             "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
-                "codex resume 'abc-123' -- 'say hi'",
+                "$CODEX_WINDOWS resume 'abc-123' -- 'say hi'",
             launchCommand(
                 "pwsh.exe",
                 AgentType.CODEX,

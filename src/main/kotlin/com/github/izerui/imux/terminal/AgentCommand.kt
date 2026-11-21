@@ -45,7 +45,11 @@ internal fun launchCommand(
     newSession: Boolean = false,
 ): List<String> {
     val dialect = dialectOf(shell)
-    val cli = agentType.cli
+    val cli = when (agentType) {
+        AgentType.CLAUDE -> agentType.cli
+        AgentType.CODEX -> cliWithDisplayOption(dialect, agentType.cli, "--no-alt-screen")
+        AgentType.PI -> cliWithDisplayOption(dialect, agentType.cli, "--tui-mode", "regular")
+    }
     // 这些参数内部都带双引号（JSON / TOML 的值），因此必须走
     // quoteEmbeddingDoubleQuotes 而不是 quote——理由见它的 KDoc，
     // 用 quote 会让 Windows 上每个 Claude/Codex 标签静默起不来。
@@ -116,6 +120,26 @@ internal fun launchCommand(
             ?.let { "$it; $command" }
             ?: command
     return listOf(shell) + shellArgs(dialect) + prefixed
+}
+
+private fun cliWithDisplayOption(dialect: ShellDialect, cli: String, option: String, vararg values: String): String {
+    val arguments = listOf(option, *values).map { quote(dialect, it) }
+    val pattern = "^[[:space:]]*$option([[:space:]]|$)"
+    val help = cliHelpCommand(dialect, cli)
+    return when (dialect) {
+        ShellDialect.POSIX -> "$cli \$( $help | grep -E ${quote(dialect, pattern)} >/dev/null && printf '%s\\n' ${arguments.joinToString(" ")} )"
+        ShellDialect.POWERSHELL -> "\$imuxDisplayArgs = @(); if (($help) -match '^\\s*$option(\\s|$)') { " +
+            "\$imuxDisplayArgs = @(${arguments.joinToString(", ")}) }; $cli @imuxDisplayArgs"
+    }
+}
+
+internal fun cliHelpCommand(dialect: ShellDialect, cli: String, script: java.nio.file.Path? = capabilityScript(dialect)): String {
+    val path = script?.let { quote(dialect, it.toString()) }
+    return when (dialect) {
+        ShellDialect.POSIX -> if (path == null) "$cli --help 2>/dev/null" else
+            "( /bin/sh $path \"\$(command -v $cli)\" || $cli --help ) 2>/dev/null"
+        ShellDialect.POWERSHELL -> if (path == null) "$cli --help 2>\$null" else "& $path '$cli' 2>\$null"
+    }
 }
 
 internal fun ideaMcpCliArgument(
@@ -295,6 +319,7 @@ internal fun launchEnvironment(
         when (agentType) {
             AgentType.CLAUDE -> {
                 put("CLAUDE_CODE_NATIVE_CURSOR", "1")
+                put("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1")
             }
 
             AgentType.PI -> {
