@@ -9,6 +9,7 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Cell
 import com.intellij.ui.dsl.builder.MutableProperty
@@ -48,7 +49,7 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                     injectToggle =
                         checkBox(ImuxBundle.message("settings.idea.mcp.inject"))
                             .bindSelected(settings.state::injectIdeaMcp)
-                            .comment(ImuxBundle.message("settings.idea.mcp.inject.comment"))
+                            .comment(ImuxBundle.message("settings.idea.mcp.inject.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row(ImuxBundle.message("settings.idea.mcp.port")) {
                     portField =
@@ -66,7 +67,7 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                                 } else {
                                     null
                                 }
-                            }.comment(ImuxBundle.message("settings.idea.mcp.port.comment"))
+                            }.comment(ImuxBundle.message("settings.idea.mcp.port.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                             .component
                     checkButton =
                         button(ImuxBundle.message("settings.idea.mcp.check")) {
@@ -80,7 +81,7 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                     guidanceToggle =
                         checkBox(ImuxBundle.message("settings.idea.mcp.guidance.enable"))
                             .bindSelected(settings.state::ideaMcpGuidanceEnabled)
-                            .comment(ImuxBundle.message("settings.idea.mcp.guidance.comment"))
+                            .comment(ImuxBundle.message("settings.idea.mcp.guidance.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row(ImuxBundle.message("settings.idea.mcp.guidance.prompt")) {
                     guidanceArea =

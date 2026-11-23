@@ -57,6 +57,18 @@ internal fun configuredIdeaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? {
     return settings.ideaMcpGuidance.takeIf { settings.state.ideaMcpGuidanceEnabled }
 }
 
+/**
+ * 「最终回复说人话」引导词；关闭或内容为空时返回 null。
+ *
+ * 与 IDEA MCP 无关：关掉 MCP 注入照样生效。只给 imux 打开的会话终端用——
+ * 副驾驶审查、需求澄清等一次性调用的输出由程序解析，不能被改写法。
+ */
+internal fun configuredPlainReplyGuidance(): String? {
+    val settings = ImuxSettings.getInstance()
+    if (!settings.state.plainReplyEnabled) return null
+    return settings.plainReplyGuidance.takeIf(String::isNotBlank)
+}
+
 internal fun canConnectToIdeaMcp(
     port: Int,
     timeoutMillis: Int = 250,

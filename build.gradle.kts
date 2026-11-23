@@ -154,6 +154,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
     from("src/main/js/pi-imux-reporter.js") { into("${project.name}/scripts") }
     from("src/main/cli-capabilities") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-idea-mcp.js") { into("${project.name}/scripts") }
+    from("src/main/js/pi-imux-reply-style.js") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-mcp.js") { into("${project.name}/scripts") }
 }
 

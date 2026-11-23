@@ -825,6 +825,7 @@ class AgentCommandTest {
                 piReport: PiReportEndpoint? = null,
                 ideaMcp: IdeaMcpEndpoint? = null,
                 ideaMcpGuidance: String? = null,
+                replyGuidance: String? = null,
             )
             """,
             source.bodyAfter("internal fun launchEnvironment", '('),

@@ -30,6 +30,10 @@ import com.google.gson.JsonObject
  *
  * [newSession] 为 true 时 [resumeId] 是新建前预分配的 id（见 [preassignedSessionId]），
  * 而不是要续聊的旧会话：claude 据此改用 `--session-id` 创建，pi 两种情形同一条命令。
+ *
+ * [replyGuidance] 是「最终回复说人话」引导词，与 IDEA MCP 无关：claude、codex 与
+ * [ideaMcpGuidance] 合并成同一段系统提示（两者各自只认一个值）；pi 走环境变量与独立扩展，
+ * 见 [launchEnvironment]，命令行里一个字不加。
  */
 internal fun launchCommand(
     shell: String,
@@ -43,6 +47,7 @@ internal fun launchCommand(
     additionalMcpServers: List<TerminalMcpServer> = emptyList(),
     claudeSettings: String? = null,
     newSession: Boolean = false,
+    replyGuidance: String? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = when (agentType) {
@@ -56,7 +61,10 @@ internal fun launchCommand(
     //
     // 两种 agent 都要带 IDEA_MCP_PROJECT_HEADER：不带它，多项目窗口下任何没写
     // projectPath 实参的工具调用都会被服务端拒绝，模型只能反过来问用户选哪个项目。
-    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance, additionalMcpServers)
+    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, null, additionalMcpServers)
+    // MCP 引导只在真的注入了 MCP 时才有意义；回复风格与 MCP 无关，单独也要注入。
+    val mcpGuidance = ideaMcpGuidance.takeIf { ideaMcp != null || additionalMcpServers.isNotEmpty() }
+    val guidanceArgument = systemGuidanceArgument(dialect, agentType, joinGuidance(mcpGuidance, replyGuidance))
     // --settings 只给 Claude：Codex、Pi 不支持这个参数，一个字不加。
     // 值内部含双引号（JSON），走 quoteEmbeddingDoubleQuotes 保证 Windows 不丢引号。
     val settingsArgument = claudeSettings
@@ -65,7 +73,7 @@ internal fun launchCommand(
     val script =
         when {
             resumeId == null -> {
-                listOfNotNull(cli, ideaMcpArgument, settingsArgument).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument).joinToString(" ")
             }
 
             // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
@@ -82,15 +90,15 @@ internal fun launchCommand(
             // claude 的 --session-id 只能创建：id 已存在会直接报错退出，所以只用于新建，
             // 续聊仍走 --resume。
             agentType == AgentType.CLAUDE && newSession -> {
-                listOfNotNull(cli, ideaMcpArgument, settingsArgument, "--session-id", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, "--session-id", quote(dialect, resumeId)).joinToString(" ")
             }
 
             agentType == AgentType.CODEX -> {
-                listOfNotNull(cli, ideaMcpArgument, "resume", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, "resume", quote(dialect, resumeId)).joinToString(" ")
             }
 
             else -> {
-                listOfNotNull(cli, ideaMcpArgument, settingsArgument, "--resume", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, "--resume", quote(dialect, resumeId)).joinToString(" ")
             }
         }
     // 初始 prompt 是**位置参数**，前面必须有 `--` 把选项解析截断。
@@ -157,9 +165,7 @@ internal fun ideaMcpCliArgument(
                 val config = claudeIdeaMcpConfig(endpoint, additionalServers)
                 buildString {
                     append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}")
-                    ideaMcpGuidance
-                        ?.takeIf(String::isNotBlank)
-                        ?.let { append(" --append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, it)}") }
+                    systemGuidanceArgument(dialect, agentType, ideaMcpGuidance)?.let { append(" $it") }
                 }
             }
 
@@ -182,12 +188,7 @@ internal fun ideaMcpCliArgument(
                             append("-c ${quoteEmbeddingDoubleQuotes(dialect, argument)}")
                         }
                     }
-                    ideaMcpGuidance
-                        ?.takeIf(String::isNotBlank)
-                        ?.let { guidance ->
-                            val instructions = "developer_instructions=${tomlBasicString(guidance)}"
-                            append(" -c ${quoteEmbeddingDoubleQuotes(dialect, instructions)}")
-                        }
+                    systemGuidanceArgument(dialect, agentType, ideaMcpGuidance)?.let { append(" $it") }
                 }
             }
 
@@ -195,6 +196,33 @@ internal fun ideaMcpCliArgument(
         }
     }
 }
+
+/**
+ * 把一段引导词加进系统提示的命令行参数；空白或 pi 返回 null。
+ *
+ * claude 用 `--append-system-prompt`（追加，不替换默认系统提示）；codex 用
+ * `-c developer_instructions=...`（会话级，AGENTS.md 不受影响）。pi 没有对应参数，
+ * 改由扩展在 `before_agent_start` 里加一段，见 [launchEnvironment]。
+ * 值内含双引号（TOML）或任意文本，一律走 [quoteEmbeddingDoubleQuotes]。
+ */
+internal fun systemGuidanceArgument(
+    dialect: ShellDialect,
+    agentType: AgentType,
+    guidance: String?,
+): String? {
+    val text = guidance?.takeIf(String::isNotBlank) ?: return null
+    return when (agentType) {
+        AgentType.CLAUDE -> "--append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, text)}"
+        AgentType.CODEX -> "-c ${quoteEmbeddingDoubleQuotes(dialect, "developer_instructions=${tomlBasicString(text)}")}"
+        AgentType.PI -> null
+    }
+}
+
+/** 多段引导词按空行拼成一段；全空返回 null。claude、codex 都只接收一个值，分开传后一个会盖掉前一个。 */
+internal fun joinGuidance(vararg parts: String?): String? =
+    parts.mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString("\n\n")
 
 /**
  * 生成 `--settings` 需要的 hook 配置 JSON。
@@ -313,6 +341,7 @@ internal fun launchEnvironment(
     piReport: PiReportEndpoint? = null,
     ideaMcp: IdeaMcpEndpoint? = null,
     ideaMcpGuidance: String? = null,
+    replyGuidance: String? = null,
 ): Map<String, String> =
     buildMap {
         put(IMUX_TAB_ENV, tabId)
@@ -330,6 +359,8 @@ internal fun launchEnvironment(
                     put("IMUX_TOKEN", it.token)
                 }
                 putAll(ideaMcpEnvironment(agentType, ideaMcp, ideaMcpGuidance))
+                // 回复风格由 pi-imux-reply-style.js 读取并立即删除，不留给 bash 子进程
+                replyGuidance?.takeIf(String::isNotBlank)?.let { put(PI_REPLY_STYLE_ENV, it) }
             }
 
             AgentType.CODEX -> {
@@ -341,6 +372,8 @@ internal fun launchEnvironment(
             }
         }
     }
+
+internal const val PI_REPLY_STYLE_ENV = "IMUX_REPLY_STYLE"
 
 internal fun ideaMcpEnvironment(
     agentType: AgentType,

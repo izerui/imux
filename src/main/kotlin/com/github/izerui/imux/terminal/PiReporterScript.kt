@@ -8,6 +8,7 @@ import java.nio.file.Path
 private const val SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reporter.js"
 private const val IDEA_MCP_SCRIPT_RELATIVE_PATH = "scripts/pi-imux-idea-mcp.js"
 private const val PLUGIN_MCP_SCRIPT_RELATIVE_PATH = "scripts/pi-imux-mcp.js"
+private const val REPLY_STYLE_SCRIPT_RELATIVE_PATH = "scripts/pi-imux-reply-style.js"
 internal const val PLUGIN_DIRECTORY_NAME = "imux"
 
 private object PiReporterScriptLocation
@@ -77,6 +78,14 @@ internal fun piReporterScript(): Path? {
 internal fun piIdeaMcpScript(): Path? {
     val (pluginPath, classPathEntry) = pluginScriptRoots()
     return locatePiIdeaMcpScript(pluginPath, classPathEntry)
+}
+
+internal fun piReplyStyleScriptIn(pluginPath: Path?): Path? = pluginScriptIn(pluginPath, REPLY_STYLE_SCRIPT_RELATIVE_PATH)
+
+/** 「最终回复说人话」的 pi 扩展；缺失时调用方不加 `-e`，只少这段引导。 */
+internal fun piReplyStyleScript(): Path? {
+    val (pluginPath, classPathEntry) = pluginScriptRoots()
+    return piReplyStyleScriptIn(pluginPath) ?: pluginScriptNear(classPathEntry, REPLY_STYLE_SCRIPT_RELATIVE_PATH)
 }
 
 /** 注册插件内置 MCP 服务（imux_mobile、imux_session）的 Pi 扩展，各服务共用一份。 */

@@ -750,6 +750,7 @@ class TerminalHost(
     ): TerminalView {
         val ideaMcp = ideaMcpEndpoint()
         val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val replyGuidance = configuredPlainReplyGuidance()
         val contribution = launchContributions[tabId]
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab =
@@ -764,6 +765,7 @@ class TerminalHost(
                         piReport = if (agentType == AgentType.PI) PiReportEndpoint.current() else null,
                         ideaMcp = ideaMcp,
                         ideaMcpGuidance = ideaMcpGuidance,
+                        replyGuidance = replyGuidance,
                     ) + contribution?.environment.orEmpty(),
                 ).tabName(tabTitle)
                 .requestFocus(false)
@@ -803,6 +805,7 @@ class TerminalHost(
     ): List<String> {
         val ideaMcp = ideaMcpEndpoint()
         val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val replyGuidance = configuredPlainReplyGuidance()
         return launchCommand(
             resolveShell(
                 System.getenv("SHELL"),
@@ -811,7 +814,7 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtensions = piExtensionsFor(agentType, ideaMcp) + launchContributions[tabId]?.piExtensions.orEmpty(),
+            piExtensions = piExtensionsFor(agentType, ideaMcp, replyGuidance) + launchContributions[tabId]?.piExtensions.orEmpty(),
             ideaMcp = ideaMcp,
             ideaMcpGuidance = ideaMcpGuidance,
             initialPrompt = initialPrompt,
@@ -819,6 +822,7 @@ class TerminalHost(
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
             claudeSettings = launchContributions[tabId]?.claudeSettings,
             newSession = true,
+            replyGuidance = replyGuidance,
         )
     }
 
@@ -829,6 +833,7 @@ class TerminalHost(
     ): List<String> {
         val ideaMcp = ideaMcpEndpoint()
         val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val replyGuidance = configuredPlainReplyGuidance()
         return launchCommand(
             resolveShell(
                 System.getenv("SHELL"),
@@ -837,12 +842,13 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtensions = piExtensionsFor(agentType, ideaMcp) + launchContributions[tabId]?.piExtensions.orEmpty(),
+            piExtensions = piExtensionsFor(agentType, ideaMcp, replyGuidance) + launchContributions[tabId]?.piExtensions.orEmpty(),
             ideaMcp = ideaMcp,
             ideaMcpGuidance = ideaMcpGuidance,
             pidFile = tabPidFileFor(tabId),
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
             claudeSettings = launchContributions[tabId]?.claudeSettings,
+            replyGuidance = replyGuidance,
         )
     }
 
@@ -872,11 +878,13 @@ class TerminalHost(
     private fun piExtensionsFor(
         agentType: AgentType,
         ideaMcp: IdeaMcpEndpoint?,
+        replyGuidance: String?,
     ): List<java.nio.file.Path> {
         if (agentType != AgentType.PI) return emptyList()
         return buildList {
             piReporterScript()?.let(::add)
             if (ideaMcp != null) piIdeaMcpScript()?.let(::add)
+            if (replyGuidance != null) piReplyStyleScript()?.let(::add)
         }
     }
 

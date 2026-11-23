@@ -7,7 +7,10 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBCheckBox
 import com.github.izerui.imux.peer.PeerCoordinator
 import com.intellij.ui.components.JBTextArea
+import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
 import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.selected
 import javax.swing.text.JTextComponent
 import com.intellij.ui.dsl.builder.MutableProperty
 import com.intellij.ui.dsl.builder.bindIntText
@@ -29,6 +32,8 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
         val agentCheckBoxes = mutableMapOf<AgentType, JBCheckBox>()
         var selectedLanguage = settings.language
         lateinit var promptArea: JBTextArea
+        lateinit var replyArea: JBTextArea
+        lateinit var replyToggle: Cell<JBCheckBox>
 
         return panel {
             row(ImuxBundle.message("settings.interface.language")) {
@@ -40,6 +45,8 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                         val newLang = selectedItem as? PluginLanguage ?: return@addActionListener
                         promptArea.text = promptAfterLanguageSwitch(promptArea.text, newLang)
                         scrollToTop(promptArea)
+                        replyArea.text = plainReplyGuidanceAfterLanguageSwitch(replyArea.text, newLang)
+                        scrollToTop(replyArea)
                         selectedLanguage = newLang
                         settings.setPreviewLanguage(newLang)
                     }
@@ -62,7 +69,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 row {
                     checkBox(ImuxBundle.message("settings.confirm.before.closing.session"))
                         .bindSelected(settings.state::confirmBeforeClosingSession)
-                        .comment(ImuxBundle.message("settings.confirm.before.closing.session.comment"))
+                        .comment(ImuxBundle.message("settings.confirm.before.closing.session.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
             }
             group(ImuxBundle.message("settings.group.agents")) {
@@ -85,11 +92,38 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     comment(ImuxBundle.message("settings.available.agents.comment"))
                 }
             }
+            group(ImuxBundle.message("settings.group.reply.style")) {
+                row {
+                    replyToggle =
+                        checkBox(ImuxBundle.message("settings.reply.plain.enable"))
+                            .bindSelected(settings.state::plainReplyEnabled)
+                            .comment(ImuxBundle.message("settings.reply.plain.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
+                }
+                row(ImuxBundle.message("settings.reply.plain.prompt")) {
+                    // 默认文案是一整句：不自动换行时文本框按这一句的长度撑宽，把设置页往右撑出去。
+                    replyArea = textArea()
+                        .applyToComponent { rows = 4; lineWrap = true; wrapStyleWord = true }
+                        .align(AlignX.FILL)
+                        .bindText(
+                            MutableProperty(
+                                { settings.state.plainReplyGuidanceOverride ?: defaultPlainReplyGuidanceForLanguage(selectedLanguage) },
+                                settings::setPlainReplyGuidance,
+                            ),
+                        ).component
+                }.resizableRow()
+                    .enabledIf(replyToggle.selected)
+                row {
+                    button(ImuxBundle.message("settings.reply.plain.restore")) {
+                        replyArea.text = defaultPlainReplyGuidanceForLanguage(selectedLanguage)
+                        scrollToTop(replyArea)
+                    }
+                }.enabledIf(replyToggle.selected)
+            }
             group(ImuxBundle.message("settings.group.peer.programming")) {
                 row(ImuxBundle.message("settings.peer.max.rounds")) {
                     intTextField(1..50)
                         .bindIntText(settings.state::peerMaxRounds)
-                        .comment(ImuxBundle.message("settings.peer.max.rounds.comment"))
+                        .comment(ImuxBundle.message("settings.peer.max.rounds.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row(ImuxBundle.message("settings.peer.default.partner")) {
                     comboBox(listOf<AgentType?>(null) + AgentType.entries, textListCellRenderer(ImuxBundle.message("settings.peer.default.partner.auto")) { it.displayName })
@@ -97,11 +131,11 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                             { AgentType.entries.firstOrNull { it.cli == settings.state.peerDefaultPartner } },
                             { settings.state.peerDefaultPartner = it?.cli },
                         )
-                        .comment(ImuxBundle.message("settings.peer.default.partner.comment"))
+                        .comment(ImuxBundle.message("settings.peer.default.partner.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 row(ImuxBundle.message("settings.peer.prompt")) {
                     promptArea = textArea()
-                        .applyToComponent { rows = 8 }
+                        .applyToComponent { rows = 8; lineWrap = true; wrapStyleWord = true }
                         .align(AlignX.FILL)
                         .bindText(
                             MutableProperty(
@@ -121,7 +155,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 row {
                     checkBox(ImuxBundle.message("settings.project.new.agent.menu"))
                         .bindSelected(settings.state::showProjectNewAgentMenu)
-                        .comment(ImuxBundle.message("settings.project.new.agent.menu.comment"))
+                        .comment(ImuxBundle.message("settings.project.new.agent.menu.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
             }
 
@@ -131,6 +165,7 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 }
                 settings.clearPreviewLanguage()
                 scrollToTop(promptArea)
+                scrollToTop(replyArea)
             }
             onIsModified {
                 selectedAgentTypes(agentCheckBoxes) != settings.enabledAgentTypes.toSet()

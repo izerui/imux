@@ -145,6 +145,28 @@ internal val DEFAULT_IDEA_MCP_GUIDANCE_ZH =
     """.trimIndent()
 
 /**
+ * 「最终回复说人话」的默认引导词。
+ *
+ * 刻意只写一句，贴近用户平时口头说的「直白点说」：规矩列得越细，模型越会照格式填空，
+ * 反而偏离它本来想表达的内容。三个分句都是实测留下的：
+ * - 「少用类名、函数名」：Codex 自带的回复格式偏爱把代码名放进反引号，只说「直白点」时
+ *   它照样满屏类名；Claude 只说「直白点」就够。
+ * - 「打个比方」：用户最初提的诉求。
+ * - 「没做完的、失败的、有风险的照实说」：防止为了简短把坏消息一起略掉。
+ *
+ * 只注入 imux 打开的会话终端；副驾驶审查、需求澄清这类由程序解析输出的一次性调用不加，
+ * 否则会打乱它们约定的输出格式。
+ */
+internal val DEFAULT_PLAIN_REPLY_GUIDANCE_EN =
+    "Write the final reply plainly so someone who doesn't read code can follow it: use few names from the code " +
+        "such as class or function names, and use an analogy where things get complicated. " +
+        "State anything unfinished, failed, or risky as it is; don't leave it out."
+
+internal val DEFAULT_PLAIN_REPLY_GUIDANCE_ZH =
+    "最终回复请直白点说，让不懂代码的人也能看明白：少用类名、函数名这类代码里的名字，复杂的地方可以打个比方。" +
+        "没做完的、失败的、有风险的照实说，不要省略。"
+
+/**
  * 插件的全局偏好。
  *
  * 应用级而非项目级：这是操作手感，不是项目配置，换个项目还要重设一遍很别扭。
@@ -191,6 +213,12 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
 
         /** null 表示使用随插件更新的默认引导词。 */
         var ideaMcpGuidanceOverride: String? by string(null)
+
+        /** 是否要求 imux 打开的会话用大白话写最终回复；与 IDEA MCP 无关，单独注入。 */
+        var plainReplyEnabled: Boolean by property(true)
+
+        /** null 表示使用随插件更新的默认引导词。 */
+        var plainReplyGuidanceOverride: String? by string(null)
 
         /** Agent 开关使用显式字段持久化；枚举名不是配置文件契约。 */
         var claudeEnabled: Boolean by property(true)
@@ -253,6 +281,9 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
     val ideaMcpGuidance: String
         get() = state.ideaMcpGuidanceOverride ?: defaultIdeaMcpGuidanceForLanguage(language)
 
+    val plainReplyGuidance: String
+        get() = state.plainReplyGuidanceOverride ?: defaultPlainReplyGuidanceForLanguage(language)
+
     val enabledAgentTypes: List<AgentType>
         get() =
             AgentType.entries.filter { agentType ->
@@ -293,6 +324,11 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
 
     fun setIdeaMcpGuidance(guidance: String) {
         state.ideaMcpGuidanceOverride = guidance.takeUnless(::isDefaultIdeaMcpGuidance)
+    }
+
+    /** 与默认值相同时不落盘，插件更新默认文案后仍能跟上。 */
+    fun setPlainReplyGuidance(guidance: String) {
+        state.plainReplyGuidanceOverride = guidance.takeUnless(::isDefaultPlainReplyGuidance)
     }
 
     fun addLanguageListener(
@@ -347,3 +383,20 @@ internal fun guidanceAfterLanguageSwitch(currentText: String, newLanguage: Plugi
 
 internal fun isDefaultIdeaMcpGuidance(text: String): Boolean =
     text == DEFAULT_IDEA_MCP_GUIDANCE_EN || text == DEFAULT_IDEA_MCP_GUIDANCE_ZH
+
+internal fun defaultPlainReplyGuidanceForLanguage(language: PluginLanguage): String =
+    if (language in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)) {
+        DEFAULT_PLAIN_REPLY_GUIDANCE_ZH
+    } else {
+        DEFAULT_PLAIN_REPLY_GUIDANCE_EN
+    }
+
+internal fun plainReplyGuidanceAfterLanguageSwitch(currentText: String, newLanguage: PluginLanguage): String =
+    if (isDefaultPlainReplyGuidance(currentText)) {
+        defaultPlainReplyGuidanceForLanguage(newLanguage)
+    } else {
+        currentText
+    }
+
+internal fun isDefaultPlainReplyGuidance(text: String): Boolean =
+    text == DEFAULT_PLAIN_REPLY_GUIDANCE_EN || text == DEFAULT_PLAIN_REPLY_GUIDANCE_ZH

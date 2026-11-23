@@ -29,6 +29,7 @@ class TerminalIntegrationSourceTest {
         listOf(
             "src/main/js/pi-imux-reporter.js",
             "src/main/js/pi-imux-idea-mcp.js",
+            "src/main/js/pi-imux-reply-style.js",
         ).forEach { path ->
             assertTrue("仓库里缺少待打包的脚本：$path", File(path).exists())
             assertTrue(
