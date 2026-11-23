@@ -151,19 +151,22 @@ internal val DEFAULT_IDEA_MCP_GUIDANCE_ZH =
  * 反而偏离它本来想表达的内容。三个分句都是实测留下的：
  * - 「少用类名、函数名」：Codex 自带的回复格式偏爱把代码名放进反引号，只说「直白点」时
  *   它照样满屏类名；Claude 只说「直白点」就够。
- * - 「打个比方」：用户最初提的诉求。
+ * - 「先把事情本身说清楚……比方不能代替原意」：用户最初提的诉求是「打个比方」，但只写
+ *   「可以打个比方」时，回复有时只剩比方，原本要说的事反倒没讲。所以要先讲清本体，
+ *   比方只能跟在后面帮忙理解。
  * - 「没做完的、失败的、有风险的照实说」：防止为了简短把坏消息一起略掉。
  *
  * 只注入 imux 打开的会话终端；副驾驶审查、需求澄清这类由程序解析输出的一次性调用不加，
  * 否则会打乱它们约定的输出格式。
  */
 internal val DEFAULT_PLAIN_REPLY_GUIDANCE_EN =
-    "Write the final reply plainly so someone who doesn't read code can follow it: use few names from the code " +
-        "such as class or function names, and use an analogy where things get complicated. " +
+    "Write the final reply plainly so someone who doesn't read code can follow it: use few class or function names. " +
+        "Explain the actual point first; add an analogy after it where things get complicated, never in place of it. " +
         "State anything unfinished, failed, or risky as it is; don't leave it out."
 
 internal val DEFAULT_PLAIN_REPLY_GUIDANCE_ZH =
-    "最终回复请直白点说，让不懂代码的人也能看明白：少用类名、函数名这类代码里的名字，复杂的地方可以打个比方。" +
+    "最终回复请直白点说，让不懂代码的人也能看明白：少用类名、函数名这类代码里的名字；" +
+        "先把事情本身说清楚，复杂的地方再补个比方，比方不能代替原意。" +
         "没做完的、失败的、有风险的照实说，不要省略。"
 
 /**
