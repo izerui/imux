@@ -51,11 +51,13 @@ internal fun configuredIdeaMcpEndpoint(
     )
 }
 
-internal fun configuredIdeaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? {
-    if (endpoint == null) return null
-    val settings = ImuxSettings.getInstance()
-    return settings.ideaMcpGuidance.takeIf { settings.state.ideaMcpGuidanceEnabled }
-}
+/** 需求澄清这类一次性调用只挂 IDEA MCP、不挂 imux_code，引导词也只讲 IDEA 那部分（副驾驶审查另见 PeerCoordinator）。 */
+internal fun configuredIdeaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? =
+    configuredAgentGuidance(ideaMcp = endpoint != null, codeTools = false)
+
+/** 引导词没有单独开关：挂了哪组工具就带哪部分，两组都没挂时为 null。 */
+internal fun configuredAgentGuidance(ideaMcp: Boolean, codeTools: Boolean): String? =
+    ImuxSettings.getInstance().agentGuidance(ideaMcp, codeTools)
 
 /**
  * 「最终回复说人话」引导词；关闭或内容为空时返回 null。

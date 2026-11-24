@@ -28,6 +28,7 @@ class PeerReviewEventsTest {
     private fun coordinator(
         maxRounds: Int = 5,
         sendAutoFeedback: ((String, String) -> Boolean)? = { _, _ -> true },
+        resolveMcp: (AgentType) -> PeerMcpConfig = { PeerMcpConfig(null, null, null) },
         runCli: (AgentType, List<String>, Path, String, Map<String, String>, Long, (Process?) -> Unit, (PeerProgressEvent) -> Unit) -> String?,
     ): PeerCoordinator =
         PeerCoordinator(
@@ -40,7 +41,7 @@ class PeerReviewEventsTest {
             edtDispatcher = Dispatchers.Unconfined,
             peerMaxRounds = { maxRounds },
             runCli = runCli,
-            resolveMcpConfig = { PeerMcpConfig(null, null, null) },
+            resolveMcpConfig = resolveMcp,
             buildPrompt = { _, _ -> "test prompt" },
             sendAutoFeedback = sendAutoFeedback,
             onFeedbackUndelivered = { _, _ -> },
@@ -65,6 +66,58 @@ class PeerReviewEventsTest {
             coordinator.dispose()
             scope.cancel()
         }
+
+    private fun codeLease(onRelease: () -> Unit) = com.github.izerui.imux.code.CodeToolsLease(
+        com.github.izerui.imux.terminal.TerminalMcpServer("imux_code", "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN"),
+        mapOf("IMUX_CODE_URL" to "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN" to "code-token"),
+        null,
+        onRelease,
+    )
+
+    @Test
+    fun `挂了查调用链工具时审查提示词追加核对调用链，命令和环境带上工具，审查结束撤销凭证`() {
+        var prompt: String? = null
+        var command: List<String>? = null
+        var environment: Map<String, String>? = null
+        var released = 0
+        val c = coordinator(
+            resolveMcp = { PeerMcpConfig(null, null, null, codeLease { released++ }) },
+            runCli = { _, cmd, _, p, env, _, _, _ -> prompt = p; command = cmd; environment = env; "PASS" },
+        )
+        using(c) {
+            it.bind("s1", AgentType.CLAUDE)
+            awaitIdle(it) { it.onTurnCompleted("s1") }
+        }
+        assertTrue(prompt!!.startsWith("test prompt"))
+        assertTrue(prompt!!.contains("`call_hierarchy`") && prompt!!.contains("`find_references`"))
+        assertTrue(command!!.last().contains("imux_code"))
+        assertEquals("code-token", environment!!["IMUX_CODE_TOKEN"])
+        assertEquals(1, released)
+    }
+
+    @Test
+    fun `没挂查调用链工具时审查提示词不追加核对调用链`() {
+        var prompt: String? = null
+        using(coordinator(runCli = { _, _, _, p, _, _, _, _ -> prompt = p; "PASS" })) {
+            it.bind("s1", AgentType.CLAUDE)
+            awaitIdle(it) { it.onTurnCompleted("s1") }
+        }
+        assertEquals("test prompt", prompt)
+    }
+
+    @Test
+    fun `副驾驶命令启动失败时也撤销查调用链工具的凭证`() {
+        var released = 0
+        val c = coordinator(
+            resolveMcp = { PeerMcpConfig(null, null, null, codeLease { released++ }) },
+            runCli = { _, _, _, _, _, _, _, _ -> throw IllegalStateException("cli missing") },
+        )
+        using(c) {
+            it.bind("s1", AgentType.CLAUDE)
+            awaitIdle(it) { it.onTurnCompleted("s1") }
+        }
+        assertEquals(1, released)
+    }
 
     @Test
     fun `持续结对通过：先报开始再报通过`() =

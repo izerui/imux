@@ -375,22 +375,29 @@ internal fun launchEnvironment(
 
 internal const val PI_REPLY_STYLE_ENV = "IMUX_REPLY_STYLE"
 
+/**
+ * 引导词同时交给 pi 的两个扩展：`pi-imux-idea-mcp.js`（开着 IDEA MCP 时加载）读 `IMUX_IDEA_MCP_GUIDANCE`，
+ * `pi-imux-mcp.js`（挂插件内置 MCP 时加载）读这个变量。两者写进系统提示的同一段（`imux_idea_mcp`），
+ * 后写的覆盖先写的、不会重复；任何一个扩展缺失或提前退出，另一个都能补上。
+ */
+internal const val PI_PLUGIN_GUIDANCE_ENV = "IMUX_MCP_GUIDANCE"
+
 internal fun ideaMcpEnvironment(
     agentType: AgentType,
     ideaMcp: IdeaMcpEndpoint?,
     ideaMcpGuidance: String?,
-): Map<String, String> =
-    if (agentType == AgentType.PI && ideaMcp != null) {
-        buildMap {
+): Map<String, String> {
+    if (agentType != AgentType.PI) return emptyMap()
+    val guidance = ideaMcpGuidance?.takeIf(String::isNotBlank)
+    return buildMap {
+        guidance?.let { put(PI_PLUGIN_GUIDANCE_ENV, it) }
+        if (ideaMcp != null) {
             put("IMUX_IDEA_MCP_URL", ideaMcp.url)
             put("IMUX_IDEA_MCP_PROJECT", ideaMcp.projectPath)
-            ideaMcpGuidance?.takeIf(String::isNotBlank)?.let { guidance ->
-                put("IMUX_IDEA_MCP_GUIDANCE", guidance)
-            }
+            guidance?.let { put("IMUX_IDEA_MCP_GUIDANCE", it) }
         }
-    } else {
-        emptyMap()
     }
+}
 
 /**
  * 新建会话时预先定下的会话 id，没有则返回 null。

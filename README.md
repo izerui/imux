@@ -37,6 +37,8 @@ https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 
 imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义重命名、调试器、inspections、运行配置、已保存的数据库连接和项目 Code Style，而不是全局文本替换、加 print 调试。
 
+改代码前，AI 会先查清要改的方法被谁调用、又依赖什么、被谁重写或实现：imux 给每个会话挂上 `find_references`、`call_hierarchy`、`type_hierarchy` 三个工具，直接用 IDE 自己的「查找用法」引擎，IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）都能用；IDE 不认识的语言退回语言服务器。这三个工具不经过 IDEA MCP，关掉 IDEA MCP 也照样可用。
+
 只对 imux 启动的会话生效，不改 CLI 的全局配置。可在 **Settings → Tools → Imux → IDEA MCP** 关闭或调整。
 
 ## 结对编程
@@ -93,7 +95,7 @@ imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义�
 | 「做完让副驾驶审查一次」 | 这一轮结束后审查一次 |
 | 「把截图发我手机」/「把这个文件发给我」 | 发图片、视频、文件到手机 |
 
-只对新打开的会话生效；不想每次确认，可以把 `mcp__imux_session__*`、`mcp__imux_mobile__*` 加进 CLI 的权限白名单。
+只对新打开的会话生效；不想每次确认，可以把 `mcp__imux_session__*`、`mcp__imux_mobile__*`、`mcp__imux_code__*` 加进 CLI 的权限白名单。
 
 ## 还要知道的
 

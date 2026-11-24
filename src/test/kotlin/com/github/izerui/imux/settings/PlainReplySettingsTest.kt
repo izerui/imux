@@ -1,7 +1,6 @@
 package com.github.izerui.imux.settings
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -11,7 +10,6 @@ class PlainReplySettingsTest {
         val settings = ImuxSettings()
 
         assertEquals(true, settings.state.plainReplyEnabled)
-        assertNull(settings.state.plainReplyGuidanceOverride)
 
         settings.setLanguage(PluginLanguage.SIMPLIFIED_CHINESE)
         assertEquals(DEFAULT_PLAIN_REPLY_GUIDANCE_ZH, settings.plainReplyGuidance)
@@ -40,27 +38,5 @@ class PlainReplySettingsTest {
         assertTrue(DEFAULT_PLAIN_REPLY_GUIDANCE_ZH.length < 120)
         assertTrue(DEFAULT_PLAIN_REPLY_GUIDANCE_EN.length < 300)
         assertTrue(!DEFAULT_PLAIN_REPLY_GUIDANCE_ZH.contains('\n') && !DEFAULT_PLAIN_REPLY_GUIDANCE_EN.contains('\n'))
-    }
-
-    @Test
-    fun `自定义文案落盘，改回任一语言的默认值则清除自定义`() {
-        val settings = ImuxSettings()
-
-        settings.setPlainReplyGuidance("custom")
-        assertEquals("custom", settings.plainReplyGuidance)
-
-        settings.setPlainReplyGuidance(DEFAULT_PLAIN_REPLY_GUIDANCE_ZH)
-        assertNull(settings.state.plainReplyGuidanceOverride)
-
-        settings.setPlainReplyGuidance("custom")
-        settings.setPlainReplyGuidance(DEFAULT_PLAIN_REPLY_GUIDANCE_EN)
-        assertNull(settings.state.plainReplyGuidanceOverride)
-    }
-
-    @Test
-    fun `切换语言时默认文案随之切换而自定义文案保留`() {
-        assertEquals(DEFAULT_PLAIN_REPLY_GUIDANCE_ZH, plainReplyGuidanceAfterLanguageSwitch(DEFAULT_PLAIN_REPLY_GUIDANCE_EN, PluginLanguage.TRADITIONAL_CHINESE))
-        assertEquals(DEFAULT_PLAIN_REPLY_GUIDANCE_EN, plainReplyGuidanceAfterLanguageSwitch(DEFAULT_PLAIN_REPLY_GUIDANCE_ZH, PluginLanguage.JAPANESE))
-        assertEquals("mine", plainReplyGuidanceAfterLanguageSwitch("mine", PluginLanguage.ENGLISH))
     }
 }

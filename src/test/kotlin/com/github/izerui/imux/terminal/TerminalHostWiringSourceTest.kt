@@ -108,7 +108,7 @@ class TerminalHostWiringSourceTest {
             """
             {
                 val ideaMcp = ideaMcpEndpoint()
-                val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+                val ideaMcpGuidance = agentGuidanceFor(ideaMcp, tabId)
                 val replyGuidance = configuredPlainReplyGuidance()
                 return launchCommand(
                     resolveShell(
@@ -155,7 +155,7 @@ class TerminalHostWiringSourceTest {
             """
             {
                 val ideaMcp = ideaMcpEndpoint()
-                val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+                val ideaMcpGuidance = agentGuidanceFor(ideaMcp, tabId)
                 val replyGuidance = configuredPlainReplyGuidance()
                 return launchCommand(
                     resolveShell(

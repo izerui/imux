@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.CODE_TOOLS_SERVER
 import com.github.izerui.imux.ImuxBundle
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -749,7 +750,7 @@ class TerminalHost(
         tabId: String,
     ): TerminalView {
         val ideaMcp = ideaMcpEndpoint()
-        val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val ideaMcpGuidance = agentGuidanceFor(ideaMcp, tabId)
         val replyGuidance = configuredPlainReplyGuidance()
         val contribution = launchContributions[tabId]
         val manager = TerminalToolWindowTabsManager.getInstance(project)
@@ -804,7 +805,7 @@ class TerminalHost(
         tabId: String,
     ): List<String> {
         val ideaMcp = ideaMcpEndpoint()
-        val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val ideaMcpGuidance = agentGuidanceFor(ideaMcp, tabId)
         val replyGuidance = configuredPlainReplyGuidance()
         return launchCommand(
             resolveShell(
@@ -832,7 +833,7 @@ class TerminalHost(
         tabId: String,
     ): List<String> {
         val ideaMcp = ideaMcpEndpoint()
-        val ideaMcpGuidance = ideaMcpGuidance(ideaMcp)
+        val ideaMcpGuidance = agentGuidanceFor(ideaMcp, tabId)
         val replyGuidance = configuredPlainReplyGuidance()
         return launchCommand(
             resolveShell(
@@ -898,9 +899,12 @@ class TerminalHost(
         return configuredIdeaMcpEndpoint(project, projectPath())
     }
 
-    private fun ideaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? {
-        return configuredIdeaMcpGuidance(endpoint)
-    }
+    /** 按这个标签实际挂上的工具拼引导词：IDEA MCP 看设置，imux_code 看启动时的附加服务。 */
+    private fun agentGuidanceFor(endpoint: IdeaMcpEndpoint?, tabId: String): String? =
+        configuredAgentGuidance(
+            ideaMcp = endpoint != null,
+            codeTools = launchContributions[tabId]?.servers.orEmpty().any { it.name == CODE_TOOLS_SERVER },
+        )
 
     private fun persistRestorableTabs() {
         if (pendingOpens.isNotEmpty()) return

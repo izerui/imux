@@ -6,17 +6,11 @@ import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBCheckBox
 import com.github.izerui.imux.peer.PeerCoordinator
-import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
-import com.intellij.ui.dsl.builder.AlignX
-import com.intellij.ui.dsl.builder.Cell
-import com.intellij.ui.dsl.builder.selected
-import javax.swing.text.JTextComponent
 import com.intellij.ui.dsl.builder.MutableProperty
 import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
-import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
 
@@ -30,10 +24,6 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
     override fun createPanel(): DialogPanel {
         val settings = ImuxSettings.getInstance()
         val agentCheckBoxes = mutableMapOf<AgentType, JBCheckBox>()
-        var selectedLanguage = settings.language
-        lateinit var promptArea: JBTextArea
-        lateinit var replyArea: JBTextArea
-        lateinit var replyToggle: Cell<JBCheckBox>
 
         return panel {
             row(ImuxBundle.message("settings.interface.language")) {
@@ -43,11 +33,6 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 ).applyToComponent {
                     addActionListener {
                         val newLang = selectedItem as? PluginLanguage ?: return@addActionListener
-                        promptArea.text = promptAfterLanguageSwitch(promptArea.text, newLang)
-                        scrollToTop(promptArea)
-                        replyArea.text = plainReplyGuidanceAfterLanguageSwitch(replyArea.text, newLang)
-                        scrollToTop(replyArea)
-                        selectedLanguage = newLang
                         settings.setPreviewLanguage(newLang)
                     }
                 }
@@ -92,32 +77,13 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     comment(ImuxBundle.message("settings.available.agents.comment"))
                 }
             }
+            // 回复引导词与副驾驶提示词都不开放编辑，始终用随插件更新、跟随界面语言的默认版本。
             group(ImuxBundle.message("settings.group.reply.style")) {
                 row {
-                    replyToggle =
-                        checkBox(ImuxBundle.message("settings.reply.plain.enable"))
-                            .bindSelected(settings.state::plainReplyEnabled)
-                            .comment(ImuxBundle.message("settings.reply.plain.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
+                    checkBox(ImuxBundle.message("settings.reply.plain.enable"))
+                        .bindSelected(settings.state::plainReplyEnabled)
+                        .comment(ImuxBundle.message("settings.reply.plain.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
-                row(ImuxBundle.message("settings.reply.plain.prompt")) {
-                    // 默认文案是一整句：不自动换行时文本框按这一句的长度撑宽，把设置页往右撑出去。
-                    replyArea = textArea()
-                        .applyToComponent { rows = 4; lineWrap = true; wrapStyleWord = true }
-                        .align(AlignX.FILL)
-                        .bindText(
-                            MutableProperty(
-                                { settings.state.plainReplyGuidanceOverride ?: defaultPlainReplyGuidanceForLanguage(selectedLanguage) },
-                                settings::setPlainReplyGuidance,
-                            ),
-                        ).component
-                }.resizableRow()
-                    .enabledIf(replyToggle.selected)
-                row {
-                    button(ImuxBundle.message("settings.reply.plain.restore")) {
-                        replyArea.text = defaultPlainReplyGuidanceForLanguage(selectedLanguage)
-                        scrollToTop(replyArea)
-                    }
-                }.enabledIf(replyToggle.selected)
             }
             group(ImuxBundle.message("settings.group.peer.programming")) {
                 row(ImuxBundle.message("settings.peer.max.rounds")) {
@@ -133,23 +99,6 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                         )
                         .comment(ImuxBundle.message("settings.peer.default.partner.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
-                row(ImuxBundle.message("settings.peer.prompt")) {
-                    promptArea = textArea()
-                        .applyToComponent { rows = 8; lineWrap = true; wrapStyleWord = true }
-                        .align(AlignX.FILL)
-                        .bindText(
-                            MutableProperty(
-                                { settings.state.peerPromptOverride ?: defaultPeerPromptForLanguage(selectedLanguage) },
-                                { settings.state.peerPromptOverride = it.takeUnless(::isDefaultPeerPrompt) },
-                            ),
-                        ).component
-                }.resizableRow()
-                row {
-                    button(ImuxBundle.message("settings.peer.prompt.restore")) {
-                        promptArea.text = defaultPeerPromptForLanguage(selectedLanguage)
-                        scrollToTop(promptArea)
-                    }
-                }
             }
             group(ImuxBundle.message("settings.group.project.window")) {
                 row {
@@ -164,8 +113,6 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                     checkBox.isSelected = agentType in settings.enabledAgentTypes
                 }
                 settings.clearPreviewLanguage()
-                scrollToTop(promptArea)
-                scrollToTop(replyArea)
             }
             onIsModified {
                 selectedAgentTypes(agentCheckBoxes) != settings.enabledAgentTypes.toSet()
@@ -196,23 +143,3 @@ internal fun defaultPeerPromptForLanguage(language: PluginLanguage): String =
     } else {
         PeerCoordinator.DEFAULT_PROMPT_EN
     }
-
-/**
- * 语言切换时决定提示词文本框是否需要跟随更新。
- * 返回新的文本框内容：如果当前内容是某个语言的默认值则切换，否则保持不变。
- */
-internal fun promptAfterLanguageSwitch(currentText: String, newLanguage: PluginLanguage): String =
-    if (currentText == PeerCoordinator.DEFAULT_PROMPT_ZH || currentText == PeerCoordinator.DEFAULT_PROMPT_EN) {
-        defaultPeerPromptForLanguage(newLanguage)
-    } else {
-        currentText
-    }
-
-/** 判断提示词是否为任一语言的默认值（不需要持久化）。 */
-internal fun isDefaultPeerPrompt(text: String): Boolean =
-    text == PeerCoordinator.DEFAULT_PROMPT_ZH || text == PeerCoordinator.DEFAULT_PROMPT_EN
-
-internal fun scrollToTop(component: JTextComponent) {
-    component.caretPosition = 0
-    component.scrollRectToVisible(java.awt.Rectangle(0, 0, 1, 1))
-}

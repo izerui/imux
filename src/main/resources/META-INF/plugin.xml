@@ -26,7 +26,8 @@
         <li><b>IDE inspections</b>: catch framework issues that compilers and linters miss (Spring, Django, ESLint, Android, and more)</li>
         <li><b>Run configurations</b>: run tests and apps with the same environment, arguments, and working directory as the IDE</li>
         <li><b>Database access</b>: query databases through connections and credentials already saved in the IDE</li>
-        <li><b>Formatting and navigation</b>: format with the project code style, trace call hierarchies, find definitions</li>
+        <li><b>Formatting and navigation</b>: format with the project code style, find definitions</li>
+        <li><b>References and call chains in every language</b>: before editing, the AI checks who calls a function, what it depends on, and what overrides or implements it through the IDE's own Find Usages engine, for every language the IDE understands (Java, Kotlin, Go, Python, JS/TS, and more)</li>
       </ul>
       <p>The MCP configuration is injected only into sessions started by imux; the global CLI configuration is not modified.
       Available tools depend on the IDE, installed plugins, and the MCP server version.</p>
@@ -39,7 +40,7 @@
         <li><b>Notifications</b> when a turn finishes or needs your input, with duration and session title</li>
         <li><b>Message navigation</b>: jump to any earlier prompt in a long session</li>
         <li><b>Transfer Session</b>: continue a Claude Code session in Codex or Pi, with a prompt that carries over the context</li>
-        <li><b>Plain-language replies</b>: sessions report finished work in everyday words, with fewer class names and jargon, and still state what failed or is risky; can be turned off or edited in Settings</li>
+        <li><b>Plain-language replies</b>: sessions report finished work in everyday words, with fewer class names and jargon, and still state what failed or is risky; can be turned off in Settings</li>
       </ul>
 
       <p><b>Review and planning</b></p>
@@ -66,9 +67,10 @@
       <p>把 JetBrains IDE 变成 AI 编程驾驶舱：在编辑器标签页里运行 Claude Code、Codex 和 Pi 会话，并通过 IDEA MCP 让它们用上 IDE 的能力。</p>
       <ul>
         <li><b>IDEA MCP</b>：语义重命名、断点调试、IDE 级代码检查、运行配置、已保存的数据库连接、按项目代码风格格式化；只注入 imux 启动的会话，不改 CLI 的全局配置</li>
+        <li><b>所有语言查引用和调用链</b>：改代码前，AI 用 IDE 自己的「查找用法」引擎查清谁调用了它、它又依赖什么、谁重写或实现了它，IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）都能用</li>
         <li><b>会话面板</b>：按智能体分组，运行中转圈、有新回复加粗；双击接着聊；跑完或需要输入时提醒；长会话内消息导航</li>
         <li><b>会话转移</b>：把 Claude Code 的工作带着前情交给 Codex 或 Pi 接着干</li>
-        <li><b>回复说人话</b>：做完事用大白话汇报，少用类名术语，失败和风险照实说；可在设置里关闭或修改</li>
+        <li><b>回复说人话</b>：做完事用大白话汇报，少用类名术语，失败和风险照实说；可在设置里关闭</li>
         <li><b>结对编程与审查一次</b>：另一个智能体当副驾驶，审查每一轮并把意见发回主会话</li>
         <li><b>先聊再做</b>：动手前，智能体结合项目代码一题一题问清楚，再整理成方案</li>
         <li><b>会话轨迹</b>：把长会话浓缩成进展时间线，标出需求变更、报错和放弃的方案</li>
@@ -196,6 +198,7 @@
         <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.MobileMcpHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.ClaudeHookHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.peer.mcp.PeerMcpHandler"/>
+        <httpRequestHandler implementation="com.github.izerui.imux.code.CodeMcpHandler"/>
 
         <statusBarWidgetFactory
                 id="imux.phoneBridge"
@@ -205,6 +208,7 @@
     <extensions defaultExtensionNs="com.github.izerui.imux">
         <terminalLaunchContributor implementation="com.github.izerui.imux.bridge.mcp.MobileLaunchContributor"/>
         <terminalLaunchContributor implementation="com.github.izerui.imux.peer.mcp.PeerLaunchContributor"/>
+        <terminalLaunchContributor implementation="com.github.izerui.imux.code.CodeLaunchContributor"/>
         <sessionDecorator implementation="com.github.izerui.imux.bridge.ui.BridgeSessionDecorator"/>
     </extensions>
 

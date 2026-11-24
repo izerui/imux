@@ -2,6 +2,7 @@ package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentSession
+import com.github.izerui.imux.code.CodeToolsLease
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.SessionListModel
 import com.github.izerui.imux.session.SessionTranscriptMessage
@@ -13,7 +14,7 @@ import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.settings.defaultPeerPromptForLanguage
 import com.github.izerui.imux.terminal.IdeaMcpEndpoint
 import com.github.izerui.imux.terminal.configuredIdeaMcpEndpoint
-import com.github.izerui.imux.terminal.configuredIdeaMcpGuidance
+import com.github.izerui.imux.terminal.configuredAgentGuidance
 import com.github.izerui.imux.terminal.piIdeaMcpScript
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -129,7 +130,11 @@ internal data class PeerMcpConfig(
     val endpoint: IdeaMcpEndpoint?,
     val guidance: String?,
     val piExtensionScript: Path?,
-)
+    /** 这轮审查挂上的查用法、查调用链工具；开关关着或挂不上时为 null。审查结束必须 [release]。 */
+    val codeTools: CodeToolsLease? = null,
+) {
+    fun release() { codeTools?.release() }
+}
 
 fun interface PeerStateListener : EventListener {
     fun peerStateChanged(sessionKey: String)
@@ -178,9 +183,11 @@ class PeerCoordinator internal constructor(
     ) -> String? = ::runPeerCli,
     private val resolveMcpConfig: (AgentType) -> PeerMcpConfig = { agentType ->
         val ep = configuredIdeaMcpEndpoint(project, projectPath)
-        val guidance = configuredIdeaMcpGuidance(ep)
+        // 副驾驶就是来查搭档有没有漏改的：挂上查调用链工具，引导词也带上对应那部分。
+        val codeTools = CodeToolsLease.acquire(project, agentType)
+        val guidance = configuredAgentGuidance(ideaMcp = ep != null, codeTools = codeTools != null)
         val piScript = if (agentType == AgentType.PI && ep != null) piIdeaMcpScript() else null
-        PeerMcpConfig(ep, guidance, piScript)
+        PeerMcpConfig(ep, guidance, piScript, codeTools)
     },
     private val buildPrompt: ((task: String, conversation: String) -> String)? = null,
     private val sendAutoFeedback: ((sessionKey: String, feedback: String) -> Boolean)? = null,
@@ -565,69 +572,88 @@ class PeerCoordinator internal constructor(
 
         val currentBinding = bindings[mainSessionKey] ?: return
         if (currentBinding.generation != run.bindingGeneration) return
-        val freshTask = extractTask(mainSessionKey)
-        if (!runIsCurrent(mainSessionKey, run, guard)) return
-        val buildFn: (String, String) -> String = buildPrompt ?: ::buildReviewPrompt
-        var conversation = collectLatestConversation(mainSessionKey)
-        var maxConvChars = conversation.length
-        val oneShotInstruction = run.instruction
-        val instructionSuffix = if (!oneShotInstruction.isNullOrBlank()) {
-            val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-            val header = if (isChinese) "## 本次审查要求" else "## Review Instructions"
-            "\n\n$header\n\n$oneShotInstruction"
-        } else {
-            ""
-        }
-        var prompt = buildFn(freshTask, conversation) + instructionSuffix
+        // 先拿配置：挂了查调用链工具时要发凭证，下面任何一处返回都要在 finally 里撤销。
         val mcpConfig = resolveMcpConfig(currentBinding.targetAgentType)
-        val invocation = buildPeerCliInvocation(shell, currentBinding.targetAgentType, projectPath, mcpConfig)
-        val command = invocation.command
-        val environment = invocation.environment
-        val completedRounds = roundCounts[mainSessionKey]?.get() ?: 0
-        val round = completedRounds + 1
-        run.startProgress(round)
-        fun outcome(kind: PeerOutcomeKind, detail: String? = null) =
-            PeerOutcome(kind, currentBinding.targetAgentType, round, System.currentTimeMillis(), detail, oneShotInstruction)
-        LOG.info("结对编程：已注入 $completedRounds 轮，调用 ${currentBinding.targetAgentType.cli}")
-
-        if (!runIsCurrent(mainSessionKey, run, guard)) return
-
-        var rawOutput: String? = null
-        var contextRetry = 0
-        var retryContextOverflow = true
-        do {
+        try {
+            val codeToolsHint = if (mcpConfig.codeTools != null) codeToolsReviewHint() else ""
+            val freshTask = extractTask(mainSessionKey)
             if (!runIsCurrent(mainSessionKey, run, guard)) return
-            retryContextOverflow = false
+            val buildFn: (String, String) -> String = buildPrompt ?: ::buildReviewPrompt
+            var conversation = collectLatestConversation(mainSessionKey)
+            var maxConvChars = conversation.length
+            val oneShotInstruction = run.instruction
+            val instructionSuffix = if (!oneShotInstruction.isNullOrBlank()) {
+                val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
+                val header = if (isChinese) "## 本次审查要求" else "## Review Instructions"
+                "\n\n$header\n\n$oneShotInstruction"
+            } else {
+                ""
+            }
+            var prompt = buildFn(freshTask, conversation) + codeToolsHint + instructionSuffix
+            val invocation = buildPeerCliInvocation(shell, currentBinding.targetAgentType, projectPath, mcpConfig)
+            val command = invocation.command
+            val environment = invocation.environment
+            val completedRounds = roundCounts[mainSessionKey]?.get() ?: 0
+            val round = completedRounds + 1
+            run.startProgress(round)
+            fun outcome(kind: PeerOutcomeKind, detail: String? = null) =
+                PeerOutcome(kind, currentBinding.targetAgentType, round, System.currentTimeMillis(), detail, oneShotInstruction)
+            LOG.info("结对编程：已注入 $completedRounds 轮，调用 ${currentBinding.targetAgentType.cli}")
 
-            val result =
-                runCatching {
-                    runCli(
-                        currentBinding.targetAgentType,
-                        command,
-                        Path.of(projectPath),
-                        prompt,
-                        environment,
-                        CLI_TIMEOUT_SECONDS,
-                        run::attach,
-                    ) { event ->
-                        run.recordProgress(event)
-                        coroutineScope.launch(edt) {
-                            if (runIsCurrent(mainSessionKey, run, guard)) {
-                                notifyStateChanged(mainSessionKey)
+            if (!runIsCurrent(mainSessionKey, run, guard)) return
+
+            var rawOutput: String? = null
+            var contextRetry = 0
+            var retryContextOverflow = true
+            do {
+                if (!runIsCurrent(mainSessionKey, run, guard)) return
+                retryContextOverflow = false
+
+                val result =
+                    runCatching {
+                        runCli(
+                            currentBinding.targetAgentType,
+                            command,
+                            Path.of(projectPath),
+                            prompt,
+                            environment,
+                            CLI_TIMEOUT_SECONDS,
+                            run::attach,
+                        ) { event ->
+                            run.recordProgress(event)
+                            coroutineScope.launch(edt) {
+                                if (runIsCurrent(mainSessionKey, run, guard)) {
+                                    notifyStateChanged(mainSessionKey)
+                                }
                             }
                         }
                     }
+
+                if (!runIsCurrent(mainSessionKey, run, guard)) return
+
+                val error = result.exceptionOrNull()
+                if (error != null && isContextOverflowError(error)) {
+                    maxConvChars = maxOf(maxConvChars / 2, 0)
+                    conversation = collectLatestConversation(mainSessionKey, maxConvChars)
+                    val shrunk = buildFn(freshTask, conversation) + codeToolsHint + instructionSuffix
+                    if (shrunk.length >= prompt.length) {
+                        LOG.warn("结对编程：上下文溢出但对话已无法进一步缩减")
+                        withContext(edt) {
+                            val detail = error.message ?: error.javaClass.simpleName
+                            if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FAILED, detail))
+                            if (!project.isDisposed) notifyCliError(currentBinding, detail)
+                        }
+                        return
+                    }
+                    contextRetry++
+                    LOG.warn("结对编程：检测到上下文溢出，收缩对话重试 (retry=$contextRetry, ${prompt.length} -> ${shrunk.length})")
+                    prompt = shrunk
+                    retryContextOverflow = true
+                    continue
                 }
 
-            if (!runIsCurrent(mainSessionKey, run, guard)) return
-
-            val error = result.exceptionOrNull()
-            if (error != null && isContextOverflowError(error)) {
-                maxConvChars = maxOf(maxConvChars / 2, 0)
-                conversation = collectLatestConversation(mainSessionKey, maxConvChars)
-                val shrunk = buildFn(freshTask, conversation) + instructionSuffix
-                if (shrunk.length >= prompt.length) {
-                    LOG.warn("结对编程：上下文溢出但对话已无法进一步缩减")
+                if (error != null) {
+                    LOG.warn("结对编程：CLI 调用失败", error)
                     withContext(edt) {
                         val detail = error.message ?: error.javaClass.simpleName
                         if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FAILED, detail))
@@ -635,46 +661,33 @@ class PeerCoordinator internal constructor(
                     }
                     return
                 }
-                contextRetry++
-                LOG.warn("结对编程：检测到上下文溢出，收缩对话重试 (retry=$contextRetry, ${prompt.length} -> ${shrunk.length})")
-                prompt = shrunk
-                retryContextOverflow = true
-                continue
-            }
 
-            if (error != null) {
-                LOG.warn("结对编程：CLI 调用失败", error)
+                rawOutput = result.getOrNull()
+            } while (retryContextOverflow)
+
+            val feedback = actionablePeerFeedback(rawOutput)
+            if (feedback == null) {
+                LOG.info("结对编程：副驾驶无有效反馈，本轮结束")
+                val isExplicitPass = rawOutput?.trim().orEmpty().let { it.isNotEmpty() && PASS_PATTERN.matches(it) }
+                if (isExplicitPass) run.passed = true
+                // 只有明确的 PASS 才算通过；空输出（崩溃、截断、错误只写在 stderr）是没拿到结论，按失败处理并给出「重试」
+                val result =
+                    if (isExplicitPass) outcome(PeerOutcomeKind.PASSED)
+                    else outcome(PeerOutcomeKind.FAILED, ImuxBundle.message("action.peer.notice.empty"))
                 withContext(edt) {
-                    val detail = error.message ?: error.javaClass.simpleName
-                    if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FAILED, detail))
-                    if (!project.isDisposed) notifyCliError(currentBinding, detail)
+                    if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, result)
                 }
                 return
             }
 
-            rawOutput = result.getOrNull()
-        } while (retryContextOverflow)
-
-        val feedback = actionablePeerFeedback(rawOutput)
-        if (feedback == null) {
-            LOG.info("结对编程：副驾驶无有效反馈，本轮结束")
-            val isExplicitPass = rawOutput?.trim().orEmpty().let { it.isNotEmpty() && PASS_PATTERN.matches(it) }
-            if (isExplicitPass) run.passed = true
-            // 只有明确的 PASS 才算通过；空输出（崩溃、截断、错误只写在 stderr）是没拿到结论，按失败处理并给出「重试」
-            val result =
-                if (isExplicitPass) outcome(PeerOutcomeKind.PASSED)
-                else outcome(PeerOutcomeKind.FAILED, ImuxBundle.message("action.peer.notice.empty"))
             withContext(edt) {
-                if (runIsCurrent(mainSessionKey, run, guard)) recordOutcome(mainSessionKey, run, result)
+                if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
+                if (injectFeedback(mainSessionKey, feedback, run, guard)) {
+                    recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback)
+                }
             }
-            return
-        }
-
-        withContext(edt) {
-            if (!runIsCurrent(mainSessionKey, run, guard) || project.isDisposed) return@withContext
-            if (injectFeedback(mainSessionKey, feedback, run, guard)) {
-                recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback)
-            }
+        } finally {
+            mcpConfig.release()
         }
     }
 
@@ -726,35 +739,24 @@ class PeerCoordinator internal constructor(
         stateDispatcher.multicaster.peerStateChanged(sessionKey)
     }
 
+    /**
+     * 挂了查调用链工具时追加在审查提示词后面：副驾驶的本职就是看搭档有没有漏改，
+     * 改了签名、参数、字段却没跟着改调用方，是最常见也最难从对话里看出来的漏洞。
+     */
+    private fun codeToolsReviewHint(): String =
+        if (ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)) {
+            "\n\n## 核对调用链\n\n搭档改了函数、方法、参数、字段或返回值时，如果你有 `imux_code` 的工具，用 `call_hierarchy` 和 `find_references` 查一下：" +
+                "调用方和用到它的地方是不是都跟着改了；改的是被重写或实现的方法、类型时，再用 `type_hierarchy` 查重写和实现有没有一起改。查出漏改的就当成问题提出来。"
+        } else {
+            "\n\n## Check the call chain\n\nWhen your partner changed a function, method, parameter, field, or return value and you have the `imux_code` tools, use `call_hierarchy` and `find_references` " +
+                "to check whether every caller and usage was updated to match; for an overridden or implemented method or type, also use `type_hierarchy` to check the overrides and implementations. Raise anything left out as an issue."
+        }
+
     private fun buildReviewPrompt(
         task: String,
         conversation: String,
     ): String {
-        val customPrompt = ImuxSettings.getInstance().state.peerPromptOverride
-        if (customPrompt != null) {
-            val isChinese = ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
-            // 旧版本可选「填入输入框」时用 ${mode} 切换说法；只剩自动发送后，老的自定义提示词里的占位符换成默认提示词的同一句
-            var result = customPrompt
-                .replace("\${task}", task)
-                .replace("\${conversation}", conversation)
-                .replace("\${mode}", if (isChinese) MODE_ZH else MODE_EN)
-            val missingTask = "\${task}" !in customPrompt && task.isNotBlank()
-            val missingConversation = "\${conversation}" !in customPrompt && conversation.isNotBlank()
-            if (missingTask || missingConversation) {
-                LOG.warn("结对编程：自定义提示词未包含 \${task} 或 \${conversation}，自动追加上下文")
-                val appendix = buildString {
-                    append("\n\n")
-                    if (missingTask) append(task)
-                    if (missingConversation) {
-                        append(if (isChinese) "## 对话记录\n\n" else "## Conversation\n\n")
-                        append(conversation).append("\n\n")
-                    }
-                }
-                result += appendix
-            }
-            return result
-        }
-
+        // 副驾驶提示词不开放编辑，始终用随插件更新的默认版本。
         val currentLanguage = ImuxBundle.currentLanguage()
         val isChinese = currentLanguage in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)
         val conversationSection =
