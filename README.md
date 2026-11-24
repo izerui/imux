@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 需要 **JetBrains IDE 2026.2+**，并至少装好 `claude`、`codex`、`pi` 其中一个（在你的终端里能直接运行即可）。
 
 1. **Settings → Plugins → Marketplace** 搜索 **imux**，安装后重启。
-2. 打开左侧的 **AI 智能体** 面板，点 **+** 选一个智能体，会话就在编辑器标签页里跑起来。
+2. 打开左侧的 **AI 智能体** 面板，点 **+** 选一个智能体（或在任何地方连按两下 **⌘** / Windows 上连按两下 **Alt**），会话就在编辑器标签页里跑起来。
 3. 双击列表里的旧会话可以接着聊。
 
 ## 会话面板

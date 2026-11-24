@@ -216,6 +216,20 @@
                 icon="/icons/agent.svg">
             <add-to-group group-id="NewGroup" anchor="first"/>
         </group>
+        <!-- 在 IDE 任何地方新建会话，见 NewAgentSessionAction.kt。与双击 Shift（Search Everywhere）同一套双击修饰键机制。
+             macOS 双击 ⌘：两个 Mac 基础 keymap 都要声明，其余 Mac keymap（含用户复制出来的）继承自它们；
+             keymap 自己声明了某个动作的快捷键，就整体覆盖上级的，所以 Mac 不会再继承 $default 的双击 Alt。
+             Windows / Linux 双击 Alt：Windows 用 $default，Linux 的 XWin / GNOME / KDE 都继承 $default。 -->
+        <action
+                id="imux.NewAgentSession"
+                class="com.github.izerui.imux.toolwindow.NewAgentSessionAction"
+                text="New AI Agent Session..."
+                description="Choose an AI agent and start a new session"
+                icon="/icons/agent.svg">
+            <keyboard-gesture-shortcut keystroke="alt ALT" modifier="dblClick" keymap="$default"/>
+            <keyboard-gesture-shortcut keystroke="meta META" modifier="dblClick" keymap="Mac OS X 10.5+"/>
+            <keyboard-gesture-shortcut keystroke="meta META" modifier="dblClick" keymap="Mac OS X"/>
+        </action>
         <action
                 id="imux.CopySessionIdentity"
                 class="com.github.izerui.imux.terminal.CopySessionIdentityAction"

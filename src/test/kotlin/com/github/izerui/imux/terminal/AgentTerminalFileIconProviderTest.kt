@@ -18,7 +18,7 @@ import java.awt.image.BufferedImage
 
 class AgentTerminalFileIconProviderTest {
     @Test
-    fun `Claude 圆形图标旋转时尺寸稳定且图案变化`() {
+    fun `Claude 星芒图标旋转时尺寸稳定、不出内切圆且图案变化`() {
         val animation = AgentIcons.busy(AgentType.CLAUDE) as EditorTabAnimatedIcon
         for (scale in listOf(1, 2)) {
             fun render(icon: Icon): BufferedImage {
@@ -35,7 +35,8 @@ class AgentTerminalFileIconProviderTest {
             val images = animation.frames.map { render(it.icon) }
             val first = images.first()
             assertEquals("四角透明，不能退回方形底板", 0, first.getRGB(0, 0).ushr(24))
-            assertTrue("不能渲染成空白图标", first.getRGB(8 * scale, 8 * scale).ushr(24) > 0)
+            // 星芒是镂空的，射线之间本就透明，只要求中心实心
+            assertTrue("不能渲染成空白图标", first.getRGB(8 * scale, 8 * scale).ushr(24) >= 240)
             images.forEachIndexed { frame, image ->
                 assertEquals(16 * scale, image.width)
                 assertEquals(16 * scale, image.height)
@@ -44,9 +45,6 @@ class AgentTerminalFileIconProviderTest {
                         val radius = image.width / 2.0
                         val distance = kotlin.math.hypot(x + 0.5 - radius, y + 0.5 - radius)
                         val alpha = image.getRGB(x, y).ushr(24)
-                        if (distance < radius - scale) {
-                            assertTrue("scale=$scale frame=$frame 圆内不能削空", alpha >= 240)
-                        }
                         if (distance > radius + scale) {
                             assertTrue("scale=$scale frame=$frame 圆外不能伸出方角", alpha <= 5)
                         }

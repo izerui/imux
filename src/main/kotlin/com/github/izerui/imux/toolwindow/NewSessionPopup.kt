@@ -7,7 +7,9 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.project.DumbAwareAction
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.ListPopup
 import java.awt.Component
 
 /**
@@ -23,24 +25,40 @@ internal object NewSessionPopup {
         dataContext: DataContext,
         onChosen: (AgentType) -> Unit,
     ) {
-        val popup =
-            JBPopupFactory.getInstance().createActionGroupPopup(
-                null,
-                agentActionGroup(
-                    onChosen = onChosen,
-                    agentTypes = ImuxSettings.getInstance().enabledAgentTypes,
-                ),
-                dataContext,
-                JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
-                true,
-            )
-
+        val popup = create(dataContext, onChosen)
         if (anchor != null) {
             popup.showUnderneathOf(anchor)
         } else {
             popup.showInBestPositionFor(dataContext)
         }
     }
+
+    /**
+     * 显示在当前 IDE 窗口正中间。给双击 ⌘ / Alt 用：快捷键不依附任何按钮，
+     * 跟着光标走的话位置每次都不一样，居中则每次都在同一处，与双击 Shift 的 Search Everywhere 一致。
+     */
+    fun showCentered(
+        project: Project,
+        dataContext: DataContext,
+        onChosen: (AgentType) -> Unit,
+    ) {
+        create(dataContext, onChosen).showCenteredInCurrentWindow(project)
+    }
+
+    private fun create(
+        dataContext: DataContext,
+        onChosen: (AgentType) -> Unit,
+    ): ListPopup =
+        JBPopupFactory.getInstance().createActionGroupPopup(
+            null,
+            agentActionGroup(
+                onChosen = onChosen,
+                agentTypes = ImuxSettings.getInstance().enabledAgentTypes,
+            ),
+            dataContext,
+            JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
+            true,
+        )
 }
 
 /** 每个 Agent 一项：标题是显示名，描述用厂商名，走状态栏提示而不占菜单行。 */

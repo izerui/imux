@@ -42,6 +42,7 @@ IDE 里 **Settings → Plugins → Marketplace**，搜索 **imux**，Install，�
 
 1. 打开左侧边栏的 **AI Agents** 面板。
 2. 点面板右上角 **+**，选 Claude Code、Codex 或 Pi，新建一个会话。
+   不想切到面板的话，在 IDE 任何地方（包括正在跑的会话里）**快速连按两下 ⌘**（Windows / Linux 为连按两下 **Alt**），窗口正中会弹出同样的选择菜单。想换成别的键，在 Keymap 里搜「新建 AI 会话」修改。
 3. 会话在编辑器标签页里跑起来，和你的代码文件并排——可以拖到编辑器另一侧，也可以拖到另一个窗口。同一个会话只开一个标签，不能分屏。
 
 想接着之前的聊？**双击**列表里的任意会话，imux 会用 `claude --resume` / `codex resume` / `pi --session-id` 把它捞回来。
