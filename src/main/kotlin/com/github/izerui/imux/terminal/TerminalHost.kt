@@ -615,13 +615,7 @@ class TerminalHost(
     }
 
     /**
-     * 选中并聚焦会话标签；还没打开就在当前编辑器组打开，并且放在最后一个。
-     *
-     * 平台默认把新标签插在当前选中标签的右边（Settings → Editor Tabs →「Open new tabs at the end」默认关），
-     * 选中第一个标签时新建会话就成了第二个，用户找不到。只在打开的这一下临时打开该设置：
-     * 平台仅在把标签放进编辑器组（`EditorWindow.addComposite`）时读它，而 `openFile` 在 EDT 上同步走完这一步，
-     * 打开完立刻恢复，不影响用户打开普通文件。后台恢复标签走 [openWithoutSelecting]，不受影响，
-     * [restorationOpenOrder] 的排序前提不变。
+     * 选中并聚焦会话标签；还没打开就在当前编辑器组打开。
      *
      * 已开着时不能经 `openFile`：它打开到活动窗口的当前编辑器组，而会话文件禁止分屏
      * （见 [AgentTerminalVirtualFile]），标签若在另一组或独立窗口，平台会先 `closeFile` 再到当前组重开。
@@ -639,14 +633,7 @@ class TerminalHost(
                 window.requestFocus(true)
                 window.toFront()
             },
-            open = {
-                val ui = UISettings.getInstance()
-                withTemporarySetting(
-                    get = { ui.openTabsAtTheEnd },
-                    set = { ui.openTabsAtTheEnd = it },
-                    value = true,
-                ) { manager.openFile(file, true) }
-            },
+            open = { manager.openFile(file, true) },
         )
     }
 
@@ -996,26 +983,6 @@ internal fun isViewportAtBottom(
     visibleHeight: Int,
     contentHeight: Int,
 ): Boolean = visibleTop.toLong() + visibleHeight >= contentHeight.toLong() - 1L
-
-/**
- * 在 [block] 执行期间把一个设置临时改成 [value]，结束后（含抛异常）恢复原值；原本就是 [value] 时不动它。
- * 见 [TerminalHost.openSelected]。
- */
-internal inline fun <T, R> withTemporarySetting(
-    get: () -> T,
-    set: (T) -> Unit,
-    value: T,
-    block: () -> R,
-): R {
-    val previous = get()
-    if (previous == value) return block()
-    set(value)
-    try {
-        return block()
-    } finally {
-        set(previous)
-    }
-}
 
 /**
  * 标签已在某个编辑器组（含独立窗口里的组）开着，就在那个组里 [select]；哪儿都没开着才 [open]。
