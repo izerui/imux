@@ -75,7 +75,7 @@ class PeerReviewEventsTest {
     )
 
     @Test
-    fun `挂了查调用链工具时审查提示词追加核对调用链，命令和环境带上工具，审查结束撤销凭证`() {
+    fun `挂了查调用链工具时命令和环境带上工具，审查结束撤销凭证，审查提示词不再重复追加（核对调用链写在引导词里）`() {
         var prompt: String? = null
         var command: List<String>? = null
         var environment: Map<String, String>? = null
@@ -88,15 +88,14 @@ class PeerReviewEventsTest {
             it.bind("s1", AgentType.CLAUDE)
             awaitIdle(it) { it.onTurnCompleted("s1") }
         }
-        assertTrue(prompt!!.startsWith("test prompt"))
-        assertTrue(prompt!!.contains("`call_hierarchy`") && prompt!!.contains("`find_references`"))
+        assertEquals("test prompt", prompt)
         assertTrue(command!!.last().contains("imux_code"))
         assertEquals("code-token", environment!!["IMUX_CODE_TOKEN"])
         assertEquals(1, released)
     }
 
     @Test
-    fun `没挂查调用链工具时审查提示词不追加核对调用链`() {
+    fun `没挂查调用链工具时审查提示词原样发出`() {
         var prompt: String? = null
         using(coordinator(runCli = { _, _, _, p, _, _, _, _ -> prompt = p; "PASS" })) {
             it.bind("s1", AgentType.CLAUDE)

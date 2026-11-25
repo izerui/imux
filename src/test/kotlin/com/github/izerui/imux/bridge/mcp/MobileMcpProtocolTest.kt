@@ -117,4 +117,27 @@ class MobileMcpProtocolTest {
             assertEquals("tab-b", registry.get(second)?.tabId)
         } finally { registry.close() }
     }
+
+    /** 发到手机是发给真人、收不回来的：只说「不要重试」不说为什么，模型在结果不明时仍可能再发一次。 */
+    @Test fun `三个发送工具的说明都讲清发出去收不回、accepted 不等于已读、结果不明时为什么不能重试`() {
+        val tools = MobileMcpProtocol.tools().map { it.asJsonObject }.associateBy { it["name"].asString }
+        for (name in listOf("send_image", "send_video", "send_file")) {
+            val description = tools.getValue(name)["description"].asString
+            assertTrue(name, description.contains("Use only when the user requests delivery: it sends to a real person's chat and cannot be taken back."))
+            assertTrue(name, description.contains("accepted only means the platform took the message, not that anyone read it."))
+            assertTrue(name, description.contains("Never retry when the outcome is unknown — the first attempt may have gone through, and a retry would send it twice"))
+        }
+        assertFalse("查询状态不发送，不带这些提醒", tools.getValue("get_mobile_status")["description"].asString.contains("Never retry"))
+    }
+
+    @Test fun `发送工具的可选参数各有说明`() {
+        val tools = MobileMcpProtocol.tools().map { it.asJsonObject }.associateBy { it["name"].asString }
+        fun description(tool: String, arg: String) =
+            tools.getValue(tool).getAsJsonObject("inputSchema").getAsJsonObject("properties").getAsJsonObject(arg)["description"].asString
+        assertEquals("Optional name to show the recipient instead of the file's own name.", description("send_image", "file_name"))
+        assertEquals("Optional name to show the recipient instead of the file's own name.", description("send_video", "file_name"))
+        assertEquals("Optional name to show the recipient instead of the file's own name.", description("send_file", "file_name"))
+        assertEquals("Optional video length in milliseconds, when known.", description("send_video", "duration_ms"))
+        assertEquals("Optional absolute path of an existing local image to use as the video cover.", description("send_video", "thumbnail_path"))
+    }
 }

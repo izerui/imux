@@ -126,4 +126,44 @@ class OneShotAgentCommandTest {
         assertTrue("Pi", pi.command.last().contains("pi --mode rpc --no-session -e '/tmp/pi-imux-idea-mcp.js'"))
         assertEquals("Pi 通过环境变量拿到 MCP 地址", ideaMcp.url, pi.environment["IMUX_IDEA_MCP_URL"])
     }
+
+    private val codeTools = com.github.izerui.imux.code.CodeToolsLease(
+        com.github.izerui.imux.terminal.TerminalMcpServer("imux_code", "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN"),
+        mapOf("IMUX_CODE_URL" to "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN" to "code-token"),
+        Path.of("/tmp/pi-imux-mcp.js"),
+    ) {}
+    private val withCode = AgentMcpConfig(null, "Map the chain", null, codeTools)
+
+    /** 需求澄清要查清现状，挂的是和会话终端同一组查调用链工具；不开 IDEA MCP 也照样挂。 */
+    @Test
+    fun `持续对话的三个 CLI 都挂上查调用链工具并带上引导词`() {
+        val claude = conversation(AgentType.CLAUDE, withCode)
+        assertTrue("Claude", claude.contains("--mcp-config") && claude.contains("imux_code") && claude.contains("Map the chain"))
+        val codex = conversation(AgentType.CODEX, withCode)
+        assertTrue("Codex", codex.contains("mcp_servers.imux_code.url=") && codex.contains("Map the chain"))
+        val pi = conversationInvocation("/bin/zsh", AgentType.PI, "/tmp/project", withCode)
+        assertTrue("Pi 加载内置 MCP 扩展", pi.command.last().contains("-e '/tmp/pi-imux-mcp.js'"))
+        assertEquals("Pi 通过环境变量拿到引导词", "Map the chain", pi.environment["IMUX_MCP_GUIDANCE"])
+        for (agentType in AgentType.entries) {
+            val environment = conversationInvocation("/bin/zsh", agentType, "/tmp/project", withCode).environment
+            assertEquals("$agentType 凭证走环境变量", "code-token", environment["IMUX_CODE_TOKEN"])
+        }
+    }
+
+    @Test
+    fun `凭证只走环境变量，三个 CLI 的命令行里都不出现`() {
+        for (agentType in AgentType.entries) {
+            assertFalse("$agentType", conversation(agentType, withCode).contains("code-token"))
+            assertFalse("$agentType", script(agentType, withCode).contains("code-token"))
+        }
+    }
+
+    @Test
+    fun `用完撤销查调用链工具的凭证，什么都不挂时撤销也不出错`() {
+        var released = 0
+        val lease = com.github.izerui.imux.code.CodeToolsLease(codeTools.server, emptyMap(), null) { released++ }
+        AgentMcpConfig(null, null, null, lease).release()
+        assertEquals(1, released)
+        AgentMcpConfig.NONE.release()
+    }
 }

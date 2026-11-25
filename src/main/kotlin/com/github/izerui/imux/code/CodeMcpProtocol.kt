@@ -44,6 +44,10 @@ interface CodeToolsBackend {
 /**
  * `imux_code` 服务：用 IDE 自己的引用索引查引用和调用链，按文件 + 行列定位符号，
  * 因此对 IDE 能解析的每一种语言都可用（包括 IDEA MCP `analyze_calls` 解析不了名字的 Go 等）。
+ *
+ * 工具说明里不提别的服务的工具（`analyze_calls`、`search_symbol`）：关掉 IDEA MCP 时智能体照样读得到这些说明，
+ * 提到没挂的工具它会去调。和引导词的分工：结果里每个标记是什么意思写在这里（用到时才读），
+ * 什么时候用、为什么用写在引导词里。
  */
 class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: CoroutineScope) {
     fun receive(root: JsonObject): McpRpcReply = McpJsonRpc.receive(root, CODE_MCP_SERVER, ::tools, call = ::call)
@@ -98,9 +102,10 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
 
         private const val POSITION_NOTE =
             "Locate the symbol by file and line (1-based): give `symbol` (its name as written on that line) or `column`; " +
-                "the line can be a declaration or any line that uses the symbol. Works for every language the IDE understands, " +
-                "including ones where IDEA MCP `analyze_calls` reports `No callable symbol found` (e.g. Go). " +
-                "Positions from `search_symbol`, compiler errors, or grep can be passed directly. " +
+                "the line can be a declaration or any line that uses the symbol. Works for the languages the IDE understands " +
+                "(resolved by position, so it needs no qualified name) and answers `language_not_supported` for the ones it does not. " +
+                "Positions from search results, compiler errors, or grep can be passed directly. " +
+                "Results cover what the IDE can resolve statically: uses through reflection, names built from strings, or generated code are not in any result, so an empty result is not proof that nothing uses it. " +
                 "`overrides_incomplete: true` means the search for what a method overrides stopped early because too many declarations share its name: " +
                 "the overrides, and calls made through them, may be incomplete — check the enclosing type's interfaces yourself."
 
@@ -111,20 +116,22 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
         fun tools(): JsonArray = JsonArray().apply {
             add(tool(
                 FIND_REFERENCES,
-                "Find every usage of a function, method, type, field, variable, or constant through the IDE's own reference index — " +
-                    "the same engine as the IDE's Find Usages. Returns each usage with file, line, column, the line text, and the " +
+                "Find what actually refers to a function, method, type, field, variable, or constant, through the IDE's own reference index — " +
+                    "the same engine as the IDE's Find Usages. Text search only matches names that look alike; this resolves each usage to the symbol it means. " +
+                    "Use it to see everything that depends on a symbol — before changing it, and when reviewing, reading, or debugging code that involves it. " +
+                    "Returns each usage with file, line, column, the line text, and the " +
                     "function or class it sits in. For a method that overrides or implements another, `overrides` lists what it overrides and " +
                     "`references_via_overridden` lists usages made through that interface or base type (e.g. `greeter.greet()` where greeter is the interface) — " +
-                    "they can run this implementation too; `overridden_by` lists what overrides or implements it. " +
-                    "Use it to see everything that depends on a symbol — before changing it, and when reviewing, reading, or debugging code that involves it. $UNANALYZED_NOTE$POSITION_NOTE",
+                    "they can run this implementation too; `overridden_by` lists what overrides or implements it. $UNANALYZED_NOTE$POSITION_NOTE",
             ))
             add(tool(
                 CALL_HIERARCHY,
-                "Build the call chain of a function or method through the IDE's own reference index — before changing it, and when reviewing, reading, or debugging code. " +
+                "Build the call chain of a function or method through the IDE's own reference index: who relies on it and what it relies on. " +
+                    "Use it before changing it, and when reviewing, reading, or debugging code. " +
                     "direction=\"callers\" walks up who calls it, who calls those, and so on (default depth 3), grouping call sites under each caller. " +
                     "Calls made through an interface or base method it overrides are included and marked `via`. Each site is marked usage=call or reference; " +
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
-                    "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated; " +
+                    "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated. " +
                     "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
                     "Every node carries file, line, and column, so any node can be queried again. " +
                     "For callers: $UNANALYZED_NOTE" +
@@ -143,7 +150,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
             })
             add(tool(
                 TYPE_HIERARCHY,
-                "Show the inheritance around a method or type through the IDE's own index. " +
+                "Show the inheritance around a method or type through the IDE's own index: whose contract it has to keep, and who has to change with it. " +
                     "direction=\"supers\" lists what it overrides, implements, or extends (base methods, interface methods, base classes, interfaces it satisfies); " +
                     "direction=\"implementations\" lists what overrides, implements, or extends it (overriding methods, implementing classes, subclasses). " +
                     "Use it before changing a method signature or a type (overriding and implementing members must change together), and when reviewing or analyzing code to see which implementation can run. $POSITION_NOTE",

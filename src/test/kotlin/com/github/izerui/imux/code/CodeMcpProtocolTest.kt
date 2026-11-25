@@ -45,14 +45,25 @@ class CodeMcpProtocolTest {
         assertTrue(tools[2].getAsJsonObject("annotations")["readOnlyHint"].asBoolean)
     }
 
-    @Test fun `三个工具的说明都写明对 analyze_calls 解析不了的语言也可用`() {
+    @Test fun `三个工具的说明都如实写明适用范围：IDE 能解析的语言可用，解析不了会明确告知`() {
         val descriptions = toolList().map { it["description"].asString }
-        assertTrue(descriptions[0].contains("Works for every language the IDE understands"))
-        assertTrue(descriptions[1].contains("Works for every language the IDE understands"))
-        assertTrue(descriptions[2].contains("Works for every language the IDE understands"))
-        assertTrue(descriptions[0].contains("`No callable symbol found` (e.g. Go)"))
-        assertTrue(descriptions[1].contains("`No callable symbol found` (e.g. Go)"))
-        assertTrue(descriptions[2].contains("`No callable symbol found` (e.g. Go)"))
+        val scope = "Works for the languages the IDE understands (resolved by position, so it needs no qualified name) and answers `language_not_supported` for the ones it does not."
+        assertTrue(descriptions[0].contains(scope))
+        assertTrue(descriptions[1].contains(scope))
+        assertTrue(descriptions[2].contains(scope))
+    }
+
+    /** 关掉 IDEA MCP 时智能体照样读得到这些说明：提到没挂的工具，它会去调。 */
+    @Test fun `三个工具的说明和参数说明都不提别的服务的工具`() {
+        val tools = toolList()
+        assertEquals(3, tools.size)
+        for (tool in tools) {
+            val text = tool.toString()
+            val name = tool["name"].asString
+            assertFalse(name, text.contains("analyze_calls"))
+            assertFalse(name, text.contains("search_symbol"))
+            assertFalse(name, text.contains("IDEA MCP"))
+        }
     }
 
     @Test fun `查用法和调用链的说明提醒 IDE 分析不了的文件要自己核对，继承的说明不提（它不返回这一栏）`() {
@@ -91,6 +102,23 @@ class CodeMcpProtocolTest {
         assertTrue(descriptions[0].contains("before changing it, and when reviewing, reading, or debugging code"))
         assertTrue(descriptions[1].contains("before changing it, and when reviewing, reading, or debugging code"))
         assertTrue(descriptions[2].contains("and when reviewing or analyzing code"))
+    }
+
+    /** 工具能看到的只是 IDE 能静态解析的引用：不说明这一点，空结果会被当成「没人用」。 */
+    @Test fun `三个工具的说明都写明看不到反射和字符串拼出的用法，空结果不等于没人用`() {
+        val descriptions = toolList().map { it["description"].asString }
+        val limit = "Results cover what the IDE can resolve statically: uses through reflection, names built from strings, or generated code are not in any result, so an empty result is not proof that nothing uses it."
+        assertTrue(descriptions[0].contains(limit))
+        assertTrue(descriptions[1].contains(limit))
+        assertTrue(descriptions[2].contains(limit))
+    }
+
+    @Test fun `三个工具的说明开头各自讲清它回答什么问题`() {
+        val descriptions = toolList().map { it["description"].asString }
+        assertTrue(descriptions[0].startsWith("Find what actually refers to a function, method, type, field, variable, or constant"))
+        assertTrue(descriptions[0].contains("Text search only matches names that look alike; this resolves each usage to the symbol it means."))
+        assertTrue(descriptions[1].startsWith("Build the call chain of a function or method through the IDE's own reference index: who relies on it and what it relies on."))
+        assertTrue(descriptions[2].startsWith("Show the inheritance around a method or type through the IDE's own index: whose contract it has to keep, and who has to change with it."))
     }
 
     @Test fun `继承的两个方向原样交给后端`() {

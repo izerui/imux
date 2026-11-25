@@ -30,4 +30,30 @@ class TerminalDecouplingSourceTest {
         val host = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt")
         assertTrue(host.normalized.contains("capabilities = launchContributions[tabId]?.guidance.orEmpty()"))
     }
+
+    /**
+     * 同一份引导词不能原样发给所有角色：副驾驶被禁止改动，却曾经拿到教它重命名、跑构建、执行 SQL 的完整版；
+     * 会话报告只读一个记录文件，却曾经带着整套 IDE 工具说明。
+     */
+    @Test
+    fun `副驾驶和需求澄清拿只查不改的引导词，会话报告什么都不挂，会话终端拿完整版`() {
+        val peer = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt").normalized
+        assertTrue(peer.contains("capabilities = codeTools?.guidance.orEmpty(), role = GuidanceRole.INVESTIGATOR"))
+        val oneShot = SourceCode("src/main/kotlin/com/github/izerui/imux/agent/OneShotAgentCommand.kt").normalized
+        assertTrue(oneShot.contains("configuredAgentGuidance(endpoint != null, codeTools?.guidance.orEmpty(), GuidanceRole.INVESTIGATOR)"))
+        val clarify = SourceCode("src/main/kotlin/com/github/izerui/imux/clarification/ClarificationService.kt").normalized
+        assertTrue(clarify.contains("AgentMcpConfig.investigator(project, projectPath, agentType)"))
+        val report = SourceCode("src/main/kotlin/com/github/izerui/imux/overview/ProgressOverview.kt").normalized
+        assertTrue(report.contains("AgentMcpConfig.NONE,"))
+        assertFalse(report.contains("AgentMcpConfig.investigator"))
+        val host = SourceCode("src/main/kotlin/com/github/izerui/imux/terminal/TerminalHost.kt").normalized
+        assertFalse("会话终端用默认的干活角色", host.contains("GuidanceRole.INVESTIGATOR"))
+    }
+
+    @Test
+    fun `审查意见带上固定开头再发进主会话，记进结果的仍是意见原文`() {
+        val peer = SourceCode("src/main/kotlin/com/github/izerui/imux/peer/PeerCoordinator.kt").normalized
+        assertTrue(peer.contains("val message = peerFeedbackMessage(feedback, ImuxBundle.currentLanguage().isChinese())"))
+        assertTrue(peer.contains("if (injectFeedback(mainSessionKey, message, run, guard)) { recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback) }"))
+    }
 }

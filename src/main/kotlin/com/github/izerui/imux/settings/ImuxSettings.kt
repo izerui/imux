@@ -26,7 +26,8 @@ internal const val DEFAULT_IDEA_MCP_PORT = 64342
  * - 「先把事情本身说清楚……比方不能代替原意」：用户最初提的诉求是「打个比方」，但只写
  *   「可以打个比方」时，回复有时只剩比方，原本要说的事反倒没讲。所以要先讲清本体，
  *   比方只能跟在后面帮忙理解。
- * - 「没做完的、失败的、有风险的照实说」：防止为了简短把坏消息一起略掉。
+ * - 「没做完的、没验证的、失败的、有风险的照实说」：防止为了简短把坏消息一起略掉。「没验证的」是后补的：
+ *   做了但没验证过，和做完了不是一回事，原来的三项里漏了这一种——它也是用户最难自己发现的一种。
  *
  * 只注入 imux 打开的会话终端；副驾驶审查、需求澄清这类由程序解析输出的一次性调用不加，
  * 否则会打乱它们约定的输出格式。
@@ -34,12 +35,12 @@ internal const val DEFAULT_IDEA_MCP_PORT = 64342
 internal val DEFAULT_PLAIN_REPLY_GUIDANCE_EN =
     "Write the final reply plainly so someone who doesn't read code can follow it: use few class or function names. " +
         "Explain the actual point first; add an analogy after it where things get complicated, never in place of it. " +
-        "State anything unfinished, failed, or risky as it is; don't leave it out."
+        "State anything unfinished, unverified, failed, or risky; don't leave it out."
 
 internal val DEFAULT_PLAIN_REPLY_GUIDANCE_ZH =
     "最终回复请直白点说，让不懂代码的人也能看明白：少用类名、函数名这类代码里的名字；" +
         "先把事情本身说清楚，复杂的地方再补个比方，比方不能代替原意。" +
-        "没做完的、失败的、有风险的照实说，不要省略。"
+        "没做完的、没验证的、失败的、有风险的照实说，不要省略。"
 
 /**
  * 插件的全局偏好。
@@ -148,8 +149,11 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
     }
 
     /** 按这次挂上的工具组合拼出的引导词；两组都没挂时为 null。内容不开放编辑，见 [agentGuidance]。 */
-    fun agentGuidance(ideaMcp: Boolean, capabilities: Set<GuidanceCapability>): String? =
-        agentGuidanceForLanguage(language, ideaMcp, codeTools = GuidanceCapability.CODE_TOOLS in capabilities)
+    fun agentGuidance(
+        ideaMcp: Boolean,
+        capabilities: Set<GuidanceCapability>,
+        role: GuidanceRole = GuidanceRole.WORKER,
+    ): String? = agentGuidanceForLanguage(language, ideaMcp, codeTools = GuidanceCapability.CODE_TOOLS in capabilities, role)
 
     val plainReplyGuidance: String
         get() = defaultPlainReplyGuidanceForLanguage(language)

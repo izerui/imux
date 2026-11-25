@@ -81,7 +81,7 @@ internal fun titleGenerationPrompt(session: AgentSession): String {
             excerpt.latestAssistantReply?.let { add("<latest_assistant_reply>\n$it\n</latest_assistant_reply>") }
         }.ifEmpty { listOf("<current_title>${session.title}</current_title>") }
     return """
-        |Generate a concise title for this coding-agent session.
+        |Generate a concise title for this coding-agent session. The title's job is to let the user pick this session out of a list of many, so name the specific subject of the work, not the kind of activity ("Fix login redirect loop", not "Bug fixing").
         |
         |Rules:
         |- Name what the session is CURRENTLY about, judged mainly by the most recent user messages.
@@ -247,12 +247,13 @@ private fun titleExcerpt(session: AgentSession): TitleExcerpt {
             lines
                 .mapNotNull { transcriptMessage(it, session.agentType, TITLE_MESSAGE_CHARS) }
                 .filterNot(SessionTranscriptMessage::hiddenFromTerminal)
-        tailMessages.takeIf { messages -> messages.count { it.isUserInput() } >= TITLE_RECENT_USER_MESSAGES }
+        tailMessages.takeIf { messages -> messages.count { it.isUserInput() && !isPeerFeedbackMessage(it.text) } >= TITLE_RECENT_USER_MESSAGES }
     }
-    val recent = tailMessages.filter { it.isUserInput() }.map { it.text }.takeLast(TITLE_RECENT_USER_MESSAGES)
+    // 副驾驶的审查意见在记录里也是「用户输入」，但不是用户在说话：按它起标题会把话题带偏。
+    val recent = tailMessages.filter { it.isUserInput() && !isPeerFeedbackMessage(it.text) }.map { it.text }.takeLast(TITLE_RECENT_USER_MESSAGES)
     val first =
         sessionTranscriptMessages(session, MAX_TRANSCRIPT_LINES, MAX_MESSAGES, TITLE_MESSAGE_CHARS)
-            .firstOrNull { it.isUserInput() }
+            .firstOrNull { it.isUserInput() && !isPeerFeedbackMessage(it.text) }
             ?.text
             // 会话短到首条已在最近几条里时不重复给出
             ?.takeUnless { it in recent }

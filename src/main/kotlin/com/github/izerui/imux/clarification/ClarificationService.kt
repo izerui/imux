@@ -162,20 +162,33 @@ class ClarificationService(
                 isWindows = SystemInfo.isWindows,
                 configuredShell = ApplicationManager.getApplication()?.let { TerminalLocalOptions.getInstance().shellPath },
             )
-        val mcp = AgentMcpConfig.configured(project, projectPath, agentType)
+        val mcp = AgentMcpConfig.investigator(project, projectPath, agentType)
         unexited.retry()
         val conversation =
-            agentConversation(
-                agentType,
-                { resumeId -> conversationInvocation(shell, agentType, projectPath, mcp, resumeId) },
-                Path.of(projectPath),
-                AGENT_TIMEOUT_SECONDS,
-            )
+            try {
+                agentConversation(
+                    agentType,
+                    { resumeId -> conversationInvocation(shell, agentType, projectPath, mcp, resumeId) },
+                    Path.of(projectPath),
+                    AGENT_TIMEOUT_SECONDS,
+                )
+            } catch (e: Throwable) {
+                // 对话没建起来，已经发出的查调用链凭证要收回。
+                mcp.release()
+                throw e
+            }
         return object : ClarificationConversation {
             override fun send(message: String, onProgress: (String) -> Unit): String =
                 conversation.send(message) { event -> clarificationProgressText(event)?.let(onProgress) }
 
-            override fun close() = unexited.addAll(conversation.close())
+            override fun close() {
+                // 先停进程，再撤销它用的查调用链凭证；撤销可重复调用。
+                try {
+                    unexited.addAll(conversation.close())
+                } finally {
+                    mcp.release()
+                }
+            }
         }
     }
 

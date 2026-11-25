@@ -18,11 +18,13 @@ class ClarificationServiceSourceTest {
     }
 
     @Test
-    fun `澄清用一段持续对话，权限与 IDEA MCP 沿用单次调用的配置，每轮超时 600 秒`() {
+    fun `澄清用一段持续对话，按只查不改的配置挂 IDE 工具，对话关闭或没建起来时收回凭证，每轮超时 600 秒`() {
         val open = source.bodyAfter("private fun openConversation(", '{')
         assertTrue("持续对话的命令", open.contains("conversationInvocation(shell, agentType, projectPath, mcp, resumeId)"))
         assertTrue("按智能体选对话方式", open.contains("agentConversation("))
-        assertTrue("IDEA MCP 按设置注入", open.contains("AgentMcpConfig.configured(project, projectPath, agentType)"))
+        assertTrue("按只查不改的配置挂工具", open.contains("AgentMcpConfig.investigator(project, projectPath, agentType)"))
+        assertTrue("对话关闭时先停进程再收回凭证", open.contains("try { unexited.addAll(conversation.close()) } finally { mcp.release() }"))
+        assertTrue("对话没建起来时收回凭证", open.contains("catch (e: Throwable) { mcp.release() throw e }"))
         assertTrue(source.normalized.contains("AGENT_TIMEOUT_SECONDS = 600L"))
         assertFalse("不再每轮新起单次调用", source.normalized.contains("runOneShotAgent("))
         assertFalse("不再每轮新起单次调用", source.normalized.contains("oneShotAgentInvocation("))

@@ -362,7 +362,8 @@ class ProgressOverviewService(
             shell,
             session.agentType,
             projectPath,
-            AgentMcpConfig.configured(project, projectPath, session.agentType),
+            // 报告只读会话记录，用不上 IDE：不挂工具、不带引导词，省掉每次生成时一整段无关说明。
+            AgentMcpConfig.NONE,
         )
 
         unexited.retry()
