@@ -233,7 +233,19 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 })
                 add("required", JsonArray().apply { add("file") })
             })
+            addToolHints()
+        }
+
+        /**
+         * 四个工具共有的提示：只读；并要求 Claude Code 直接加载，不藏到工具搜索后面。
+         * Claude Code 默认把外接工具一律延迟加载，模型要先搜索才看得到说明：实测里 Claude 因此跳过这几个工具，
+         * 或用文本搜索找到调用处就先改了、事后才查。`anthropic/alwaysLoad` 是它认的工具级标记（用户在配置里
+         * 对整个服务写 `alwaysLoad: false` 时仍以用户为准）；Codex、Pi 不认，本来就直接加载，不受影响。
+         * 只标这四个：说明加起来不长，IDEA MCP 那五十多个照旧延迟。
+         */
+        private fun JsonObject.addToolHints() {
             add("annotations", JsonObject().apply { addProperty("readOnlyHint", true) })
+            add("_meta", JsonObject().apply { addProperty("anthropic/alwaysLoad", true) })
         }
 
         private fun tool(name: String, description: String, extra: JsonObject.() -> Unit = {}) = JsonObject().apply {
@@ -273,7 +285,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     if (name == CALL_HIERARCHY || name == TYPE_HIERARCHY) add("direction")
                 })
             })
-            add("annotations", JsonObject().apply { addProperty("readOnlyHint", true) })
+            addToolHints()
         }
     }
 }

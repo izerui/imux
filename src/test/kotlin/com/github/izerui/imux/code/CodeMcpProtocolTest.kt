@@ -49,6 +49,15 @@ class CodeMcpProtocolTest {
         assertTrue(tools[3].getAsJsonObject("annotations")["readOnlyHint"].asBoolean)
     }
 
+    @Test fun `四个工具都要求 Claude Code 直接加载，不藏到工具搜索后面`() {
+        val tools = toolList()
+        fun alwaysLoad(i: Int) = tools[i].getAsJsonObject("_meta")?.get("anthropic/alwaysLoad")?.asBoolean
+        assertEquals("find_references", true, alwaysLoad(0))
+        assertEquals("call_hierarchy", true, alwaysLoad(1))
+        assertEquals("type_hierarchy", true, alwaysLoad(2))
+        assertEquals("file_outline", true, alwaysLoad(3))
+    }
+
     @Test fun `文件大纲把文件和条数上限交给后端，未给上限取默认值，超出封顶 1000`() {
         val backend = Backend()
         reply(backend, "file_outline", """{"file":"a.go"}""")
