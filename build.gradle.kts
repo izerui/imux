@@ -58,12 +58,15 @@ dependencies {
         // 使用平台 installer，runIde 才会拿到当前系统需要的原生组件。通用仓库 ZIP
         // 不包含 platform-daemon-plugin/jetbrainsd_mac_aarch64.tar.gz，IDE 虽能启动，
         // 但 JetBrains OS Integration 会因 bundled daemon 缺失连续重试并报 SEVERE。
-        // imux 只依赖 Platform 与捆绑 Terminal，不需要 Java、数据库、Spring 等
+        // imux 必需的只有 Platform 与捆绑 Terminal；Java 只是可选依赖（见下），不需要数据库、Spring 等
         // Ultimate 专属插件。使用 Community 发行版可避免依赖报告展开整套 IU 插件及其可选缺失模块。
         intellijIdea("262.10315.19")
         bundledPlugin("org.jetbrains.plugins.terminal")
         // 会话报告内嵌显示用 JCEF；2026.2 起它是可被禁用的内置插件，plugin.xml 里为可选依赖
         bundledPlugin("com.intellij.modules.jcef")
+        // 查代码工具补充判断「框架会自动调用」要用 Java 插件（UAST 翻译、程序入口清单）；plugin.xml 里为可选依赖，
+        // 只在 imux-java.xml 登记的那一个类里用到，没有 Java 插件的 IDE 不加载。
+        bundledPlugin("com.intellij.java")
         // 暂不引入 testFramework(TestFrameworkType.Platform)：
         // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，
         // 本机网络下该主机 TLS 稳定被重置。它只服务于 BasePlatformTestCase 类的

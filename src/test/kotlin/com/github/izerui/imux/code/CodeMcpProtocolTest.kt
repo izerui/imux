@@ -122,10 +122,12 @@ class CodeMcpProtocolTest {
 
     @Test fun `查用法和查调用链的说明都写明框架隐式使用，且没标不能当没人用`() {
         val descriptions = toolList().map { it["description"].asString }
-        val mark = "`implicit_usage: true` means a framework uses it without any call in the code"
-        val caveat = "none for Python or Go, and not every framework entry point (a Next.js page's default export is not marked) — so its absence proves nothing."
+        val mark = "`implicit_usage: true` means a framework or the runtime uses it without any call in the code"
+        val caveat = "nothing for Python or Go, and not every entry point (Spring web request handlers and a Next.js page's default export are not marked) — so its absence proves nothing."
         assertTrue("查用法", descriptions[0].contains(mark) && descriptions[0].contains(caveat))
-        assertTrue("查调用链", descriptions[1].contains("A node marked `implicit_usage` is also used by a framework without any call in the code, so the chain may end there and still be in use."))
+        assertTrue("带 Java 支持时还认程序入口，Kotlin 也算", descriptions[0].contains("in IDEs with Java support also test methods, `main`, and other entry points, for Kotlin code too"))
+        assertFalse("实测认不出 JUnit 5 测试，不能再这么写", descriptions[0].contains("JUnit 5 tests"))
+        assertTrue("查调用链", descriptions[1].contains("The queried function, and any caller whose chain ends with no callers of its own, is marked `implicit_usage` when a framework or the runtime uses it without any call in the code, so the chain may end there and still be in use."))
     }
 
     @Test fun `查用法的说明写明按命名配对的测试与反查被测代码`() {

@@ -82,6 +82,8 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
     <depends optional="true" config-file="imux-jcef.xml">com.intellij.modules.jcef</depends>
+    <!-- 查代码工具判断「框架会自动调用」时补上 Kotlin 写的 Spring 代码和程序入口；PyCharm、GoLand 等没有 Java 插件，不加载，只是少这两类标记。 -->
+    <depends optional="true" config-file="imux-java.xml">com.intellij.java</depends>
 
     <!-- 会话装饰：其它功能给终端标签、会话树、终端顶部加的标记与横幅。现有代码只认这个接口。 -->
     <extensionPoints>
@@ -92,6 +94,11 @@
         <extensionPoint
                 qualifiedName="com.github.izerui.imux.sessionDecorator"
                 interface="com.github.izerui.imux.terminal.SessionDecorator"
+                dynamic="true"/>
+        <!-- 查代码工具：补充判断一段代码会不会被框架或运行环境自动调用。实现在可选配置 imux-java.xml。 -->
+        <extensionPoint
+                qualifiedName="com.github.izerui.imux.implicitUsageSupplement"
+                interface="com.github.izerui.imux.code.ImplicitUsageSupplement"
                 dynamic="true"/>
     </extensionPoints>
 

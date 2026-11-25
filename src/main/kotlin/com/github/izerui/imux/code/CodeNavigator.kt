@@ -139,6 +139,7 @@ internal class CodeNavigator(private val project: Project) {
      * 没有显式调用、却会被框架用到（Spring Bean、JUnit 5 测试、JPA 字段、Vue/React 组件成员……）：
      * 问各插件注册的 [ImplicitUsageProvider]，和 IDE 的「未使用」检查用的是同一套判断。
      * 没有插件接入的语言（Python、Go）永远是 false，所以说明里不能写成「没标就没人用」。
+     * 装了 Java 插件时再由 [ImplicitUsageSupplement] 补上 Kotlin 写的 Spring 代码和程序入口（测试方法、main）。
      * 单个插件出错只当它不认识，不拖垮整个查询。
      */
     private fun implicitlyUsed(element: PsiElement): Boolean =
@@ -149,7 +150,7 @@ internal class CodeNavigator(private val project: Project) {
                 if (e is com.intellij.openapi.progress.ProcessCanceledException || e is java.util.concurrent.CancellationException) throw e
                 false
             }
-        }
+        } || ImplicitUsageSupplement.anyImplicitlyUsed(element)
 
     /** 只有变量、字段、属性分得出读和写；函数、类没有这个区分，返回 null 就不标。 */
     private fun accessDetector(target: PsiElement): ReadWriteAccessDetector? =
@@ -532,8 +533,6 @@ internal class CodeNavigator(private val project: Project) {
         expanded: MutableMap<PsiElement, Int>,
     ): JsonObject {
         val node = describe(element)
-        // 调用链在这里断了、却是框架入口时要说清：不是没人用，是框架在调。
-        if (implicitlyUsed(element)) node.addProperty("implicit_usage", true)
         if (depth <= 0) return node
         expanded[element] = depth
         // 每个往上展开的节点都补查一次：B 调 A、而 IDE 分析不了的文件又调 B 时，提醒要挂在 B 上，不能只在 A 上查。
@@ -593,6 +592,11 @@ internal class CodeNavigator(private val project: Project) {
         node.add("callers", callers)
         if (referencedBy.size() > 0) node.add("referenced_without_calling", referencedBy)
         if (loose.size() > 0) node.add("references_outside_functions", loose)
+        // 调用链在这里断了、却是框架或运行环境的入口时要说清：不是没人用，是框架在调。
+        // 只查查询目标本身和找不到调用方的节点：判断测试方法这类入口一处要几毫秒到几百毫秒，而常用函数的调用方往往上百个是测试方法，
+        // 每个都查会把查询拖慢一两秒；有调用方的节点链条没断，标不标都不影响结论。
+        val chainEndsHere = callers.size() == 0 && referencedBy.size() == 0 && loose.size() == 0
+        if ((path.size == 1 || chainEndsHere) && implicitlyUsed(element)) node.addProperty("implicit_usage", true)
         return node
     }
 

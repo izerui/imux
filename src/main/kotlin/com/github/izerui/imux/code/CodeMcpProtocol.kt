@@ -134,8 +134,9 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
 
         /** 框架隐式使用：只有接入了的插件能认出来，没标不能当作没人用。 */
         private const val IMPLICIT_NOTE =
-            "`implicit_usage: true` means a framework uses it without any call in the code (Spring beans, JUnit 5 tests, JPA fields, Vue/React/Angular members, Next.js exports such as `metadata`): " +
-                "do not treat it as unused. Only frameworks whose IDE plugin recognizes this are covered — none for Python or Go, and not every framework entry point (a Next.js page's default export is not marked) — so its absence proves nothing. "
+            "`implicit_usage: true` means a framework or the runtime uses it without any call in the code (Spring beans and their scheduled, event-listener and `@Bean` methods, JPA fields, Vue/React/Angular members, Next.js exports such as `metadata`; " +
+                "in IDEs with Java support also test methods, `main`, and other entry points, for Kotlin code too): do not treat it as unused. " +
+                "Only what the IDE recognizes is covered — nothing for Python or Go, and not every entry point (Spring web request handlers and a Next.js page's default export are not marked) — so its absence proves nothing. "
 
         /** 只有查用法、查调用方会补查「分析不了的文件」；继承、查依赖不会，说明里不能写。 */
         private const val UNANALYZED_NOTE =
@@ -166,7 +167,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "Calls made through an interface or base method it overrides are included and marked `via`; calls through a renaming import (`import f as g`) are included and marked `via_alias`. Each site is marked usage=call or reference; " +
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
                     "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated. " +
-                    "A node marked `implicit_usage` is also used by a framework without any call in the code, so the chain may end there and still be in use. " +
+                    "The queried function, and any caller whose chain ends with no callers of its own, is marked `implicit_usage` when a framework or the runtime uses it without any call in the code, so the chain may end there and still be in use. " +
                     "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
                     "Every node carries file, line, and column, so any node can be queried again. " +
                     "For callers: $UNANALYZED_NOTE" +

@@ -1,6 +1,7 @@
 package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -118,7 +119,8 @@ class TerminalDecouplingSourceTest {
     fun `框架隐式使用、读写、对应测试都只问 IDE`() {
         val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
         assertTrue("查用法标隐式使用", nav.contains("if (implicitlyUsed(target)) addProperty(\"implicit_usage\", true)"))
-        assertTrue("调用链每个节点标隐式使用", nav.contains("if (implicitlyUsed(element)) node.addProperty(\"implicit_usage\", true)"))
+        assertTrue("调用链只在查询目标和链条断开处标隐式使用", nav.contains("if ((path.size == 1 || chainEndsHere) && implicitlyUsed(element)) node.addProperty(\"implicit_usage\", true)"))
+        assertTrue("链条断开指三类都没有", nav.contains("val chainEndsHere = callers.size() == 0 && referencedBy.size() == 0 && loose.size() == 0"))
         assertTrue("隐式使用问插件", nav.contains("provider.isImplicitUsage(element) || provider.isImplicitRead(element) || provider.isImplicitWrite(element)"))
         assertTrue("读写只对分得出的符号标", nav.contains("ReadWriteAccessDetector.findDetector(target)?.takeIf { it.isReadWriteAccessible(target) }"))
         assertTrue("别名用法不标读写", nav.contains("access?.let { accessOf(it, target, reference) }?.let { site.addProperty(\"access\", it) }"))
@@ -127,6 +129,39 @@ class TerminalDecouplingSourceTest {
         assertTrue("嵌在里面的类型改用最外层的类型配", nav.contains("else generateSequence(found) { it.parent }.firstOrNull { it.parent is PsiFile } ?: continue"))
         assertTrue("超出名额的按去重后的数目说明", nav.contains("omitted += maxOf(items.size - RELATED_TESTS_LIMIT, 0)"))
         assertTrue("文件和类重复报时只留类", nav.contains("return valid.filter { item -> item !is PsiFile || valid.none { it !is PsiFile && it.containingFile == item } }"))
+    }
+
+    /**
+     * PyCharm、GoLand 等没有 Java 插件：引用 Java 插件类的代码一旦被加载就会失败，查代码工具整个不可用。
+     * 所以 Java 插件的东西只能出现在可选配置 imux-java.xml 登记的那一个类里。
+     * 这里只钉住最可能被顺手引用的几个包（UAST、未使用检查、Java 代码结构）；完整的把关是对 PyCharm 跑插件验证器，
+     * 它会报出任何在没有 Java 插件时解析不了的引用。
+     */
+    @Test
+    fun `UAST、未使用检查和 Java 代码结构的类只在可选配置登记的那一个文件里引用`() {
+        val javaOnly = Regex("""import (org\.jetbrains\.uast|com\.intellij\.codeInspection\.deadCode|com\.intellij\.lang\.java|com\.intellij\.psi\.(JavaPsiFacade|PsiClass|PsiMethod|PsiField|PsiModifierListOwner|PsiJavaFile|PsiMember)\b)""")
+        val offenders = java.io.File("src/main/kotlin").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && !it.path.endsWith("code/java/JavaImplicitUsageSupplement.kt") }
+            .filter { javaOnly.containsMatchIn(it.readText()) }
+            .map { it.path }.toList()
+        assertEquals(emptyList<String>(), offenders)
+        val supplement = SourceCode("src/main/kotlin/com/github/izerui/imux/code/java/JavaImplicitUsageSupplement.kt").normalized
+        assertTrue("那个文件确实用到了 Java 插件（断言不是空转）", javaOnly.containsMatchIn(supplement))
+    }
+
+    @Test
+    fun `Java 补充判断只在可选依赖里登记，查询时会问它，出错只当不知道`() {
+        val plugin = SourceCode("src/main/resources/META-INF/plugin.xml").normalized
+        assertTrue("可选依赖 Java 插件", plugin.contains("<depends optional=\"true\" config-file=\"imux-java.xml\">com.intellij.java</depends>"))
+        assertTrue("扩展点", plugin.contains("qualifiedName=\"com.github.izerui.imux.implicitUsageSupplement\""))
+        assertFalse("主配置里不能直接登记实现", plugin.contains("JavaImplicitUsageSupplement"))
+        val optional = SourceCode("src/main/resources/META-INF/imux-java.xml").normalized
+        assertTrue("实现登记在可选配置里", optional.contains("<implicitUsageSupplement implementation=\"com.github.izerui.imux.code.java.JavaImplicitUsageSupplement\"/>"))
+        val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
+        assertTrue("查询时问补充判断", nav.contains("} || ImplicitUsageSupplement.anyImplicitlyUsed(element)"))
+        val supplement = SourceCode("src/main/kotlin/com/github/izerui/imux/code/ImplicitUsageSupplement.kt").normalized
+        assertTrue("取消原样抛出", supplement.contains("} catch (e: ProcessCanceledException) { throw e } catch (e: CancellationException) { throw e }"))
+        assertTrue("链接错误（类找不到、签名不符）只当不知道", supplement.contains("} catch (_: LinkageError) { false }"))
     }
 
     @Test
