@@ -7,14 +7,16 @@ import org.junit.Test
 
 class PeerFeedbackMarkTest {
     @Test
-    fun `中文和英文的审查意见都以固定开头起头，开头写明不是用户的要求，正文原样跟在后面`() {
-        val zh = peerFeedbackMessage("这里空列表会炸", chinese = true)
-        assertEquals("【副驾驶审查意见｜不是用户的要求：先核实再处理，与用户已定的事冲突时以用户为准】\n\n这里空列表会炸", zh)
-        val en = peerFeedbackMessage("empty list crashes", chinese = false)
-        assertEquals(
-            "[Copilot review — not a user request: verify before acting; where it conflicts with what the user decided, the user decides]\n\nempty list crashes",
-            en,
-        )
+    fun `中文和英文的审查意见都只以一个短标记起头，正文原样跟在后面`() {
+        assertEquals("【副驾驶审查意见】\n\n这里空列表会炸", peerFeedbackMessage("这里空列表会炸", chinese = true))
+        assertEquals("[Copilot review]\n\nempty list crashes", peerFeedbackMessage("empty list crashes", chinese = false))
+    }
+
+    /** 早先的开头后面还带一段说明，旧会话记录里留着那种写法，标题、报告、副驾驶照样要认得出。 */
+    @Test
+    fun `早先带说明的中文和英文开头也都认得出`() {
+        assertTrue(isPeerFeedbackMessage("【副驾驶审查意见｜不是用户的要求：先核实再处理，与用户已定的事冲突时以用户为准】\n\nx"))
+        assertTrue(isPeerFeedbackMessage("[Copilot review — not a user request: verify before acting]\n\nx"))
     }
 
     @Test
