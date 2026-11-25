@@ -6,6 +6,16 @@ plugins {
     // 元数据是 2.3.0 版本，用 2.1.x 编译会报「incompatible version of Kotlin」。
     id("org.jetbrains.kotlin.jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.18.1"
+    idea
+}
+
+// .verify（插件验证用的整套 IDE 副本，4.5G）和 .reference（JetBrains 官方文档与示例）都被 Git 忽略，
+// 但不排除的话 IDE 会把它们当项目代码建索引：符号搜索混进官方示例里的同名类，按名字找重写对象时
+// 还会去解析副本里几兆的打包 JS。这里声明排除，Gradle 同步时 IDE 照此设置；用 rg 检索不受影响。
+idea {
+    module {
+        excludeDirs.addAll(listOf(file(".verify"), file(".reference")))
+    }
 }
 
 group = "com.github.izerui"
