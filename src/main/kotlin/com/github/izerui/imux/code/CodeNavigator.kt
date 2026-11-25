@@ -12,6 +12,9 @@ import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.TestSourcesFilter
+import com.intellij.codeInsight.daemon.ImplicitUsageProvider
+import com.intellij.codeInsight.highlighting.ReadWriteAccessDetector
+import com.intellij.testIntegration.TestFinder
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.TextRange
@@ -77,10 +80,14 @@ internal class CodeNavigator(private val project: Project) {
         val references = JsonArray()
         var truncated = false
         val targetName = (target as? PsiNamedElement)?.name
+        val access = accessDetector(target)
         ReferencesSearch.search(target, scope).forEach(Processor { reference ->
             if (!inScope(reference, scope) || isSelfReference(target, reference)) return@Processor true
             if (references.size() >= query.limit) { truncated = true; return@Processor false }
-            usageSite(reference.element, reference.rangeInElement)?.let(references::add)
+            usageSite(reference.element, reference.rangeInElement)?.let { site ->
+                access?.let { accessOf(it, target, reference) }?.let { site.addProperty("access", it) }
+                references.add(site)
+            }
             // 起了别名导入（`from m import f as _f`）时，后面用的是别名：顺着别名在这个文件里接着找。
             for ((aliasUse, alias) in aliasUses(reference, targetName)) {
                 if (references.size() >= query.limit) { truncated = true; return@Processor false }
@@ -120,9 +127,84 @@ internal class CodeNavigator(private val project: Project) {
             if (supers.isNotEmpty()) add("overrides", JsonArray().apply { supers.forEach { add(describe(it)) } })
             if (target in supersIncomplete) addProperty("overrides_incomplete", true)
             if (implementations.size() > 0) add("overridden_by", implementations)
+            if (implicitlyUsed(target)) addProperty("implicit_usage", true)
+            // 变量、字段、参数不配测试：IDE 会往外找到所在的类，列出的是整个类的测试，不是它的。
+            if (access == null) addRelatedTests(target)
             addUnanalyzedMentions(target, scope)
             if (truncated) addProperty("truncated", true)
         })
+    }
+
+    /**
+     * 没有显式调用、却会被框架用到（Spring Bean、JUnit 5 测试、JPA 字段、Vue/React 组件成员……）：
+     * 问各插件注册的 [ImplicitUsageProvider]，和 IDE 的「未使用」检查用的是同一套判断。
+     * 没有插件接入的语言（Python、Go）永远是 false，所以说明里不能写成「没标就没人用」。
+     * 单个插件出错只当它不认识，不拖垮整个查询。
+     */
+    private fun implicitlyUsed(element: PsiElement): Boolean =
+        ImplicitUsageProvider.EP_NAME.extensionList.any { provider ->
+            try {
+                provider.isImplicitUsage(element) || provider.isImplicitRead(element) || provider.isImplicitWrite(element)
+            } catch (e: Exception) {
+                if (e is com.intellij.openapi.progress.ProcessCanceledException || e is java.util.concurrent.CancellationException) throw e
+                false
+            }
+        }
+
+    /** 只有变量、字段、属性分得出读和写；函数、类没有这个区分，返回 null 就不标。 */
+    private fun accessDetector(target: PsiElement): ReadWriteAccessDetector? =
+        ReadWriteAccessDetector.findDetector(target)?.takeIf { it.isReadWriteAccessible(target) }
+
+    /**
+     * 这一处是读还是写：交给语言插件按语法位置判断（赋值号左边是写，`x += 1` 是又读又写），
+     * 和编辑器里两种颜色的高亮是同一个来源。看不出「改了它指向的内容」（`items.add(x)` 对 items 是读）。
+     */
+    private fun accessOf(detector: ReadWriteAccessDetector, target: PsiElement, reference: PsiReference): String? =
+        try {
+            when (detector.getReferenceAccess(target, reference)) {
+                ReadWriteAccessDetector.Access.Read -> "read"
+                ReadWriteAccessDetector.Access.Write -> "write"
+                ReadWriteAccessDetector.Access.ReadWrite -> "read_write"
+                null -> null
+            }
+        } catch (e: Exception) {
+            if (e is com.intellij.openapi.progress.ProcessCanceledException || e is java.util.concurrent.CancellationException) throw e
+            null
+        }
+
+    /**
+     * 对应的测试：问各语言注册的 [TestFinder]（IDE 里「跳到测试」用的就是它），按所在的类或文件、按命名惯例配对，
+     * 能找到没有直接调用它的测试。它本身就是测试时反过来，列出它测的代码。
+     * 平台的 TestFinderHelper 不在公开模块里，这里照它的做法直接遍历扩展点。
+     */
+    private fun JsonObject.addRelatedTests(target: PsiElement) {
+        val tests = LinkedHashSet<PsiElement>()
+        val tested = LinkedHashSet<PsiElement>()
+        for (finder in TestFinder.EP_NAME.extensionList) {
+            try {
+                val found = finder.findSourceElement(target) ?: continue
+                // 往外找到的是嵌在里面的类型时（Kotlin 的 companion object 名字都叫 Companion），按它的名字配出来的是
+                // 一堆不相干的测试：改用最外层的类型。它自己、所在的文件、最外层的类型照原样用。
+                val source = if (found == target || found is PsiFile) found
+                    else generateSequence(found) { it.parent }.firstOrNull { it.parent is PsiFile } ?: continue
+                if (finder.isTest(source)) tested += finder.findClassesForTest(source) else tests += finder.findTestsForClass(source)
+            } catch (e: Exception) {
+                if (e is com.intellij.openapi.progress.ProcessCanceledException || e is java.util.concurrent.CancellationException) throw e
+            }
+        }
+        // Kotlin 等语言会把文件和文件里的类各报一次：同一个文件里已有具体的类，文件本身就不再列。
+        fun distinct(items: Set<PsiElement>): List<PsiElement> {
+            val valid = items.filter { it.isValid }
+            return valid.filter { item -> item !is PsiFile || valid.none { it !is PsiFile && it.containingFile == item } }
+        }
+        var omitted = 0
+        for ((key, items) in listOf("tests" to distinct(tests), "tested_code" to distinct(tested))) {
+            if (items.isEmpty()) continue
+            add(key, JsonArray().apply { items.take(RELATED_TESTS_LIMIT).forEach { add(describe(it)) } })
+            omitted += maxOf(items.size - RELATED_TESTS_LIMIT, 0)
+        }
+        // 名额外还有的要说出来：没列出不等于没有。
+        if (omitted > 0) addProperty("tests_omitted", omitted)
     }
 
     /** 继承关系：supers 列出它重写、实现、继承的上层；implementations 列出重写、实现、继承它的下层。 */
@@ -450,6 +532,8 @@ internal class CodeNavigator(private val project: Project) {
         expanded: MutableMap<PsiElement, Int>,
     ): JsonObject {
         val node = describe(element)
+        // 调用链在这里断了、却是框架入口时要说清：不是没人用，是框架在调。
+        if (implicitlyUsed(element)) node.addProperty("implicit_usage", true)
         if (depth <= 0) return node
         expanded[element] = depth
         // 每个往上展开的节点都补查一次：B 调 A、而 IDE 分析不了的文件又调 B 时，提醒要挂在 B 上，不能只在 A 上查。
@@ -1369,6 +1453,9 @@ private const val UNANALYZED_LIMIT = 50
 
 /** 出现在这些符号之后的函数名，处在一条命令的开头。 */
 private val COMMAND_SEPARATORS = listOf(";", "&&", "||", "|", "$(", "`", "then", "do", "else", "!")
+
+/** 对应的测试最多列几个。 */
+private const val RELATED_TESTS_LIMIT = 20
 
 /** 往上找重写对象时最多检查的同名候选数。 */
 private const val SUPER_CANDIDATE_LIMIT = 60

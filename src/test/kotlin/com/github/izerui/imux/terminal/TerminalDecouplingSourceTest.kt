@@ -115,6 +115,21 @@ class TerminalDecouplingSourceTest {
     }
 
     @Test
+    fun `框架隐式使用、读写、对应测试都只问 IDE`() {
+        val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
+        assertTrue("查用法标隐式使用", nav.contains("if (implicitlyUsed(target)) addProperty(\"implicit_usage\", true)"))
+        assertTrue("调用链每个节点标隐式使用", nav.contains("if (implicitlyUsed(element)) node.addProperty(\"implicit_usage\", true)"))
+        assertTrue("隐式使用问插件", nav.contains("provider.isImplicitUsage(element) || provider.isImplicitRead(element) || provider.isImplicitWrite(element)"))
+        assertTrue("读写只对分得出的符号标", nav.contains("ReadWriteAccessDetector.findDetector(target)?.takeIf { it.isReadWriteAccessible(target) }"))
+        assertTrue("别名用法不标读写", nav.contains("access?.let { accessOf(it, target, reference) }?.let { site.addProperty(\"access\", it) }"))
+        assertTrue("对应测试走 IDE 的跳到测试", nav.contains("if (finder.isTest(source)) tested += finder.findClassesForTest(source) else tests += finder.findTestsForClass(source)"))
+        assertTrue("变量、字段、参数不配测试", nav.contains("if (access == null) addRelatedTests(target)"))
+        assertTrue("嵌在里面的类型改用最外层的类型配", nav.contains("else generateSequence(found) { it.parent }.firstOrNull { it.parent is PsiFile } ?: continue"))
+        assertTrue("超出名额的按去重后的数目说明", nav.contains("omitted += maxOf(items.size - RELATED_TESTS_LIMIT, 0)"))
+        assertTrue("文件和类重复报时只留类", nav.contains("return valid.filter { item -> item !is PsiFile || valid.none { it !is PsiFile && it.containingFile == item } }"))
+    }
+
+    @Test
     fun `文件大纲不等索引，其它查询要等索引`() {
         val service = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeMcpService.kt").normalized
         assertTrue(service.contains("run(file, needsIndex = false) { CodeNavigator(project).fileOutline(file, limit) }"))

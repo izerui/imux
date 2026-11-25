@@ -27,7 +27,7 @@
         <li><b>Run configurations</b>: run tests and apps with the same environment, arguments, and working directory as the IDE</li>
         <li><b>Database access</b>: query databases through connections and credentials already saved in the IDE</li>
         <li><b>Formatting and navigation</b>: format with the project code style, find definitions</li>
-        <li><b>References and call chains in every language</b>: before editing, and when reviewing or analyzing code, the AI checks who calls a function, what it depends on, and what overrides or implements it through the IDE's own Find Usages engine, for every language the IDE understands (Java, Kotlin, Go, Python, JS/TS, and more); a file outline gives an overview of a file's declarations and their lines so the AI knows where to start, without replacing a full read of the code it changes</li>
+        <li><b>References and call chains in every language</b>: before editing, and when reviewing or analyzing code, the AI checks who calls a function, what it depends on, and what overrides or implements it through the IDE's own Find Usages engine, with each usage marked as a read or a write, in test code, or used implicitly by a framework (so it is not mistaken for dead code), plus the tests the IDE pairs with it, for every language the IDE understands (Java, Kotlin, Go, Python, JS/TS, and more); a file outline gives an overview of a file's declarations and their lines so the AI knows where to start, without replacing a full read of the code it changes</li>
       </ul>
       <p>The MCP configuration is injected only into sessions started by imux; the global CLI configuration is not modified.
       Available tools depend on the IDE, installed plugins, and the MCP server version.</p>

@@ -132,6 +132,11 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 "`overrides_incomplete: true` means the search for what a method overrides stopped early because too many declarations share its name: " +
                 "the overrides, and calls made through them, may be incomplete — check the enclosing type's interfaces yourself."
 
+        /** 框架隐式使用：只有接入了的插件能认出来，没标不能当作没人用。 */
+        private const val IMPLICIT_NOTE =
+            "`implicit_usage: true` means a framework uses it without any call in the code (Spring beans, JUnit 5 tests, JPA fields, Vue/React/Angular members, Next.js exports such as `metadata`): " +
+                "do not treat it as unused. Only frameworks whose IDE plugin recognizes this are covered — none for Python or Go, and not every framework entry point (a Next.js page's default export is not marked) — so its absence proves nothing. "
+
         /** 只有查用法、查调用方会补查「分析不了的文件」；继承、查依赖不会，说明里不能写。 */
         private const val UNANALYZED_NOTE =
             "Files in languages the IDE cannot analyze are listed separately as `unanalyzed_mentions`: check those yourself. "
@@ -146,7 +151,12 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "function or class it sits in. For a method that overrides or implements another, `overrides` lists what it overrides and " +
                     "`references_via_overridden` lists usages made through that interface or base type (e.g. `greeter.greet()` where greeter is the interface) — " +
                     "they can run this implementation too; `overridden_by` lists what overrides or implements it. " +
-                    "An import that renames it (`from m import f as g`) is followed: uses through the new name are included and marked `via_alias`. $UNANALYZED_NOTE$POSITION_NOTE",
+                    "An import that renames it (`from m import f as g`) is followed: uses through the new name are included and marked `via_alias`. " +
+                    "For variables, fields, and properties each usage carries `access`: read, write, or read_write (`x += 1`), judged by where the name sits — " +
+                    "`items.add(x)` is a read of items, so read does not mean the object it points to was left unchanged. " +
+                    "$IMPLICIT_NOTE" +
+                    "`tests` lists the tests the IDE pairs with it by naming convention (as in its Go to Test), including tests that never call it directly; " +
+                    "when it is itself a test, `tested_code` lists what it tests. Neither is given for variables, fields, or parameters; `tests_omitted` counts entries beyond the first 20. $UNANALYZED_NOTE$POSITION_NOTE",
             ))
             add(tool(
                 CALL_HIERARCHY,
@@ -156,6 +166,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "Calls made through an interface or base method it overrides are included and marked `via`; calls through a renaming import (`import f as g`) are included and marked `via_alias`. Each site is marked usage=call or reference; " +
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
                     "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated. " +
+                    "A node marked `implicit_usage` is also used by a framework without any call in the code, so the chain may end there and still be in use. " +
                     "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
                     "Every node carries file, line, and column, so any node can be queried again. " +
                     "For callers: $UNANALYZED_NOTE" +

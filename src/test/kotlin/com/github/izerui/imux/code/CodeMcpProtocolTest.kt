@@ -105,6 +105,26 @@ class CodeMcpProtocolTest {
         assertTrue(descriptions[2].contains(note))
     }
 
+    @Test fun `查用法的说明写明读写区分及其看不出内容被改`() {
+        val description = toolList()[0]["description"].asString
+        assertTrue(description.contains("each usage carries `access`: read, write, or read_write (`x += 1`)"))
+        assertTrue(description.contains("`items.add(x)` is a read of items, so read does not mean the object it points to was left unchanged."))
+    }
+
+    @Test fun `查用法和查调用链的说明都写明框架隐式使用，且没标不能当没人用`() {
+        val descriptions = toolList().map { it["description"].asString }
+        val mark = "`implicit_usage: true` means a framework uses it without any call in the code"
+        val caveat = "none for Python or Go, and not every framework entry point (a Next.js page's default export is not marked) — so its absence proves nothing."
+        assertTrue("查用法", descriptions[0].contains(mark) && descriptions[0].contains(caveat))
+        assertTrue("查调用链", descriptions[1].contains("A node marked `implicit_usage` is also used by a framework without any call in the code, so the chain may end there and still be in use."))
+    }
+
+    @Test fun `查用法的说明写明按命名配对的测试与反查被测代码`() {
+        val description = toolList()[0]["description"].asString
+        assertTrue(description.contains("`tests` lists the tests the IDE pairs with it by naming convention (as in its Go to Test), including tests that never call it directly;"))
+        assertTrue(description.contains("when it is itself a test, `tested_code` lists what it tests. Neither is given for variables, fields, or parameters; `tests_omitted` counts entries beyond the first 20."))
+    }
+
     @Test fun `三个按位置定位的工具都说明测试代码标 in_test，且没标不等于是产品代码`() {
         val descriptions = toolList().map { it["description"].asString }
         val note = "Entries in files the IDE treats as test code are marked `in_test`"
