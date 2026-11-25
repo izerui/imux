@@ -75,28 +75,43 @@ class CodeMcpProtocolTest {
         assertEquals(emptyList<String>(), backend.calls)
     }
 
-    @Test fun `文件大纲的说明讲清它是总览、不替代阅读、函数体局部变量不列、超出上限怎么标、扁平文件该用什么`() {
+    @Test fun `文件大纲的说明讲清它是总览、不替代阅读、怎么交给其它工具、父类与可见性、截断怎么标、扁平文件和建索引时怎么办`() {
         val description = toolList()[3]["description"].asString
-        assertTrue(description.startsWith("Get an overview of a file"))
-        assertTrue(description.contains("Use it to see how a file is laid out and decide where to look; to query a node with the other three tools, pass this file, the node's `line` and `column`, and its `symbol` (or its name when there is no `symbol`)"))
-        assertTrue("列号用来分开同一行的重载", description.contains("the column tells apart two declarations of the same name on one line, such as overloads."))
-        assertTrue("父类带位置，告诉下一步看哪个文件", description.contains("each with its file and line and `in_project`: outline a project parent's file next to see what it declares."))
-        assertTrue("没有可见性信息时不能当成全公开", description.contains("when it is false the IDE gives no visibility for this language, so unmarked does not mean public."))
-        assertTrue(description.contains("When the display name differs from the declaration's own name, `symbol` gives the plain name."))
-        assertTrue(description.contains("it needs no index, so it works while the IDE is indexing (parents are then left out and `supers_skipped` says so)."))
-        assertTrue(description.contains("(a lower bound when total_nodes_is_lower_bound is set, for files too large or deeply nested to count in full)"))
-        assertFalse("节点里没有 file 字段，不能说节点的 file", description.contains("each node's file"))
-        assertTrue(description.contains("A class, interface, or other type lists in `supers` the parents written in its own declaration"))
-        assertTrue("继承来的成员不列，要用查继承", description.contains("Members inherited from those parents are not listed — the outline shows only what this file declares; use `type_hierarchy` for the full inheritance"))
-        assertTrue(description.contains("including parents a declaration does not name (such as Go's implicit interfaces)."))
-        assertFalse("不再有时限、也不会标不全", description.contains("supers_incomplete"))
+        assertTrue(description.startsWith("Get an overview of a file from the IDE's structure view"))
         assertTrue(description.contains("It is an overview, not a substitute for reading: read in full whatever you will change or draw a conclusion about."))
-        assertFalse(description.contains("without reading all of it"))
-        assertFalse(description.contains("only the parts you need"))
-        assertTrue(description.contains("Local variables inside function bodies are left out."))
-        assertTrue(description.contains("Results beyond max_results set truncated=true and report total_nodes"))
-        assertTrue(description.contains("for flat files such as .properties, text search is often more direct."))
-        assertTrue(description.contains("answers `language_not_supported` for the ones it does not."))
+        assertTrue(description.contains("To query a node with the other tools, pass this file, its `line` and `column`, and its `symbol`"))
+        assertTrue(description.contains("Types list in `supers` the parents written in their declaration, with file and line (`in_project: false` means a library), so you know which file to outline next"))
+        assertTrue(description.contains("inherited members are not listed — use `type_hierarchy` for the full inheritance."))
+        assertTrue(description.contains("otherwise the IDE gives no visibility, so unmarked does not mean public."))
+        assertTrue("截断时先给顶层，并说明漏了什么", description.contains("When nodes exceed max_results, top levels come first; `top_level_omitted` and `children_omitted` say what was left out"))
+        assertTrue(description.contains("Local variables in function bodies are left out; for flat files such as .properties, text search is often more direct."))
+        assertTrue(description.contains("Needs no index: while the IDE is indexing it still works, without parents (`supers_skipped`)."))
+        assertFalse("节点里没有 file 字段，不能说节点的 file", description.contains("each node's file"))
+        assertFalse("不再有时限、也不会标不全", description.contains("supers_incomplete"))
+        assertFalse("不能写成替代阅读", description.contains("only the parts you need"))
+    }
+
+    @Test fun `查用法和查调用链的说明都写明会顺着改名导入继续找并标出经由别名`() {
+        val descriptions = toolList().map { it["description"].asString }
+        assertTrue(descriptions[0].contains("An import that renames it (`from m import f as g`) is followed: uses through the new name are included and marked `via_alias`."))
+        assertTrue(descriptions[1].contains("calls through a renaming import (`import f as g`) are included and marked `via_alias`."))
+    }
+
+    @Test fun `三个按位置定位的工具都说明认不出名字时多半是没配 SDK 或缺依赖`() {
+        val descriptions = toolList().map { it["description"].asString }
+        val note = "`unresolved` means the name is on that line but the IDE cannot tell what it refers to — usually a library name whose SDK or dependency is not set up in the IDE."
+        assertTrue(descriptions[0].contains(note))
+        assertTrue(descriptions[1].contains(note))
+        assertTrue(descriptions[2].contains(note))
+    }
+
+    @Test fun `三个按位置定位的工具都说明测试代码标 in_test，且没标不等于是产品代码`() {
+        val descriptions = toolList().map { it["description"].asString }
+        val note = "Entries in files the IDE treats as test code are marked `in_test`"
+        val caveat = "Python has no such rule, so its tests are marked only when their directory is marked as a test source root): unmarked does not prove it is production code."
+        assertTrue("查用法", descriptions[0].contains(note) && descriptions[0].contains(caveat))
+        assertTrue("查调用链", descriptions[1].contains(note) && descriptions[1].contains(caveat))
+        assertTrue("查继承", descriptions[2].contains(note) && descriptions[2].contains(caveat))
     }
 
     @Test fun `三个工具的说明都如实写明适用范围：IDE 能解析的语言可用，解析不了会明确告知`() {

@@ -125,6 +125,9 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 "the line can be a declaration or any line that uses the symbol. Works for the languages the IDE understands " +
                 "(resolved by position, so it needs no qualified name) and answers `language_not_supported` for the ones it does not. " +
                 "Positions from search results, compiler errors, or grep can be passed directly. " +
+                "`unresolved` means the name is on that line but the IDE cannot tell what it refers to — usually a library name whose SDK or dependency is not set up in the IDE. " +
+                "Entries in files the IDE treats as test code are marked `in_test` (test source roots, plus language rules such as Go `_test.go` and JS `.spec`/`.test`; " +
+                "Python has no such rule, so its tests are marked only when their directory is marked as a test source root): unmarked does not prove it is production code. " +
                 "Results cover what the IDE can resolve statically: uses through reflection, names built from strings, or generated code are not in any result, so an empty result is not proof that nothing uses it. " +
                 "`overrides_incomplete: true` means the search for what a method overrides stopped early because too many declarations share its name: " +
                 "the overrides, and calls made through them, may be incomplete — check the enclosing type's interfaces yourself."
@@ -142,14 +145,15 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "Returns each usage with file, line, column, the line text, and the " +
                     "function or class it sits in. For a method that overrides or implements another, `overrides` lists what it overrides and " +
                     "`references_via_overridden` lists usages made through that interface or base type (e.g. `greeter.greet()` where greeter is the interface) — " +
-                    "they can run this implementation too; `overridden_by` lists what overrides or implements it. $UNANALYZED_NOTE$POSITION_NOTE",
+                    "they can run this implementation too; `overridden_by` lists what overrides or implements it. " +
+                    "An import that renames it (`from m import f as g`) is followed: uses through the new name are included and marked `via_alias`. $UNANALYZED_NOTE$POSITION_NOTE",
             ))
             add(tool(
                 CALL_HIERARCHY,
                 "Build the call chain of a function or method through the IDE's own reference index: who relies on it and what it relies on. " +
                     "Use it before changing it, and when reviewing, reading, or debugging code. " +
                     "direction=\"callers\" walks up who calls it, who calls those, and so on (default depth 3), grouping call sites under each caller. " +
-                    "Calls made through an interface or base method it overrides are included and marked `via`. Each site is marked usage=call or reference; " +
+                    "Calls made through an interface or base method it overrides are included and marked `via`; calls through a renaming import (`import f as g`) are included and marked `via_alias`. Each site is marked usage=call or reference; " +
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
                     "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated. " +
                     "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
@@ -193,23 +197,16 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
             addProperty("name", FILE_OUTLINE)
             addProperty(
                 "description",
-                "Get an overview of a file: its declarations as a tree — classes, functions, methods, fields, " +
-                    "and for other file types headings, keys, or tags — each with its display name (with signature where the language shows one), kind, " +
-                    "the line and column its name is at, and its end line, taken from the IDE's own structure view; it needs no index, so it works while the IDE is indexing " +
-                    "(parents are then left out and `supers_skipped` says so). " +
-                    "When the display name differs from the declaration's own name, `symbol` gives the plain name. " +
-                    "A class, interface, or other type lists in `supers` the parents written in its own declaration (`class User(Base)`, `extends Base implements Repo`, `: Base(), Marker`), " +
-                    "each with its file and line and `in_project`: outline a project parent's file next to see what it declares. " +
-                    "Members inherited from those parents are not listed — the outline shows only what this file declares; use `type_hierarchy` for the full inheritance, " +
-                    "including parents a declaration does not name (such as Go's implicit interfaces). " +
-                    "`non_public: true` marks members that are not public (private, package-private, internal) when `visibility_known` is true; when it is false the IDE gives no visibility for this language, so unmarked does not mean public. " +
-                    "Use it to see how a file is laid out and decide where to look; to query a node with the other three tools, pass this file, the node's `line` and `column`, and its `symbol` (or its name when there is no `symbol`) — " +
-                    "the column tells apart two declarations of the same name on one line, such as overloads. " +
-                    "It is an overview, not a substitute for reading: read in full whatever you will change or draw a conclusion about. " +
-                    "Local variables inside function bodies are left out. Results beyond max_results set truncated=true and report total_nodes " +
-                    "(a lower bound when total_nodes_is_lower_bound is set, for files too large or deeply nested to count in full); " +
-                    "for flat files such as .properties, text search is often more direct. " +
-                    "Works for the file types the IDE has a structure view for, and answers `language_not_supported` for the ones it does not.",
+                "Get an overview of a file from the IDE's structure view: its declarations as a tree (classes, functions, fields; for other files headings, keys, or tags), " +
+                    "each with its display name (with signature where the language shows one), kind, the line and column of its name, and its end line. " +
+                    "Use it to see how a file is laid out and decide where to look. It is an overview, not a substitute for reading: read in full whatever you will change or draw a conclusion about. " +
+                    "To query a node with the other tools, pass this file, its `line` and `column`, and its `symbol` (the plain name, when the display name has a signature) or its name. " +
+                    "Types list in `supers` the parents written in their declaration, with file and line (`in_project: false` means a library), so you know which file to outline next; " +
+                    "inherited members are not listed — use `type_hierarchy` for the full inheritance. " +
+                    "`non_public: true` marks non-public members when `visibility_known` is true; otherwise the IDE gives no visibility, so unmarked does not mean public. " +
+                    "When nodes exceed max_results, top levels come first; `top_level_omitted` and `children_omitted` say what was left out, and `total_nodes` the size " +
+                    "(a lower bound when `total_nodes_is_lower_bound` is set). Local variables in function bodies are left out; for flat files such as .properties, text search is often more direct. " +
+                    "Needs no index: while the IDE is indexing it still works, without parents (`supers_skipped`). Answers `language_not_supported` when the file type has no structure view.",
             )
             add("inputSchema", JsonObject().apply {
                 addProperty("type", "object"); addProperty("additionalProperties", false)

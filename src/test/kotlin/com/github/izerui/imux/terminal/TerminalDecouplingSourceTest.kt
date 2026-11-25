@@ -62,7 +62,7 @@ class TerminalDecouplingSourceTest {
      * 方法全丢，名字带括号的 YAML/JSON 键下级全丢。大纲的整理要在 IDE 里跑，这里钉住三条规则都带着语言判断。
      */
     @Test
-    fun `文件大纲的去噪音规则只对 JavaScript 一族生效、遍历有预算、按列号区分重载、父类按位置读，且大纲不等索引`() {
+    fun `文件大纲的去噪音规则只对 JavaScript 一族生效、遍历有预算、按列号区分重载、父类按位置读`() {
         val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
         assertTrue("函数体不展开", nav.contains("if (script && insideOf != null && insideOf.contains(range)) continue"))
         assertTrue("赋值语句", nav.contains("if (script && leaf && isReference(value)) {"))
@@ -73,7 +73,7 @@ class TerminalDecouplingSourceTest {
         assertTrue("无名节点也计入遍历层数，挡住连续的无名节点", nav.contains("walk(tree, grandchildren, level + 1, true, insideOf, out)"))
         assertTrue("同时给名字和列号时按列号挑", nav.contains(".sortedBy { offset -> query.column?.let { kotlin.math.abs(offset - (lineStart + it - 1)) } ?: 0 }"))
         assertTrue("只给有成员、显示名带括号、或用 extends/implements 的节点标父类，宁可少标不标错",
-            nav.contains("(grandchildren.isNotEmpty() || name.contains('(') || inheritsByKeyword(value, document))"))
+            nav.contains("(item.structureChildren.isNotEmpty() || name.contains('(') || inheritsByKeyword(value, document))"))
         assertTrue("父类一律按位置读，不搜索", nav.contains("when (val found = safeSupers(value, name, document, memberRanges)) {"))
         assertTrue("JS 一族名字后紧跟冒号的是类型注解", nav.contains("if (k < range.endOffset && chars[k] == ':') return emptyList()"))
         assertTrue("建索引中途打断要注明", nav.contains("if (!supersAvailable || supersInterrupted) addProperty(\"supers_skipped\""))
@@ -83,6 +83,39 @@ class TerminalDecouplingSourceTest {
         assertTrue("标父类出意外不拖垮整个大纲", nav.contains("writtenSupers(element, displayName, document, memberRanges) } catch (e: com.intellij.openapi.project.IndexNotReadyException) {"))
         assertTrue("语言插件给的坏引用位置只跳过这一个", nav.contains("val absolute = try { reference.absoluteRange } catch (e: IllegalArgumentException) { continue }"))
         assertTrue("不是代码元素的分组节点不整棵丢掉", nav.contains("walk(tree, childrenOf(tree), level + 1, underAnonymous, insideOf, out)"))
+        assertTrue("名额不够时按层挑，先给全顶层", nav.contains("while (queue.isNotEmpty() && kept.size < limit) {"))
+        assertTrue("顶层没装下要说明", nav.contains("roots.count { it !in kept }.takeIf { it > 0 }?.let { addProperty(\"top_level_omitted\", it) }"))
+        assertTrue("下级没给全要说明", nav.contains("if (shown.size < item.children.size) addProperty(\"children_omitted\", item.children.size - shown.size)"))
+        assertTrue("查用法顺着别名导入继续找", nav.contains("for ((aliasUse, alias) in aliasUses(reference, targetName)) {"))
+        assertTrue("查调用方顺着别名导入继续找", nav.contains("for ((aliasUse, alias) in aliasUses(reference, (searched as? PsiNamedElement)?.name)) {"))
+        assertTrue("只认导入语句里的别名", nav.contains("text.startsWith(\"import \") || text.startsWith(\"from \")"))
+        assertTrue("一条语句导入多个名字时分不清就不跟", nav.contains("if (alias != null && statement.text.contains(',')) return emptyList()"))
+        assertTrue("认不出名字时如实说明", nav.contains("\"unresolved\","))
+    }
+
+    /**
+     * 按名字找「它可能实现了谁」时，曾把项目里 `.verify` 下 IDE 副本中几兆的打包 JS 也拿来建结构视图：
+     * 一个文件几十秒，读锁被写操作打断又从头建，查一个 Python 函数的用法直到超时都回不来。
+     */
+    @Test
+    fun `按名字找重写对象只看同语言、项目自己的、不超大的文件`() {
+        val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
+        assertTrue("别的语言跳过", nav.contains("if (file.viewProvider.languages.none { rootLanguage(it) == language } ||"))
+        assertTrue("超大文件跳过", nav.contains("vf.length > SUPER_SCAN_MAX_FILE_BYTES ||"))
+        assertTrue("隐藏目录与说明文件跳过", nav.contains("|| isProseOrHidden(vf)) {"))
+        assertTrue("方言归到同一种语言", nav.contains("return generateSequence(language) { it.baseLanguage }.last()"))
+    }
+
+    @Test
+    fun `用法条目和声明节点都标测试代码，且只问 IDE`() {
+        val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
+        assertTrue("用法条目", nav.contains("if (PsiTreeUtil.getParentOfType(element, PsiComment::class.java, false) != null) addProperty(\"in_comment\", true) markTest(file)"))
+        assertTrue("声明节点", nav.contains("file.virtualFile?.let { addProperty(\"in_project\", fileIndex.isInContent(it)) } markTest(file)"))
+        assertTrue("判断交给 IDE", nav.contains("if (TestSourcesFilter.isTestSources(vf, project)) addProperty(\"in_test\", true)"))
+    }
+
+    @Test
+    fun `文件大纲不等索引，其它查询要等索引`() {
         val service = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeMcpService.kt").normalized
         assertTrue(service.contains("run(file, needsIndex = false) { CodeNavigator(project).fileOutline(file, limit) }"))
         assertTrue(service.contains("if (needsIndex && DumbService.isDumb(project))"))

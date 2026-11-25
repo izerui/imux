@@ -197,7 +197,7 @@ private object EN : GuidanceText {
 
         "Done" is a claim that needs evidence. Gather it in this order, and say plainly which step you did not run:
         1. It compiles: when the change involves compiled code, cross-file references, or public signatures, run `build_project`, which reports compilation errors with file and line. Skip it when the project has no effective IDE build step.
-        2. It introduced no new problems: run `lint_files` on every file you changed; it also checks framework rules the compiler ignores (Spring annotations, Android resources, JPA mappings, and so on).
+        2. It introduced no new problems: run `lint_files` on every file you changed; it also checks framework rules the compiler ignores (Spring annotations, Android resources, JPA mappings, and so on). When the change touched a signature or shared behavior, also lint the files of the callers it affects: in languages without a compile step (Python, JavaScript), a caller left unchanged shows up only there.
         3. Behavior still holds: before running tests, check `get_run_configurations`; when one matches, use `execute_run_configuration` so the environment is the one the developer gets from Run. With no match, use the project's own test command.
         """.trimIndent()
 
@@ -331,7 +331,7 @@ private object ZH : GuidanceText {
 
         「做完了」是一个需要证据的判断。按下面的顺序取证，哪一步没做就如实说没做：
         1. 能编译：改动涉及编译型代码、跨文件引用或公共签名时运行 `build_project`，它给出带文件和行号的编译错误。项目没有有效的 IDE 构建步骤就跳过。
-        2. 没引入新问题：对每个改过的文件运行 `lint_files`，编译器不管的框架规则（Spring 注解、Android 资源、JPA 映射等）它也查。
+        2. 没引入新问题：对每个改过的文件运行 `lint_files`，编译器不管的框架规则（Spring 注解、Android 资源、JPA 映射等）它也查。改动涉及签名或共享行为时，受它影响的调用方所在文件也一并检查：没有编译步骤的语言（Python、JavaScript）里，漏改的调用方只有这样才露得出来。
         3. 行为没坏：跑测试前先看 `get_run_configurations`，有匹配的就用 `execute_run_configuration`，环境和开发者点 Run 时一致；没有匹配的就用项目自己的测试命令。
         """.trimIndent()
 
