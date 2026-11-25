@@ -138,6 +138,10 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 "in IDEs with Java support also test methods, `main`, and other entry points, for Kotlin code too): do not treat it as unused. " +
                 "Only what the IDE recognizes is covered — nothing for Python or Go, and not every entry point (Spring web request handlers and a Next.js page's default export are not marked) — so its absence proves nothing. "
 
+        /** 大文件不建结构视图（见 CodeNavigator 的 LARGE_FILE_BYTES），「在哪个函数里」改用轻量办法。 */
+        private const val LARGE_FILE_NOTE =
+            "In files over 1 MB (usually bundled or generated code) the enclosing function is found by a lighter method: it may be missing, e.g. in minified code. "
+
         /** 只有查用法、查调用方会补查「分析不了的文件」；继承、查依赖不会，说明里不能写。 */
         private const val UNANALYZED_NOTE =
             "Files in languages the IDE cannot analyze are listed separately as `unanalyzed_mentions`: check those yourself. "
@@ -157,7 +161,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "`items.add(x)` is a read of items, so read does not mean the object it points to was left unchanged. " +
                     "$IMPLICIT_NOTE" +
                     "`tests` lists the tests the IDE pairs with it by naming convention (as in its Go to Test), including tests that never call it directly; " +
-                    "when it is itself a test, `tested_code` lists what it tests. Neither is given for variables, fields, or parameters; `tests_omitted` counts entries beyond the first 20. $UNANALYZED_NOTE$POSITION_NOTE",
+                    "when it is itself a test, `tested_code` lists what it tests. Neither is given for variables, fields, or parameters; `tests_omitted` counts entries beyond the first 20. $LARGE_FILE_NOTE$UNANALYZED_NOTE$POSITION_NOTE",
             ))
             add(tool(
                 CALL_HIERARCHY,
@@ -170,7 +174,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "The queried function, and any caller whose chain ends with no callers of its own, is marked `implicit_usage` when a framework or the runtime uses it without any call in the code, so the chain may end there and still be in use. " +
                     "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
                     "Every node carries file, line, and column, so any node can be queried again. " +
-                    "For callers: $UNANALYZED_NOTE" +
+                    "For callers: $UNANALYZED_NOTE$LARGE_FILE_NOTE" +
                     "A node marked `unanalyzed_not_checked` or `not_expanded` was not checked or walked further because the query ran out of time or max_results: " +
                     "query that node again if it matters. $POSITION_NOTE",
             ) {

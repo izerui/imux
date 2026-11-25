@@ -29,6 +29,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiNameIdentifierOwner
+import com.intellij.ui.breadcrumbs.BreadcrumbsUtil
 import com.intellij.psi.PsiNamedElement
 import com.intellij.psi.PsiPolyVariantReference
 import com.intellij.psi.PsiReference
@@ -271,7 +272,7 @@ internal class CodeNavigator(private val project: Project) {
             val language = rootLanguage(element.language)
             PsiSearchHelper.getInstance(project).processAllFilesWithWord(name, GlobalSearchScope.projectScope(project), Processor { file ->
                 val vf = file.virtualFile
-                if (file.viewProvider.languages.none { rootLanguage(it) == language } || vf == null || vf.length > SUPER_SCAN_MAX_FILE_BYTES || isProseOrHidden(vf)) {
+                if (file.viewProvider.languages.none { rootLanguage(it) == language } || vf == null || vf.length > LARGE_FILE_BYTES || isProseOrHidden(vf)) {
                     return@Processor true
                 }
                 outline(file).filter { it != element && (it as? PsiNamedElement)?.name == name }.forEach {
@@ -855,6 +856,7 @@ internal class CodeNavigator(private val project: Project) {
      * 才退回到其它节点，至少说明「在哪个标签里」——HTML 里本来就只有标签。
      */
     private fun enclosingMember(file: PsiFile, offset: Int, callableOnly: Boolean = false): PsiElement? {
+        if (isLargeFile(file)) return enclosingByParents(file, offset)
         // 从引用位置本身开始、且只占一行的节点，是这次引用所在的赋值（JS 的 `total.value = 0`），不是外层成员。
         // 只限单行：Java 不写修饰符的方法 `Result compute() {…}` 也从返回类型那个引用开始，但它跨多行，不能排除。
         val document = PsiDocumentManager.getInstance(project).getDocument(file)
@@ -869,6 +871,37 @@ internal class CodeNavigator(private val project: Project) {
         // 插件没有声明依赖，在不带该模块的 IDE 里会类加载失败（插件验证器会报出来）。
         return innermost(containing.filterIsInstance<PsiNameIdentifierOwner>())
             ?: if (callableOnly) null else innermost(containing)
+    }
+
+    private fun isLargeFile(file: PsiFile): Boolean = (file.virtualFile?.length ?: 0L) > LARGE_FILE_BYTES
+
+    /**
+     * 大文件里「这处用法在哪个函数里」：不建结构视图，从这个位置顺着语法树往外找。
+     *
+     * 判断哪一层算「所在位置」，交给 IDE 编辑器底部面包屑的规则（各语言插件自己实现，Java、Kotlin、JS/TS、Python、Go 等都有）：
+     * 它只看往外的一层层外壳、不生成整份目录，大文件也快，判断的就是「光标这一行在哪个类、哪个函数里」。
+     * 取第一个被面包屑认作位置、且有名字的那层。面包屑的入口 `BreadcrumbsProvider.EP_NAME` 是内部接口，
+     * 这里用公开的 [BreadcrumbsUtil.getInfoProvider] 按语言取。
+     *
+     * 没有面包屑规则的语言，取第一个包住它的具名声明。
+     */
+    private fun enclosingByParents(file: PsiFile, offset: Int): PsiElement? {
+        val leaf = file.findElementAt(offset) ?: return null
+        val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return null
+        // 整个落在这处用法同一行里的声明（`const result = f()`），是这处用法所在的赋值，不是外层函数：
+        // 面包屑把变量也当位置，不排除的话会标成「在 result 里」，查调用链还会把 result 当调用方再去搜它的用法。
+        // 结构视图那条路有同样的规则（见 enclosingMember）。压成一行的代码因此找不到外层，如实留空。
+        val line = document.getLineNumber(offset)
+        val named = generateSequence(leaf) { it.parent }
+            .takeWhile { it !is PsiFile }
+            .filterIsInstance<PsiNameIdentifierOwner>()
+            .filter { owner ->
+                val range = owner.textRange ?: return@filter false
+                owner.nameIdentifier?.textRange?.contains(offset) != true && !owner.name.isNullOrBlank() &&
+                    !(document.getLineNumber(range.startOffset) == line && document.getLineNumber(range.endOffset) == line)
+            }
+        val breadcrumbs = BreadcrumbsUtil.getInfoProvider(leaf.language)
+        return if (breadcrumbs != null) named.firstOrNull { breadcrumbs.acceptElement(it) } else named.firstOrNull()
     }
 
     /**
@@ -1348,6 +1381,9 @@ internal class CodeNavigator(private val project: Project) {
      */
     private fun outline(file: PsiFile): List<PsiElement> {
         outlines[file]?.let { return it }
+        // 大文件不建结构视图（原因见 LARGE_FILE_BYTES）：当它没有结构信息，用到的地方少展开一些，不会出错；
+        // 「在哪个函数里」另有轻量办法，见 enclosingMember。
+        if (isLargeFile(file)) return emptyList<PsiElement>().also { outlines[file] = it }
         val builder = LanguageStructureViewBuilder.getInstance().getStructureViewBuilder(file) as? TreeBasedStructureViewBuilder
             ?: return emptyList<PsiElement>().also { outlines[file] = it }
         val model = builder.createStructureViewModel(null)
@@ -1470,8 +1506,12 @@ private const val QUERY_SCAN_BUDGET_NANOS = 40_000_000_000L
 /** 按名字找重写对象（含逐个核对候选）的时间上限。 */
 private const val SUPER_SCAN_BUDGET_NANOS = 15_000_000_000L
 
-/** 按名字找重写对象时跳过的文件大小：再大的多是打包、生成产物，建结构视图要几十秒。 */
-private const val SUPER_SCAN_MAX_FILE_BYTES = 1_000_000L
+/**
+ * 大文件阈值：再大的多是打包、生成产物。这种文件建结构视图要几十秒（JS 打包文件实测几兆就卡住），
+ * 读锁一被写操作打断又从头建，整次查询直到超时都回不来。所以一律不建结构视图：按名字找重写对象时跳过，
+ * 「在哪个函数里」改为顺着语法树往外找。
+ */
+private const val LARGE_FILE_BYTES = 1_000_000L
 
 /** 往上找重写对象时按名字最多扫的文件数。 */
 private const val SUPER_FILE_LIMIT = 300
