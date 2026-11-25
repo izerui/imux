@@ -86,6 +86,13 @@ class CodeMcpProtocolTest {
         assertTrue(description.contains("a call to itself is marked recursive"))
     }
 
+    @Test fun `三个工具的说明都写明不只改代码前用，审查、分析代码时也用`() {
+        val descriptions = toolList().map { it["description"].asString }
+        assertTrue(descriptions[0].contains("before changing it, and when reviewing, reading, or debugging code"))
+        assertTrue(descriptions[1].contains("before changing it, and when reviewing, reading, or debugging code"))
+        assertTrue(descriptions[2].contains("and when reviewing or analyzing code"))
+    }
+
     @Test fun `继承的两个方向原样交给后端`() {
         val backend = Backend()
         reply(backend, "type_hierarchy", """{"file":"a.go","line":3,"direction":"supers"}""")
@@ -175,5 +182,14 @@ class CodeMcpProtocolTest {
         assertEquals(listOf(2), wordOffsets("a \$x", "\$x"))
         assertEquals(emptyList<Int>(), wordOffsets("myRun_x RunX", "Run"))
         assertEquals(emptyList<Int>(), wordOffsets("anything", ""))
+    }
+
+    @Test fun `名字不在给的行上时按远近给出附近出现它的行，只认完整标识符且不超出窗口`() {
+        val lines = listOf("a", "fun acquire()", "b", "c", "myacquire2", "acquire(x)", "d")
+        fun text(n: Int) = lines[n - 1]
+        assertEquals(listOf(6, 2), nearbyLines(5, lines.size, "acquire", text = ::text))
+        assertEquals(listOf(6), nearbyLines(5, lines.size, "acquire", max = 1, text = ::text))
+        assertEquals(listOf(6), nearbyLines(7, lines.size, "acquire", window = 2, text = ::text))
+        assertEquals(emptyList<Int>(), nearbyLines(4, lines.size, "missing", text = ::text))
     }
 }

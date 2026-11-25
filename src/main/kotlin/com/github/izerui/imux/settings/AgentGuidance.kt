@@ -1,17 +1,27 @@
 package com.github.izerui.imux.settings
 
-/** imux 自带的查引用、查调用链 MCP 服务名；提示词按名字提到它，服务端注册时也用它。 */
+/** imux 自带的查用法、查调用链 MCP 服务名；提示词按名字提到它，服务端注册时也用它。 */
 internal const val CODE_TOOLS_SERVER = "imux_code"
+
+/**
+ * 挂上某组工具后，引导词里要带上的那部分。由提供工具的功能自己声明（终端启动配置、副驾驶的凭证），
+ * 终端和副驾驶只把声明交给 [agentGuidance]，不必认识具体的服务名。IDEA MCP 不在其中：它由设置直接决定。
+ */
+enum class GuidanceCapability {
+    /** 查用法、查调用链、查继承：引导词带上「摸清链路」一节（改代码之前，以及审查、分析代码时）。 */
+    CODE_TOOLS,
+}
 
 /**
  * 注入给智能体的引导词，按这次会话实际挂上了哪几组工具拼装。
  *
  * - [ideaMcp]：挂了 IDEA MCP（重命名、编译检查、调试、数据库……）；
- * - [codeTools]：挂了 [CODE_TOOLS_SERVER]（查引用、查调用链）。会话终端始终挂，
- *   会话终端和副驾驶审查都挂（随「查用法、查调用链工具」开关），需求澄清这类一次性调用不挂。
+ * - [codeTools]：挂了 [CODE_TOOLS_SERVER]（查用法、查调用链、查继承）。会话终端和副驾驶审查都挂（随「查用法、
+ *   查调用链、查继承工具」开关），需求澄清这类一次性调用不挂。
  *
  * 没挂的工具一个字不提：提到用不了的工具，智能体会去调、失败、再换路，白白浪费回合。
- * 结构按改代码的流程排：改之前摸清链路 → 改的时候 → 改完验证，其余能力放后面。
+ * 结构按改代码的流程排：摸清链路 → 改的时候 → 改完验证，其余能力放后面。摸清链路一节不只管改代码：
+ * 审查、阅读、排查问题时下结论之前同样要查，否则智能体只在动手改的时候才想起这组工具。
  * 不对用户开放编辑：内容和工具组合绑定，用户改过的版本跟不上工具变化。
  */
 internal fun agentGuidance(chinese: Boolean, ideaMcp: Boolean, codeTools: Boolean): String? {
@@ -26,7 +36,6 @@ internal fun agentGuidance(chinese: Boolean, ideaMcp: Boolean, codeTools: Boolea
             add(text.debugging)
             add(text.otherCapabilities(codeTools))
             add(text.ownTools)
-            add(text.safety)
         }
     }.joinToString("\n\n")
 }
@@ -42,7 +51,6 @@ private interface GuidanceText {
     val debugging: String
     fun otherCapabilities(codeTools: Boolean): String
     val ownTools: String
-    val safety: String
 }
 
 private object EN : GuidanceText {
@@ -61,9 +69,11 @@ private object EN : GuidanceText {
     override fun preEdit(ideaMcp: Boolean): String = buildString {
         append(
             """
-            ## 1. Before editing: map what the change touches
+            ## 1. Map the chain: before editing, and when reviewing or analyzing code
 
-            Do not start editing after reading only a few files. Whenever the change touches a signature, shared behavior, or anything used outside the current function:
+            These tools are not only for editing. Whenever a conclusion depends on how code is connected — reviewing a change, reading or explaining code, tracking down a bug, or answering "who uses this, and what breaks if it changes" — check with `call_hierarchy`, `find_references`, and `type_hierarchy` first instead of concluding from the few files you happened to read.
+
+            Before editing: Do not start editing after reading only a few files. Whenever the change touches a signature, shared behavior, or anything used outside the current function:
             """.trimIndent(),
         )
         append("\n")
@@ -82,7 +92,7 @@ private object EN : GuidanceText {
             4. For every parameter, field, return value, or shared state whose meaning, type, or nullability changes, run `find_references` to see where its values come from and where they go, including other modules.
             5. Then edit, and update every affected caller, override, and implementation in the same change. If the chain turns out larger than expected, say so instead of quietly changing only part of it.
 
-            A purely local edit only needs the function itself read in full.
+            A purely local edit only needs the function itself read in full. When reviewing a change, trace the same chain for each changed symbol: callers, overrides, and implementations that should have changed but did not are the problems to report.
 
             Using these tools:
             - Locate a symbol by `file` + `line` plus its `symbol` name. Positions from search results, compiler errors, or grep can be passed straight in.
@@ -153,12 +163,6 @@ private object EN : GuidanceText {
         Text search (grep/rg), reading and writing files, directory listings, git, and shell commands — they are faster and more direct than IDE round-trips.
         """.trimIndent()
 
-    override val safety =
-        """
-        ## Safety
-
-        State-changing IDE calls — `rename_refactoring`, `execute_run_configuration`, `xdebug_control_session`, `xdebug_set_variable`, `execute_sql_query`, `apply_patch` — may have already executed even if the response times out or the connection drops. NEVER retry them after an ambiguous failure; check the result in the IDE first.
-        """.trimIndent()
 }
 
 private object ZH : GuidanceText {
@@ -176,9 +180,11 @@ private object ZH : GuidanceText {
     override fun preEdit(ideaMcp: Boolean): String = buildString {
         append(
             """
-            ## 1. 改之前：摸清改动牵涉的范围
+            ## 1. 摸清链路：改代码之前，以及审查、分析代码时
 
-            不要只读了几个文件就动手。只要改动涉及签名、共享行为或当前函数之外用到的东西：
+            这组工具不只在改代码时用。凡是结论取决于代码之间怎么连着的——审查改动、阅读或讲解代码、排查 bug、回答「谁在用它、改了会影响哪里」——都先用 `call_hierarchy`、`find_references`、`type_hierarchy` 查清楚，不要凭碰巧读到的几个文件下结论。
+
+            改代码之前：不要只读了几个文件就动手。只要改动涉及签名、共享行为或当前函数之外用到的东西：
             """.trimIndent(),
         )
         append("\n")
@@ -197,7 +203,7 @@ private object ZH : GuidanceText {
             4. 凡是含义、类型或可空性要变的参数、字段、返回值和共享状态，都用 `find_references` 追清楚它的值从哪来、流到哪去，包括其它模块。
             5. 摸清之后再动手，并在同一次改动里把受影响的调用方、重写和实现一并改掉。链路比预想的大时如实说明，不要悄悄只改其中一部分。
 
-            纯局部的改动只需把该函数完整读完。
+            纯局部的改动只需把该函数完整读完。审查改动时，对每个改过的符号查同样的链路：该跟着改却没改的调用方、重写和实现，就是要指出的问题。
 
             使用这些工具：
             - 按 `file` + `line` 加上符号名 `symbol` 定位。搜索结果、编译错误或 grep 给出的位置可以直接传入。
@@ -268,10 +274,4 @@ private object ZH : GuidanceText {
         文本搜索（grep/rg）、读写文件、列目录、git 和 shell 命令——比经过 IDE 更快、更直接。
         """.trimIndent()
 
-    override val safety =
-        """
-        ## 安全规则
-
-        有副作用的 IDE 调用——`rename_refactoring`、`execute_run_configuration`、`xdebug_control_session`、`xdebug_set_variable`、`execute_sql_query`、`apply_patch`——即使响应超时或连接断开，也可能已经执行。出现不明确的失败后绝对不要重试，先在 IDE 里确认结果。
-        """.trimIndent()
 }

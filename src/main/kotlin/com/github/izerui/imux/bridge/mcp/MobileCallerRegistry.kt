@@ -1,9 +1,8 @@
 package com.github.izerui.imux.bridge.mcp
 
+import com.github.izerui.imux.mcp.newMcpToken
 import com.github.izerui.imux.bridge.media.MediaSendCoordinator
 import kotlinx.coroutines.CoroutineScope
-import java.security.SecureRandom
-import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -21,7 +20,7 @@ class MobileCaller(
 class MobileCallerRegistry(private val scope: CoroutineScope) : AutoCloseable {
     private val callers = ConcurrentHashMap<String, MobileCaller>()
     fun register(projectPath: String, tabId: String): Pair<String, MobileCaller> {
-        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) })
+        val token = newMcpToken()
         val caller = MobileCaller(projectPath, tabId, scope)
         callers[token] = caller
         return token to caller

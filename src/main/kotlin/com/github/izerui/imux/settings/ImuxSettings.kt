@@ -148,7 +148,8 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
     }
 
     /** 按这次挂上的工具组合拼出的引导词；两组都没挂时为 null。内容不开放编辑，见 [agentGuidance]。 */
-    fun agentGuidance(ideaMcp: Boolean, codeTools: Boolean): String? = agentGuidanceForLanguage(language, ideaMcp, codeTools)
+    fun agentGuidance(ideaMcp: Boolean, capabilities: Set<GuidanceCapability>): String? =
+        agentGuidanceForLanguage(language, ideaMcp, codeTools = GuidanceCapability.CODE_TOOLS in capabilities)
 
     val plainReplyGuidance: String
         get() = defaultPlainReplyGuidanceForLanguage(language)

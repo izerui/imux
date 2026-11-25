@@ -1,7 +1,9 @@
 package com.github.izerui.imux.code
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.GuidanceCapability
 import com.github.izerui.imux.settings.ImuxSettings
+import com.github.izerui.imux.settings.PluginLanguage
 import com.github.izerui.imux.terminal.TerminalMcpServer
 import com.github.izerui.imux.terminal.piPluginMcpScript
 import com.intellij.openapi.diagnostic.logger
@@ -21,11 +23,29 @@ class CodeToolsLease internal constructor(
     val piExtension: Path?,
     private val revoke: () -> Unit,
 ) {
+    /** 挂上这组工具，引导词就要带上「摸清链路」一节。 */
+    val guidance: Set<GuidanceCapability> get() = GUIDANCE
+
     fun release() = revoke()
 
     companion object {
         const val URL_ENV = "IMUX_CODE_URL"
         const val TOKEN_ENV = "IMUX_CODE_TOKEN"
+        private val GUIDANCE = setOf(GuidanceCapability.CODE_TOOLS)
+
+        /**
+         * 副驾驶审查时追加在审查提示词后面：副驾驶的本职就是看搭档有没有漏改，
+         * 改了签名、参数、字段却没跟着改调用方，是最常见也最难从对话里看出来的漏洞。
+         * 写「如果你有这些工具」：老版本 Pi 没有原生 MCP 时工具挂不上，不能要求它调用不存在的工具。
+         */
+        fun reviewHint(language: PluginLanguage): String =
+            if (language in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)) {
+                "\n\n## 核对调用链\n\n搭档改了函数、方法、参数、字段或返回值时，如果你有 `$CODE_MCP_SERVER` 的工具，用 `call_hierarchy` 和 `find_references` 查一下：" +
+                    "调用方和用到它的地方是不是都跟着改了；改的是被重写或实现的方法、类型时，再用 `type_hierarchy` 查重写和实现有没有一起改。查出漏改的就当成问题提出来。"
+            } else {
+                "\n\n## Check the call chain\n\nWhen your partner changed a function, method, parameter, field, or return value and you have the `$CODE_MCP_SERVER` tools, use `call_hierarchy` and `find_references` " +
+                    "to check whether every caller and usage was updated to match; for an overridden or implemented method or type, also use `type_hierarchy` to check the overrides and implementations. Raise anything left out as an issue."
+            }
 
         /**
          * 「查用法、查调用链工具」关着、内置服务器还没起来，或 Pi 缺少扩展脚本时返回 null：

@@ -1,5 +1,6 @@
 package com.github.izerui.imux.code
 
+import com.github.izerui.imux.mcp.McpTokenRegistry
 import com.google.gson.JsonObject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -14,9 +15,6 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.newvfs.ManagingFS
 import com.intellij.openapi.vfs.newvfs.RefreshQueue
-import java.security.SecureRandom
-import java.util.Base64
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CoroutineScope
@@ -28,16 +26,14 @@ const val CODE_MCP_PATH = "/imux/code-mcp"
 /** 按终端发放 `imux_code` 凭证；凭证只对应启动它的那个项目，终端关闭时撤销。 */
 @Service(Service.Level.APP)
 class CodeMcpService(val scope: CoroutineScope) : Disposable {
-    private val protocols = ConcurrentHashMap<String, CodeMcpProtocol>()
+    private val protocols = McpTokenRegistry<CodeMcpProtocol>()
 
     fun register(project: Project): String {
-        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) })
-        protocols[token] = CodeMcpProtocol(ProjectCodeBackend(project), scope)
-        return token
+        return protocols.register(CodeMcpProtocol(ProjectCodeBackend(project), scope))
     }
 
     fun protocol(token: String): CodeMcpProtocol? = protocols[token]
-    fun revoke(token: String) { protocols.remove(token) }
+    fun revoke(token: String) = protocols.revoke(token)
     override fun dispose() { protocols.clear() }
 
     companion object {

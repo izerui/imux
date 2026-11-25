@@ -43,7 +43,7 @@ class AgentGuidanceTest {
         for (tool in toolNames(enIdeaOnly)) assertFalse(tool, enCodeOnly.contains("`$tool`"))
         assertFalse(enCodeOnly.contains("`idea` (IDEA MCP)"))
         assertTrue(enCodeOnly.contains("- `imux_code`: `find_references`, `call_hierarchy`, and `type_hierarchy`"))
-        assertTrue(enCodeOnly.contains("## 1. Before editing: map what the change touches"))
+        assertTrue(enCodeOnly.contains("## 1. Map the chain: before editing, and when reviewing or analyzing code"))
     }
 
     @Test
@@ -51,7 +51,7 @@ class AgentGuidanceTest {
         for (tool in toolNames(zhIdeaOnly)) assertFalse(tool, zhCodeOnly.contains("`$tool`"))
         assertFalse(zhCodeOnly.contains("`idea`（IDEA MCP）"))
         assertTrue(zhCodeOnly.contains("- `imux_code`：`find_references`、`call_hierarchy` 和 `type_hierarchy`"))
-        assertTrue(zhCodeOnly.contains("## 1. 改之前：摸清改动牵涉的范围"))
+        assertTrue(zhCodeOnly.contains("## 1. 摸清链路：改代码之前，以及审查、分析代码时"))
     }
 
     @Test
@@ -65,7 +65,7 @@ class AgentGuidanceTest {
         assertFalse(enIdeaOnly.contains("imux_code"))
         assertFalse(enIdeaOnly.contains("find_references"))
         assertFalse(enIdeaOnly.contains("call_hierarchy"))
-        assertFalse(enIdeaOnly.contains("## 1. Before editing"))
+        assertFalse(enIdeaOnly.contains("## 1. Map the chain"))
         assertTrue(enIdeaOnly.contains("- `idea` (IDEA MCP):"))
         assertTrue(enIdeaOnly.contains("## 2. While editing"))
     }
@@ -75,7 +75,7 @@ class AgentGuidanceTest {
         assertFalse(zhIdeaOnly.contains("imux_code"))
         assertFalse(zhIdeaOnly.contains("find_references"))
         assertFalse(zhIdeaOnly.contains("call_hierarchy"))
-        assertFalse(zhIdeaOnly.contains("## 1. 改之前"))
+        assertFalse(zhIdeaOnly.contains("## 1. 摸清链路"))
         assertTrue(zhIdeaOnly.contains("- `idea`（IDEA MCP）："))
         assertTrue(zhIdeaOnly.contains("## 2. 改的时候"))
     }
@@ -83,8 +83,8 @@ class AgentGuidanceTest {
     @Test
     fun `两组都挂时英文按改前、改时、改后的顺序排列并带上其余各节`() {
         val order = listOf(
-            "## 1. Before editing", "## 2. While editing", "## 3. After editing", "## Debugging runtime bugs",
-            "## Other IDE capabilities to prefer", "## Use your own tools for", "## Safety",
+            "## 1. Map the chain", "## 2. While editing", "## 3. After editing", "## Debugging runtime bugs",
+            "## Other IDE capabilities to prefer", "## Use your own tools for",
         ).map(enFull::indexOf)
         assertTrue(order.toString(), order.all { it >= 0 })
         assertEquals(order.sorted(), order)
@@ -93,8 +93,8 @@ class AgentGuidanceTest {
     @Test
     fun `两组都挂时中文按改前、改时、改后的顺序排列并带上其余各节`() {
         val order = listOf(
-            "## 1. 改之前", "## 2. 改的时候", "## 3. 改完以后", "## 调试运行时 bug",
-            "## 其它优先用 IDE 的能力", "## 这些用你自己的工具", "## 安全规则",
+            "## 1. 摸清链路", "## 2. 改的时候", "## 3. 改完以后", "## 调试运行时 bug",
+            "## 其它优先用 IDE 的能力", "## 这些用你自己的工具",
         ).map(zhFull::indexOf)
         assertTrue(order.toString(), order.all { it >= 0 })
         assertEquals(order.sorted(), order)
@@ -153,9 +153,9 @@ class AgentGuidanceTest {
     fun `设置按当前语言和工具组合取引导词`() {
         val settings = ImuxSettings()
         settings.setLanguage(PluginLanguage.SIMPLIFIED_CHINESE)
-        assertEquals(zhCodeOnly, settings.agentGuidance(ideaMcp = false, codeTools = true))
+        assertEquals(zhCodeOnly, settings.agentGuidance(ideaMcp = false, capabilities = setOf(GuidanceCapability.CODE_TOOLS)))
         settings.setLanguage(PluginLanguage.ENGLISH)
-        assertEquals(enIdeaOnly, settings.agentGuidance(ideaMcp = true, codeTools = false))
+        assertEquals(enIdeaOnly, settings.agentGuidance(ideaMcp = true, capabilities = emptySet()))
     }
 
     // endregion
@@ -196,6 +196,18 @@ class AgentGuidanceTest {
         assertTrue(zhFull.contains("`imux_code` 返回 `language_not_supported` 或不可用时，改用语言服务器：LSP 工具的 `findReferences` / `incomingCalls` / `outgoingCalls`"))
         assertTrue(zhFull.contains("这门语言也没有语言服务器时，用文本搜索，逐个打开命中处读上下文，确认是真实用法，回复里说明这条链路是靠文本搜索得出的。"))
         assertTrue(zhFull.contains("同一个失败的调用不要换个写法反复重试。"))
+    }
+
+    @Test
+    fun `英文写明审查、阅读、排查时也要先查链路，审查时漏改的就是问题`() {
+        assertTrue(enCodeOnly.contains("These tools are not only for editing. Whenever a conclusion depends on how code is connected — reviewing a change, reading or explaining code, tracking down a bug"))
+        assertTrue(enCodeOnly.contains("When reviewing a change, trace the same chain for each changed symbol: callers, overrides, and implementations that should have changed but did not are the problems to report."))
+    }
+
+    @Test
+    fun `中文写明审查、阅读、排查时也要先查链路，审查时漏改的就是问题`() {
+        assertTrue(zhCodeOnly.contains("这组工具不只在改代码时用。凡是结论取决于代码之间怎么连着的——审查改动、阅读或讲解代码、排查 bug"))
+        assertTrue(zhCodeOnly.contains("审查改动时，对每个改过的符号查同样的链路：该跟着改却没改的调用方、重写和实现，就是要指出的问题。"))
     }
 
     // endregion
@@ -243,13 +255,15 @@ class AgentGuidanceTest {
     }
 
     @Test
-    fun `英文有副作用的调用不明确失败后不重试`() {
-        assertTrue(enFull.contains("NEVER retry them after an ambiguous failure; check the result in the IDE first."))
+    fun `英文 IDEA MCP 提示词省略安全规则段落`() {
+        assertFalse(enIdeaOnly.contains("## Safety"))
+        assertFalse(enFull.contains("## Safety"))
     }
 
     @Test
-    fun `中文有副作用的调用不明确失败后不重试`() {
-        assertTrue(zhFull.contains("出现不明确的失败后绝对不要重试，先在 IDE 里确认结果。"))
+    fun `中文 IDEA MCP 提示词省略安全规则段落`() {
+        assertFalse(zhIdeaOnly.contains("## 安全规则"))
+        assertFalse(zhFull.contains("## 安全规则"))
     }
 
     // endregion

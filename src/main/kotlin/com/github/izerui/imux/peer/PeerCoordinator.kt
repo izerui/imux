@@ -187,7 +187,7 @@ class PeerCoordinator internal constructor(
         val codeTools = CodeToolsLease.acquire(project, agentType)
         // 凭证已发出：后面任何一步出错都要撤销，否则它一直留在服务里、还拽着 Project 不放。
         try {
-            val guidance = configuredAgentGuidance(ideaMcp = ep != null, codeTools = codeTools != null)
+            val guidance = configuredAgentGuidance(ideaMcp = ep != null, capabilities = codeTools?.guidance.orEmpty())
             val piScript = if (agentType == AgentType.PI && ep != null) piIdeaMcpScript() else null
             PeerMcpConfig(ep, guidance, piScript, codeTools)
         } catch (e: Throwable) {
@@ -583,7 +583,8 @@ class PeerCoordinator internal constructor(
         // 确认这一轮还有效之后才拿配置：挂了查调用链工具时要发凭证，下面任何一处返回都要在 finally 里撤销。
         val mcpConfig = resolveMcpConfig(currentBinding.targetAgentType)
         try {
-            val codeToolsHint = if (mcpConfig.codeTools != null) codeToolsReviewHint() else ""
+            // 挂了查调用链工具时，由工具自己提供审查要追加的核对要求（副驾驶不必认识工具名）。
+            val codeToolsHint = mcpConfig.codeTools?.let { CodeToolsLease.reviewHint(ImuxBundle.currentLanguage()) }.orEmpty()
             val buildFn: (String, String) -> String = buildPrompt ?: ::buildReviewPrompt
             var conversation = collectLatestConversation(mainSessionKey)
             var maxConvChars = conversation.length
@@ -744,19 +745,6 @@ class PeerCoordinator internal constructor(
         if (disposed) return
         stateDispatcher.multicaster.peerStateChanged(sessionKey)
     }
-
-    /**
-     * 挂了查调用链工具时追加在审查提示词后面：副驾驶的本职就是看搭档有没有漏改，
-     * 改了签名、参数、字段却没跟着改调用方，是最常见也最难从对话里看出来的漏洞。
-     */
-    private fun codeToolsReviewHint(): String =
-        if (ImuxBundle.currentLanguage() in setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)) {
-            "\n\n## 核对调用链\n\n搭档改了函数、方法、参数、字段或返回值时，如果你有 `imux_code` 的工具，用 `call_hierarchy` 和 `find_references` 查一下：" +
-                "调用方和用到它的地方是不是都跟着改了；改的是被重写或实现的方法、类型时，再用 `type_hierarchy` 查重写和实现有没有一起改。查出漏改的就当成问题提出来。"
-        } else {
-            "\n\n## Check the call chain\n\nWhen your partner changed a function, method, parameter, field, or return value and you have the `imux_code` tools, use `call_hierarchy` and `find_references` " +
-                "to check whether every caller and usage was updated to match; for an overridden or implemented method or type, also use `type_hierarchy` to check the overrides and implementations. Raise anything left out as an issue."
-        }
 
     private fun buildReviewPrompt(
         task: String,

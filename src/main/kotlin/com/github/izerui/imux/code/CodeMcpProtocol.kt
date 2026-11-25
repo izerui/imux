@@ -116,11 +116,11 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "function or class it sits in. For a method that overrides or implements another, `overrides` lists what it overrides and " +
                     "`references_via_overridden` lists usages made through that interface or base type (e.g. `greeter.greet()` where greeter is the interface) — " +
                     "they can run this implementation too; `overridden_by` lists what overrides or implements it. " +
-                    "Use it before changing a symbol to see everything that depends on it. $UNANALYZED_NOTE$POSITION_NOTE",
+                    "Use it to see everything that depends on a symbol — before changing it, and when reviewing, reading, or debugging code that involves it. $UNANALYZED_NOTE$POSITION_NOTE",
             ))
             add(tool(
                 CALL_HIERARCHY,
-                "Build the call chain of a function or method through the IDE's own reference index. " +
+                "Build the call chain of a function or method through the IDE's own reference index — before changing it, and when reviewing, reading, or debugging code. " +
                     "direction=\"callers\" walks up who calls it, who calls those, and so on (default depth 3), grouping call sites under each caller. " +
                     "Calls made through an interface or base method it overrides are included and marked `via`. Each site is marked usage=call or reference; " +
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
@@ -146,7 +146,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 "Show the inheritance around a method or type through the IDE's own index. " +
                     "direction=\"supers\" lists what it overrides, implements, or extends (base methods, interface methods, base classes, interfaces it satisfies); " +
                     "direction=\"implementations\" lists what overrides, implements, or extends it (overriding methods, implementing classes, subclasses). " +
-                    "Use it before changing a method signature or a type: overriding and implementing members must change together. $POSITION_NOTE",
+                    "Use it before changing a method signature or a type (overriding and implementing members must change together), and when reviewing or analyzing code to see which implementation can run. $POSITION_NOTE",
             ) {
                 add("direction", JsonObject().apply {
                     addProperty("type", "string")

@@ -184,9 +184,18 @@ internal class CodeNavigator(private val project: Project) {
         candidates.filter { candidate -> candidate != element && implementedBy(candidate, element, scope) }
     }
 
-    /** 方法、函数重写或实现的上层方法（不含类型的父类型），用于补上经由接口、父类的调用。类型本身返回空。 */
-    private fun memberSupers(element: PsiElement): List<PsiElement> =
-        if (membersOf(element).isNotEmpty()) emptyList() else supers(element).filter { membersOf(it).isEmpty() }
+    /**
+     * 方法、函数重写或实现的上层方法（不含类型的父类型），用于补上经由接口、父类的调用。类型本身返回空。
+     *
+     * 只认和它同名的上层：方法重写、实现的一定同名（`run` 对 `run`），类型的父类型一般不同名（`Impl` 对 `Marker`）。
+     * 不能只看「有没有成员」：空类、空接口也没有成员，`class Impl : Marker` 会被当成方法，
+     * 只接受 `Marker` 的代码就全被算成经由接口用到了 `Impl`。
+     */
+    private fun memberSupers(element: PsiElement): List<PsiElement> {
+        if (membersOf(element).isNotEmpty()) return emptyList()
+        val name = nameOf(element)
+        return supers(element).filter { nameOf(it) == name && membersOf(it).isEmpty() }
+    }
 
     /** 结构视图里直接包含它的类型节点（有成员的节点）；顶层函数返回 null。 */
     private fun enclosingType(element: PsiElement): PsiElement? {
@@ -335,13 +344,17 @@ internal class CodeNavigator(private val project: Project) {
             return
         }
         val (mentions, truncated) = cached ?: scanUnanalyzed(name, scope).also { unanalyzedCache[name] = it }
-        if (mentions.size() == 0) return
+        if (mentions.size() == 0) {
+            // 一条没找到但被截断：是刚开扫就用完了时间，不是「没有遗漏」，要如实标成没查。
+            if (truncated) addProperty("unanalyzed_not_checked", true)
+            return
+        }
         add("unanalyzed_mentions", mentions.deepCopy())
         if (truncated) addProperty("unanalyzed_truncated", true)
         addProperty(
             "unanalyzed_note",
             "The IDE cannot analyze these files' language, so they are not in the results above. Open them and check whether each mention is a real use." +
-                if (truncated) " Only the first $UNANALYZED_LIMIT are listed: search the name yourself for the rest." else "",
+                if (truncated) " The list is incomplete (it stops at $UNANALYZED_LIMIT entries or when the query runs out of time): search the name yourself for the rest." else "",
         )
     }
 
@@ -469,6 +482,8 @@ internal class CodeNavigator(private val project: Project) {
     private fun isCall(reference: com.intellij.psi.PsiReference, target: PsiElement): Boolean {
         val range = reference.absoluteRange
         val (file, start) = hostPosition(reference.element, range.startOffset) ?: return false
+        // 说明文档里提到名字（Markdown 的 `Impl`）只是提及，反引号、括号这些迹象不代表调用。
+        if (file.virtualFile?.extension?.lowercase() in PROSE_EXTENSIONS) return false
         val end = start + range.length
         val text = PsiDocumentManager.getInstance(project).getDocument(file)?.charsSequence ?: return false
         val isFunction = membersOf(target).isEmpty()
@@ -615,7 +630,12 @@ internal class CodeNavigator(private val project: Project) {
         val lineText = document.charsSequence.subSequence(lineStart, lineEnd).toString()
         val offsets: List<Int> = when {
             query.symbol != null -> wordOffsets(lineText, query.symbol).map { lineStart + it }.ifEmpty {
-                return failure("symbol_not_on_line", "`${query.symbol}` does not appear on line ${query.line}: ${lineText.trim().take(200)}")
+                // 智能体常拿改动前的行号来查：顺带给出附近出现这个名字的行，下一次就能直接查对，不必再翻文件。
+                val nearby = nearbyLines(query.line, document.lineCount, query.symbol) { n ->
+                    document.charsSequence.subSequence(document.getLineStartOffset(n - 1), document.getLineEndOffset(n - 1))
+                }
+                val hint = if (nearby.isEmpty()) "" else " It appears nearby on line ${nearby.joinToString(", ")}."
+                return failure("symbol_not_on_line", "`${query.symbol}` does not appear on line ${query.line}: ${lineText.trim().take(200)}$hint")
             }
             query.column != null -> listOf((lineStart + query.column - 1).coerceIn(lineStart, lineEnd))
             else -> (lineStart until lineEnd).filter { !lineText[it - lineStart].isWhitespace() }
@@ -857,6 +877,13 @@ private val PROSE_NAMES = setOf("license", "licence", "notice", "copying", "auth
 
 /** 每个调用方下最多列出的调用点；超出时给出总数 call_site_count。 */
 private const val CALL_SITES_PER_CALLER = 20
+
+/** [line] 前后 [window] 行内出现 [word]（完整标识符）的行号，按离 [line] 由近到远，最多 [max] 个。 */
+internal fun nearbyLines(line: Int, lineCount: Int, word: String, window: Int = 40, max: Int = 3, text: (Int) -> CharSequence): List<Int> =
+    (maxOf(1, line - window)..minOf(lineCount, line + window))
+        .filter { it != line && wordOffsets(text(it).toString(), word).isNotEmpty() }
+        .sortedBy { kotlin.math.abs(it - line) }
+        .take(max)
 
 /** 一行里 [word] 作为完整标识符出现的位置（0 起），用于按名字在行内定位。 */
 internal fun wordOffsets(line: String, word: String): List<Int> {

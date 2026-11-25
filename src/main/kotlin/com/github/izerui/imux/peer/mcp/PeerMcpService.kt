@@ -1,6 +1,7 @@
 package com.github.izerui.imux.peer.mcp
 
 import com.github.izerui.imux.ImuxBundle
+import com.github.izerui.imux.mcp.McpTokenRegistry
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.terminal.TerminalHost
@@ -14,17 +15,13 @@ import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.security.SecureRandom
-import java.util.Base64
-import java.util.concurrent.ConcurrentHashMap
 
 /** 按终端发放 `imux_session` 凭证；凭证只认启动它的那个标签页，终端关闭时撤销。 */
 @Service(Service.Level.APP)
 class PeerMcpService(val scope: CoroutineScope) : Disposable {
-    private val protocols = ConcurrentHashMap<String, PeerMcpProtocol>()
+    private val protocols = McpTokenRegistry<PeerMcpProtocol>()
 
     fun register(project: Project, tabId: String, agentType: AgentType): String {
-        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) })
         val tools = PeerSessionTools(
             agentType,
             sessionKey = { if (project.isDisposed) null else TerminalHost.getInstance(project).openTabsByTabId()[tabId] },
@@ -32,17 +29,16 @@ class PeerMcpService(val scope: CoroutineScope) : Disposable {
             onSwitched = { partner -> notifySwitched(project, tabId, partner) },
             onScheduled = { reviewer -> notify(project, ImuxBundle.message("action.peer.mcp.scheduled", titleOf(project, tabId), reviewer.displayName)) },
         )
-        protocols[token] = PeerMcpProtocol(object : PeerToolsBackend {
+        return protocols.register(PeerMcpProtocol(object : PeerToolsBackend {
             override suspend fun status() = withContext(Dispatchers.EDT) { tools.status() }
             override suspend fun enable(agent: String?) = withContext(Dispatchers.EDT) { tools.enable(agent) }
             override suspend fun disable() = withContext(Dispatchers.EDT) { tools.disable() }
             override suspend fun reviewOnce(agent: String?, instruction: String?) = withContext(Dispatchers.EDT) { tools.reviewOnce(agent, instruction) }
-        }, scope)
-        return token
+        }, scope))
     }
 
     fun protocol(token: String): PeerMcpProtocol? = protocols[token]
-    fun revoke(token: String) { protocols.remove(token) }
+    fun revoke(token: String) = protocols.revoke(token)
 
     /** 智能体自己开关了结对，留一条用户看得见的记录。 */
     private fun notifySwitched(project: Project, tabId: String, partner: AgentType?) {

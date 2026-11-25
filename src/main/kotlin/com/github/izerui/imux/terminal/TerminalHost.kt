@@ -2,7 +2,6 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.model.AgentSession
 import com.github.izerui.imux.model.AgentType
-import com.github.izerui.imux.settings.CODE_TOOLS_SERVER
 import com.github.izerui.imux.ImuxBundle
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -899,11 +898,11 @@ class TerminalHost(
         return configuredIdeaMcpEndpoint(project, projectPath())
     }
 
-    /** 按这个标签实际挂上的工具拼引导词：IDEA MCP 看设置，imux_code 看启动时的附加服务。 */
+    /** 按这个标签实际挂上的工具拼引导词：IDEA MCP 看设置，其余由各附加功能在启动配置里声明。 */
     private fun agentGuidanceFor(endpoint: IdeaMcpEndpoint?, tabId: String): String? =
         configuredAgentGuidance(
             ideaMcp = endpoint != null,
-            codeTools = launchContributions[tabId]?.servers.orEmpty().any { it.name == CODE_TOOLS_SERVER },
+            capabilities = launchContributions[tabId]?.guidance.orEmpty(),
         )
 
     private fun persistRestorableTabs() {

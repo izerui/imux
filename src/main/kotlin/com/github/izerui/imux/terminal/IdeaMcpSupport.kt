@@ -2,6 +2,7 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.settings.DEFAULT_IDEA_MCP_PORT
+import com.github.izerui.imux.settings.GuidanceCapability
 import com.github.izerui.imux.settings.ImuxSettings
 import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
@@ -53,11 +54,11 @@ internal fun configuredIdeaMcpEndpoint(
 
 /** 需求澄清这类一次性调用只挂 IDEA MCP、不挂 imux_code，引导词也只讲 IDEA 那部分（副驾驶审查另见 PeerCoordinator）。 */
 internal fun configuredIdeaMcpGuidance(endpoint: IdeaMcpEndpoint?): String? =
-    configuredAgentGuidance(ideaMcp = endpoint != null, codeTools = false)
+    configuredAgentGuidance(ideaMcp = endpoint != null, capabilities = emptySet())
 
-/** 引导词没有单独开关：挂了哪组工具就带哪部分，两组都没挂时为 null。 */
-internal fun configuredAgentGuidance(ideaMcp: Boolean, codeTools: Boolean): String? =
-    ImuxSettings.getInstance().agentGuidance(ideaMcp, codeTools)
+/** 引导词没有单独开关：挂了哪组工具就带哪部分，都没挂时为 null。[capabilities] 由提供工具的功能声明。 */
+internal fun configuredAgentGuidance(ideaMcp: Boolean, capabilities: Set<GuidanceCapability>): String? =
+    ImuxSettings.getInstance().agentGuidance(ideaMcp, capabilities)
 
 /**
  * 「最终回复说人话」引导词；关闭或内容为空时返回 null。
