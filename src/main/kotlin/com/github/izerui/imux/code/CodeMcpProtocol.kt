@@ -17,6 +17,12 @@ const val CODE_MCP_SERVER = CODE_TOOLS_SERVER
 
 data class CodeToolResult(val value: JsonObject, val failed: Boolean = false)
 
+/** 失败结果：原因代号和一句说明。查询后端、查代码引擎都用这一份，字段不会两边对不上。 */
+internal fun codeFailure(reason: String, message: String) = CodeToolResult(JsonObject().apply {
+    addProperty("reason", reason)
+    addProperty("message", message)
+}, failed = true)
+
 data class CodeQuery(
     val file: String,
     val line: Int,
@@ -39,6 +45,9 @@ interface CodeToolsBackend {
     suspend fun references(query: CodeQuery): CodeToolResult
     suspend fun callHierarchy(query: CodeQuery, direction: CallDirection, depth: Int): CodeToolResult
     suspend fun typeHierarchy(query: CodeQuery, direction: HierarchyDirection): CodeToolResult
+
+    /** 文件大纲：不定位符号，只要文件和条数上限。 */
+    suspend fun fileOutline(file: String, limit: Int): CodeToolResult
 }
 
 /**
@@ -54,6 +63,15 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
 
     private fun call(id: JsonElement, name: String, args: JsonObject): McpRpcReply {
         fun error(text: String) = McpJsonRpc.reply(rpcError(id, -32602, text))
+        if (name == FILE_OUTLINE) {
+            args.keySet().firstOrNull { it !in OUTLINE_ARGS }?.let { return error("Unsupported argument: $it") }
+            val file = args.text("file")?.takeIf { it.isNotBlank() } ?: return error("file must be a non-empty string")
+            val limit = if (args.has("max_results")) {
+                args.positiveInt("max_results")?.coerceAtMost(CodeQuery.MAX_LIMIT)
+                    ?: return error("max_results must be a positive integer")
+            } else CodeQuery.MAX_LIMIT
+            return async(id) { backend.fileOutline(file, limit) }
+        }
         val allowed = when (name) {
             FIND_REFERENCES -> COMMON_ARGS
             CALL_HIERARCHY -> COMMON_ARGS + setOf("direction", "depth")
@@ -95,8 +113,10 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
         const val FIND_REFERENCES = "find_references"
         const val CALL_HIERARCHY = "call_hierarchy"
         const val TYPE_HIERARCHY = "type_hierarchy"
+        const val FILE_OUTLINE = "file_outline"
         const val MAX_DEPTH = 6
         private val COMMON_ARGS = setOf("file", "line", "column", "symbol", "include_libraries", "max_results")
+        private val OUTLINE_ARGS = setOf("file", "max_results")
 
         fun defaultDepth(direction: CallDirection) = if (direction == CallDirection.CALLERS) 3 else 1
 
@@ -161,6 +181,51 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     addProperty("description", "supers: what it overrides, implements, or extends; implementations: what overrides, implements, or extends it.")
                 })
             })
+            add(outlineTool())
+        }
+
+        /**
+         * 文件大纲：先纵观一个文件、决定从哪下手的第一层。它不替代阅读——要改、要下结论的代码照样完整读（用户定的），
+ * 说明里写明这一点，免得智能体看完大纲就跳过细读。和另外三个工具不同，它不定位符号，
+         * 所以参数只有文件和条数上限，不带位置说明和「分析不了的文件」那一栏。
+         */
+        private fun outlineTool() = JsonObject().apply {
+            addProperty("name", FILE_OUTLINE)
+            addProperty(
+                "description",
+                "Get an overview of a file: its declarations as a tree — classes, functions, methods, fields, " +
+                    "and for other file types headings, keys, or tags — each with its display name (with signature where the language shows one), kind, " +
+                    "the line and column its name is at, and its end line, taken from the IDE's own structure view; it needs no index, so it works while the IDE is indexing " +
+                    "(parents are then left out and `supers_skipped` says so). " +
+                    "When the display name differs from the declaration's own name, `symbol` gives the plain name. " +
+                    "A class, interface, or other type lists in `supers` the parents written in its own declaration (`class User(Base)`, `extends Base implements Repo`, `: Base(), Marker`), " +
+                    "each with its file and line and `in_project`: outline a project parent's file next to see what it declares. " +
+                    "Members inherited from those parents are not listed — the outline shows only what this file declares; use `type_hierarchy` for the full inheritance, " +
+                    "including parents a declaration does not name (such as Go's implicit interfaces). " +
+                    "`non_public: true` marks members that are not public (private, package-private, internal) when `visibility_known` is true; when it is false the IDE gives no visibility for this language, so unmarked does not mean public. " +
+                    "Use it to see how a file is laid out and decide where to look; to query a node with the other three tools, pass this file, the node's `line` and `column`, and its `symbol` (or its name when there is no `symbol`) — " +
+                    "the column tells apart two declarations of the same name on one line, such as overloads. " +
+                    "It is an overview, not a substitute for reading: read in full whatever you will change or draw a conclusion about. " +
+                    "Local variables inside function bodies are left out. Results beyond max_results set truncated=true and report total_nodes " +
+                    "(a lower bound when total_nodes_is_lower_bound is set, for files too large or deeply nested to count in full); " +
+                    "for flat files such as .properties, text search is often more direct. " +
+                    "Works for the file types the IDE has a structure view for, and answers `language_not_supported` for the ones it does not.",
+            )
+            add("inputSchema", JsonObject().apply {
+                addProperty("type", "object"); addProperty("additionalProperties", false)
+                add("properties", JsonObject().apply {
+                    add("file", JsonObject().apply {
+                        addProperty("type", "string")
+                        addProperty("description", "File path, relative to the project root or absolute.")
+                    })
+                    add("max_results", JsonObject().apply {
+                        addProperty("type", "integer"); addProperty("minimum", 1); addProperty("maximum", CodeQuery.MAX_LIMIT)
+                        addProperty("description", "Upper bound on returned nodes. Default ${CodeQuery.MAX_LIMIT}; nodes beyond it set truncated=true.")
+                    })
+                })
+                add("required", JsonArray().apply { add("file") })
+            })
+            add("annotations", JsonObject().apply { addProperty("readOnlyHint", true) })
         }
 
         private fun tool(name: String, description: String, extra: JsonObject.() -> Unit = {}) = JsonObject().apply {
@@ -183,7 +248,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     })
                     add("column", JsonObject().apply {
                         addProperty("type", "integer"); addProperty("minimum", 1)
-                        addProperty("description", "1-based column of the symbol name; used when symbol is omitted.")
+                        addProperty("description", "1-based column of the symbol name. Used alone when symbol is omitted; together with symbol it picks among several occurrences of that name on the line (e.g. two overloads), nearest first.")
                     })
                     add("include_libraries", JsonObject().apply {
                         addProperty("type", "boolean")

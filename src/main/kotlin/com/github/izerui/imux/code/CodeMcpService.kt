@@ -57,29 +57,36 @@ private class ProjectCodeBackend(private val project: Project) : CodeToolsBacken
         run(query) { CodeNavigator(project).callHierarchy(query, direction, depth) }
     override suspend fun typeHierarchy(query: CodeQuery, direction: HierarchyDirection) =
         run(query) { CodeNavigator(project).typeHierarchy(query, direction) }
+    // 结构视图只看这一个文件的语法树，不靠索引：IDE 建索引时侧栏的结构视图照样能看，大纲也不必等。
+    override suspend fun fileOutline(file: String, limit: Int) =
+        run(file, needsIndex = false) { CodeNavigator(project).fileOutline(file, limit) }
 
-    private suspend fun run(query: CodeQuery, block: () -> CodeToolResult): CodeToolResult {
-        if (project.isDisposed) return failure("project_closed", "The project of this session is closed in the IDE.")
+    private suspend fun run(query: CodeQuery, block: () -> CodeToolResult): CodeToolResult = run(query.file, needsIndex = true, block)
+
+    private suspend fun run(file: String, needsIndex: Boolean, block: () -> CodeToolResult): CodeToolResult {
+        if (project.isDisposed) return codeFailure("project_closed", "The project of this session is closed in the IDE.")
         return try {
             // 建索引可能要几分钟：短等一下，还没好就直接告诉智能体稍后重试，不让它干等到超时。
             // 不在建索引就不等：runWhenSmart 经界面线程回调，开着模态对话框时会一直排不上，白等到超时还误报「在建索引」。
             // 用公开的 runWhenSmart 等「索引就绪」通知；带超时的 waitForSmartMode(long) 是 Internal API。
-            if (DumbService.isDumb(project)) withTimeoutOrNull(INDEX_WAIT_MS) {
+            if (needsIndex && DumbService.isDumb(project)) withTimeoutOrNull(INDEX_WAIT_MS) {
                 suspendCancellableCoroutine<Unit> { continuation ->
                     DumbService.getInstance(project).runWhenSmart { if (continuation.isActive) continuation.resume(Unit) }
                 }
-            } ?: return failure("indexing", "The IDE is still indexing this project. Retry in a minute or so.")
+            } ?: return codeFailure("indexing", "The IDE is still indexing this project. Retry in a minute or so.")
             withTimeoutOrNull(TIMEOUT_MS) {
-                syncFromDisk(query.file)
-                constrainedReadAction(ReadConstraint.inSmartMode(project), ReadConstraint.withDocumentsCommitted(project)) { block() }
+                syncFromDisk(file)
+                val committed = ReadConstraint.withDocumentsCommitted(project)
+                if (needsIndex) constrainedReadAction(ReadConstraint.inSmartMode(project), committed) { block() }
+                else constrainedReadAction(committed) { block() }
             }
-                ?: if (DumbService.isDumb(project)) failure("indexing", "The IDE is still indexing this project. Retry in a moment.")
-                else failure("timeout", "The search took longer than ${TIMEOUT_MS / 1000}s. Narrow it with a smaller max_results or depth.")
+                ?: if (needsIndex && DumbService.isDumb(project)) codeFailure("indexing", "The IDE is still indexing this project. Retry in a moment.")
+                else codeFailure("timeout", "The search took longer than ${TIMEOUT_MS / 1000}s. ${if (needsIndex) "Narrow it with a smaller max_results or depth." else "Try a smaller max_results."}")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             LOG.warn("imux_code query failed", e)
-            failure("internal_error", "The IDE failed to run this query: ${e.javaClass.simpleName}. Fall back to the language server or text search.")
+            codeFailure("internal_error", "The IDE failed to run this query: ${e.javaClass.simpleName}. Fall back to the language server or text search.")
         }
     }
 
@@ -123,10 +130,6 @@ private class ProjectCodeBackend(private val project: Project) : CodeToolsBacken
     private suspend fun awaitRefresh(start: (Runnable) -> Unit) = suspendCancellableCoroutine { continuation ->
         start(Runnable { if (continuation.isActive) continuation.resume(Unit) })
     }
-
-    private fun failure(reason: String, message: String) = CodeToolResult(JsonObject().apply {
-        addProperty("reason", reason); addProperty("message", message)
-    }, failed = true)
 
     companion object {
         private const val TIMEOUT_MS = 120_000L

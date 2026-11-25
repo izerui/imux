@@ -37,7 +37,7 @@ https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 
 imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义重命名、调试器、inspections、运行配置、已保存的数据库连接和项目 Code Style，而不是全局文本替换、加 print 调试。
 
-改代码、审查改动、分析代码时，AI 会先查清相关方法被谁调用、又依赖什么、被谁重写或实现，不凭读到的几个文件下结论：imux 给每个会话挂上 `find_references`、`call_hierarchy`、`type_hierarchy` 三个工具，直接用 IDE 自己的「查找用法」引擎，IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）都能用；IDE 不认识的语言退回语言服务器。这三个工具不经过 IDEA MCP，关掉 IDEA MCP 也照样可用。
+改代码、审查改动、分析代码时，AI 会先查清相关方法被谁调用、又依赖什么、被谁重写或实现，不凭读到的几个文件下结论：imux 给每个会话挂上 `find_references`、`call_hierarchy`、`type_hierarchy` 三个工具，直接用 IDE 自己的「查找用法」引擎；另有 `file_outline` 先给出一个文件的总览（类、函数和所在行），帮 AI 决定从哪下手；它不替代阅读，要改的代码照样完整读。这些工具在 IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）里都能用；IDE 不认识的语言退回语言服务器。它们不经过 IDEA MCP，关掉 IDEA MCP 也照样可用。
 
 只对 imux 启动的会话生效，不改 CLI 的全局配置。可在 **Settings → Tools → Imux → IDEA MCP** 关闭或调整。
 

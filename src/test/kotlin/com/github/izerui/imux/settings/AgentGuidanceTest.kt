@@ -54,7 +54,7 @@ class AgentGuidanceTest {
     fun `只挂 imux_code 时英文引导词不提任何 IDEA MCP 工具`() {
         for (tool in toolNames(enIdeaOnly)) assertFalse(tool, enCodeOnly.contains("`$tool`"))
         assertFalse(enCodeOnly.contains("`idea` (IDEA MCP)"))
-        assertTrue(enCodeOnly.contains("- `imux_code`: `find_references`, `call_hierarchy`, and `type_hierarchy`"))
+        assertTrue(enCodeOnly.contains("- `imux_code`: `file_outline` (a file's structure, from the IDE's structure view) and `find_references`, `call_hierarchy`, `type_hierarchy` (from the IDE's own index)."))
         assertTrue(enCodeOnly.contains("## Map the chain"))
     }
 
@@ -62,7 +62,7 @@ class AgentGuidanceTest {
     fun `只挂 imux_code 时中文引导词不提任何 IDEA MCP 工具`() {
         for (tool in toolNames(zhIdeaOnly)) assertFalse(tool, zhCodeOnly.contains("`$tool`"))
         assertFalse(zhCodeOnly.contains("`idea`（IDEA MCP）"))
-        assertTrue(zhCodeOnly.contains("- `imux_code`：`find_references`、`call_hierarchy` 和 `type_hierarchy`"))
+        assertTrue(zhCodeOnly.contains("- `imux_code`：`file_outline`（文件结构，来自 IDE 的结构视图）和 `find_references`、`call_hierarchy`、`type_hierarchy`（走 IDE 自己的索引）"))
         assertTrue(zhCodeOnly.contains("## 摸清链路"))
     }
 
@@ -302,6 +302,28 @@ class AgentGuidanceTest {
         assertTrue(zhCodeOnly.contains("- 谁在依赖它、它又依赖谁：`call_hierarchy`，两个方向都看；经由接口或父类方法的调用也会列出，并标明 `via`。"))
         assertTrue(zhCodeOnly.contains("- 它重写、实现了谁（它得遵守谁的约定），又被谁重写、实现（谁得跟着它变）：`type_hierarchy`，上下两个方向（`supers` 和 `implementations`）。"))
         assertTrue(zhCodeOnly.contains("- 一个值从哪来、流到哪去：对参数、字段、返回值、共享状态用 `find_references`，包括其它模块。"))
+    }
+
+    /**
+     * 大纲是先纵观、再决定从哪下手的第一层，不替代细读（用户定的）：干活的和只查不改的都要读文件，
+     * 两种角色、两种语言都要有这句，而且都要写明不替代阅读。
+     */
+    @Test
+    fun `先看大纲再细读这句在干活和只查不改两种角色、中英两种语言里都有，并写明不替代阅读`() {
+        val en = "To get an overview of a file and decide where to start, use `file_outline`: it lists the file's declarations with the line each one is on, and those lines can be passed straight to the three tools above. For a class it also gives the parents written in its declaration and where they are, so you know which file to outline next. It is an overview, not a substitute for reading: whatever you will change or draw a conclusion about, still read in full, and when you are unsure how much is involved, read the whole file."
+        val zh = "想先纵观一个文件、决定从哪下手，用 `file_outline`：它列出文件里的声明和各自所在的行，行号可以直接交给上面三个工具；类还会标出声明里写明的父类、接口及其位置，接下来该去看哪个文件就清楚了。它只是总览，不替代阅读：要改的、要下结论的地方，照样把相关代码完整读完；拿不准牵涉多大时，就读全文件。"
+        assertTrue(enCodeOnly.contains(en))
+        assertTrue(investigator(chinese = false, ideaMcp = false, codeTools = true).contains(en))
+        assertTrue(zhCodeOnly.contains(zh))
+        assertTrue(investigator(chinese = true, ideaMcp = false, codeTools = true).contains(zh))
+        for (text in listOf(enCodeOnly, zhCodeOnly)) {
+            assertFalse("不能写成替代阅读", text.contains("without reading all of it"))
+            assertFalse("不能写成替代阅读", text.contains("only the parts you need"))
+            assertFalse("不能写成替代阅读", text.contains("不必整个读进来"))
+            assertFalse("不能写成替代阅读", text.contains("只读需要的部分"))
+        }
+        assertFalse("没挂查代码工具时不提", enIdeaOnly.contains("file_outline"))
+        assertFalse("没挂查代码工具时不提", zhIdeaOnly.contains("file_outline"))
     }
 
     @Test

@@ -56,4 +56,35 @@ class TerminalDecouplingSourceTest {
         assertTrue(peer.contains("val message = peerFeedbackMessage(feedback, ImuxBundle.currentLanguage().isChinese())"))
         assertTrue(peer.contains("if (injectFeedback(mainSessionKey, message, run, guard)) { recordOutcome(mainSessionKey, run, outcome(PeerOutcomeKind.FEEDBACK), feedback) }"))
     }
+
+    /**
+     * 文件大纲去噪音的三条规则只对 JavaScript 一族生效：早先对所有语言生效时，Python 带父类的类（显示名 `User(Base)`）
+     * 方法全丢，名字带括号的 YAML/JSON 键下级全丢。大纲的整理要在 IDE 里跑，这里钉住三条规则都带着语言判断。
+     */
+    @Test
+    fun `文件大纲的去噪音规则只对 JavaScript 一族生效、遍历有预算、按列号区分重载、父类按位置读，且大纲不等索引`() {
+        val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
+        assertTrue("函数体不展开", nav.contains("if (script && insideOf != null && insideOf.contains(range)) continue"))
+        assertTrue("赋值语句", nav.contains("if (script && leaf && isReference(value)) {"))
+        assertTrue("对象字面量字段", nav.contains("if (script && underAnonymous && leaf && lineOf(range.startOffset) == lineOf(range.endOffset)) continue"))
+        assertTrue("带括号才算函数也限于这一族", nav.contains("val bodyRange = if (script && name.contains('(')) range else null"))
+        assertTrue(nav.contains("generateSequence(element.language) { it.baseLanguage }.any { it.id == \"JavaScript\" }"))
+        assertTrue("每取一个节点都检查预算，挡住同层几万项的扁平文件", nav.contains("if (++visited > OUTLINE_MAX_NODES || System.nanoTime() > outlineDeadline) {"))
+        assertTrue("无名节点也计入遍历层数，挡住连续的无名节点", nav.contains("walk(tree, grandchildren, level + 1, true, insideOf, out)"))
+        assertTrue("同时给名字和列号时按列号挑", nav.contains(".sortedBy { offset -> query.column?.let { kotlin.math.abs(offset - (lineStart + it - 1)) } ?: 0 }"))
+        assertTrue("只给有成员、显示名带括号、或用 extends/implements 的节点标父类，宁可少标不标错",
+            nav.contains("(grandchildren.isNotEmpty() || name.contains('(') || inheritsByKeyword(value, document))"))
+        assertTrue("父类一律按位置读，不搜索", nav.contains("when (val found = safeSupers(value, name, document, memberRanges)) {"))
+        assertTrue("JS 一族名字后紧跟冒号的是类型注解", nav.contains("if (k < range.endOffset && chars[k] == ':') return emptyList()"))
+        assertTrue("建索引中途打断要注明", nav.contains("if (!supersAvailable || supersInterrupted) addProperty(\"supers_skipped\""))
+        assertFalse("不再有搜索确认那条路", nav.contains("verifiedSupers"))
+        assertFalse("标父类不再设时限（结果会因 IDE 缓存冷热而不同）", nav.contains("OUTLINE_SUPERS_BUDGET_NANOS"))
+        assertTrue("建索引时不标父类，大纲照常给", nav.contains("val supersAvailable = !DumbService.isDumb(project)"))
+        assertTrue("标父类出意外不拖垮整个大纲", nav.contains("writtenSupers(element, displayName, document, memberRanges) } catch (e: com.intellij.openapi.project.IndexNotReadyException) {"))
+        assertTrue("语言插件给的坏引用位置只跳过这一个", nav.contains("val absolute = try { reference.absoluteRange } catch (e: IllegalArgumentException) { continue }"))
+        assertTrue("不是代码元素的分组节点不整棵丢掉", nav.contains("walk(tree, childrenOf(tree), level + 1, underAnonymous, insideOf, out)"))
+        val service = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeMcpService.kt").normalized
+        assertTrue(service.contains("run(file, needsIndex = false) { CodeNavigator(project).fileOutline(file, limit) }"))
+        assertTrue(service.contains("if (needsIndex && DumbService.isDumb(project))"))
+    }
 }

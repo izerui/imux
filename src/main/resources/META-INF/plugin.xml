@@ -27,7 +27,7 @@
         <li><b>Run configurations</b>: run tests and apps with the same environment, arguments, and working directory as the IDE</li>
         <li><b>Database access</b>: query databases through connections and credentials already saved in the IDE</li>
         <li><b>Formatting and navigation</b>: format with the project code style, find definitions</li>
-        <li><b>References and call chains in every language</b>: before editing, and when reviewing or analyzing code, the AI checks who calls a function, what it depends on, and what overrides or implements it through the IDE's own Find Usages engine, for every language the IDE understands (Java, Kotlin, Go, Python, JS/TS, and more)</li>
+        <li><b>References and call chains in every language</b>: before editing, and when reviewing or analyzing code, the AI checks who calls a function, what it depends on, and what overrides or implements it through the IDE's own Find Usages engine, for every language the IDE understands (Java, Kotlin, Go, Python, JS/TS, and more); a file outline gives an overview of a file's declarations and their lines so the AI knows where to start, without replacing a full read of the code it changes</li>
       </ul>
       <p>The MCP configuration is injected only into sessions started by imux; the global CLI configuration is not modified.
       Available tools depend on the IDE, installed plugins, and the MCP server version.</p>
@@ -67,7 +67,7 @@
       <p>把 JetBrains IDE 变成 AI 编程驾驶舱：在编辑器标签页里运行 Claude Code、Codex 和 Pi 会话，并通过 IDEA MCP 让它们用上 IDE 的能力。</p>
       <ul>
         <li><b>IDEA MCP</b>：语义重命名、断点调试、IDE 级代码检查、运行配置、已保存的数据库连接、按项目代码风格格式化；只注入 imux 启动的会话，不改 CLI 的全局配置</li>
-        <li><b>所有语言查引用和调用链</b>：改代码、审查、分析代码时，AI 用 IDE 自己的「查找用法」引擎查清谁调用了它、它又依赖什么、谁重写或实现了它，IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）都能用</li>
+        <li><b>所有语言查引用和调用链</b>：改代码、审查、分析代码时，AI 用 IDE 自己的「查找用法」引擎查清谁调用了它、它又依赖什么、谁重写或实现了它，IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）都能用；文件大纲先给出文件的总览（声明和所在行），帮 AI 决定从哪下手，要改的代码照样完整读</li>
         <li><b>会话面板</b>：按智能体分组，运行中转圈、有新回复加粗；双击接着聊；跑完或需要输入时提醒；长会话内消息导航</li>
         <li><b>会话转移</b>：把 Claude Code 的工作带着前情交给 Codex 或 Pi 接着干</li>
         <li><b>回复说人话</b>：做完事用大白话汇报，少用类名术语，失败和风险照实说；可在设置里关闭</li>

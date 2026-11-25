@@ -12,6 +12,7 @@ class CodeMcpProtocolTest {
         override suspend fun references(query: CodeQuery) = record("refs $query")
         override suspend fun callHierarchy(query: CodeQuery, direction: CallDirection, depth: Int) = record("calls ${direction.id} $depth $query")
         override suspend fun typeHierarchy(query: CodeQuery, direction: HierarchyDirection) = record("types ${direction.id} $query")
+        override suspend fun fileOutline(file: String, limit: Int) = record("outline $file $limit")
         private fun record(call: String) = CodeToolResult(JsonObject().apply { addProperty("call", call) }).also { calls += call }
     }
 
@@ -28,9 +29,9 @@ class CodeMcpProtocolTest {
             .getAsJsonObject("result").getAsJsonArray("tools").map { it.asJsonObject }
     }
 
-    @Test fun `工具列表是查引用、调用链、继承三个只读工具，调用链和继承必须给方向`() {
+    @Test fun `工具列表是查引用、调用链、继承、文件大纲四个只读工具，调用链和继承必须给方向`() {
         val tools = toolList()
-        assertEquals(listOf("find_references", "call_hierarchy", "type_hierarchy"), tools.map { it["name"].asString })
+        assertEquals(listOf("find_references", "call_hierarchy", "type_hierarchy", "file_outline"), tools.map { it["name"].asString })
         val common = setOf("file", "line", "column", "symbol", "include_libraries", "max_results")
         fun properties(i: Int) = tools[i].getAsJsonObject("inputSchema").getAsJsonObject("properties").keySet()
         fun required(i: Int) = tools[i].getAsJsonObject("inputSchema").getAsJsonArray("required").map { it.asString }
@@ -43,6 +44,59 @@ class CodeMcpProtocolTest {
         assertTrue(tools[0].getAsJsonObject("annotations")["readOnlyHint"].asBoolean)
         assertTrue(tools[1].getAsJsonObject("annotations")["readOnlyHint"].asBoolean)
         assertTrue(tools[2].getAsJsonObject("annotations")["readOnlyHint"].asBoolean)
+        assertEquals(setOf("file", "max_results"), properties(3))
+        assertEquals(listOf("file"), required(3))
+        assertTrue(tools[3].getAsJsonObject("annotations")["readOnlyHint"].asBoolean)
+    }
+
+    @Test fun `文件大纲把文件和条数上限交给后端，未给上限取默认值，超出封顶 1000`() {
+        val backend = Backend()
+        reply(backend, "file_outline", """{"file":"a.go"}""")
+        reply(backend, "file_outline", """{"file":"a.go","max_results":5}""")
+        reply(backend, "file_outline", """{"file":"a.go","max_results":50000}""")
+        assertEquals(listOf("outline a.go 1000", "outline a.go 5", "outline a.go 1000"), backend.calls)
+    }
+
+    @Test fun `文件大纲拒绝定位符号用的参数和非法值，且不调用后端`() {
+        val backend = Backend()
+        val rejected = listOf(
+            """{}""",
+            """{"file":""}""",
+            """{"file":"a.go","line":1}""",
+            """{"file":"a.go","symbol":"Run"}""",
+            """{"file":"a.go","direction":"callers"}""",
+            """{"file":"a.go","max_results":0}""",
+        )
+        for (args in rejected) {
+            val error = reply(backend, "file_outline", args).getAsJsonObject("error")
+            assertNotNull("$args 应被拒绝", error)
+            assertEquals(-32602, error["code"].asInt)
+        }
+        assertEquals(emptyList<String>(), backend.calls)
+    }
+
+    @Test fun `文件大纲的说明讲清它是总览、不替代阅读、函数体局部变量不列、超出上限怎么标、扁平文件该用什么`() {
+        val description = toolList()[3]["description"].asString
+        assertTrue(description.startsWith("Get an overview of a file"))
+        assertTrue(description.contains("Use it to see how a file is laid out and decide where to look; to query a node with the other three tools, pass this file, the node's `line` and `column`, and its `symbol` (or its name when there is no `symbol`)"))
+        assertTrue("列号用来分开同一行的重载", description.contains("the column tells apart two declarations of the same name on one line, such as overloads."))
+        assertTrue("父类带位置，告诉下一步看哪个文件", description.contains("each with its file and line and `in_project`: outline a project parent's file next to see what it declares."))
+        assertTrue("没有可见性信息时不能当成全公开", description.contains("when it is false the IDE gives no visibility for this language, so unmarked does not mean public."))
+        assertTrue(description.contains("When the display name differs from the declaration's own name, `symbol` gives the plain name."))
+        assertTrue(description.contains("it needs no index, so it works while the IDE is indexing (parents are then left out and `supers_skipped` says so)."))
+        assertTrue(description.contains("(a lower bound when total_nodes_is_lower_bound is set, for files too large or deeply nested to count in full)"))
+        assertFalse("节点里没有 file 字段，不能说节点的 file", description.contains("each node's file"))
+        assertTrue(description.contains("A class, interface, or other type lists in `supers` the parents written in its own declaration"))
+        assertTrue("继承来的成员不列，要用查继承", description.contains("Members inherited from those parents are not listed — the outline shows only what this file declares; use `type_hierarchy` for the full inheritance"))
+        assertTrue(description.contains("including parents a declaration does not name (such as Go's implicit interfaces)."))
+        assertFalse("不再有时限、也不会标不全", description.contains("supers_incomplete"))
+        assertTrue(description.contains("It is an overview, not a substitute for reading: read in full whatever you will change or draw a conclusion about."))
+        assertFalse(description.contains("without reading all of it"))
+        assertFalse(description.contains("only the parts you need"))
+        assertTrue(description.contains("Local variables inside function bodies are left out."))
+        assertTrue(description.contains("Results beyond max_results set truncated=true and report total_nodes"))
+        assertTrue(description.contains("for flat files such as .properties, text search is often more direct."))
+        assertTrue(description.contains("answers `language_not_supported` for the ones it does not."))
     }
 
     @Test fun `三个工具的说明都如实写明适用范围：IDE 能解析的语言可用，解析不了会明确告知`() {
@@ -56,7 +110,7 @@ class CodeMcpProtocolTest {
     /** 关掉 IDEA MCP 时智能体照样读得到这些说明：提到没挂的工具，它会去调。 */
     @Test fun `三个工具的说明和参数说明都不提别的服务的工具`() {
         val tools = toolList()
-        assertEquals(3, tools.size)
+        assertEquals(4, tools.size)
         for (tool in tools) {
             val text = tool.toString()
             val name = tool["name"].asString
@@ -121,6 +175,11 @@ class CodeMcpProtocolTest {
         assertTrue(descriptions[2].startsWith("Show the inheritance around a method or type through the IDE's own index: whose contract it has to keep, and who has to change with it."))
     }
 
+    @Test fun `列号参数的说明讲清它和名字一起给时用来挑同一行的同名符号`() {
+        val column = toolList()[0].getAsJsonObject("inputSchema").getAsJsonObject("properties").getAsJsonObject("column")["description"].asString
+        assertTrue(column.contains("together with symbol it picks among several occurrences of that name on the line (e.g. two overloads), nearest first."))
+    }
+
     @Test fun `继承的两个方向原样交给后端`() {
         val backend = Backend()
         reply(backend, "type_hierarchy", """{"file":"a.go","line":3,"direction":"supers"}""")
@@ -164,6 +223,7 @@ class CodeMcpProtocolTest {
             override suspend fun references(query: CodeQuery) = CodeToolResult(JsonObject().apply { addProperty("reason", "indexing") }, failed = true)
             override suspend fun callHierarchy(query: CodeQuery, direction: CallDirection, depth: Int) = CodeToolResult(JsonObject())
             override suspend fun typeHierarchy(query: CodeQuery, direction: HierarchyDirection) = CodeToolResult(JsonObject())
+            override suspend fun fileOutline(file: String, limit: Int) = CodeToolResult(JsonObject())
         }
         val protocol = CodeMcpProtocol(failing, this)
         val refs = protocol.receive(call("find_references", """{"file":"a.go","line":1}""")).body!!.await().getAsJsonObject("result")

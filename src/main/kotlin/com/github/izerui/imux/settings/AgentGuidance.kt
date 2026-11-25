@@ -8,7 +8,7 @@ internal const val CODE_TOOLS_SERVER = "imux_code"
  * 终端和副驾驶只把声明交给 [agentGuidance]，不必认识具体的服务名。IDEA MCP 不在其中：它由设置直接决定。
  */
 enum class GuidanceCapability {
-    /** 查用法、查调用链、查继承：引导词带上「摸清链路」一节。 */
+    /** 看文件大纲、查用法、查调用链、查继承：引导词带上「摸清链路」一节。 */
     CODE_TOOLS,
 }
 
@@ -103,7 +103,7 @@ private object EN : GuidanceText {
         }
         if (codeTools) {
             append(
-                "\n- `$CODE_TOOLS_SERVER`: `find_references`, `call_hierarchy`, and `type_hierarchy`, which use the IDE's own index. " +
+                "\n- `$CODE_TOOLS_SERVER`: `file_outline` (a file's structure, from the IDE's structure view) and `find_references`, `call_hierarchy`, `type_hierarchy` (from the IDE's own index). " +
                     "They work for the languages the IDE understands and answer `language_not_supported` for the ones it does not.",
             )
         }
@@ -146,6 +146,8 @@ private object EN : GuidanceText {
             - Who relies on it and what it relies on: `call_hierarchy`, in both directions; calls made through an interface or base method are included and marked `via`.
             - What it overrides or implements (whose contract it must keep) and what overrides or implements it (who must change with it): `type_hierarchy`, in both directions (`supers` and `implementations`).
             - Where a value comes from and where it goes: `find_references` on the parameter, field, return value, or shared state, including other modules.
+
+            To get an overview of a file and decide where to start, use `file_outline`: it lists the file's declarations with the line each one is on, and those lines can be passed straight to the three tools above. For a class it also gives the parents written in its declaration and where they are, so you know which file to outline next. It is an overview, not a substitute for reading: whatever you will change or draw a conclusion about, still read in full, and when you are unsure how much is involved, read the whole file.
             """.trimIndent(),
         )
         if (worker) {
@@ -173,7 +175,7 @@ private object EN : GuidanceText {
             - If `$CODE_TOOLS_SERVER` answers `language_not_supported` or is unavailable, take another route and let your confidence follow the source: first the language server (the LSP tool's `findReferences` / `incomingCalls` / `outgoingCalls`, or its command line run from the project root); only with no language server either, text search — read each hit in context to confirm it is a real use, and say in your reply that the chain came from text search.
             - A failed call is telling you the question is wrong or the route is closed: read the reason it returns before deciding what to do next, and do not retry it with different spellings.
 
-            Locating a symbol: give `file` + `line` plus its `symbol` name. Positions from search results, compiler errors, or grep can be passed straight in.
+            Locating a symbol: give `file` + `line` plus its `symbol` name, and add `column` when that line has more than one symbol of the name (overloads, for example). Positions from search results, compiler errors, grep, or `file_outline` can be passed straight in.
             """.trimIndent(),
         )
         if (ideaMcp) {
@@ -241,7 +243,7 @@ private object ZH : GuidanceText {
             )
         }
         if (codeTools) {
-            append("\n- `$CODE_TOOLS_SERVER`：`find_references`、`call_hierarchy` 和 `type_hierarchy`，走 IDE 自己的索引；IDE 能解析的语言都能用，解析不了会明确返回 `language_not_supported`。")
+            append("\n- `$CODE_TOOLS_SERVER`：`file_outline`（文件结构，来自 IDE 的结构视图）和 `find_references`、`call_hierarchy`、`type_hierarchy`（走 IDE 自己的索引）；IDE 能解析的语言都能用，解析不了会明确返回 `language_not_supported`。")
         }
         append("\n\n读文本只能看到代码写了什么；IDE 解析过整个项目，知道每个名字指的是谁、哪里用到了它。所以下面的内容都出自一条原则：IDE 能回答的事实就问它，不要从文字里猜——")
         append(if (worker) "下结论、动手改之前先取证。" else "下结论之前先取证。")
@@ -278,6 +280,8 @@ private object ZH : GuidanceText {
             - 谁在依赖它、它又依赖谁：`call_hierarchy`，两个方向都看；经由接口或父类方法的调用也会列出，并标明 `via`。
             - 它重写、实现了谁（它得遵守谁的约定），又被谁重写、实现（谁得跟着它变）：`type_hierarchy`，上下两个方向（`supers` 和 `implementations`）。
             - 一个值从哪来、流到哪去：对参数、字段、返回值、共享状态用 `find_references`，包括其它模块。
+
+            想先纵观一个文件、决定从哪下手，用 `file_outline`：它列出文件里的声明和各自所在的行，行号可以直接交给上面三个工具；类还会标出声明里写明的父类、接口及其位置，接下来该去看哪个文件就清楚了。它只是总览，不替代阅读：要改的、要下结论的地方，照样把相关代码完整读完；拿不准牵涉多大时，就读全文件。
             """.trimIndent(),
         )
         if (worker) {
@@ -305,7 +309,7 @@ private object ZH : GuidanceText {
             - `$CODE_TOOLS_SERVER` 返回 `language_not_supported` 或不可用时，换一条路查，结论的把握跟着来源走：先用语言服务器（LSP 工具的 `findReferences` / `incomingCalls` / `outgoingCalls`，或在项目根目录运行它的命令行）；这门语言也没有语言服务器，才用文本搜索——逐个打开命中处读上下文，确认是真实用法，并在回复里说明这条链路是靠文本搜索得出的。
             - 一次调用失败，是在告诉你这个问法不对或这条路不通：先读它返回的原因再决定下一步，不要换个写法反复重试。
 
-            定位符号：给 `file` + `line`，再加符号名 `symbol`。搜索结果、编译错误或 grep 给出的位置可以直接传入。
+            定位符号：给 `file` + `line`，再加符号名 `symbol`；同一行有几个同名符号时（比如重载）再加上 `column`。搜索结果、编译错误、grep 或 `file_outline` 给出的位置可以直接传入。
             """.trimIndent(),
         )
         if (ideaMcp) {

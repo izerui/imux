@@ -7,6 +7,8 @@ import com.intellij.lang.injection.InjectedLanguageManager
 import com.intellij.lang.findUsages.EmptyFindUsagesProvider
 import com.intellij.lang.findUsages.LanguageFindUsages
 import com.intellij.openapi.fileTypes.PlainTextLanguage
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.util.Disposer
@@ -244,17 +246,7 @@ internal class CodeNavigator(private val project: Project) {
         //   里 `val x` 是成员，父类在它后面；Python 类的成员一直到类结尾，后一段为空；
         // - 都没有：到第一个 `=` 或换行为止。没有花括号的函数（Python、Kotlin 表达式函数）不能把整个函数体当头部，
         //   否则函数体里引用到的每个项目符号都要做一次继承搜索；没有类体的子类通常一行写完。
-        val header: List<IntRange> = when {
-            brace >= 0 -> listOf(range.startOffset until range.startOffset + brace)
-            members.isNotEmpty() -> listOf(
-                range.startOffset until members.minOf { it.textRange.startOffset },
-                members.maxOf { it.textRange.endOffset } until range.endOffset,
-            )
-            else -> {
-                val stop = listOf(equals, newline).filter { it >= 0 }.minOrNull()
-                listOf(range.startOffset until (stop?.let { range.startOffset + it } ?: range.endOffset))
-            }
-        }
+        val header = headerRanges(range, members, brace, equals, newline)
         val result = LinkedHashSet<PsiElement>()
         PsiTreeUtil.processElements(element) { child ->
             if (header.none { child.textRange.startOffset in it }) return@processElements true
@@ -273,6 +265,18 @@ internal class CodeNavigator(private val project: Project) {
             true
         }
         return result.toList()
+    }
+
+    private fun headerRanges(range: TextRange, members: List<PsiElement>, brace: Int, equals: Int, newline: Int): List<IntRange> = when {
+        brace >= 0 -> listOf(range.startOffset until range.startOffset + brace)
+        members.isNotEmpty() -> listOf(
+            range.startOffset until members.minOf { it.textRange.startOffset },
+            members.maxOf { it.textRange.endOffset } until range.endOffset,
+        )
+        else -> {
+            val stop = listOf(equals, newline).filter { it >= 0 }.minOrNull()
+            listOf(range.startOffset until (stop?.let { range.startOffset + it } ?: range.endOffset))
+        }
     }
 
     /**
@@ -607,29 +611,30 @@ internal class CodeNavigator(private val project: Project) {
         data class Failed(val result: CodeToolResult) : Located
     }
 
-    private fun failure(reason: String, message: String) = Located.Failed(CodeToolResult(JsonObject().apply {
-        addProperty("reason", reason)
-        addProperty("message", message)
-    }, failed = true))
+    private fun failure(reason: String, message: String) = Located.Failed(codeFailure(reason, message))
 
     private fun locate(query: CodeQuery): Located {
-        val vf = findFile(query.file) ?: return failure("file_not_found", "No file at ${query.file}. Pass a path relative to the project root or an absolute path.")
-        val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return failure("file_not_found", "The IDE cannot open ${query.file}.")
+        val (psiFile, document) = when (val opened = openFile(query.file)) {
+            is Opened.File -> opened.file to opened.document
+            is Opened.Failed -> return Located.Failed(opened.result)
+        }
         if (!supportsFindUsages(psiFile)) {
             return failure(
                 "language_not_supported",
-                "The IDE has no Find Usages support for ${vf.name} (${psiFile.language.displayName}), so it cannot resolve references in it. " +
+                "The IDE has no Find Usages support for ${psiFile.name} (${psiFile.language.displayName}), so it cannot resolve references in it. " +
                     "Use the language server (LSP) tools or text search for this file instead.",
             )
         }
-        val document = PsiDocumentManager.getInstance(project).getDocument(psiFile)
-            ?: return failure("file_not_found", "The IDE has no text for ${query.file}.")
         if (query.line < 1 || query.line > document.lineCount) return failure("bad_position", "line ${query.line} is outside 1..${document.lineCount}.")
         val lineStart = document.getLineStartOffset(query.line - 1)
         val lineEnd = document.getLineEndOffset(query.line - 1)
         val lineText = document.charsSequence.subSequence(lineStart, lineEnd).toString()
         val offsets: List<Int> = when {
-            query.symbol != null -> wordOffsets(lineText, query.symbol).map { lineStart + it }.ifEmpty {
+            // 同时给了名字和列号：同一行有几个同名符号时（一行里写了两个重载 `void run(); void run(int n);`），
+            // 按列号挑最近的那个，否则总会选中第一个、悄悄查错对象。文件大纲给每个节点都带了列号，就是为了这种情况。
+            query.symbol != null -> wordOffsets(lineText, query.symbol).map { lineStart + it }
+                .sortedBy { offset -> query.column?.let { kotlin.math.abs(offset - (lineStart + it - 1)) } ?: 0 }
+                .ifEmpty {
                 // 智能体常拿改动前的行号来查：顺带给出附近出现这个名字的行，下一次就能直接查对，不必再翻文件。
                 val nearby = nearbyLines(query.line, document.lineCount, query.symbol) { n ->
                     document.charsSequence.subSequence(document.getLineStartOffset(n - 1), document.getLineEndOffset(n - 1))
@@ -751,6 +756,388 @@ internal class CodeNavigator(private val project: Project) {
             TextRange(range.startOffset, minOf(range.endOffset, document.getLineEndOffset(document.getLineNumber(range.startOffset))))
         }
         return reference.absoluteRange.intersects(anchor)
+    }
+
+    /**
+     * 文件大纲：IDE 结构视图的那棵树，整理成智能体能直接用的样子——每个节点带显示名（语言给了签名就带签名）、
+     * 能交给另外三个工具的名字 `symbol`、种类、名字所在的行和结束行。
+     *
+     * 结构视图是给人在侧栏里浏览用的。JavaScript 一族（JS、TS、Vue 里的脚本）的结构视图有三类别的语言没有的噪音，
+     * 下面的规则**只对这一族的节点生效**——早先对所有语言生效时，误伤了 Python 带父类的类（显示名是 `User(Base)`，
+     * 被当成函数、方法全丢）、Python 在 `__init__` 里赋值的实例字段、名字带括号的 YAML/JSON 键（下级全丢）：
+     * - 对象字面量被列成无名节点、底下挂一条条字段：无名节点不列，底下只保留跨多行或还有下级的（Vue 选项式写法的方法
+     *   正写在无名对象里，不能整棵丢掉）；
+     * - 会深入函数体，列出局部变量、临时对象：显示名带括号的节点（函数）不展开范围在它内部的下级；
+     * - 赋值语句（`this.total = 0`）被列成节点、还常挂错位置：带引用、没下级、并且超出父节点范围或落在兄弟节点范围内的不列。
+     * 是不是这一族，按节点 PSI 的语言往上找基础语言、看有没有 JavaScript；不判断「种类」文字——那是按界面语言翻译过的。
+     * 这些规则都在真实 IDE 里逐一实测过（Kotlin、Java、Go、Python、TypeScript、JavaScript、Vue、YAML、JSON、Markdown、XML、.properties）。
+     */
+    fun fileOutline(path: String, limit: Int): CodeToolResult {
+        val (psiFile, document) = when (val opened = openFile(path)) {
+            is Opened.File -> opened.file to opened.document
+            is Opened.Failed -> return opened.result
+        }
+        val builder = LanguageStructureViewBuilder.getInstance().getStructureViewBuilder(psiFile) as? TreeBasedStructureViewBuilder
+            ?: return codeFailure(
+                "language_not_supported",
+                "The IDE has no structure view for ${psiFile.name} (${psiFile.language.displayName}). Read the file directly or use text search instead.",
+            )
+        val model = builder.createStructureViewModel(null)
+        try {
+            var emitted = 0
+            var total = 0
+            var visited = 0
+            var cutShort = false
+            val outlineDeadline = System.nanoTime() + OUTLINE_TIME_BUDGET_NANOS
+            // 可见性借各语言自己的「显示非公开成员」过滤器判断：Java、Kotlin 有，TypeScript、Python 没有。
+            // 过滤器的名字各语言不同（SHOW_NON_PUBLIC、KOTLIN_SHOW_NON_PUBLIC），按结尾认；可见性的判断类在各语言插件里，不能直接用。
+            val nonPublicFilter = model.filters.firstOrNull { it.name.endsWith("SHOW_NON_PUBLIC") }
+            // 大纲本身不需要索引，标父类要解析引用、需要索引：IDE 在建索引时只给大纲，不标父类，结果里注明。
+            val supersAvailable = !DumbService.isDumb(project)
+            // 大纲进行到一半 IDE 开始建索引：后面的类标不了父类，要在结果里说明，不能让智能体以为它们没有父类。
+            var supersInterrupted = false
+            fun lineOf(offset: Int) = document.getLineNumber(offset.coerceIn(0, document.textLength)) + 1
+            fun inFile(element: PsiElement?) = element != null && element.isValid && element.containingFile == psiFile
+            fun childrenOf(node: StructureViewTreeElement) = node.children.filterIsInstance<StructureViewTreeElement>()
+
+            // level 是实际遍历的层数，无名节点也算一层；输出时无名节点摊平，但遍历预算照样计入——
+            // 否则一串连续的无名节点能绕过层数上限，递归把线程栈撑爆。
+            fun walk(node: StructureViewTreeElement, children: List<StructureViewTreeElement>, level: Int, underAnonymous: Boolean, insideOf: TextRange?, out: JsonArray?) {
+                if (level > OUTLINE_MAX_DEPTH) {
+                    if (children.isNotEmpty()) cutShort = true
+                    return
+                }
+                val parentRange = (node.value as? PsiElement)?.takeIf(::inFile)?.textRange
+                // 兄弟节点的范围只算一次：每个叶子都要拿来比，大文件里同级节点可能成千上万。
+                val siblingRanges: List<TextRange> by lazy { children.mapNotNull { (it.value as? PsiElement)?.takeIf(::inFile)?.textRange } }
+                for (tree in children) {
+                    ProgressManager.checkCanceled()
+                    // 每取一个节点都检查预算：几万项都在同一层的扁平文件（.properties），只在进下一层时检查是挡不住的。
+                    if (++visited > OUTLINE_MAX_NODES || System.nanoTime() > outlineDeadline) {
+                        cutShort = true
+                        return
+                    }
+                    val raw = tree.value
+                    if (raw !is PsiElement) {
+                        // 不是代码元素的分组节点（有些语言用来归类）：它本身不列，下级照样看，不能连同下级整棵丢掉。
+                        walk(tree, childrenOf(tree), level + 1, underAnonymous, insideOf, out)
+                        continue
+                    }
+                    // 指向别的文件的节点不看：Go 的结构视图会把同包其它文件的函数也挂进来。
+                    val value = raw.takeIf(::inFile) ?: continue
+                    val range = value.textRange ?: continue
+                    val script = isJavaScriptFamily(value)
+                    if (script && insideOf != null && insideOf.contains(range)) continue
+                    val grandchildren = childrenOf(tree)
+                    val leaf = grandchildren.isEmpty()
+                    if (script && leaf && isReference(value)) {
+                        if (parentRange != null && !parentRange.contains(range)) continue
+                        if (siblingRanges.any { it != range && it.contains(range) }) continue
+                    }
+                    val name = tree.presentation.presentableText?.trim()
+                    if (name.isNullOrEmpty()) {
+                        walk(tree, grandchildren, level + 1, true, insideOf, out)
+                        continue
+                    }
+                    if (script && underAnonymous && leaf && lineOf(range.startOffset) == lineOf(range.endOffset)) continue
+                    total++
+                    val bodyRange = if (script && name.contains('(')) range else null
+                    if (out == null || emitted >= limit) {
+                        walk(tree, grandchildren, level + 1, false, bodyRange, null)
+                        continue
+                    }
+                    emitted++
+                    val entry = JsonObject().apply {
+                        addProperty("name", name)
+                        // 显示名常带签名（`compute(Int): Result`），不能直接当 symbol 交给另外三个工具；这里给出声明自己的名字。
+                        (value as? PsiNamedElement)?.name?.takeIf { it.isNotBlank() && it != name }?.let { addProperty("symbol", it) }
+                        addProperty("kind", kindOf(value))
+                        val nameOffset = (value as? PsiNameIdentifierOwner)?.nameIdentifier?.textRange?.startOffset ?: range.startOffset
+                        addProperty("line", lineOf(nameOffset))
+                        // 列号：同一行写了两个重载时，只靠行号和名字分不出是哪一个。
+                        addProperty("column", nameOffset - document.getLineStartOffset(lineOf(nameOffset) - 1) + 1)
+                        addProperty("end_line", lineOf(range.endOffset))
+                        tree.presentation.locationString?.trim()?.takeIf { it.isNotEmpty() }?.let { addProperty("detail", it.take(OUTLINE_DETAIL_CHARS)) }
+                        if (nonPublicFilter != null && !nonPublicFilter.isVisible(tree)) addProperty("non_public", true)
+                        // 只给这几种节点标父类，宁可少标不标错：
+                        // - 下面有成员的（类、接口、对象、枚举）；
+                        // - 显示名带括号的：Python 的空类 `MyError(Exception)`，括号里就是父类（函数也会进来，但头部有参数声明，读出来是空的）；
+                        // - 名字后面（跳过泛型）紧跟 extends / implements 的空类：Java、TS 的 `class Base implements Shape {}`。
+                        // 其余没有成员的节点不标：按位置分不出它是空的类还是变量——Python 类属性 `id: int`、TS 的 `const repo: Repository`
+                        // 显示名都不带类型，按类处理会把类型注解标成父类。Kotlin 用冒号表示继承，和类型注解分不开，它的空类
+                        // （`class MyErr : Exception()`）要看父类用查继承工具。带上父类的位置，智能体就知道接下来该去哪个文件看大纲。
+                        if (bodyRange == null && supersAvailable &&
+                            (grandchildren.isNotEmpty() || name.contains('(') || inheritsByKeyword(value, document))
+                        ) {
+                            val memberRanges = grandchildren.mapNotNull { (it.value as? PsiElement)?.takeIf(::inFile)?.textRange }
+                            when (val found = safeSupers(value, name, document, memberRanges)) {
+                                null -> supersInterrupted = true
+                                else -> if (found.isNotEmpty()) add("supers", JsonArray().apply { found.forEach { add(describe(it)) } })
+                            }
+                        }
+                    }
+                    val nested = JsonArray()
+                    walk(tree, grandchildren, level + 1, false, bodyRange, nested)
+                    if (nested.size() > 0) entry.add("children", nested)
+                    out.add(entry)
+                }
+            }
+
+            val nodes = JsonArray()
+            walk(model.root, childrenOf(model.root), 0, false, null, nodes)
+            return CodeToolResult(JsonObject().apply {
+                addProperty("file", relativePath(psiFile))
+                addProperty("language", psiFile.language.displayName)
+                addProperty("line_count", document.lineCount)
+                // 有没有可见性信息要说清：没有时不标 non_public，不等于全是公开的。
+                addProperty("visibility_known", nonPublicFilter != null)
+                if (!supersAvailable || supersInterrupted) addProperty("supers_skipped", "The IDE is indexing; parents (supers) are not listed for some or all types this time. Ask again once indexing finishes.")
+                add("outline", nodes)
+                addProperty("node_count", emitted)
+                if (emitted < total || cutShort) {
+                    addProperty("truncated", true)
+                    addProperty("total_nodes", total)
+                    // 撞到层数或总数的硬上限时没数完：总数只是下限，不能拿来估算文件规模。
+                    if (cutShort) addProperty("total_nodes_is_lower_bound", true)
+                }
+            })
+        } finally {
+            Disposer.dispose(model)
+        }
+    }
+
+    /**
+     * 标父类出任何意外都只让这个节点不标父类，不能拖垮整个大纲：实测 Kotlin 插件会给个别引用一个起点为负的位置，
+     * 一取位置就抛异常。被建索引打断时返回 null，调用方据此注明「父类没标全」。取消信号照常抛出。
+     */
+    private fun safeSupers(
+        element: PsiElement,
+        displayName: String,
+        document: com.intellij.openapi.editor.Document,
+        memberRanges: List<TextRange>,
+    ): List<PsiElement>? =
+        try {
+            writtenSupers(element, displayName, document, memberRanges)
+        } catch (e: com.intellij.openapi.project.IndexNotReadyException) {
+            null // 返回 null 表示「被建索引打断」，由调用方在结果里注明
+        } catch (e: Exception) {
+            if (e is com.intellij.openapi.progress.ProcessCanceledException || e is java.util.concurrent.CancellationException) throw e
+            emptyList()
+        }
+
+    /**
+     * 声明头部写明的父类、接口（`class User(Base)`、`class HttpRepo extends Cache implements Repo`、`class Impl(x: X) : Base(1), Marker`）。
+     *
+     * 不靠搜索确认：搜索要先让 IDE 分析整个文件的类型关系，第一次看一个上千行的 Kotlin 文件要四秒左右，分析过后又只要零点一秒，
+     * 同一个文件两次调用结果会不一样（实测）。改成只读声明头部，按位置排除不是父类的引用。规则都与语言无关，在真实 IDE 里
+     * 对 Java、Kotlin、TypeScript、Python 的各种写法逐一核对过：
+     * - 头部从声明自己的名字开始（名字前面的注解 `@Entity` 不算）：名字后面先出现 `{` 就到 `{` 为止（Java、Kotlin、TS、Go，
+     *   多行的 `extends ... implements ...` 也在内）；否则到括号外的第一个换行为止——Python 的类头部只有 `class User(Base):`
+     *   这一行，类体里的类型注解（`tags: list[Tag]`）、文档字符串都不会混进来。字符串、注释里的字符不参与判断。
+     * - 名字后面紧跟的那对括号是什么，看显示名：Python 的类显示成 `User(Base)`，括号里就是父类，只取括号里的；其它语言的
+     *   显示名不带括号（`Impl`、`RED`），那对括号是构造参数或枚举常量的参数，一律不算。
+     * - 头部里有参数声明的是函数（`fun foo(a: Int): Result`、`def greet(self)`），不标：函数的返回类型、参数类型都不是父类。
+     * - 落在这个声明的成员范围里的不算（Kotlin 的构造参数、构造函数）；注解里的不算（`@Inject constructor`）；
+     *   紧贴名字的尖括号、方括号里的不算（泛型参数和约束 `ArrayList<String>`、`<T extends Number>`，`a <= b` 这种比较不算尖括号）；
+     *   赋值右边的不算（Python 的 `metaclass=ABCMeta`、JS 的 `X = Symbol.for(...)`）；后面紧跟点号的不算（`unittest.TestCase` 里的 `unittest`）；
+     *   解析到这个声明自己或它内部的不算（`Base(x)` 里的参数 `x`）。
+     * 可能多标的写法（比如 TS 的 `extends mixin(A, B)`）很少见，多标只会让智能体多看一个文件，不会让它漏看。
+     * 解析引用要用索引：调用方在 IDE 建索引时不调这里。
+     */
+    private fun writtenSupers(
+        element: PsiElement,
+        displayName: String,
+        document: com.intellij.openapi.editor.Document,
+        memberRanges: List<TextRange>,
+    ): List<PsiElement> {
+        val nameRange = (element as? PsiNameIdentifierOwner)?.nameIdentifier?.textRange ?: return emptyList()
+        val range = element.textRange ?: return emptyList()
+        if (!range.contains(nameRange) || range.endOffset > document.textLength) return emptyList()
+        val chars = document.charsSequence
+        // JavaScript 一族里，名字后面紧跟冒号的是类型注解（`const repo: Repository`）：TS 的类用 extends/implements 表示继承，不用冒号。
+        if (isJavaScriptFamily(element)) {
+            var k = nameRange.endOffset
+            while (k < range.endOffset && chars[k].isWhitespace()) k++
+            if (k < range.endOffset && chars[k] == ':') return emptyList()
+        }
+
+        // 从名字后面扫一遍（跳过字符串和注释）：括号外的第一个 `{`、第一个换行，各组括号的范围，紧贴名字的尖括号、方括号。
+        val end = range.endOffset
+        val parenGroups = ArrayList<TextRange>()
+        val genericRanges = ArrayList<TextRange>()
+        var firstBrace = -1
+        var firstNewline = -1
+        run {
+            var i = nameRange.endOffset
+            var depth = 0
+            var groupStart = -1
+            var quote: Char? = null
+            while (i < end && (firstBrace < 0 || firstNewline < 0)) {
+                val c = chars[i]
+                if (quote != null) {
+                    if (c == '\\') i++ else if (c == quote) quote = null
+                    i++
+                    continue
+                }
+                // 行注释：`//`，以及 Python、Ruby、Shell 的 `#`（注释里的撇号、括号不能搅乱引号和括号的计数）。
+                if ((c == '/' && i + 1 < end && chars[i + 1] == '/') || c == '#') {
+                    while (i < end && chars[i] != '\n') i++
+                    continue
+                }
+                if (c == '/' && i + 1 < end && chars[i + 1] == '*') {
+                    var k = i + 2
+                    while (k + 1 < end && !(chars[k] == '*' && chars[k + 1] == '/')) k++
+                    i = k + 2
+                    continue
+                }
+                val previous = if (i > 0) chars[i - 1] else ' '
+                val glued = previous.isLetterOrDigit() || previous == '_' || previous == '>' || previous == ']'
+                when {
+                    c == '"' || c == '\'' || c == '`' -> quote = c
+                    // 紧贴名字的尖括号、方括号才是泛型（`ArrayList<String>`、`Generic[T]`）；`a <= b`、`a < b` 不算。
+                    (c == '<' || c == '[') && glued && !(c == '<' && i + 1 < end && chars[i + 1] == '=') -> {
+                        val close = if (c == '<') '>' else ']'
+                        var k = i + 1
+                        var nest = 1
+                        while (k < end && nest > 0) {
+                            if (chars[k] == c) nest++ else if (chars[k] == close && !(close == '>' && chars[k - 1] == '-')) nest--
+                            k++
+                        }
+                        genericRanges += TextRange(i, k)
+                        i = k
+                        continue
+                    }
+                    c == '(' -> { if (depth == 0) groupStart = i; depth++ }
+                    c == ')' -> { if (depth > 0) depth--; if (depth == 0 && groupStart >= 0) { parenGroups += TextRange(groupStart, i + 1); groupStart = -1 } }
+                    c == '{' && depth == 0 && firstBrace < 0 -> firstBrace = i
+                    c == '\n' && depth == 0 && firstNewline < 0 -> firstNewline = i
+                }
+                i++
+            }
+        }
+        // 类体里的成员（不算括号里的构造参数）出现在换行和 `{` 之间，说明这个 `{` 已经在类体里了（Python 的字典），头部到换行为止；
+        // 否则 `{` 是类体的开始，头部到 `{` 为止（Java 多行的 extends/implements 也在内）。
+        val bodyMembers = memberRanges.filter { m -> parenGroups.none { it.contains(m.startOffset) } }
+        val headerEnd = when {
+            firstBrace >= 0 && (firstNewline < 0 || firstNewline > firstBrace || bodyMembers.none { it.startOffset in firstNewline until firstBrace }) -> firstBrace
+            firstNewline >= 0 -> firstNewline
+            else -> end
+        }
+        val parenGroup = parenGroups.firstOrNull()?.takeIf { chars.subSequence(nameRange.endOffset, it.startOffset).isBlank() }
+        val header = TextRange(nameRange.endOffset, headerEnd.coerceAtLeast(nameRange.endOffset))
+        if (header.isEmpty) return emptyList()
+        val onlyInsideParens = displayName.contains('(')
+        fun counts(offset: Int): Boolean {
+            if (!header.contains(offset) || memberRanges.any { it.contains(offset) } || genericRanges.any { it.contains(offset) }) return false
+            val inParens = parenGroup?.contains(offset) == true
+            return if (onlyInsideParens) inParens else !inParens
+        }
+        // 头部里有参数声明的是函数：返回类型、参数类型都不是父类。
+        val elementsInHeader = ArrayList<PsiElement>()
+        fun collect(node: PsiElement) {
+            var child = node.firstChild
+            while (child != null) {
+                val r = child.textRange
+                if (r != null && r.intersects(header)) {
+                    elementsInHeader += child
+                    collect(child)
+                }
+                child = child.nextSibling
+            }
+        }
+        collect(element)
+        if (elementsInHeader.any { it is PsiNameIdentifierOwner && it != element && memberRanges.none { m -> m.contains(it.textRange) } && genericRanges.none { g -> g.contains(it.textRange.startOffset) } }) {
+            return emptyList()
+        }
+        // 赋值右边的不算：从引用往前看，在离开当前这对括号或遇到逗号之前碰到了赋值的 `=`，它就在等号右边。
+        // JS 的 `X = Symbol.for(...)` 整段都不算；Python 的 `(Base, metaclass=Meta)` 里 `Meta` 不算、`Base` 算。
+        // `==`、`<=`、`>=`、`!=`、`=>`、`->` 不是赋值。
+        fun afterAssignment(offset: Int): Boolean {
+            var k = offset - 1
+            var depth = 0
+            while (k >= nameRange.endOffset) {
+                // 泛型里的 `=`（TS 的 `class Store<S = {}>`）不是赋值：整段跳过。
+                val generic = genericRanges.firstOrNull { it.contains(k) }
+                if (generic != null) {
+                    k = generic.startOffset - 1
+                    continue
+                }
+                val c = chars[k]
+                when {
+                    c == ')' || c == ']' -> depth++
+                    c == '(' || c == '[' -> { if (depth == 0) return false; depth-- }
+                    c == ',' && depth == 0 -> return false
+                    c == '=' && depth == 0 -> {
+                        val before = if (k > 0) chars[k - 1] else ' '
+                        val after = if (k + 1 < chars.length) chars[k + 1] else ' '
+                        if (before !in "=<>!:" && after != '=' && after != '>') return true
+                    }
+                }
+                k--
+            }
+            return false
+        }
+        val result = LinkedHashSet<PsiElement>()
+        for (child in elementsInHeader) {
+            if (generateSequence(child) { it.parent }.takeWhile { it != element }.any { it.textMatches("@") || it.text?.startsWith("@") == true }) continue
+            for (reference in child.references) {
+                // 个别语言插件给出的引用位置是坏的（起点为负），取位置就抛异常：跳过这一个引用。
+                val absolute = try { reference.absoluteRange } catch (e: IllegalArgumentException) { continue }
+                if (!counts(absolute.startOffset)) continue
+                if (afterAssignment(absolute.startOffset) || chars.getOrNull(absolute.endOffset) == '.') continue
+                val resolved = resolve(reference) ?: continue
+                if (resolved == element || resolved.textRange?.let { r -> resolved.containingFile == element.containingFile && range.contains(r) } == true) continue
+                // `: Base(1)`、`super(…)` 解析到的是父类的构造函数：往外找到同名的那一层就是父类本身。
+                val name = (resolved as? PsiNamedElement)?.name
+                val type = generateSequence(resolved.parent) { it.parent }
+                    .takeWhile { it !is PsiFile }
+                    .firstOrNull { it is PsiNamedElement && it.name == name && it != element }
+                    ?: resolved
+                result += type
+            }
+        }
+        return result.distinctBy { it.navigationElement ?: it }
+    }
+
+    /** 名字后面（跳过空白和紧贴的泛型 `<...>`）紧跟 `extends` 或 `implements`：这是类的写法，变量不会这样写。 */
+    private fun inheritsByKeyword(element: PsiElement, document: com.intellij.openapi.editor.Document): Boolean {
+        val name = (element as? PsiNameIdentifierOwner)?.nameIdentifier?.textRange ?: return false
+        val end = element.textRange?.endOffset?.coerceAtMost(document.textLength) ?: return false
+        val chars = document.charsSequence
+        var i = name.endOffset
+        if (i < end && chars[i] == '<') {
+            var nest = 0
+            while (i < end) {
+                if (chars[i] == '<') nest++ else if (chars[i] == '>') nest--
+                i++
+                if (nest == 0) break
+            }
+        }
+        while (i < end && chars[i].isWhitespace()) i++
+        return listOf("extends", "implements").any { keyword ->
+            i + keyword.length <= end && chars.subSequence(i, i + keyword.length).toString() == keyword &&
+                (i + keyword.length == end || !chars[i + keyword.length].isLetterOrDigit())
+        }
+    }
+
+    /** JavaScript 一族（JS、TS，以及 Vue/HTML 里的脚本）：按节点自己的语言往上找基础语言。不依赖 JavaScript 插件的类。 */
+    private fun isJavaScriptFamily(element: PsiElement): Boolean =
+        generateSequence(element.language) { it.baseLanguage }.any { it.id == "JavaScript" }
+
+    private fun isReference(element: PsiElement) = element.reference != null || element.firstChild?.reference != null
+
+    private sealed interface Opened {
+        class File(val file: PsiFile, val document: com.intellij.openapi.editor.Document) : Opened
+        class Failed(val result: CodeToolResult) : Opened
+    }
+
+    /** 按路径打开文件：找不到、IDE 打不开、没有文本时各自如实说明。定位符号（[locate]）和文件大纲共用。 */
+    private fun openFile(path: String): Opened {
+        fun fail(message: String) = Opened.Failed(codeFailure("file_not_found", message))
+        val vf = findFile(path) ?: return fail("No file at $path. Pass a path relative to the project root or an absolute path.")
+        val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return fail("The IDE cannot open $path.")
+        val document = PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return fail("The IDE has no text for $path.")
+        return Opened.File(psiFile, document)
     }
 
     /**
@@ -877,6 +1264,17 @@ private val PROSE_NAMES = setOf("license", "licence", "notice", "copying", "auth
 
 /** 每个调用方下最多列出的调用点；超出时给出总数 call_site_count。 */
 private const val CALL_SITES_PER_CALLER = 20
+
+/** 文件大纲最多往下走几层（无名节点也算）、最多看多少个节点（含无名、被过滤掉的），防止病态的大文件拖垮查询或撑爆调用栈。 */
+private const val OUTLINE_MAX_DEPTH = 32
+private const val OUTLINE_MAX_NODES = 20_000
+
+
+/** 一次大纲的总时限：最坏情况（几万个节点、语言插件取显示名很慢）也要在查询总超时之前停下，给出已有的部分。 */
+private const val OUTLINE_TIME_BUDGET_NANOS = 20_000_000_000L
+
+/** 结构视图附带的说明（XML 标签的属性等）可能很长，只留开头。 */
+private const val OUTLINE_DETAIL_CHARS = 120
 
 /** [line] 前后 [window] 行内出现 [word]（完整标识符）的行号，按离 [line] 由近到远，最多 [max] 个。 */
 internal fun nearbyLines(line: Int, lineCount: Int, word: String, window: Int = 40, max: Int = 3, text: (Int) -> CharSequence): List<Int> =
