@@ -14,6 +14,7 @@ import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.ElementDescriptionUtil
 import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiDirectory
@@ -54,6 +55,12 @@ internal class CodeNavigator(private val project: Project) {
     /** 按名字扫同名候选时撞上限、上层可能没找全的元素；结果里标 `overrides_incomplete`。 */
     private val supersIncomplete = HashSet<PsiElement>()
     private val unanalyzedCache = HashMap<String, Pair<JsonArray, Boolean>>()
+    /**
+     * 整次查询共用的扫描时限：按名字找重写对象、扫「分析不了的文件」都按名字走单词索引，调用链上每个节点各扫一次，
+     * 节点一多就会把整次查询拖过总超时、一点结果都拿不到。超过这个时限后不再扫，结果里如实标出没查的地方。
+     */
+    private val scanDeadline = System.nanoTime() + QUERY_SCAN_BUDGET_NANOS
+    private fun scanTimeLeft() = System.nanoTime() < scanDeadline
     private val fileIndex = ProjectFileIndex.getInstance(project)
 
     fun references(query: CodeQuery): CodeToolResult {
@@ -79,7 +86,8 @@ internal class CodeNavigator(private val project: Project) {
         // 通过接口、父类引用它的地方（`greeter.greet()` 的变量类型是接口）记在上层声明名下，要单独补上。
         val supers = supers(target)
         val viaSupers = JsonArray()
-        for (parent in supers) {
+        // 「经由上层调用」只对方法成立：类型的父类型被别处用到，不是对这个子类的使用。
+        for (parent in memberSupers(target)) {
             ReferencesSearch.search(parent, scope).forEach(Processor { reference ->
                 if (!inScope(reference, scope) || isSelfReference(parent, reference)) return@Processor true
                 if (viaSupers.size() >= query.limit) { truncated = true; return@Processor false }
@@ -153,8 +161,8 @@ internal class CodeNavigator(private val project: Project) {
         // 再按名字扫，只用于写在类型外面的方法（Go 的方法、顶层函数）：Go 的接口是隐式实现的，只能靠同名候选。
         // 写在类型里面的方法（Java、Kotlin、TS、Python）按结构找已经可靠；对它们按名字扫，常见名字（dispose、get）
         // 有几十上百个候选，每个都要做一次「谁重写了它」的搜索，一次查询就会超时。扫描设时间和数量上限，扫不完如实标出。
-        if (owner == null && name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '_' || it == '$' }) {
-            val deadline = System.nanoTime() + SUPER_SCAN_BUDGET_NANOS
+        if (owner == null && membersOf(element).isEmpty() && name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '_' || it == '$' }) {
+            val deadline = minOf(System.nanoTime() + SUPER_SCAN_BUDGET_NANOS, scanDeadline)
             // 同时限制候选数和扫过的文件数：常见名字（get、run）出现在成千上万个文件里，每个文件都要建结构视图。
             var scanned = 0
             var files = 0
@@ -175,6 +183,10 @@ internal class CodeNavigator(private val project: Project) {
         }
         candidates.filter { candidate -> candidate != element && implementedBy(candidate, element, scope) }
     }
+
+    /** 方法、函数重写或实现的上层方法（不含类型的父类型），用于补上经由接口、父类的调用。类型本身返回空。 */
+    private fun memberSupers(element: PsiElement): List<PsiElement> =
+        if (membersOf(element).isNotEmpty()) emptyList() else supers(element).filter { membersOf(it).isEmpty() }
 
     /** 结构视图里直接包含它的类型节点（有成员的节点）；顶层函数返回 null。 */
     private fun enclosingType(element: PsiElement): PsiElement? {
@@ -209,10 +221,14 @@ internal class CodeNavigator(private val project: Project) {
      * 默认只要项目内的；[includeLibraries] 时也要库里的父类型。
      */
     private fun headerTypes(element: PsiElement, includeLibraries: Boolean = false): List<PsiElement> {
+        // IDE 内部生成的声明（TS 的导入别名、隐式声明这类）没有源码文本，没有头部可看。
         val range = element.textRange ?: return emptyList()
+        val text = element.text ?: return emptyList()
         val members = membersOf(element)
-        val text = element.text
-        val brace = text.indexOf('{')
+        // 从声明自己的名字开始：名字前面的文档注释（`/** {@link Foo} */`）、注解（`@SuppressWarnings({"a"})`）、
+        // 装饰器（`@Component({...})`）里的花括号不能把头部提前截断。往后找时跳过注释、不看括号里的内容。
+        val from = (element as? PsiNameIdentifierOwner)?.nameIdentifier?.textRange?.startOffset ?: range.startOffset
+        val (brace, equals, newline) = headerStops(element, text, from - range.startOffset)
         // 头部范围（绝对偏移，左闭右开），可能是两段：
         // - 有 `{`：到第一个 `{` 为止（Java、Kotlin、TS、Go 的类型与带类体的子类）；
         // - 没有 `{` 但有成员：第一个成员之前 + 最后一个成员之后。Kotlin 构造参数换行写的 `class Foo(\n val x: Int,\n) : Base(x)`
@@ -226,7 +242,7 @@ internal class CodeNavigator(private val project: Project) {
                 members.maxOf { it.textRange.endOffset } until range.endOffset,
             )
             else -> {
-                val stop = listOf(text.indexOf('='), text.indexOf('\n')).filter { it >= 0 }.minOrNull()
+                val stop = listOf(equals, newline).filter { it >= 0 }.minOrNull()
                 listOf(range.startOffset until (stop?.let { range.startOffset + it } ?: range.endOffset))
             }
         }
@@ -248,6 +264,32 @@ internal class CodeNavigator(private val project: Project) {
             true
         }
         return result.toList()
+    }
+
+    /**
+     * 从 [from]（相对 [element] 文本的偏移）往后，第一个不在注释里、不在括号里的 `{`、`=`、换行的位置，找不到为 -1。
+     */
+    private fun headerStops(element: PsiElement, text: String, from: Int): Triple<Int, Int, Int> {
+        val start = element.textRange.startOffset
+        val comments = PsiTreeUtil.findChildrenOfType(element, PsiComment::class.java).mapNotNull { it.textRange?.shiftLeft(start) }
+        var depth = 0
+        var brace = -1
+        var equals = -1
+        var newline = -1
+        var i = from.coerceAtLeast(0)
+        while (i < text.length && brace < 0) {
+            val comment = comments.firstOrNull { i >= it.startOffset && i < it.endOffset }
+            if (comment != null) { i = comment.endOffset; continue }
+            when (text[i]) {
+                '(', '[' -> depth++
+                ')', ']' -> if (depth > 0) depth--
+                '{' -> if (depth == 0) brace = i
+                '=' -> if (depth == 0 && equals < 0) equals = i
+                '\n' -> if (depth == 0 && newline < 0) newline = i
+            }
+            i++
+        }
+        return Triple(brace, equals, newline)
     }
 
     private fun implementedBy(candidate: PsiElement, element: PsiElement, scope: GlobalSearchScope): Boolean {
@@ -287,7 +329,12 @@ internal class CodeNavigator(private val project: Project) {
         val name = (target as? PsiNamedElement)?.name ?: return
         if (name.isEmpty() || !name.all { it.isLetterOrDigit() || it == '_' || it == '$' }) return
         // 同一次查询里同名节点只扫一次单词索引（调用链里同一个名字常出现多次）。
-        val (mentions, truncated) = unanalyzedCache.getOrPut(name) { scanUnanalyzed(name, scope) }
+        val cached = unanalyzedCache[name]
+        if (cached == null && !scanTimeLeft()) {
+            addProperty("unanalyzed_not_checked", true)
+            return
+        }
+        val (mentions, truncated) = cached ?: scanUnanalyzed(name, scope).also { unanalyzedCache[name] = it }
         if (mentions.size() == 0) return
         add("unanalyzed_mentions", mentions.deepCopy())
         if (truncated) addProperty("unanalyzed_truncated", true)
@@ -296,6 +343,19 @@ internal class CodeNavigator(private val project: Project) {
             "The IDE cannot analyze these files' language, so they are not in the results above. Open them and check whether each mention is a real use." +
                 if (truncated) " Only the first $UNANALYZED_LIMIT are listed: search the name yourself for the rest." else "",
         )
+    }
+
+    /**
+     * 不是项目代码的文件：没有扩展名的授权、说明文件（LICENSE、NOTICE……），以及项目里以 `.` 开头的隐藏目录下的文件
+     * （`.verify` 里整套 IDE 副本、`.reference` 里的官方文档、`.idea`、`.gradle`）。这些目录常被版本控制忽略，
+     * 但 IDE 仍把它们算进项目；不排除的话，常见单词（receive、get）会把这一栏塞满授权声明和文档片段。
+     * 不直接问版本控制「是否被忽略」：那个接口在 vcs 模块里，插件没有声明依赖。
+     */
+    private fun isProseOrHidden(vf: VirtualFile): Boolean {
+        if (vf.extension.isNullOrEmpty() && vf.nameWithoutExtension.lowercase() in PROSE_NAMES) return true
+        val base = project.basePath ?: return false
+        val relative = vf.path.removePrefix("$base/").takeIf { it != vf.path } ?: return false
+        return relative.split('/').dropLast(1).any { it.startsWith('.') }
     }
 
     private fun scanUnanalyzed(name: String, scope: GlobalSearchScope): Pair<JsonArray, Boolean> {
@@ -307,7 +367,7 @@ internal class CodeNavigator(private val project: Project) {
         val psiManager = PsiManager.getInstance(project)
         PsiSearchHelper.getInstance(project).processCandidateFilesForText(scope, UsageSearchContext.ANY, true, name, Processor { vf ->
             // 说明文档、日志这类纯文字文件不是「分析不了的代码」，列出来只会挤掉真正要核对的地方。
-            if (vf.extension?.lowercase() in PROSE_EXTENSIONS) return@Processor true
+            if (vf.extension?.lowercase() in PROSE_EXTENSIONS || isProseOrHidden(vf)) return@Processor true
             val file = psiManager.findFile(vf) ?: return@Processor true
             if (supportsFindUsages(file)) return@Processor true
             val document = PsiDocumentManager.getInstance(project).getDocument(file) ?: return@Processor true
@@ -316,6 +376,7 @@ internal class CodeNavigator(private val project: Project) {
                 val text = document.charsSequence.subSequence(start, document.getLineEndOffset(line)).toString()
                 if (wordOffsets(text, name).isEmpty()) continue
                 if (!seen.add("${vf.path}:$line")) continue
+                if (!scanTimeLeft()) { truncated = true; return@Processor false }
                 if (mentions.size() >= UNANALYZED_LIMIT) { truncated = true; return@Processor false }
                 mentions.add(JsonObject().apply {
                     addProperty("file", relativePath(file))
@@ -355,7 +416,7 @@ internal class CodeNavigator(private val project: Project) {
         val groups = LinkedHashMap<PsiElement, MutableList<JsonObject>>()
         val loose = JsonArray()
         // 通过接口、父类调用的地方记在上层声明名下（`greeter.greet()` 里 greeter 是接口类型），也是它的调用方，标明经由谁。
-        val parents = supers(element)
+        val parents = memberSupers(element)
         if (element in supersIncomplete) node.addProperty("overrides_incomplete", true)
         for (searched in listOf(element) + parents) ReferencesSearch.search(searched, scope).forEach(Processor { reference ->
             // 调用链只看真实调用；注释里提到名字的地方 find_references 会单独列出。
@@ -384,6 +445,7 @@ internal class CodeNavigator(private val project: Project) {
                 continue
             }
             val child = when {
+                budget.exhausted -> describe(owner).apply { addProperty("not_expanded", true) }
                 owner in path -> describe(owner).apply { addProperty("recursive", true) }
                 (expanded[owner] ?: -1) >= depth - 1 -> describe(owner).apply { addProperty("expanded_above", true) }
                 else -> callers(owner, depth - 1, scope, budget, path + owner, expanded)
@@ -480,7 +542,12 @@ internal class CodeNavigator(private val project: Project) {
                 if (resolved == element) { if (isCall(reference, element)) callsItself = true; continue }
                 // 自己体内的局部变量、参数不算依赖；包、目录这类没有文件的节点也跳过。
                 if (resolved is PsiDirectory || resolved.containingFile == null || PsiTreeUtil.isAncestor(element, resolved, false)) continue
-                targets += resolved
+                // 项目里的依赖只算结构视图里有的声明（函数、类型、字段、常量）：具名参数 `f(callableOnly = true)`
+                // 解析到的是别的函数的参数，不是依赖。库里的只计数，不在这里建结构视图。
+                if (!isInProject(resolved)) { targets += resolved; continue }
+                // 构造调用 `Budget(…)` 解析到构造函数，它不在结构视图里：换成外层同名的类。
+                val declaration = if (resolved in outline(resolved.containingFile)) resolved else sameNameOwner(resolved)
+                if (declaration != null && declaration != element) targets += declaration
             }
             true
         }
@@ -496,6 +563,16 @@ internal class CodeNavigator(private val project: Project) {
         node.add("callees", callees)
         if (!includeLibraries && libraries.isNotEmpty()) node.addProperty("library_callees_omitted", libraries.size)
         return node
+    }
+
+    /** 往外找第一个与它同名、并且在结构视图里的声明（构造函数所在的类）。 */
+    private fun sameNameOwner(element: PsiElement): PsiElement? {
+        val name = (element as? PsiNamedElement)?.name ?: return null
+        val file = element.containingFile ?: return null
+        val outline = outline(file)
+        return generateSequence(element.parent) { it.parent }
+            .takeWhile { it !is PsiFile }
+            .firstOrNull { it is PsiNamedElement && it.name == name && it in outline }
     }
 
     private fun isInProject(element: PsiElement): Boolean =
@@ -597,8 +674,16 @@ internal class CodeNavigator(private val project: Project) {
             ?: (reference as? PsiPolyVariantReference)?.multiResolve(false)?.firstNotNullOfOrNull { it.element?.takeIf { e -> e.isValid } }
 
     /** 读锁里不能刷新磁盘：磁盘同步由 [CodeMcpService] 在进锁前做完，这里只查 VFS。 */
-    private fun findFile(path: String): VirtualFile? =
-        resolveQueryPath(project, path)?.let(LocalFileSystem.getInstance()::findFileByPath)
+    private fun findFile(path: String): VirtualFile? {
+        val resolved = resolveQueryPath(project, path) ?: return null
+        // 结果里库文件的路径形如 `…/guava.jar!/com/…/Foo.class`、`…/Home!/java.base/…/URI.class`，
+        // 要从 jar、jrt 文件系统找，结果里的每个节点才都能拿回来再查。
+        if ("!/" in resolved) {
+            val manager = VirtualFileManager.getInstance()
+            return manager.findFileByUrl("jar://$resolved") ?: manager.findFileByUrl("jrt://$resolved")
+        }
+        return LocalFileSystem.getInstance().findFileByPath(resolved)
+    }
 
     private fun scope(includeLibraries: Boolean): GlobalSearchScope =
         if (includeLibraries) GlobalSearchScope.allScope(project) else GlobalSearchScope.projectScope(project)
@@ -755,6 +840,9 @@ private val COMMAND_SEPARATORS = listOf(";", "&&", "||", "|", "$(", "`", "then",
 /** 往上找重写对象时最多检查的同名候选数。 */
 private const val SUPER_CANDIDATE_LIMIT = 60
 
+/** 整次查询里所有按名字扫描（找重写对象、找分析不了的文件）共用的时间上限。 */
+private const val QUERY_SCAN_BUDGET_NANOS = 40_000_000_000L
+
 /** 按名字找重写对象（含逐个核对候选）的时间上限。 */
 private const val SUPER_SCAN_BUDGET_NANOS = 15_000_000_000L
 
@@ -763,6 +851,9 @@ private const val SUPER_FILE_LIMIT = 300
 
 /** 纯文字文件：其中提到函数名多半是说明，不是代码里的调用。 */
 private val PROSE_EXTENSIONS = setOf("md", "markdown", "txt", "log", "rst", "adoc", "csv", "tsv", "license", "notice")
+
+/** 没有扩展名时按文件名识别的纯文字文件。 */
+private val PROSE_NAMES = setOf("license", "licence", "notice", "copying", "authors", "readme", "changelog")
 
 /** 每个调用方下最多列出的调用点；超出时给出总数 call_site_count。 */
 private const val CALL_SITES_PER_CALLER = 20

@@ -185,9 +185,15 @@ class PeerCoordinator internal constructor(
         val ep = configuredIdeaMcpEndpoint(project, projectPath)
         // 副驾驶就是来查搭档有没有漏改的：挂上查调用链工具，引导词也带上对应那部分。
         val codeTools = CodeToolsLease.acquire(project, agentType)
-        val guidance = configuredAgentGuidance(ideaMcp = ep != null, codeTools = codeTools != null)
-        val piScript = if (agentType == AgentType.PI && ep != null) piIdeaMcpScript() else null
-        PeerMcpConfig(ep, guidance, piScript, codeTools)
+        // 凭证已发出：后面任何一步出错都要撤销，否则它一直留在服务里、还拽着 Project 不放。
+        try {
+            val guidance = configuredAgentGuidance(ideaMcp = ep != null, codeTools = codeTools != null)
+            val piScript = if (agentType == AgentType.PI && ep != null) piIdeaMcpScript() else null
+            PeerMcpConfig(ep, guidance, piScript, codeTools)
+        } catch (e: Throwable) {
+            codeTools?.release()
+            throw e
+        }
     },
     private val buildPrompt: ((task: String, conversation: String) -> String)? = null,
     private val sendAutoFeedback: ((sessionKey: String, feedback: String) -> Boolean)? = null,
@@ -572,12 +578,12 @@ class PeerCoordinator internal constructor(
 
         val currentBinding = bindings[mainSessionKey] ?: return
         if (currentBinding.generation != run.bindingGeneration) return
-        // 先拿配置：挂了查调用链工具时要发凭证，下面任何一处返回都要在 finally 里撤销。
+        val freshTask = extractTask(mainSessionKey)
+        if (!runIsCurrent(mainSessionKey, run, guard)) return
+        // 确认这一轮还有效之后才拿配置：挂了查调用链工具时要发凭证，下面任何一处返回都要在 finally 里撤销。
         val mcpConfig = resolveMcpConfig(currentBinding.targetAgentType)
         try {
             val codeToolsHint = if (mcpConfig.codeTools != null) codeToolsReviewHint() else ""
-            val freshTask = extractTask(mainSessionKey)
-            if (!runIsCurrent(mainSessionKey, run, guard)) return
             val buildFn: (String, String) -> String = buildPrompt ?: ::buildReviewPrompt
             var conversation = collectLatestConversation(mainSessionKey)
             var maxConvChars = conversation.length

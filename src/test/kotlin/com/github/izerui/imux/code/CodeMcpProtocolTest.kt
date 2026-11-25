@@ -55,11 +55,15 @@ class CodeMcpProtocolTest {
         assertTrue(descriptions[2].contains("`No callable symbol found` (e.g. Go)"))
     }
 
-    @Test fun `三个工具的说明都提醒 IDE 分析不了的文件要自己核对`() {
+    @Test fun `查用法和调用链的说明提醒 IDE 分析不了的文件要自己核对，继承的说明不提（它不返回这一栏）`() {
         val descriptions = toolList().map { it["description"].asString }
         assertTrue(descriptions[0].contains("listed separately as `unanalyzed_mentions`: check those yourself"))
-        assertTrue(descriptions[1].contains("listed separately as `unanalyzed_mentions`: check those yourself"))
-        assertTrue(descriptions[2].contains("listed separately as `unanalyzed_mentions`: check those yourself"))
+        assertTrue(descriptions[1].contains("For callers: Files in languages the IDE cannot analyze are listed separately as `unanalyzed_mentions`"))
+        assertFalse(descriptions[2].contains("unanalyzed_mentions"))
+    }
+
+    @Test fun `调用链说明解释没查和没展开的节点`() {
+        assertTrue(toolList()[1]["description"].asString.contains("A node marked `unanalyzed_not_checked` or `not_expanded` was not checked or walked further"))
     }
 
     @Test fun `三个工具的说明都解释继承没查全的标记`() {

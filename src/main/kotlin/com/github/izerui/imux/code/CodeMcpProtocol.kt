@@ -101,9 +101,12 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 "the line can be a declaration or any line that uses the symbol. Works for every language the IDE understands, " +
                 "including ones where IDEA MCP `analyze_calls` reports `No callable symbol found` (e.g. Go). " +
                 "Positions from `search_symbol`, compiler errors, or grep can be passed directly. " +
-                "Files in languages the IDE cannot analyze are listed separately as `unanalyzed_mentions`: check those yourself. " +
                 "`overrides_incomplete: true` means the search for what a method overrides stopped early because too many declarations share its name: " +
                 "the overrides, and calls made through them, may be incomplete — check the enclosing type's interfaces yourself."
+
+        /** 只有查用法、查调用方会补查「分析不了的文件」；继承、查依赖不会，说明里不能写。 */
+        private const val UNANALYZED_NOTE =
+            "Files in languages the IDE cannot analyze are listed separately as `unanalyzed_mentions`: check those yourself. "
 
         fun tools(): JsonArray = JsonArray().apply {
             add(tool(
@@ -113,7 +116,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "function or class it sits in. For a method that overrides or implements another, `overrides` lists what it overrides and " +
                     "`references_via_overridden` lists usages made through that interface or base type (e.g. `greeter.greet()` where greeter is the interface) — " +
                     "they can run this implementation too; `overridden_by` lists what overrides or implements it. " +
-                    "Use it before changing a symbol to see everything that depends on it. $POSITION_NOTE",
+                    "Use it before changing a symbol to see everything that depends on it. $UNANALYZED_NOTE$POSITION_NOTE",
             ))
             add(tool(
                 CALL_HIERARCHY,
@@ -123,7 +126,10 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
                     "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated; " +
                     "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
-                    "Every node carries file, line, and column, so any node can be queried again. $POSITION_NOTE",
+                    "Every node carries file, line, and column, so any node can be queried again. " +
+                    "For callers: $UNANALYZED_NOTE" +
+                    "A node marked `unanalyzed_not_checked` or `not_expanded` was not checked or walked further because the query ran out of time or max_results: " +
+                    "query that node again if it matters. $POSITION_NOTE",
             ) {
                 add("direction", JsonObject().apply {
                     addProperty("type", "string")

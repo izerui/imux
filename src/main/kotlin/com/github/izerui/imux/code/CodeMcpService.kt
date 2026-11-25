@@ -94,7 +94,8 @@ private class ProjectCodeBackend(private val project: Project) : CodeToolsBacken
      * 最多等 [REFRESH_WAIT_MS]，刷不完也照常查询，只是可能读到稍旧的内容。
      */
     private suspend fun syncFromDisk(file: String) {
-        val path = resolveQueryPath(project, file)
+        // 库文件（jar、jrt 里的）不在本地磁盘上，不用刷新。
+        val path = resolveQueryPath(project, file)?.takeUnless { "!/" in it }
         withTimeoutOrNull(REFRESH_WAIT_MS) {
             if (path != null) {
                 val fs = LocalFileSystem.getInstance()
