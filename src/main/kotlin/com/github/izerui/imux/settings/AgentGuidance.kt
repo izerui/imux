@@ -123,7 +123,7 @@ private object EN : GuidanceText {
             """
                 ## Map the chain
 
-                To understand a piece of code, consider who relies on it and whose contract it must keep. The IDE index connects declarations with the same name to their respective uses and follows interface dispatch and references across modules.
+                Use text search to find text or locate files. Once you have identified a symbol, prefer the IDE index when your conclusion depends on who calls it, what implements it, or which uses a change would affect. Read the relevant code to confirm how it behaves.
 
                 - To see who relies on a method or what it relies on, use `call_hierarchy`. Follow callers up to find affected entry points and callees down to see where the work goes. Calls found through an interface or base method are marked `via`.
                 - To see which contract a method or type implements, follow `supers` in `type_hierarchy`. When the contract changes, `implementations` shows which implementations may need updating.
@@ -219,7 +219,7 @@ private object ZH : GuidanceText {
             """
                 ## 摸清链路
 
-                一段代码是什么，还要看谁在依赖它、它得遵守谁的约定。遇到同名符号、接口分派或跨模块引用时，IDE 索引能把这些关系连起来。
+                查找文本或定位文件时，用文本搜索。定位到具体符号后，如果结论取决于谁调用它、谁实现它，或改动会影响哪些使用方，优先用 IDE 索引核对，再阅读相关源码确认实际行为。
 
                 - 谁在依赖它、它又依赖谁，用 `call_hierarchy`。想知道哪些入口会受影响，往上看调用方。想知道这一步把事情交给了谁，往下看被调用方。经由接口或父类方法找到的调用会标明 `via`，可以看出这层关系是怎么连上的。
                 - 它重写、实现了谁，又被谁重写、实现，用 `type_hierarchy`。往上看 `supers`，能找到它得遵守的约定。改的是约定本身，往下看 `implementations`，能找到哪些实现也得跟着变。
