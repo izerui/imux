@@ -2,7 +2,9 @@ package com.github.izerui.imux.settings
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.model.AgentType
+import com.intellij.ide.DataManager
 import com.intellij.openapi.options.BoundConfigurable
+import com.intellij.openapi.options.ex.Settings
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBCheckBox
 import com.github.izerui.imux.peer.PeerCoordinator
@@ -39,6 +41,13 @@ class ImuxSettingsConfigurable : BoundConfigurable("Imux") {
                 comment(ImuxBundle.message("settings.interface.language.comment"))
             }
             group(ImuxBundle.message("settings.group.sessions")) {
+                row {
+                    link(ImuxBundle.message("settings.sessions.terminal.font")) { event ->
+                        val context = DataManager.getInstance().getDataContext(event.source as java.awt.Component)
+                        val dialog = Settings.KEY.getData(context) ?: return@link
+                        dialog.find("terminal")?.let { dialog.select(it) }
+                    }
+                }
                 buttonsGroup(ImuxBundle.message("settings.open.session")) {
                     row {
                         radioButton(ImuxBundle.message("settings.open.session.single.click"), true)

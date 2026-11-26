@@ -78,13 +78,11 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                             .comment(ImuxBundle.message("settings.code.tools.inject.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
                 // 结束前自动检查用查代码工具的凭证找到项目，再经 IDEA MCP 检查：查代码工具关着时无从谈起。
-                indent {
-                    row {
-                        checkBox(ImuxBundle.message("settings.code.tools.edit.check"))
-                            .bindSelected(settings.state::autoCheckAfterEdit)
-                            .comment(ImuxBundle.message("settings.code.tools.edit.check.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
-                    }.enabledIf(codeToolsToggle.selected)
-                }
+                row {
+                    checkBox(ImuxBundle.message("settings.code.tools.edit.check"))
+                        .bindSelected(settings.state::autoCheckAfterEdit)
+                        .comment(ImuxBundle.message("settings.code.tools.edit.check.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
+                }.enabledIf(codeToolsToggle.selected)
             }
         }
     }
