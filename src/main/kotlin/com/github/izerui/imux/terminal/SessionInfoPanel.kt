@@ -48,6 +48,12 @@ internal class SessionInfoPanel(
     fun reading() { readStatus.text = msg("session.info.reading") }
     fun readFailed() { readStatus.text = msg("session.info.readFailed") }
 
+    fun missingRuntimeHeight(): Int {
+        val viewport = (tabs.getTabAt(0).component as JPanel).components.filterIsInstance<JBScrollPane>().single().viewport
+        if (viewport.extentSize.height <= 0) return 0
+        return (viewport.view.preferredSize.height - viewport.extentSize.height).coerceAtLeast(0)
+    }
+
     init {
         tabs.addListener(object : TabsListener {
             override fun selectionChanged(oldSelection: TabInfo?, newSelection: TabInfo?) {

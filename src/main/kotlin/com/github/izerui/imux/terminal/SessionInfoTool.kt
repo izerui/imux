@@ -78,6 +78,15 @@ internal class SessionInfoTool(
                 usage.last?.let { last -> "≈ " + NumberFormat.getPercentInstance().format(last.toDouble() / window) }
             } ?: msg("session.info.contextUnknown")
             panel.display(usage.total?.let(number::format) ?: msg("session.info.usagePending"), context, sections)
+            javax.swing.SwingUtilities.invokeLater {
+                if (popup.isDisposed || !panel.isShowing) return@invokeLater
+                panel.validate()
+                val screen = com.intellij.ui.ScreenUtil.getScreenRectangle(panel)
+                val size = popup.size
+                val available = screen.y + screen.height - panel.locationOnScreen.y - size.height - com.intellij.util.ui.JBUI.scale(4)
+                val extra = minOf(panel.missingRuntimeHeight(), available)
+                if (extra > 0) popup.setSize(java.awt.Dimension(size.width, size.height + extra))
+            }
         }
         fun reload() {
             job?.cancel()
