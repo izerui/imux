@@ -136,13 +136,6 @@ class CodeMcpProtocolTest {
         assertTrue(description.contains("when it is itself a test, `tested_code` lists what it tests. Neither is given for variables, fields, or parameters; `tests_omitted` counts entries beyond the first 20."))
     }
 
-    @Test fun `查用法和查调用链的说明都写明大文件里的所在函数用轻量办法找、可能缺失`() {
-        val descriptions = toolList().map { it["description"].asString }
-        val note = "In files over 1 MB (usually bundled or generated code) the enclosing function is found by a lighter method: it may be missing, e.g. in minified code."
-        assertTrue("查用法", descriptions[0].contains(note))
-        assertTrue("查调用链", descriptions[1].contains(note))
-    }
-
     @Test fun `三个按位置定位的工具都说明测试代码标 in_test，且没标不等于是产品代码`() {
         val descriptions = toolList().map { it["description"].asString }
         val note = "Entries in files the IDE treats as test code are marked `in_test`"

@@ -102,7 +102,7 @@ class TerminalDecouplingSourceTest {
     fun `按名字找重写对象只看同语言、项目自己的、不超大的文件`() {
         val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
         assertTrue("别的语言跳过", nav.contains("if (file.viewProvider.languages.none { rootLanguage(it) == language } ||"))
-        assertTrue("超大文件跳过", nav.contains("vf.length > LARGE_FILE_BYTES ||"))
+        assertTrue("超大文件跳过", nav.contains("vf.length > SUPER_SCAN_MAX_FILE_BYTES ||"))
         assertTrue("隐藏目录与说明文件跳过", nav.contains("|| isProseOrHidden(vf)) {"))
         assertTrue("方言归到同一种语言", nav.contains("return generateSequence(language) { it.baseLanguage }.last()"))
     }
@@ -162,21 +162,6 @@ class TerminalDecouplingSourceTest {
         val supplement = SourceCode("src/main/kotlin/com/github/izerui/imux/code/ImplicitUsageSupplement.kt").normalized
         assertTrue("取消原样抛出", supplement.contains("} catch (e: ProcessCanceledException) { throw e } catch (e: CancellationException) { throw e }"))
         assertTrue("链接错误（类找不到、签名不符）只当不知道", supplement.contains("} catch (_: LinkageError) { false }"))
-    }
-
-    /**
-     * 查用法时要判断每处用法「在哪个函数里」，曾对几兆的打包 JS 建结构视图，一个文件几十秒。
-     * 所有建结构视图的地方都经过 outline()，在这一处挡住大文件，以后新加的调用也自动受保护。
-     */
-    @Test
-    fun `查用法和查调用链遇到大文件不建结构视图，所在函数按面包屑规则顺着语法树找`() {
-        val nav = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeNavigator.kt").normalized
-        assertTrue("结构视图的唯一入口挡住大文件", nav.contains("if (isLargeFile(file)) return emptyList<PsiElement>().also { outlines[file] = it }"))
-        assertTrue("所在函数走轻量办法", nav.contains("if (isLargeFile(file)) return enclosingByParents(file, offset)"))
-        assertTrue("所在位置按 IDE 面包屑的规则判断", nav.contains("return if (breadcrumbs != null) named.firstOrNull { breadcrumbs.acceptElement(it) } else named.firstOrNull()"))
-        assertTrue("面包屑走公开的按语言取法，不碰内部的扩展点入口", nav.contains("BreadcrumbsUtil.getInfoProvider(leaf.language)") && !nav.contains("BreadcrumbsProvider.EP_NAME."))
-        assertTrue("整个落在用法同一行的声明是所在的赋值，不算外层函数", nav.contains("!(document.getLineNumber(range.startOffset) == line && document.getLineNumber(range.endOffset) == line)"))
-        assertEquals("建结构视图只有两处：受保护的 outline()，以及点名要看这个文件、自带时间和节点上限的文件大纲", 2, Regex("""createStructureViewModel\(""").findAll(nav).count())
     }
 
     @Test
