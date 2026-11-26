@@ -546,7 +546,7 @@ internal class CodeNavigator(private val project: Project) {
         // 记一处调用点；返回 false 表示额度用完、停止搜索。
         fun record(reference: PsiReference, searched: PsiElement, alias: String?): Boolean {
             val site = usageSite(reference.element, reference.rangeInElement) ?: return true
-            site.addProperty("usage", if (isCall(reference, searched)) "call" else "reference")
+            site.addProperty("usage", syntaxUsage(reference))
             if (searched != element) site.addProperty("via", "${nameOf(searched)} (${kindOf(searched)})")
             alias?.let { site.addProperty("via_alias", it) }
             // 每个调用点都计入 max_results；用完就停止搜索，免得被调用上万次的函数把搜索拖到底、把结果撑爆。
@@ -570,12 +570,15 @@ internal class CodeNavigator(private val project: Project) {
         })
         val callers = JsonArray()
         val referencedBy = JsonArray()
+        val uncertain = JsonArray()
         // 调用点在搜索时已计入额度，这里不再为调用方节点重复扣：否则额度刚好被调用点用完时，调用方会一个都显示不出来。
         for ((owner, sites) in groups) {
             // 只是把它当值交出去（`it::receive`、回调、事件处理器）的地方不是执行入口：单列出来，不往上追。
             if (sites.none { it.get("usage")?.asString == "call" }) {
-                referencedBy.add(describe(owner).apply {
+                val group = if (sites.any { it["usage"].asString == "unknown" }) uncertain else referencedBy
+                group.add(describe(owner).apply {
                     add("reference_sites", JsonArray().apply { sites.take(CALL_SITES_PER_CALLER).forEach(::add) })
+                    if (sites.size > CALL_SITES_PER_CALLER) addProperty("site_count", sites.size)
                 })
                 continue
             }
@@ -591,105 +594,53 @@ internal class CodeNavigator(private val project: Project) {
         }
         node.add("callers", callers)
         if (referencedBy.size() > 0) node.add("referenced_without_calling", referencedBy)
+        if (uncertain.size() > 0) node.add("unconfirmed_callers", uncertain)
         if (loose.size() > 0) node.add("references_outside_functions", loose)
         // 调用链在这里断了、却是框架或运行环境的入口时要说清：不是没人用，是框架在调。
         // 只查查询目标本身和找不到调用方的节点：判断测试方法这类入口一处要几毫秒到几百毫秒，而常用函数的调用方往往上百个是测试方法，
         // 每个都查会把查询拖慢一两秒；有调用方的节点链条没断，标不标都不影响结论。
-        val chainEndsHere = callers.size() == 0 && referencedBy.size() == 0 && loose.size() == 0
+        val chainEndsHere = callers.size() == 0 && referencedBy.size() == 0 && loose.size() == 0 && uncertain.size() == 0
         if ((path.size == 1 || chainEndsHere) && implicitlyUsed(element)) node.addProperty("implicit_usage", true)
         return node
     }
 
-    /**
-     * 这处引用是不是在调用它。不按语言写规则，只看引用前后紧挨的字符：名字后面紧跟 `(`，或函数后面紧跟尾随 lambda 的 `{`
-     * （可隔泛型实参 `<…>`），或前面紧贴 `<`（JSX、Vue 模板里把组件当标签渲染，`<` 前面不是操作数）、`@`（装饰器、注解），算调用；`::receive`、
-     * 作为参数传出去、赋给变量、Vue 模板 `@click="reset"` 这类只把它当值交出去的，算引用。
-     * 判断不了时归为引用：宁可少追一层，也不把注册回调的地方当成执行入口。
-     */
-    private fun isCall(reference: com.intellij.psi.PsiReference, target: PsiElement): Boolean {
+    private fun syntaxUsage(reference: PsiReference): String {
         val range = reference.absoluteRange
-        val (file, start) = hostPosition(reference.element, range.startOffset) ?: return false
-        // 说明文档里提到名字（Markdown 的 `Impl`）只是提及，反引号、括号这些迹象不代表调用。
-        if (file.virtualFile?.extension?.lowercase() in PROSE_EXTENSIONS) return false
-        val end = start + range.length
-        val text = PsiDocumentManager.getInstance(project).getDocument(file)?.charsSequence ?: return false
-        val isFunction = membersOf(target).isEmpty()
-
-        // 一、明确是调用的迹象。
-        val before = start - 1
-        if (before >= 0) {
-            // 装饰器、注解：`@decor`。
-            if (text[before] == '@') return true
-            // 组件标签：`<Header />`。`<` 必须紧贴名字，且前面不是操作数——`i < size`、`i<size`、`List<Foo>` 都不算。
-            if (text[before] == '<') {
-                val operand = before - 1
-                return operand < 0 || !(text[operand].isLetterOrDigit() || text[operand] == '_' || text[operand] == ')' || text[operand] == ']')
-            }
+        if (range.isEmpty) return "unknown"
+        var node = reference.element.containingFile?.findElementAt(range.endOffset - 1)?.node
+        while (node != null && node.textRange.endOffset == range.endOffset) {
+            val parent = node.treeParent ?: break
+            val kind = parent.elementType.toString().substringAfterLast(':').trim().uppercase()
+            val usage = classifyUsageRole(kind, parent.firstChildNode === node)
+            if (usage != null) return usage
+            node = parent
         }
-        var after = end
-        while (after < text.length && text[after].isWhitespace() && text[after] != '\n') after++
-        if (after < text.length && text[after] == '<') {
-            var depth = 0
-            while (after < text.length) {
-                when (text[after]) {
-                    '<' -> depth++
-                    '>' -> if (--depth == 0) { after++; break }
-                    '\n', ';', '{', '}' -> return false
-                }
-                after++
-            }
-        }
-        if (after < text.length && text[after] == '(') return true
-        // `{`：Kotlin、Swift 把最后一个参数写成尾随 lambda 的调用，如 `doWork { … }`。
-        // 只对函数类目标算数：类型名后面跟 `{` 是声明头里的父类型（`class Impl : Base {`）或结构体字面量。
-        if (after < text.length && text[after] == '{' && isFunction) return true
-
-        // 二、明确是当值交出去的迹象：这些都不是调用。
-        val lineStart = (start - 1 downTo 0).firstOrNull { text[it] == '\n' }?.let { it + 1 } ?: 0
-        val lineEnd = (end until text.length).firstOrNull { text[it] == '\n' } ?: text.length
-        val head = text.subSequence(lineStart, start).toString()
-        val tail = text.subSequence(end, lineEnd).toString()
-        // 去掉限定前缀（`controller.HandleOAuth`、`this::tick`、`Foo::bar`）再看前面紧挨的是什么。
-        val prefix = head.trimEnd().replace(Regex("""[\w$]+(\s*(\.|::|->)\s*)$"""), "").trimEnd()
-        val next = tail.trimStart().firstOrNull()
-        if (head.trimEnd().endsWith("::")) return false
-        // 作为参数：`register(handler)`、`f(a, handler)`；参数换行写时名字单独一行、后面跟 `,` 或 `)`。
-        if (next == ',' || (next == ')' && (prefix.isEmpty() || prefix.endsWith("(") || prefix.endsWith(",")))) return false
-        if (prefix.endsWith("=") && !prefix.endsWith("==") && (next == null || next == ';' || next == ',' || next == ')')) return false
-        if ((prefix.endsWith("\"") || prefix.endsWith("'")) && (next == '"' || next == '\'')) return false
-
-        // 三、都没有：函数出现在命令开头（Shell、Ruby、Scala 等不写括号的调用，如 `limit_notes "$f"`）算调用。
-        if (!isFunction || next == '=' || next == '.') return false
-        val command = head.trimEnd()
-        return command.isEmpty() || COMMAND_SEPARATORS.any { command.endsWith(it) && boundaryBefore(command, it) }
-    }
-
-    /** 关键字类分隔符（`then`、`do`）前面必须是空白或行首，避免 `undo` 这种词尾误配。 */
-    private fun boundaryBefore(command: String, separator: String): Boolean {
-        if (!separator.first().isLetter()) return true
-        val at = command.length - separator.length - 1
-        return at < 0 || !command[at].isLetterOrDigit()
+        return "unknown"
     }
 
     private fun callees(element: PsiElement, depth: Int, includeLibraries: Boolean, budget: Budget, path: Set<PsiElement>): JsonObject {
         val node = describe(element)
         if (depth <= 0) return node
         val targets = LinkedHashSet<PsiElement>()
-        var callsItself = false
+        val evidence = mutableMapOf<PsiElement, CallSiteEvidence>()
         PsiTreeUtil.processElements(element) { child ->
             for (reference in child.references) {
                 val resolved = resolve(reference) ?: continue
                 // 直接递归单独记下：下面排除「自己体内的东西」时会连自己一起排除掉。
                 // 只把自己当值交出去（`register(::tick)`）不是递归。
-                if (resolved == element) { if (isCall(reference, element)) callsItself = true; continue }
                 // 自己体内的局部变量、参数不算依赖；包、目录这类没有文件的节点也跳过。
-                if (resolved is PsiDirectory || resolved.containingFile == null || PsiTreeUtil.isAncestor(element, resolved, false)) continue
+                if (resolved is PsiDirectory || resolved.containingFile == null || (resolved != element && PsiTreeUtil.isAncestor(element, resolved, false))) continue
                 // 项目里的依赖只算结构视图里有的声明（函数、类型、字段、常量）：具名参数 `f(callableOnly = true)`
                 // 解析到的是别的函数的参数，不是依赖。库里的只计数，不在这里建结构视图。
-                if (!isInProject(resolved)) { targets += resolved; continue }
                 // 构造调用 `Budget(…)` 解析到构造函数，它不在结构视图里：换成外层同名的类。
-                val declaration = if (resolved in outline(resolved.containingFile)) resolved else sameNameOwner(resolved)
-                if (declaration != null && declaration != element) targets += declaration
+                val declaration = if (!isInProject(resolved) || resolved in outline(resolved.containingFile)) resolved else sameNameOwner(resolved)
+                if (declaration != null) {
+                    targets += declaration
+                    if (!includeLibraries && !isInProject(declaration)) continue
+                    evidence.getOrPut(declaration) { CallSiteEvidence() }.record(syntaxUsage(reference)) {
+                        usageSite(reference.element, reference.rangeInElement)
+                    }
+                }
             }
             true
         }
@@ -698,10 +649,13 @@ internal class CodeNavigator(private val project: Project) {
         val callees = JsonArray()
         for (target in if (includeLibraries) project + libraries else project) {
             if (!budget.take()) break
-            val expand = depth > 1 && target !in path && isProjectLeafMember(target)
-            callees.add(if (expand) callees(target, depth - 1, includeLibraries, budget, path + target) else describe(target))
+            val uses = evidence.getValue(target)
+            val expand = uses.called && depth > 1 && target !in path && isProjectLeafMember(target)
+            val child = if (expand) callees(target, depth - 1, includeLibraries, budget, path + target) else describe(target)
+            uses.writeTo(child)
+            if (target == element && uses.called) child.addProperty("recursive", true)
+            callees.add(child)
         }
-        if (callsItself) callees.add(describe(element).apply { addProperty("recursive", true) })
         node.add("callees", callees)
         if (!includeLibraries && libraries.isNotEmpty()) node.addProperty("library_callees_omitted", libraries.size)
         return node
@@ -1339,6 +1293,10 @@ internal class CodeNavigator(private val project: Project) {
     private fun openFile(path: String): Opened {
         fun fail(message: String) = Opened.Failed(codeFailure("file_not_found", message))
         val vf = findFile(path) ?: return fail("No file at $path. Pass a path relative to the project root or an absolute path.")
+        val canonical = vf.canonicalFile ?: return fail("Cannot resolve this file in the project or its dependencies.")
+        if (!fileIndex.isInContent(canonical) && !fileIndex.isInLibrary(canonical)) {
+            return Opened.Failed(codeFailure("outside_project", "The file is outside this project's content, libraries and SDK."))
+        }
         val psiFile = PsiManager.getInstance(project).findFile(vf) ?: return fail("The IDE cannot open $path.")
         val document = PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return fail("The IDE has no text for $path.")
         return Opened.File(psiFile, document)
@@ -1457,8 +1415,38 @@ internal fun resolveQueryPath(project: Project, path: String): String? {
 
 private const val UNANALYZED_LIMIT = 50
 
-/** 出现在这些符号之后的函数名，处在一条命令的开头。 */
-private val COMMAND_SEPARATORS = listOf(";", "&&", "||", "|", "$(", "`", "then", "do", "else", "!")
+internal class CallSiteEvidence {
+    private val sites = JsonArray()
+    private var count = 0
+    private var usage = "reference"
+    val called get() = usage == "call"
+
+    fun record(role: String, describeSite: () -> JsonObject?) {
+        count++
+        if (role == "call" || (role == "unknown" && !called)) usage = role
+        if (sites.size() < CALL_SITES_PER_CALLER) {
+            describeSite()?.let { site ->
+                site.addProperty("usage", role)
+                sites.add(site)
+            }
+        }
+    }
+
+    fun writeTo(node: JsonObject) {
+        node.addProperty("usage", usage)
+        node.add("sites", sites)
+        if (count > sites.size()) node.addProperty("site_count", count)
+    }
+}
+
+/** Only accept syntactic roles with a known meaning. Unrecognized language nodes stay unconfirmed. */
+internal fun classifyUsageRole(parentType: String, firstChild: Boolean): String? = when (parentType) {
+    "CALL_EXPRESSION", "METHOD_CALL_EXPRESSION", "JS_CALL_EXPRESSION", "GO_CALL_EXPR" ->
+        if (firstChild) "call" else null
+    "ARGUMENT_LIST", "VALUE_ARGUMENT", "EXPRESSION_LIST", "JS_ARGUMENT_LIST",
+    "GO_ARGUMENT_LIST", "CALLABLE_REFERENCE_EXPRESSION", "METHOD_REF_EXPRESSION" -> "reference"
+    else -> null
+}
 
 /** 对应的测试最多列几个。 */
 private const val RELATED_TESTS_LIMIT = 20

@@ -164,11 +164,11 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                 "Build the call chain of a function or method through the IDE's own reference index: who relies on it and what it relies on. " +
                     "Use it before changing it, and when reviewing, reading, or debugging code. " +
                     "direction=\"callers\" walks up who calls it, who calls those, and so on (default depth 3), grouping call sites under each caller. " +
-                    "Calls made through an interface or base method it overrides are included and marked `via`; calls through a renaming import (`import f as g`) are included and marked `via_alias`. Each site is marked usage=call or reference; " +
+                    "Calls made through an interface or base method it overrides are included and marked `via`; calls through a renaming import (`import f as g`) are included and marked `via_alias`. Each site is marked usage=call, reference or unknown; `unconfirmed_callers` contains owners with uncertain sites and no confirmed calls. " +
                     "places that only pass it as a value (method references, callbacks, event handlers) are listed under `referenced_without_calling` and not walked further. " +
                     "A caller already shown elsewhere in the tree is marked expanded_above instead of repeated. " +
                     "The queried function, and any caller whose chain ends with no callers of its own, is marked `implicit_usage` when a framework or the runtime uses it without any call in the code, so the chain may end there and still be in use. " +
-                    "direction=\"callees\" lists what its body uses — functions, methods, types, fields (default depth 1; deeper levels expand project functions; a call to itself is marked recursive). " +
+                    "direction=\"callees\" lists functions, methods, types and fields used by the body. Each dependency has `sites` with file, line, column, text and usage. Read individual sites for mixed uses; `site_count` gives the total when abbreviated. Only confirmed calls expand at deeper levels (default depth 1; a call to itself is marked recursive). " +
                     "Every node carries file, line, and column, so any node can be queried again. " +
                     "For callers: $UNANALYZED_NOTE" +
                     "A node marked `unanalyzed_not_checked` or `not_expanded` was not checked or walked further because the query ran out of time or max_results: " +

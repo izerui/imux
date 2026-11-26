@@ -57,8 +57,7 @@ object TerminalLaunchContributions {
         ) { closeAll(parts) }
 
     /**
-     * 各功能给 Claude 的 `--settings` 合成一份：`hooks` 按事件把各自的规则接在一起（手机桥接订阅用完工具、确认等事件，
-     * 结束前自动检查订阅发话和要结束，两边互不影响）；其它顶层项后来的覆盖先来的。只取第一份会把别的功能的 hook 丢掉。
+     * 各功能给 Claude 的 `--settings` 合成一份：`hooks` 按事件拼接规则，其它顶层项后来的覆盖先来的。
      * 某一份不是合法 JSON 时跳过它，不拖垮会话启动。
      */
     internal fun mergeClaudeSettings(parts: List<String>): String? {
@@ -102,9 +101,20 @@ object TerminalLaunchContributions {
         val parts = mutableListOf<TerminalLaunchContribution>()
         try {
             ep.extensionList.forEach { provider ->
-                val part = withTimeoutOrNull(5_000) { provider.prepare(project, tabId, agentType) }
-                    ?: throw IllegalStateException("terminal launch integration timed out")
-                parts += part
+                var prepared: TerminalLaunchContribution? = null
+                try {
+                    val part = withTimeoutOrNull(5_000) {
+                        provider.prepare(project, tabId, agentType).also { prepared = it }
+                    }
+                    if (part == null) {
+                        LOG.warn("Terminal integration timed out: ${provider.javaClass.name}")
+                    } else {
+                        parts += part
+                        prepared = null
+                    }
+                } finally {
+                    prepared?.close()
+                }
             }
             return merge(parts)
         } catch (e: Exception) {

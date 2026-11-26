@@ -13,30 +13,6 @@ import org.junit.Test
 import java.nio.file.Path
 
 class AgentCommandTest {
-    @Test
-    fun `Codex 新建和续聊都注册开始及结束检查`() {
-        for (shell in listOf("/bin/sh", "powershell.exe")) {
-            for (id in listOf(null, "existing")) {
-                val script = launchCommand(shell, AgentType.CODEX, id, codexEditCheck = Path.of("my plugin", "check.cjs")).last()
-                assertTrue(script.contains("hooks.UserPromptSubmit"))
-                assertTrue(script.contains("hooks.Stop"))
-                assertTrue(script.contains("check.cjs"))
-                assertFalse(script.contains("--dangerously-bypass-hook-trust"))
-            }
-        }
-    }
-
-    @Test
-    fun `结束检查适配器交回 IDE 错误并只请求一次修复`() {
-        val process = ProcessBuilder("node", "src/test/js/edit-check.test.mjs").redirectErrorStream(true).start()
-        try {
-            assertTrue("适配器测试超时", process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS))
-            assertEquals(process.inputStream.bufferedReader().readText(), 0, process.exitValue())
-        } finally {
-            process.destroyForcibly()
-        }
-    }
-
     private companion object {
         val IDEA_MCP = IdeaMcpEndpoint(port = 64342, projectPath = "/workspace")
         val CODEX_POSIX = "codex \$( ${cliHelpCommand(ShellDialect.POSIX, "codex")} | grep -E '^[[:space:]]*--no-alt-screen([[:space:]]|$)' >/dev/null && printf '%s\\n' '--no-alt-screen' )"

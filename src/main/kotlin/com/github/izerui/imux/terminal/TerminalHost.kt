@@ -822,7 +822,6 @@ class TerminalHost(
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
             claudeSettings = launchContributions[tabId]?.claudeSettings,
             newSession = true,
-            codexEditCheck = codexEditCheckFor(tabId, agentType),
             replyGuidance = replyGuidance,
         )
     }
@@ -849,15 +848,9 @@ class TerminalHost(
             pidFile = tabPidFileFor(tabId),
             additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
             claudeSettings = launchContributions[tabId]?.claudeSettings,
-            codexEditCheck = codexEditCheckFor(tabId, agentType),
             replyGuidance = replyGuidance,
         )
     }
-
-    private fun codexEditCheckFor(tabId: String, agentType: AgentType) =
-        if (agentType == AgentType.CODEX && launchContributions[tabId]?.environment?.get("IMUX_EDIT_CHECK") == "1") {
-            codexEditCheckScript()
-        } else null
 
     /**
      * Windows 上让 shell 自报 pid 的文件路径；其它平台返回 null。

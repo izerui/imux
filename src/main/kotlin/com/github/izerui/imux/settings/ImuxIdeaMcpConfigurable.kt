@@ -70,19 +70,11 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
             }
             // 使用引导没有单独开关：哪组工具开着，就自动带上哪部分引导（见 agentGuidance）。
             group(ImuxBundle.message("settings.code.tools.group")) {
-                lateinit var codeToolsToggle: Cell<JCheckBox>
                 row {
-                    codeToolsToggle =
-                        checkBox(ImuxBundle.message("settings.code.tools.inject"))
-                            .bindSelected(settings.state::injectCodeTools)
-                            .comment(ImuxBundle.message("settings.code.tools.inject.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
+                    checkBox(ImuxBundle.message("settings.code.tools.inject"))
+                        .bindSelected(settings.state::injectCodeTools)
+                        .comment(ImuxBundle.message("settings.code.tools.inject.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
-                // 结束前自动检查用查代码工具的凭证找到项目，再经 IDEA MCP 检查：查代码工具关着时无从谈起。
-                row {
-                    checkBox(ImuxBundle.message("settings.code.tools.edit.check"))
-                        .bindSelected(settings.state::autoCheckAfterEdit)
-                        .comment(ImuxBundle.message("settings.code.tools.edit.check.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
-                }.enabledIf(codeToolsToggle.selected)
             }
         }
     }

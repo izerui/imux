@@ -8,8 +8,6 @@ const SERVERS = [
 export default function (pi) {
   // 凭证读出后立即从环境中删除，不泄给子进程；扩展重载时从全局状态恢复。
   const state = (globalThis[STATE_KEY] ??= {});
-  if (process.env.IMUX_EDIT_CHECK === "1") state.editCheck = true;
-  delete process.env.IMUX_EDIT_CHECK;
   for (const server of SERVERS) {
     const supplied = { url: process.env[server.url], token: process.env[server.token] };
     delete process.env[server.url];
@@ -23,47 +21,6 @@ export default function (pi) {
   if (suppliedGuidance?.trim()) state.guidance = suppliedGuidance;
   const available = SERVERS.filter((server) => state[server.name]);
   if (available.length === 0) return;
-  if (state.editCheck && state.imux_code && typeof pi.on === "function") {
-    const endpoint = new URL("/imux/code-edit-check", state.imux_code.url);
-    let pending = false;
-    let repairing = false;
-    async function notify(event, timeout, release = false) {
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          redirect: "error",
-          headers: { Authorization: `Bearer ${state.imux_code.token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ hook_event_name: event, stop_hook_active: release }),
-          signal: AbortSignal.timeout(timeout),
-        });
-        if (response.ok) return await response.json();
-      } catch {
-        // Closing the tab or losing the IDE connection lets the turn finish.
-      }
-    }
-    pi.on("before_agent_start", async (event) => {
-      if (event.messageType !== "user") return;
-      repairing = false;
-      pending = Boolean(await notify("UserPromptSubmit", 5000));
-    });
-    pi.on("agent_before_settle", async (event) => {
-      if ((!pending && !repairing) || event.continue) return;
-      pending = false;
-      if (repairing || event.outcome !== "completed") {
-        repairing = false;
-        await notify("Stop", 5000, true);
-        return;
-      }
-      const result = await notify("Stop", 40000);
-      if (result?.decision === "block" && result.reason) {
-        repairing = true;
-        return {
-          entries: [{ type: "custom_message", customType: "imux-edit-check", content: result.reason, display: true }],
-          continue: true,
-        };
-      }
-    });
-  }
   if (typeof pi?.registerMcpServer !== "function") {
     console.error(`${available.map((server) => server.name).join(", ")} unavailable: this Pi version has no native MCP support.`);
     return;

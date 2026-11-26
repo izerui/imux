@@ -23,7 +23,9 @@ class PeerFeedbackMarkTest {
     fun `两种开头都认得出，用户自己的话认不成审查意见`() {
         assertTrue(isPeerFeedbackMessage(peerFeedbackMessage("x", chinese = true)))
         assertTrue(isPeerFeedbackMessage(peerFeedbackMessage("x", chinese = false)))
-        assertTrue("记录里前面带空白也认", isPeerFeedbackMessage("  \n【副驾驶审查意见｜…】\n\nx"))
+        assertTrue("记录里前面带空白也认", isPeerFeedbackMessage("  \n【副驾驶审查意见】\n\nx"))
+        assertFalse(isPeerFeedbackMessage("【副驾驶审查意见汇总】请先修第二条"))
+        assertFalse(isPeerFeedbackMessage("[Copilot reviewer] Use my notes"))
         assertTrue("被截断到只剩开头也认", isPeerFeedbackMessage("[Copilot review — not a user"))
         assertFalse(isPeerFeedbackMessage("帮我看看副驾驶审查意见对不对"))
         assertFalse(isPeerFeedbackMessage("please do a Copilot review"))
