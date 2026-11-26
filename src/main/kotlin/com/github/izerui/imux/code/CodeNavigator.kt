@@ -652,8 +652,7 @@ internal class CodeNavigator(private val project: Project) {
             val uses = evidence.getValue(target)
             val expand = uses.called && depth > 1 && target !in path && isProjectLeafMember(target)
             val child = if (expand) callees(target, depth - 1, includeLibraries, budget, path + target) else describe(target)
-            uses.writeTo(child)
-            if (target == element && uses.called) child.addProperty("recursive", true)
+            uses.writeTo(child, self = target == element)
             callees.add(child)
         }
         node.add("callees", callees)
@@ -1432,9 +1431,10 @@ internal class CallSiteEvidence {
         }
     }
 
-    fun writeTo(node: JsonObject) {
+    fun writeTo(node: JsonObject, self: Boolean = false) {
         node.addProperty("usage", usage)
         node.add("sites", sites)
+        if (self && called) node.addProperty("recursive", true)
         if (count > sites.size()) node.addProperty("site_count", count)
     }
 }

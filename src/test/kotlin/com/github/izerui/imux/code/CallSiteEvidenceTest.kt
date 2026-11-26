@@ -7,6 +7,15 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CallSiteEvidenceTest {
+    @Test fun `自身直接调用在返回节点和源码位置标为调用并注明递归`() {
+        val evidence = CallSiteEvidence()
+        evidence.record("call") { JsonObject().apply { addProperty("text", "visit(child)") } }
+        val node = JsonObject().also { evidence.writeTo(it, self = true) }
+        assertEquals("call", node["usage"].asString)
+        assertEquals(true, node["recursive"].asBoolean)
+        assertEquals("call", node.getAsJsonArray("sites").single().asJsonObject["usage"].asString)
+    }
+
     @Test fun `作为实参的 save 与随后直接调用的 save 分别保留行号与用法`() {
         val uses = CallSiteEvidence()
         uses.record(classifyUsageRole("ARGUMENT_LIST", false)!!) {
