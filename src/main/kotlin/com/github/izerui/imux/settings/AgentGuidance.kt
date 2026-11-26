@@ -129,7 +129,7 @@ private object EN : GuidanceText {
                 - To see which contract a method or type implements, follow `supers` in `type_hierarchy`. When the contract changes, `implementations` shows which implementations may need updating.
                 - To trace a value, use `find_references` on its parameter, field or shared state and inspect the read and write sites. When the meaning of a return value changes, callers can reveal where the old meaning is still assumed.
 
-                Match the investigation to the reach of the change. A caller of the method behind a failing context menu might reveal a toolbar button that reaches the same code. In a review, an implementation in another module might still follow the old interface contract even if its file is outside the diff.
+                When shared behavior changes, who else depends on the old contract?
 
                 To locate a symbol, give its `file`, declaration `line` and `symbol` name. Add `column` to distinguish candidates on the same line. If a call fails, read the reason. It may give the actual declaration line.
 
@@ -151,7 +151,7 @@ private object EN : GuidanceText {
             """
                 ## After editing
 
-                Saying the work is done takes evidence. The IDE can help verify different aspects of the change.
+                Saying the work is done takes evidence. What result will the user get in practice? How much of that have you verified? If the evidence covers only an intermediate step, verify the final result through the entry point the user normally uses. If the environment limits what you can check, say how far you got and what still needs confirmation. The IDE can help verify different aspects of the change.
 
                 - For changes involving cross-file references or public signatures, `build_project` builds the current IDE project and reports compiler errors with file and line.
                 - `lint_files` reports errors, warnings and framework inspections enabled for the project, such as Spring annotations, Android resources and JPA mappings. When a shared contract changes, the callers' files are also worth checking.
@@ -225,7 +225,7 @@ private object ZH : GuidanceText {
                 - 它重写、实现了谁，又被谁重写、实现，用 `type_hierarchy`。往上看 `supers`，能找到它得遵守的约定。改的是约定本身，往下看 `implementations`，能找到哪些实现也得跟着变。
                 - 一个值从哪来、流到哪去，可以对参数、字段或共享状态用 `find_references`，沿 IDE 找到的使用位置看谁在写、谁在读。改了方法返回值的含义，也可以沿调用处看，哪些地方还按旧约定处理结果。
 
-                力气花在和改动的波及面相称的地方。比如用户从右键菜单碰到了问题，定位到出错的方法以后，往上看一层调用方，可能会发现工具栏按钮也走这里。审查改动时也一样，接口改了，另一个模块的实现还沿用旧约定，即使那个文件没出现在本次改动里，也值得看一眼。
+                改动涉及共享行为时，还有谁依赖原来的约定？
 
                 定位符号时，给出文件 `file`、声明所在行 `line` 和符号名 `symbol`。同一行有几个候选时，再加列号 `column`。一次调用失败，先看返回的原因，有时结果里已经指出了声明实际在哪一行。
 
@@ -247,7 +247,7 @@ private object ZH : GuidanceText {
             """
                 ## 改完以后
 
-                “做完了”是一个需要证据的判断。看这次改动要验证什么，IDE 能在相应的环节提供证据。
+                “做完了”是一个需要证据的判断。用户实际使用时会得到什么结果？手里的证据验证到了哪一步？如果只验证了中间一段，就从实际入口核对最终结果。受环境限制时，说清楚已经验证到哪里，哪一步还有待确认。看这次改动要验证什么，IDE 能在相应的环节提供证据。
 
                 - 能不能编译。改动涉及跨文件引用或公共签名时，`build_project` 可以按当前 IDE 工程构建，给出带文件和行号的编译错误。
                 - IDE 能查到哪些问题。`lint_files` 可以看文件里的错误和警告，也能查到工程启用的框架规则，例如 Spring 注解、Android 资源和 JPA 映射。共享约定发生变化时，调用方所在的文件也值得一起看。
