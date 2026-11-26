@@ -104,12 +104,20 @@ class TerminalHost(
     private val pendingOpens = mutableMapOf<String, Job>()
     private val pendingSelections = mutableMapOf<String, Boolean>()
     private val launchContributions = mutableMapOf<String, TerminalLaunchContribution>()
+    internal fun serverLabelKey(tabId: String, name: String): String? = launchContributions[tabId]?.serverLabels?.get(name)
+    internal fun configuredServerNames(tabId: String): List<String> = launchContributions[tabId]?.let { part ->
+        part.servers.filterNot { part.serverLabels[it.name] in part.piRegistrationFailures }.map { it.name } +
+            listOfNotNull("idea".takeIf { part.ideaConfigured })
+    }.orEmpty()
     internal fun unavailableTools(tabId: String): Set<String> = launchContributions[tabId]?.let {
         it.unavailableTools + it.piRegistrationFailures
     }.orEmpty()
 
     internal fun updatePiRegistrationFailures(tabId: String, failed: Set<String>) {
         if (launchContributions[tabId]?.updatePiRegistrationFailures(failed) == true) SessionDecorations.changed()
+    }
+    internal fun recordPiCapabilities(report: com.github.izerui.imux.session.PiSessionReport) {
+        files.values.firstOrNull { it.tabId == report.tabId && it.agentType == AgentType.PI }?.piCapabilities = report
     }
     private val preparationLock = Mutex()
 
@@ -817,7 +825,7 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtensions = piExtensionsFor(agentType, ideaMcp, replyGuidance) + launchContributions[tabId]?.piExtensions.orEmpty(),
+            piExtensions = piExtensionsFor(agentType, ideaMcp, replyGuidance, tabId) + launchContributions[tabId]?.piExtensions.orEmpty(),
             ideaMcp = ideaMcp,
             ideaMcpGuidance = ideaMcpGuidance,
             initialPrompt = initialPrompt,
@@ -845,7 +853,7 @@ class TerminalHost(
             ),
             agentType,
             resumeId = sessionId,
-            piExtensions = piExtensionsFor(agentType, ideaMcp, replyGuidance) + launchContributions[tabId]?.piExtensions.orEmpty(),
+            piExtensions = piExtensionsFor(agentType, ideaMcp, replyGuidance, tabId) + launchContributions[tabId]?.piExtensions.orEmpty(),
             ideaMcp = ideaMcp,
             ideaMcpGuidance = ideaMcpGuidance,
             pidFile = tabPidFileFor(tabId),
@@ -882,11 +890,14 @@ class TerminalHost(
         agentType: AgentType,
         ideaMcp: IdeaMcpEndpoint?,
         replyGuidance: String?,
+        tabId: String,
     ): List<java.nio.file.Path> {
+        val ideaScript = if (agentType == AgentType.PI && ideaMcp != null) piIdeaMcpScript() else null
+        launchContributions[tabId]?.ideaConfigured = ideaMcp != null && (agentType != AgentType.PI || ideaScript != null)
         if (agentType != AgentType.PI) return emptyList()
         return buildList {
             piReporterScript()?.let(::add)
-            if (ideaMcp != null) piIdeaMcpScript()?.let(::add)
+            ideaScript?.let(::add)
             if (replyGuidance != null) piReplyStyleScript()?.let(::add)
         }
     }

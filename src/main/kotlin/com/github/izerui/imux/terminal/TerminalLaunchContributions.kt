@@ -39,6 +39,7 @@ class TerminalLaunchContribution(
     internal var piRegistrationFailures: Set<String> = emptySet()
         private set
     internal var serverLabels: Map<String, String> = emptyMap()
+    internal var ideaConfigured = false
 
     internal fun updatePiRegistrationFailures(failed: Set<String>): Boolean {
         val labels = failed.mapNotNullTo(linkedSetOf(), serverLabels::get)

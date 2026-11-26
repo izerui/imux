@@ -112,7 +112,7 @@ class PlainReplyLaunchTest {
             val body = host.compact(host.bodyAfter(entry, '{'))
             assertTrue(entry, body.contains("valreplyGuidance=configuredPlainReplyGuidance()"))
             assertTrue(entry, body.contains("replyGuidance=replyGuidance)"))
-            assertTrue(entry, body.contains("piExtensionsFor(agentType,ideaMcp,replyGuidance)"))
+            assertTrue(entry, body.contains("piExtensionsFor(agentType,ideaMcp,replyGuidance,tabId)"))
         }
         val create = host.compact(host.bodyAfter("private fun createView(", '{'))
         assertTrue(create.contains("valreplyGuidance=configuredPlainReplyGuidance()"))

@@ -362,7 +362,8 @@ class AgentTerminalFileEditor(
         }, shown = { missing().isNotEmpty() })
         val toolButtons =
             listOf(ToolPill(pairTool, pinned = true), ToolPill(talkTool), ToolPill(trailOverlay.tool)) +
-                SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill) + warning
+                SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill) +
+                ToolPill(SessionInfoTool(project, virtualFile, this) { toolStrip?.component }) + warning
         val toolStrip = TerminalToolStrip(resultChip, toolButtons)
         this.toolStrip = toolStrip
         toolStrip.refresh()

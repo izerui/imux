@@ -312,6 +312,7 @@ class SessionMonitor(
         coroutineScope.launch(Dispatchers.EDT) {
             if (project.isDisposed) return@launch
             val host = TerminalHost.getInstance(project)
+            if (report.activeTools != null || report.contextPercent != null || report.skillNames != null) host.recordPiCapabilities(report)
             when (report.type) {
                 PiReportType.SESSION_START -> {
                     report.failedMcpServers?.let { host.updatePiRegistrationFailures(report.tabId, it) }

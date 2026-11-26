@@ -9,6 +9,10 @@ data class PiSessionReport(
     val stopReason: PiStopReason? = null,
     val messageId: String? = null,
     val failedMcpServers: Set<String>? = null,
+    val activeTools: List<String>? = null,
+    val contextPercent: Int? = null,
+    val skillNames: List<String>? = null,
+    val skillLocations: Map<String, String> = emptyMap(),
 )
 
 enum class PiReportType(
@@ -81,7 +85,16 @@ internal fun parsePiReport(body: String): PiSessionReport? {
     val failures = if (type == PiReportType.SESSION_START) {
         JsonLineScanner.topLevelStringValue(body, "failedMcpServers")?.split(',')?.filter(String::isNotEmpty)?.toSet()
     } else null
-    return PiSessionReport(type, tabId, sessionId, cwd, stopReason, messageId, failures)
+    val tools = JsonLineScanner.topLevelStringValue(body, "activeTools")?.split(',')
+        ?.filter { it.isNotBlank() }?.distinct()?.sorted()
+    val percent = JsonLineScanner.topLevelStringValue(body, "contextPercent")?.toIntOrNull()?.takeIf { it in 0..100 }
+    val skills = JsonLineScanner.topLevelStringValue(body, "skillNames")?.lines()?.filter(String::isNotBlank)?.distinct()?.sorted()
+    val locations = if (skills.isNullOrEmpty() || "\"skillLocations\"" !in body) emptyMap() else runCatching {
+        com.google.gson.JsonParser.parseString(body).asJsonObject.getAsJsonObject("skillLocations").entrySet()
+            .filter { it.key in skills && it.value.isJsonPrimitive && it.value.asJsonPrimitive.isString }
+            .associate { it.key to it.value.asString }
+    }.getOrDefault(emptyMap())
+    return PiSessionReport(type, tabId, sessionId, cwd, stopReason, messageId, failures, tools, percent, skills, locations)
 }
 
 private fun looksLikePiSessionId(value: String): Boolean = PI_SESSION_ID.matches(value)

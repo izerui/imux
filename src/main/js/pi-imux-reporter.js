@@ -183,6 +183,21 @@ export default function (pi) {
         };
         if (stopReason) body.stopReason = stopReason;
         if (messageId) body.messageId = messageId;
+        try {
+          const tools = pi.getActiveTools?.();
+          if (Array.isArray(tools)) body.activeTools = tools.filter(t => typeof t === "string" && /^[\w.-]+$/.test(t)).slice(0, 256).join(",");
+          const percent = ctx.getContextUsage?.()?.percent;
+          if (Number.isFinite(percent)) body.contextPercent = String(Math.round(percent));
+        } catch { /* Older extensions may supply neither field. */ }
+        try {
+          const commands = pi.getCommands?.();
+          if (Array.isArray(commands)) {
+            const skills = commands.filter(c => c.source === "skill" && typeof c.name === "string");
+            body.skillNames = skills.map(c => c.name.replace(/^skill:/, "")).filter(n => n && !n.includes("\n")).join("\n");
+            body.skillLocations = Object.fromEntries(skills.filter(c => typeof c.sourceInfo?.path === "string")
+              .map(c => [c.name.replace(/^skill:/, ""), c.sourceInfo.path]));
+          }
+        } catch { /* Skill discovery is optional. */ }
         if (type === "session_start") {
           const failures = globalThis[Symbol.for("com.github.izerui.imux.pi-mcp")]?.registrationFailures;
           if (Array.isArray(failures)) body.failedMcpServers = failures.join(",");
