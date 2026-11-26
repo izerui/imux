@@ -27,14 +27,75 @@ const val CODE_MCP_PATH = "/imux/code-mcp"
 @Service(Service.Level.APP)
 class CodeMcpService(val scope: CoroutineScope) : Disposable {
     private val protocols = McpTokenRegistry<CodeMcpProtocol>()
+    /** 凭证对应的项目：结束前自动检查（[EditCheckHandler]）用同一份凭证找到会话所在的项目。 */
+    private val projects = java.util.concurrent.ConcurrentHashMap<String, Project>()
 
     fun register(project: Project): String {
-        return protocols.register(CodeMcpProtocol(ProjectCodeBackend(project), scope))
+        return protocols.register(CodeMcpProtocol(ProjectCodeBackend(project), scope)).also { projects[it] = project }
     }
 
+    /** 结束前自动检查：每个会话这一轮里变过的文件（绝对路径），你每发一句话就重新开始记。 */
+    private val turns = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+    @Volatile private var listening = false
+
     fun protocol(token: String): CodeMcpProtocol? = protocols[token]
-    fun revoke(token: String) = protocols.revoke(token)
-    override fun dispose() { protocols.clear() }
+    /** 凭证已撤销时为 null（撤销时一并删除）。 */
+    fun project(token: String): Project? = projects[token]?.takeIf { protocols[token] != null }
+    fun revoke(token: String) { protocols.revoke(token); projects.remove(token); turns.remove(token) }
+    override fun dispose() { protocols.clear(); projects.clear(); turns.clear() }
+
+    /** 这个会话开始新的一轮：清空记录，从现在起记它所在项目里变过的文件。凭证无效时返回 false。 */
+    fun startTurn(token: String): Boolean {
+        if (project(token) == null) return false
+        ensureListening()
+        turns[token] = java.util.concurrent.ConcurrentHashMap.newKeySet()
+        return true
+    }
+
+    /** 这一轮记下的文件；这一轮没开始记（比如插件更新后的旧会话）时为 null。 */
+    fun turnChanges(token: String): Set<String>? = turns[token]?.toSet()
+
+    /**
+     * 第一次有会话开始记时才接上两种通知，跟着服务一起释放：
+     * 文件内容变了（命令行、改文件工具在 IDE 外的修改，经文件监听上报后才有）；
+     * IDE 里的文档变了（IDE 重命名之类的修改可能还没存盘，文件层面看不到）。
+     */
+    private fun ensureListening() {
+        if (listening) return
+        synchronized(this) {
+            if (listening) return
+            listening = true
+            ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+                com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES,
+                object : com.intellij.openapi.vfs.newvfs.BulkFileListener {
+                    override fun after(events: List<com.intellij.openapi.vfs.newvfs.events.VFileEvent>) {
+                        if (turns.isEmpty()) return
+                        for (event in events) {
+                            if (event is com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent) continue
+                            record(event.file?.path ?: event.path)
+                        }
+                    }
+                },
+            )
+            com.intellij.openapi.editor.EditorFactory.getInstance().eventMulticaster.addDocumentListener(
+                object : com.intellij.openapi.editor.event.DocumentListener {
+                    override fun documentChanged(event: com.intellij.openapi.editor.event.DocumentEvent) {
+                        if (turns.isEmpty()) return
+                        com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(event.document)?.path?.let(::record)
+                    }
+                },
+                this,
+            )
+        }
+    }
+
+    /** 记到所在项目匹配的每个会话名下；这里只按项目路径粗筛，是不是项目代码留到检查时再判断。 */
+    private fun record(path: String) {
+        for ((token, changed) in turns) {
+            val base = projects[token]?.basePath ?: continue
+            if (path.startsWith("$base/")) changed += path
+        }
+    }
 
     companion object {
         fun getInstance(): CodeMcpService = ApplicationManager.getApplication().getService(CodeMcpService::class.java)

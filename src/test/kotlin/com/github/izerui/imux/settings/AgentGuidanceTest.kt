@@ -401,6 +401,20 @@ class AgentGuidanceTest {
     }
 
     @Test
+    fun `挂了查代码工具时跑测试先跑对应测试，没挂时不提 tests 字段，中英文各一份`() {
+        val enWith = agentGuidance(chinese = false, ideaMcp = true, codeTools = true)!!
+        val enWithout = agentGuidance(chinese = false, ideaMcp = true, codeTools = false)!!
+        val zhWith = agentGuidance(chinese = true, ideaMcp = true, codeTools = true)!!
+        val zhWithout = agentGuidance(chinese = true, ideaMcp = true, codeTools = false)!!
+        val en = "Run first the tests `find_references` lists under `tests` for what you changed; run the full suite only after those pass, and only when the change reaches further."
+        val zh = "先跑查用法结果里 `tests` 列出的、和改动相关的测试；它们通过后，改动波及更广时再跑全量。"
+        assertTrue("英文挂了查代码工具", enWith.contains("With no match, use the project's own test command. $en"))
+        assertFalse("英文没挂", enWithout.contains("`tests`"))
+        assertTrue("中文挂了查代码工具", zhWith.contains("没有匹配的就用项目自己的测试命令。$zh"))
+        assertFalse("中文没挂", zhWithout.contains("`tests`"))
+    }
+
+    @Test
     fun `英文运行时出错先看现场，并说明为什么不靠加 print 猜`() {
         assertTrue(enFull.contains("## When it fails at runtime: look at the scene instead of guessing"))
         assertTrue(enFull.contains("Adding print statements means guessing where the problem is and then editing code to test the guess; a breakpoint shows you the values at the moment it goes wrong."))

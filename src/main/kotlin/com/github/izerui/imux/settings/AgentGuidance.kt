@@ -57,7 +57,7 @@ internal fun agentGuidance(
         if (codeTools) add(text.chain(ideaMcp, worker))
         if (ideaMcp && worker) {
             add(text.whileEditing)
-            add(text.verify)
+            add(text.verify(codeTools))
             add(text.debugging)
             add(text.onDemand)
         }
@@ -83,7 +83,8 @@ private interface GuidanceText {
     fun look(codeTools: Boolean, worker: Boolean): String
     fun chain(ideaMcp: Boolean, worker: Boolean): String
     val whileEditing: String
-    val verify: String
+    /** [codeTools] 时多一句：先跑查用法给出的对应测试（`tests` 只在挂了查代码工具时才有）。 */
+    fun verify(codeTools: Boolean): String
     val debugging: String
 
     /** 特定场景才用得上的能力，和每次都该用的分开放，免得冷门的冲淡常用的。 */
@@ -191,7 +192,7 @@ private object EN : GuidanceText {
         - Format with `reformat_file`: it applies this project's own code style, not an external formatter's.
         """.trimIndent()
 
-    override val verify =
+    override fun verify(codeTools: Boolean) =
         """
         ## After editing: prove it is right before saying it is done
 
@@ -199,7 +200,7 @@ private object EN : GuidanceText {
         1. It compiles: when the change involves compiled code, cross-file references, or public signatures, run `build_project`, which reports compilation errors with file and line. Skip it when the project has no effective IDE build step.
         2. It introduced no new problems: run `lint_files` on every file you changed; it also checks framework rules the compiler ignores (Spring annotations, Android resources, JPA mappings, and so on). When the change touched a signature or shared behavior, also lint the files of the callers it affects: in languages without a compile step (Python, JavaScript), a caller left unchanged shows up only there.
         3. Behavior still holds: before running tests, check `get_run_configurations`; when one matches, use `execute_run_configuration` so the environment is the one the developer gets from Run. With no match, use the project's own test command.
-        """.trimIndent()
+        """.trimIndent() + if (codeTools) " Run first the tests `find_references` lists under `tests` for what you changed; run the full suite only after those pass, and only when the change reaches further." else ""
 
     override val debugging =
         """
@@ -325,7 +326,7 @@ private object ZH : GuidanceText {
         - 格式化用 `reformat_file`：用的是这个项目自己的代码风格，不是外部格式化工具的。
         """.trimIndent()
 
-    override val verify =
+    override fun verify(codeTools: Boolean) =
         """
         ## 改完以后：证明它是对的，再说做完了
 
@@ -333,7 +334,7 @@ private object ZH : GuidanceText {
         1. 能编译：改动涉及编译型代码、跨文件引用或公共签名时运行 `build_project`，它给出带文件和行号的编译错误。项目没有有效的 IDE 构建步骤就跳过。
         2. 没引入新问题：对每个改过的文件运行 `lint_files`，编译器不管的框架规则（Spring 注解、Android 资源、JPA 映射等）它也查。改动涉及签名或共享行为时，受它影响的调用方所在文件也一并检查：没有编译步骤的语言（Python、JavaScript）里，漏改的调用方只有这样才露得出来。
         3. 行为没坏：跑测试前先看 `get_run_configurations`，有匹配的就用 `execute_run_configuration`，环境和开发者点 Run 时一致；没有匹配的就用项目自己的测试命令。
-        """.trimIndent()
+        """.trimIndent() + if (codeTools) "先跑查用法结果里 `tests` 列出的、和改动相关的测试；它们通过后，改动波及更广时再跑全量。" else ""
 
     override val debugging =
         """

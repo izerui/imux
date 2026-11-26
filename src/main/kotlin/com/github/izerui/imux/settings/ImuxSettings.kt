@@ -90,6 +90,12 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
          */
         var injectCodeTools: Boolean by property(true)
 
+        /**
+         * Claude 结束一轮前，经 IDEA MCP 检查这一轮改过的文件，有错误就拦下让它先修（见 EditCheck）。
+         * 依赖查代码工具（凭证）和 IDEA MCP（检查）；每次收到通知时现读，关掉后已开着的会话立即不再检查。
+         */
+        var autoCheckAfterEdit: Boolean by property(true)
+
         /** 是否要求 imux 打开的会话用大白话写最终回复；与 IDEA MCP 无关，单独注入。 */
         var plainReplyEnabled: Boolean by property(true)
 

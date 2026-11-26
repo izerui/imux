@@ -71,7 +71,7 @@ class PeerReviewEventsTest {
         com.github.izerui.imux.terminal.TerminalMcpServer("imux_code", "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN"),
         mapOf("IMUX_CODE_URL" to "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN" to "code-token"),
         null,
-        onRelease,
+        revoke = onRelease,
     )
 
     @Test

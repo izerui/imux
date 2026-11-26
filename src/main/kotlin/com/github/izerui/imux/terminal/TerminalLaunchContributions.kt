@@ -52,9 +52,33 @@ object TerminalLaunchContributions {
             parts.flatMap { it.servers },
             parts.flatMap { it.environment.entries }.associate { it.toPair() },
             parts.flatMap { it.piExtensions }.distinct(),
-            parts.firstNotNullOfOrNull { it.claudeSettings },
+            mergeClaudeSettings(parts.mapNotNull { it.claudeSettings }),
             parts.flatMapTo(LinkedHashSet()) { it.guidance },
         ) { closeAll(parts) }
+
+    /**
+     * 各功能给 Claude 的 `--settings` 合成一份：`hooks` 按事件把各自的规则接在一起（手机桥接订阅用完工具、确认等事件，
+     * 结束前自动检查订阅发话和要结束，两边互不影响）；其它顶层项后来的覆盖先来的。只取第一份会把别的功能的 hook 丢掉。
+     * 某一份不是合法 JSON 时跳过它，不拖垮会话启动。
+     */
+    internal fun mergeClaudeSettings(parts: List<String>): String? {
+        if (parts.isEmpty()) return null
+        if (parts.size == 1) return parts.single()
+        val merged = com.google.gson.JsonObject()
+        val hooks = com.google.gson.JsonObject()
+        for (part in parts) {
+            val json = runCatching { com.google.gson.JsonParser.parseString(part).asJsonObject }.getOrNull() ?: continue
+            for ((key, value) in json.entrySet()) {
+                if (key != "hooks" || !value.isJsonObject) { merged.add(key, value); continue }
+                for ((event, rules) in value.asJsonObject.entrySet()) {
+                    val list = hooks.getAsJsonArray(event) ?: com.google.gson.JsonArray().also { hooks.add(event, it) }
+                    if (rules.isJsonArray) list.addAll(rules.asJsonArray)
+                }
+            }
+        }
+        if (hooks.size() > 0) merged.add("hooks", hooks)
+        return merged.toString()
+    }
 
     /**
      * 逐个释放：某个功能释放出错也要接着释放后面的（否则后面发出的凭证不会撤销）。

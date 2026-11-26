@@ -23,6 +23,7 @@ class CodeLaunchContributor : TerminalLaunchContributor {
             listOf(lease.server),
             lease.environment,
             listOfNotNull(lease.piExtension),
+            lease.claudeSettings,
             guidance = lease.guidance,
         ) { lease.release() }
     }

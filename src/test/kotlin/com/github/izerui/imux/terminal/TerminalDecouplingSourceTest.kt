@@ -166,6 +166,31 @@ class TerminalDecouplingSourceTest {
     }
 
     @Test
+    fun `结束前自动检查只给会话终端的 Claude 挂，处理器已登记，副驾驶审查和需求澄清不挂`() {
+        val lease = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeToolsLease.kt").normalized
+        assertTrue("只给 Claude、开关开着才挂", lease.contains("val editCheck = if (agentType == AgentType.CLAUDE && ImuxSettings.getInstance().state.autoCheckAfterEdit) {"))
+        val contributor = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeLaunchContributor.kt").normalized
+        assertTrue("会话终端交给 Claude", contributor.contains("listOfNotNull(lease.piExtension), lease.claudeSettings,"))
+        val plugin = SourceCode("src/main/resources/META-INF/plugin.xml").normalized
+        assertTrue("处理器已登记", plugin.contains("<httpRequestHandler implementation=\"com.github.izerui.imux.code.EditCheckHandler\"/>"))
+        val readOnly = java.io.File("src/main/kotlin/com/github/izerui/imux").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" && (it.path.contains("/peer/") || it.path.contains("/clarification/")) && it.readText().contains("claudeSettings") }
+            .map { it.path }.toList()
+        assertEquals("副驾驶审查、需求澄清不挂", emptyList<String>(), readOnly)
+        val handler = SourceCode("src/main/kotlin/com/github/izerui/imux/code/EditCheckHandler.kt").normalized
+        assertTrue("每次现读开关和 IDEA MCP", handler.contains("editCheckWanted(event, files, settings.state.autoCheckAfterEdit, settings.state.injectIdeaMcp)"))
+        assertTrue("发话时开始记", handler.contains("EditCheck.Event.TurnStart -> { service.startTurn(token); reply(channel, version, keepAlive, 200) }"))
+        assertTrue("检查前先同步磁盘改动", handler.contains("RefreshQueue.getInstance().refresh(true, true,"))
+        assertTrue("只查项目里的代码", handler.contains("if (!index.isInContent(file) || index.isExcluded(file)) return@mapNotNull null"))
+        val service = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeMcpService.kt").normalized
+        assertTrue("按文件变化记（不看用了什么工具）", service.contains("com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES"))
+        assertTrue("IDE 里没存盘的改动也记", service.contains("eventMulticaster.addDocumentListener("))
+        assertTrue("会话关闭时记录随凭证撤销", service.contains("fun revoke(token: String) { protocols.revoke(token); projects.remove(token); turns.remove(token) }"))
+        assertTrue("只认本机请求", handler.contains("if (!loopbackAllowed(request, context)) { reply(channel, version, keepAlive, 403); return true }"))
+        assertTrue("检查放到后台", handler.contains("service.scope.launch(Dispatchers.IO) {"))
+    }
+
+    @Test
     fun `文件大纲不等索引，其它查询要等索引`() {
         val service = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeMcpService.kt").normalized
         assertTrue(service.contains("run(file, needsIndex = false) { CodeNavigator(project).fileOutline(file, limit) }"))

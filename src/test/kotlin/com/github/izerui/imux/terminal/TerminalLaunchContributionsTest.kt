@@ -3,6 +3,7 @@ package com.github.izerui.imux.terminal
 import com.github.izerui.imux.settings.GuidanceCapability
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Path
 
@@ -18,7 +19,7 @@ class TerminalLaunchContributionsTest {
     }
 
     @Test
-    fun `合并后服务按顺序拼接，环境变量合在一起，Pi 扩展去重，Claude 设置取第一个`() {
+    fun `合并后服务按顺序拼接，环境变量合在一起，Pi 扩展去重，只有一份 Claude 设置时原样保留`() {
         val shared = Path.of("/tmp/pi-imux-mcp.js")
         val merged = TerminalLaunchContributions.merge(listOf(
             TerminalLaunchContribution(listOf(server("a")), mapOf("A" to "1"), listOf(shared)),
@@ -29,6 +30,25 @@ class TerminalLaunchContributionsTest {
         assertEquals(listOf(shared), merged.piExtensions)
         assertEquals("{}", merged.claudeSettings)
         assertNull(TerminalLaunchContributions.merge(listOf(TerminalLaunchContribution())).claudeSettings)
+    }
+
+    @Test
+    fun `两份 Claude 设置的 hook 按事件接在一起，手机和改完检查都保留，其它顶层项保留`() {
+        val mobile = """{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":[{"url":"m1"}]}],"PostToolUse":[{"matcher":"*","hooks":[{"url":"m2"}]}]}}"""
+        val editCheck = """{"hooks":{"PostToolUse":[{"matcher":"Edit|Write","hooks":[{"url":"e1"}]}]},"other":1}"""
+        val merged = com.google.gson.JsonParser.parseString(TerminalLaunchContributions.mergeClaudeSettings(listOf(mobile, editCheck))!!).asJsonObject
+        val hooks = merged.getAsJsonObject("hooks")
+        assertEquals("手机的确认事件还在", "m1", hooks.getAsJsonArray("PermissionRequest")[0].asJsonObject.getAsJsonArray("hooks")[0].asJsonObject["url"].asString)
+        val postToolUse = hooks.getAsJsonArray("PostToolUse").map { it.asJsonObject["matcher"].asString }
+        assertEquals("用完工具事件两份都在、手机在前", listOf("*", "Edit|Write"), postToolUse)
+        assertEquals("其它顶层项保留", 1, merged["other"].asInt)
+    }
+
+    @Test
+    fun `没有 Claude 设置时为空，有一份不是合法 JSON 时跳过它`() {
+        assertNull(TerminalLaunchContributions.mergeClaudeSettings(emptyList()))
+        val merged = TerminalLaunchContributions.mergeClaudeSettings(listOf("not json", """{"hooks":{"PostToolUse":[{"matcher":"Edit"}]}}"""))!!
+        assertTrue(merged.contains("\"matcher\":\"Edit\""))
     }
 
     @Test

@@ -20,6 +20,11 @@ class CodeToolsLease internal constructor(
     val environment: Map<String, String>,
     /** Pi 靠这个扩展登记插件内置 MCP；其它 CLI 为 null。 */
     val piExtension: Path?,
+    /**
+     * 只有 Claude、且开着「结束前自动检查」时才有：发话时、要结束时通知 imux（见 EditCheck）。
+     * 只给会话终端用；副驾驶审查、需求澄清只查不改，不挂。
+     */
+    val claudeSettings: String? = null,
     private val revoke: () -> Unit,
 ) {
     /** 挂上这组工具，引导词就要带上「摸清链路」一节。 */
@@ -54,10 +59,14 @@ class CodeToolsLease internal constructor(
             val service = CodeMcpService.getInstance()
             val token = service.register(project)
             val url = "http://127.0.0.1:$port$CODE_MCP_PATH"
+            val editCheck = if (agentType == AgentType.CLAUDE && ImuxSettings.getInstance().state.autoCheckAfterEdit) {
+                editCheckHookSettings("http://127.0.0.1:$port$CODE_EDIT_CHECK_PATH", TOKEN_ENV)
+            } else null
             return CodeToolsLease(
                 TerminalMcpServer(CODE_MCP_SERVER, url, TOKEN_ENV),
                 mapOf(URL_ENV to url, TOKEN_ENV to token),
                 piExtension,
+                editCheck,
             ) { service.revoke(token) }
         }
     }

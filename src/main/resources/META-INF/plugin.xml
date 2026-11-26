@@ -206,6 +206,7 @@
         <httpRequestHandler implementation="com.github.izerui.imux.bridge.mcp.ClaudeHookHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.peer.mcp.PeerMcpHandler"/>
         <httpRequestHandler implementation="com.github.izerui.imux.code.CodeMcpHandler"/>
+        <httpRequestHandler implementation="com.github.izerui.imux.code.EditCheckHandler"/>
 
         <statusBarWidgetFactory
                 id="imux.phoneBridge"
