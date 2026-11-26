@@ -1,6 +1,7 @@
 package com.github.izerui.imux.code
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.settings.ImuxSettings
 import com.github.izerui.imux.terminal.TerminalLaunchContribution
 import com.github.izerui.imux.terminal.TerminalLaunchContributor
 import com.intellij.openapi.project.Project
@@ -21,7 +22,9 @@ class CodeLaunchContributor : TerminalLaunchContributor {
             ?: return TerminalLaunchContribution()
         return TerminalLaunchContribution(
             listOf(lease.server),
-            lease.environment,
+            if (agentType != AgentType.CLAUDE && ImuxSettings.getInstance().state.autoCheckAfterEdit) {
+                lease.environment + ("IMUX_EDIT_CHECK" to "1")
+            } else lease.environment,
             listOfNotNull(lease.piExtension),
             lease.claudeSettings,
             guidance = lease.guidance,

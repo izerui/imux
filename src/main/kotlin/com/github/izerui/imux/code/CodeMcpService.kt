@@ -35,7 +35,7 @@ class CodeMcpService(val scope: CoroutineScope) : Disposable {
     }
 
     /** 结束前自动检查：每个会话这一轮里变过的文件（绝对路径），你每发一句话就重新开始记。 */
-    private val turns = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+    internal val turns = EditCheckTurns()
     @Volatile private var listening = false
 
     fun protocol(token: String): CodeMcpProtocol? = protocols[token]
@@ -46,14 +46,15 @@ class CodeMcpService(val scope: CoroutineScope) : Disposable {
 
     /** 这个会话开始新的一轮：清空记录，从现在起记它所在项目里变过的文件。凭证无效时返回 false。 */
     fun startTurn(token: String): Boolean {
-        if (project(token) == null) return false
+        val root = project(token)?.basePath ?: return false
         ensureListening()
-        turns[token] = java.util.concurrent.ConcurrentHashMap.newKeySet()
+        turns.start(token, root)
+        if (project(token) == null) {
+            turns.remove(token)
+            return false
+        }
         return true
     }
-
-    /** 这一轮记下的文件；这一轮没开始记（比如插件更新后的旧会话）时为 null。 */
-    fun turnChanges(token: String): Set<String>? = turns[token]?.toSet()
 
     /**
      * 第一次有会话开始记时才接上两种通知，跟着服务一起释放：
@@ -69,10 +70,9 @@ class CodeMcpService(val scope: CoroutineScope) : Disposable {
                 com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES,
                 object : com.intellij.openapi.vfs.newvfs.BulkFileListener {
                     override fun after(events: List<com.intellij.openapi.vfs.newvfs.events.VFileEvent>) {
-                        if (turns.isEmpty()) return
                         for (event in events) {
                             if (event is com.intellij.openapi.vfs.newvfs.events.VFileDeleteEvent) continue
-                            record(event.file?.path ?: event.path)
+                            turns.record(event.file?.path ?: event.path)
                         }
                     }
                 },
@@ -80,20 +80,11 @@ class CodeMcpService(val scope: CoroutineScope) : Disposable {
             com.intellij.openapi.editor.EditorFactory.getInstance().eventMulticaster.addDocumentListener(
                 object : com.intellij.openapi.editor.event.DocumentListener {
                     override fun documentChanged(event: com.intellij.openapi.editor.event.DocumentEvent) {
-                        if (turns.isEmpty()) return
-                        com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(event.document)?.path?.let(::record)
+                        com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getFile(event.document)?.path?.let(turns::record)
                     }
                 },
                 this,
             )
-        }
-    }
-
-    /** 记到所在项目匹配的每个会话名下；这里只按项目路径粗筛，是不是项目代码留到检查时再判断。 */
-    private fun record(path: String) {
-        for ((token, changed) in turns) {
-            val base = projects[token]?.basePath ?: continue
-            if (path.startsWith("$base/")) changed += path
         }
     }
 

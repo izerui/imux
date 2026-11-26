@@ -166,7 +166,7 @@ class TerminalDecouplingSourceTest {
     }
 
     @Test
-    fun `结束前自动检查只给会话终端的 Claude 挂，处理器已登记，副驾驶审查和需求澄清不挂`() {
+    fun `Claude 的检查走会话终端的 HTTP 钩子，处理器已登记，副驾驶审查和需求澄清不挂`() {
         val lease = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeToolsLease.kt").normalized
         assertTrue("只给 Claude、开关开着才挂", lease.contains("val editCheck = if (agentType == AgentType.CLAUDE && ImuxSettings.getInstance().state.autoCheckAfterEdit) {"))
         val contributor = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeLaunchContributor.kt").normalized
@@ -178,8 +178,8 @@ class TerminalDecouplingSourceTest {
             .map { it.path }.toList()
         assertEquals("副驾驶审查、需求澄清不挂", emptyList<String>(), readOnly)
         val handler = SourceCode("src/main/kotlin/com/github/izerui/imux/code/EditCheckHandler.kt").normalized
-        assertTrue("每次现读开关和 IDEA MCP", handler.contains("editCheckWanted(event, files, settings.state.autoCheckAfterEdit, settings.state.injectIdeaMcp)"))
-        assertTrue("发话时开始记", handler.contains("EditCheck.Event.TurnStart -> { service.startTurn(token); reply(channel, version, keepAlive, 200) }"))
+        assertTrue("每次现读开关和 IDEA MCP", handler.contains("settings.state.autoCheckAfterEdit && settings.state.injectIdeaMcp"))
+        assertTrue("发话时开始记", handler.contains("EditCheck.Event.TurnStart -> { service.startTurn(token)"))
         assertTrue("检查前先同步磁盘改动", handler.contains("RefreshQueue.getInstance().refresh(true, true,"))
         assertTrue("只查项目里的代码", handler.contains("if (!index.isInContent(file) || index.isExcluded(file)) return@mapNotNull null"))
         val service = SourceCode("src/main/kotlin/com/github/izerui/imux/code/CodeMcpService.kt").normalized

@@ -48,6 +48,7 @@ internal fun launchCommand(
     claudeSettings: String? = null,
     newSession: Boolean = false,
     replyGuidance: String? = null,
+    codexEditCheck: java.nio.file.Path? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
     val cli = when (agentType) {
@@ -70,10 +71,17 @@ internal fun launchCommand(
     val settingsArgument = claudeSettings
         ?.takeIf { agentType == AgentType.CLAUDE }
         ?.let { "--settings ${quoteEmbeddingDoubleQuotes(dialect, it)}" }
+    val codexHooks = codexEditCheck?.takeIf { agentType == AgentType.CODEX }?.let { path ->
+        val command = tomlBasicString("node ${quote(dialect, path.toString())}")
+        listOf("UserPromptSubmit" to 6, "Stop" to 42).joinToString(" ") { (event, timeout) ->
+            val rule = "hooks.$event=[{hooks=[{type=\"command\",command=$command,timeout=$timeout}]}]"
+            "-c ${quoteEmbeddingDoubleQuotes(dialect, rule)}"
+        }
+    }
     val script =
         when {
             resumeId == null -> {
-                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, codexHooks).joinToString(" ")
             }
 
             // pi 的 --session-id 对已存在的 id 是打开、不存在则以该 id 创建，
@@ -94,7 +102,7 @@ internal fun launchCommand(
             }
 
             agentType == AgentType.CODEX -> {
-                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, "resume", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, codexHooks, "resume", quote(dialect, resumeId)).joinToString(" ")
             }
 
             else -> {

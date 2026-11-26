@@ -126,6 +126,7 @@ class TerminalHostWiringSourceTest {
                     additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
                     claudeSettings = launchContributions[tabId]?.claudeSettings,
                     newSession = true,
+                    codexEditCheck = codexEditCheckFor(tabId, agentType),
                     replyGuidance = replyGuidance,
                 )
             }
@@ -171,6 +172,7 @@ class TerminalHostWiringSourceTest {
                     pidFile = tabPidFileFor(tabId),
                     additionalMcpServers = launchContributions[tabId]?.servers.orEmpty(),
                     claudeSettings = launchContributions[tabId]?.claudeSettings,
+                    codexEditCheck = codexEditCheckFor(tabId, agentType),
                     replyGuidance = replyGuidance,
                 )
             }

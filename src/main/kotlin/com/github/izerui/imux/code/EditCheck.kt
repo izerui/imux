@@ -24,8 +24,7 @@ import java.time.Duration
  * 为什么经 IDEA MCP 而不自己检查：IDE 后台跑检查的入口 `DaemonCodeAnalyzerImpl.runMainPasses` 是内部接口，
  * IDEA MCP 的 `lint_files` 是公开工具、内部就是这样调的。代价是只有开着 IDEA MCP 的会话才有。
  *
- * 三个 CLI：Claude 由这里提供；Codex 的 hook 用启动参数能挂上，但默认不被信任，要生效只能让整个会话跳过 hook 信任检查，
- * 暂不提供；Pi 由 pi-lens 之类的扩展在改完时检查，imux 不重复提供。
+ * Claude 用 HTTP hook，Codex 用命令 hook，Pi 用扩展结束事件；三者都把本轮事件交给同一个检查入口。
  */
 const val CODE_EDIT_CHECK_PATH = "/imux/code-edit-check"
 

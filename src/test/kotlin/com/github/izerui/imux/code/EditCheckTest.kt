@@ -19,15 +19,57 @@ class EditCheckTest {
         assertEquals("请求体不是 JSON", EditCheck.Event.Other, EditCheck.event(null))
     }
 
-    @Test fun `结束时拦过就放行、开关关着、IDEA MCP 没开、这一轮没改动都不查，否则查`() {
-        val first = EditCheck.Event.TurnEnd(alreadyBlocked = false)
-        val changed = setOf("/p/a.kt")
-        assertTrue("都满足", editCheckWanted(first, changed, enabled = true, ideaMcp = true))
-        assertFalse("拦过一次", editCheckWanted(EditCheck.Event.TurnEnd(alreadyBlocked = true), changed, enabled = true, ideaMcp = true))
-        assertFalse("开关关着", editCheckWanted(first, changed, enabled = false, ideaMcp = true))
-        assertFalse("IDEA MCP 没开", editCheckWanted(first, changed, enabled = true, ideaMcp = false))
-        assertFalse("这一轮没改动", editCheckWanted(first, emptySet(), enabled = true, ideaMcp = true))
-        assertFalse("这一轮没开始记", editCheckWanted(first, null, enabled = true, ideaMcp = true))
+    @Test fun `磁盘刷新时才出现的文件会送检，结束后空闲标签释放记录`() = kotlinx.coroutines.runBlocking {
+        val turns = EditCheckTurns()
+        turns.start("a", "/proj")
+        val inspected = mutableListOf<String>()
+        finishEditCheck(turns, "a", turns.claim("a")!!, { true }, { turns.record("/proj/late.kt") }, {
+            inspected.addAll(it)
+            null
+        })
+        assertEquals(listOf("/proj/late.kt"), inspected)
+        turns.record("/proj/idle.kt")
+        assertNull(turns.claim("a"))
+    }
+
+    @Test fun `并行改同一工程的会话都放行，另一个工程照常检查`() = kotlinx.coroutines.runBlocking {
+        val turns = EditCheckTurns()
+        turns.start("a", "/proj")
+        turns.start("b", "/proj")
+        turns.start("c", "/other")
+        turns.record("/proj/a.kt")
+        turns.record("/other/c.kt")
+        for (token in listOf("a", "b")) {
+            assertNull(finishEditCheck(turns, token, turns.claim(token)!!, { true }, {}, { error("不应检查 $token") }))
+        }
+        assertEquals("error", finishEditCheck(turns, "c", turns.claim("c")!!, { true }, {}, {
+            assertEquals(setOf("/other/c.kt"), it)
+            "error"
+        }))
+    }
+
+    @Test fun `等待检查期间关闭开关会丢弃报告`() = kotlinx.coroutines.runBlocking {
+        val turns = EditCheckTurns()
+        turns.start("a", "/proj")
+        turns.record("/proj/a.kt")
+        var enabled = true
+        assertNull(finishEditCheck(turns, "a", turns.claim("a")!!, { enabled }, {}, { enabled = false; "error" }))
+        assertFalse(enabled)
+        assertNull(turns.claim("a"))
+    }
+
+    @Test fun `超过整轮预算会中断等待并释放记录`() = kotlinx.coroutines.runBlocking {
+        val turns = EditCheckTurns()
+        turns.start("a", "/proj")
+        turns.record("/proj/a.kt")
+        var interrupted = false
+        assertNull(finishEditCheck(turns, "a", turns.claim("a")!!, { true }, {}, {
+            kotlinx.coroutines.runInterruptible(kotlinx.coroutines.Dispatchers.IO) {
+                try { Thread.sleep(5000); "late" } catch (_: InterruptedException) { interrupted = true; null }
+            }
+        }, budgetMillis = 300))
+        assertTrue(interrupted)
+        assertNull(turns.claim("a"))
     }
 
     private val lint = json(

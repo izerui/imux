@@ -169,6 +169,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
     from("src/main/js/pi-imux-idea-mcp.js") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-reply-style.js") { into("${project.name}/scripts") }
     from("src/main/js/pi-imux-mcp.js") { into("${project.name}/scripts") }
+    from("src/main/js/codex-imux-edit-check.cjs") { into("${project.name}/scripts") }
 }
 
 // 本项目有一批「源码级」测试：ImuxLspUiSourceTest、PluginXmlRegistrationTest、
@@ -186,6 +187,7 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
 // 代价是注释改动也会触发一次测试，相对于假绿是划算的。
 tasks.test {
     inputs.dir("src/main/cli-capabilities")
+    inputs.file("src/test/js/edit-check.test.mjs")
     listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
         inputs
             .dir(dir)

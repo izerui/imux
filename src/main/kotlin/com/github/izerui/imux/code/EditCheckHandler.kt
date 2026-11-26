@@ -29,6 +29,7 @@ import io.netty.handler.codec.http.QueryStringDecoder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.ide.HttpRequestHandler
@@ -58,18 +59,28 @@ class EditCheckHandler : HttpRequestHandler() {
         val body = runCatching { JsonParser.parseString(request.content().toString(Charsets.UTF_8)).asJsonObject }.getOrNull()
         val settings = ImuxSettings.getInstance()
         when (val event = EditCheck.event(body)) {
-            EditCheck.Event.TurnStart -> { service.startTurn(token); reply(channel, version, keepAlive, 200) }
+            EditCheck.Event.TurnStart -> {
+                service.startTurn(token)
+                reply(channel, version, keepAlive, 200)
+            }
             is EditCheck.Event.TurnEnd -> {
-                val files = service.turnChanges(token)
-                if (!editCheckWanted(event, files, settings.state.autoCheckAfterEdit, settings.state.injectIdeaMcp)) {
+                val turn = service.turns.claim(token)
+                if (turn == null) {
                     reply(channel, version, keepAlive, 200); return true
                 }
-                val project = service.project(token) ?: run { reply(channel, version, keepAlive, 200); return true }
+                val project = service.project(token)
+                if (project == null || event.alreadyBlocked) {
+                    service.turns.finish(token, turn)
+                    reply(channel, version, keepAlive, 200); return true
+                }
                 val port = settings.state.ideaMcpPort.takeIf { it in 1..65535 } ?: DEFAULT_IDEA_MCP_PORT
                 val chinese = settings.effectiveLanguage.isChinese()
                 service.scope.launch(Dispatchers.IO) {
                     val report = try {
-                        check(project, files.orEmpty(), port, chinese)
+                        finishEditCheck(service.turns, token, turn, {
+                            settings.state.autoCheckAfterEdit && settings.state.injectIdeaMcp &&
+                                service.project(token) === project && !project.isDisposed && channel.isActive
+                        }, ::refreshChanges, { files -> check(project, files, port, chinese) })
                     } catch (e: CancellationException) {
                         reply(channel, version, keepAlive, 200); throw e
                     } catch (e: Exception) {
@@ -88,15 +99,18 @@ class EditCheckHandler : HttpRequestHandler() {
      * 先把 Claude 在 IDE 外写的改动同步进 IDE（文件监听上报的改动），再只留项目里的代码（排除构建产物、被排除的目录），
      * 交给 IDEA MCP 检查。项目已关闭、没剩下要查的文件、连不上 IDEA MCP 时返回 null。
      */
-    private suspend fun check(project: Project, changed: Set<String>, port: Int, chinese: Boolean): String? {
-        if (project.isDisposed) return null
-        val base = project.basePath ?: return null
+    private suspend fun refreshChanges() {
         // 完成通知指定 ModalityState.any()：开着设置等模态对话框时默认队列发不出来，会白等到超时。最多等 10 秒，刷不完照常查。
         withTimeoutOrNull(10_000) {
             suspendCancellableCoroutine { continuation ->
                 RefreshQueue.getInstance().refresh(true, true, Runnable { if (continuation.isActive) continuation.resume(Unit) }, ModalityState.any(), *ManagingFS.getInstance().localRoots)
             }
         }
+    }
+
+    private suspend fun check(project: Project, changed: Set<String>, port: Int, chinese: Boolean): String? {
+        if (project.isDisposed) return null
+        val base = project.basePath ?: return null
         val files = readAction {
             val index = ProjectFileIndex.getInstance(project)
             changed.mapNotNull { path ->
@@ -106,7 +120,9 @@ class EditCheckHandler : HttpRequestHandler() {
             }
         }.sorted().take(EDIT_CHECK_MAX_FILES)
         if (files.isEmpty()) return null
-        val lint = IdeaMcpLintClient(IdeaMcpEndpoint(port, base).url, base).lint(files, EDIT_CHECK_LINT_TIMEOUT_MILLIS) ?: return null
+        val lint = runInterruptible(Dispatchers.IO) {
+            IdeaMcpLintClient(IdeaMcpEndpoint(port, base).url, base).lint(files, EDIT_CHECK_LINT_TIMEOUT_MILLIS)
+        } ?: return null
         return EditCheck.report(lint, files.size, chinese)
     }
 
@@ -124,8 +140,3 @@ class EditCheckHandler : HttpRequestHandler() {
     }
 }
 
-/**
- * 这一轮结束时要不要检查：这一轮已经拦过一次就放行（防死循环）；开关关着、IDEA MCP 没开、这一轮没记到改动都不查。
- */
-internal fun editCheckWanted(end: EditCheck.Event.TurnEnd, changed: Set<String>?, enabled: Boolean, ideaMcp: Boolean): Boolean =
-    !end.alreadyBlocked && enabled && ideaMcp && !changed.isNullOrEmpty()

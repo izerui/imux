@@ -103,6 +103,7 @@ imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义�
 - **不托管你的会话**：只读各 CLI 自己的会话库，不改对话文件；删掉插件，记录一条不少。
 - 设置都在 **Settings → Tools → Imux**。
 - 调整会话字号：在该页的「会话」中点击「在终端设置中调整字号」，进入「字体设置」修改大小。
+- 在 **Settings → Tools → Imux → IDEA MCP** 开启结束前自动检查，Claude、Codex 和 Pi 就能根据 IDE 错误继续修复一次。Codex 首次使用需在 `/hooks` 中信任 Imux 的检查。
 
 更完整的说明（各项设置、注入方式、审查轮次规则、轨迹缓存、读取了哪些文件、已知限制）见 [详细说明](docs/guide.md)。
 
