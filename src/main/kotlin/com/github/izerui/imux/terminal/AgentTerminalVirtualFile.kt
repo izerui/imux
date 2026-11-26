@@ -1,5 +1,6 @@
 package com.github.izerui.imux.terminal
 
+import com.github.izerui.imux.session.PiSessionReport
 import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.fileTypes.FileType
@@ -31,7 +32,11 @@ class AgentTerminalVirtualFile(
     var sessionId: String? = null,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
-    internal var piCapabilities: com.github.izerui.imux.session.PiSessionReport? = null
+    // 新会话的首报可能早于 sessionKey 迁移，旧报告也可能晚到；弹窗按发起查询时的 key 读取。
+    private val piReports = java.util.concurrent.ConcurrentHashMap<String, PiSessionReport>()
+    internal fun recordPiCapabilities(report: PiSessionReport) { piReports[report.sessionId] = report }
+    internal fun piCapabilitiesFor(key: String): PiSessionReport? = piReports[key]
+    internal fun clearPiCapabilities() = piReports.clear()
 
     /** 右上角会话轨迹面板是否展开。放在会话上：拖动标签页重建编辑器后保持。 */
     var trailExpanded: Boolean = false

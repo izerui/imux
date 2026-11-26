@@ -105,10 +105,10 @@ internal class CodeNavigator(private val project: Project) {
             true
         })
         // 通过接口、父类引用它的地方（`greeter.greet()` 的变量类型是接口）记在上层声明名下，要单独补上。
-        val supers = supers(target)
+        val supers = supers(target, query.includeLibraries)
         val viaSupers = JsonArray()
         // 「经由上层调用」只对方法成立：类型的父类型被别处用到，不是对这个子类的使用。
-        for (parent in memberSupers(target)) {
+        for (parent in memberSupers(target) { supers }) {
             ReferencesSearch.search(parent, scope).forEach(Processor { reference ->
                 if (!inScope(reference, scope) || isSelfReference(parent, reference)) return@Processor true
                 if (viaSupers.size() >= query.limit) { truncated = true; return@Processor false }
@@ -239,10 +239,10 @@ internal class CodeNavigator(private val project: Project) {
      *
      * 平台只有「往下找实现」的通用接口（[DefinitionsScopedSearch]，各语言插件都接了，Go 的隐式接口也算），
      * 没有通用的「往上找」。所以反过来查：同名的候选声明、以及声明头部（主体之前）引用到的类型里，
-     * 往下找实现能找到它的，就是它的上层。只在项目内查：库里的接口（如 Runnable.run）引用遍布全项目，
+     * 往下找实现能找到它的，就是它的上层。默认只在项目内查：库里的接口（如 Runnable.run）引用遍布全项目，
      * 当成上层只会把无关调用全拉进来。候选数设上限，常见名字（get、run）不至于拖慢查询。
      */
-    private fun supers(element: PsiElement, includeLibraries: Boolean = false): List<PsiElement> = superCache.getOrPut(element to includeLibraries) {
+    private fun supers(element: PsiElement, includeLibraries: Boolean): List<PsiElement> = superCache.getOrPut(element to includeLibraries) {
         val name = (element as? PsiNamedElement)?.name ?: return@getOrPut emptyList()
         val scope = scope(includeLibraries)
         val candidates = LinkedHashSet<PsiElement>()
@@ -296,10 +296,10 @@ internal class CodeNavigator(private val project: Project) {
      * 不能只看「有没有成员」：空类、空接口也没有成员，`class Impl : Marker` 会被当成方法，
      * 只接受 `Marker` 的代码就全被算成经由接口用到了 `Impl`。
      */
-    private fun memberSupers(element: PsiElement): List<PsiElement> {
+    private inline fun memberSupers(element: PsiElement, supers: () -> List<PsiElement>): List<PsiElement> {
         if (membersOf(element).isNotEmpty()) return emptyList()
         val name = nameOf(element)
-        return supers(element).filter { nameOf(it) == name && membersOf(it).isEmpty() }
+        return supers().filter { nameOf(it) == name && membersOf(it).isEmpty() }
     }
 
     /** 结构视图里直接包含它的类型节点（有成员的节点）；顶层函数返回 null。 */
@@ -318,7 +318,7 @@ internal class CodeNavigator(private val project: Project) {
         return outline(file).filter { it != type && it.textRange?.let(range::contains) == true }
     }
 
-    /** 逐级往上的父类型（只在项目内，最多 8 层，防止循环）。 */
+    /** 逐级往上的父类型（按请求决定是否含库，最多 8 层，防止循环）。 */
     private fun supertypesOf(type: PsiElement, includeLibraries: Boolean): List<PsiElement> {
         val result = LinkedHashSet<PsiElement>()
         var frontier = listOf(type)
@@ -334,7 +334,7 @@ internal class CodeNavigator(private val project: Project) {
      * 不能因为没有成员就不看头部（`class Closed : Base("…")` 没有类体），那样会漏掉不同名的父类。
      * 默认只要项目内的；[includeLibraries] 时也要库里的父类型。
      */
-    private fun headerTypes(element: PsiElement, includeLibraries: Boolean = false): List<PsiElement> {
+    private fun headerTypes(element: PsiElement, includeLibraries: Boolean): List<PsiElement> {
         // IDE 内部生成的声明（TS 的导入别名、隐式声明这类）没有源码文本，没有头部可看。
         val range = element.textRange ?: return emptyList()
         val text = element.text ?: return emptyList()
@@ -425,7 +425,7 @@ internal class CodeNavigator(private val project: Project) {
         }
         val budget = Budget(query.limit)
         val root = when (direction) {
-            CallDirection.CALLERS -> callers(target, depth, scope(query.includeLibraries), budget, hashSetOf(target), HashMap())
+            CallDirection.CALLERS -> callers(target, depth, query.includeLibraries, budget, hashSetOf(target), HashMap())
             CallDirection.CALLEES -> callees(target, depth, query.includeLibraries, budget, hashSetOf(target))
         }
         return CodeToolResult(JsonObject().apply {
@@ -527,7 +527,7 @@ internal class CodeNavigator(private val project: Project) {
     private fun callers(
         element: PsiElement,
         depth: Int,
-        scope: GlobalSearchScope,
+        includeLibraries: Boolean,
         budget: Budget,
         path: Set<PsiElement>,
         expanded: MutableMap<PsiElement, Int>,
@@ -535,13 +535,14 @@ internal class CodeNavigator(private val project: Project) {
         val node = describe(element)
         if (depth <= 0) return node
         expanded[element] = depth
+        val scope = scope(includeLibraries)
         // 每个往上展开的节点都补查一次：B 调 A、而 IDE 分析不了的文件又调 B 时，提醒要挂在 B 上，不能只在 A 上查。
         node.addUnanalyzedMentions(element, scope)
         // 同一个调用方可能在多处调用：按调用方分组，调用点挂在它下面。
         val groups = LinkedHashMap<PsiElement, MutableList<JsonObject>>()
         val loose = JsonArray()
         // 通过接口、父类调用的地方记在上层声明名下（`greeter.greet()` 里 greeter 是接口类型），也是它的调用方，标明经由谁。
-        val parents = memberSupers(element)
+        val parents = memberSupers(element) { supers(element, includeLibraries) }
         if (element in supersIncomplete) node.addProperty("overrides_incomplete", true)
         // 记一处调用点；返回 false 表示额度用完、停止搜索。
         fun record(reference: PsiReference, searched: PsiElement, alias: String?): Boolean {
@@ -586,7 +587,7 @@ internal class CodeNavigator(private val project: Project) {
                 budget.exhausted -> describe(owner).apply { addProperty("not_expanded", true) }
                 owner in path -> describe(owner).apply { addProperty("recursive", true) }
                 (expanded[owner] ?: -1) >= depth - 1 -> describe(owner).apply { addProperty("expanded_above", true) }
-                else -> callers(owner, depth - 1, scope, budget, path + owner, expanded)
+                else -> callers(owner, depth - 1, includeLibraries, budget, path + owner, expanded)
             }
             child.add("call_sites", JsonArray().apply { sites.take(CALL_SITES_PER_CALLER).forEach(::add) })
             if (sites.size > CALL_SITES_PER_CALLER) child.addProperty("call_site_count", sites.size)
@@ -623,17 +624,22 @@ internal class CodeNavigator(private val project: Project) {
         if (depth <= 0) return node
         val targets = LinkedHashSet<PsiElement>()
         val evidence = mutableMapOf<PsiElement, CallSiteEvidence>()
-        PsiTreeUtil.processElements(element) { child ->
+        // 声明本身不会执行函数体；从根查起时才进入它。lambda 沿用外层的归属。
+        val body = com.intellij.psi.SyntaxTraverser.psiTraverser(element).expand { it == element || !isNamedFunction(it) }
+        for (child in body) {
+            if (child != element && isNamedFunction(child)) continue
             for (reference in child.references) {
                 val resolved = resolve(reference) ?: continue
                 // 直接递归单独记下：下面排除「自己体内的东西」时会连自己一起排除掉。
                 // 只把自己当值交出去（`register(::tick)`）不是递归。
                 // 自己体内的局部变量、参数不算依赖；包、目录这类没有文件的节点也跳过。
-                if (resolved is PsiDirectory || resolved.containingFile == null || (resolved != element && PsiTreeUtil.isAncestor(element, resolved, false))) continue
+                if (resolved is PsiDirectory || resolved.containingFile == null) continue
+                val function = isNamedFunction(resolved)
+                if (!function && resolved != element && PsiTreeUtil.isAncestor(element, resolved, false)) continue
                 // 项目里的依赖只算结构视图里有的声明（函数、类型、字段、常量）：具名参数 `f(callableOnly = true)`
                 // 解析到的是别的函数的参数，不是依赖。库里的只计数，不在这里建结构视图。
                 // 构造调用 `Budget(…)` 解析到构造函数，它不在结构视图里：换成外层同名的类。
-                val declaration = if (!isInProject(resolved) || resolved in outline(resolved.containingFile)) resolved else sameNameOwner(resolved)
+                val declaration = if (function || !isInProject(resolved) || resolved in outline(resolved.containingFile)) resolved else sameNameOwner(resolved)
                 if (declaration != null) {
                     targets += declaration
                     if (!includeLibraries && !isInProject(declaration)) continue
@@ -642,7 +648,6 @@ internal class CodeNavigator(private val project: Project) {
                     }
                 }
             }
-            true
         }
         // 语言内置和依赖库（String、equals、标准库函数……）默认只计数：改项目代码时要看的是项目里的依赖。
         val (project, libraries) = targets.partition { isInProject(it) }
@@ -673,11 +678,20 @@ internal class CodeNavigator(private val project: Project) {
     private fun isInProject(element: PsiElement): Boolean =
         (element.navigationElement ?: element).containingFile?.virtualFile?.let(fileIndex::isInContent) == true
 
-    /** 只往项目内、结构视图里没有子节点的成员（函数、方法、属性）继续展开，类型和包不展开。 */
+    // 用 PSI 的语法角色而非本地化 kind 文案或结构视图：后者可能省略 Kotlin 的局部 fun，
+    // 也可能把赋给变量的匿名 JS 箭头显示成具名 function。
+    private fun isNamedFunction(element: PsiElement): Boolean = element is PsiNameIdentifierOwner &&
+        element.nameIdentifier != null && when (element.node?.elementType?.toString()?.substringAfterLast(':')?.trim()) {
+            "FUN", "FUNCTION_DECLARATION", "FUNCTION", "METHOD" -> true
+            else -> false
+        }
+
+    /** 项目内的具名函数允许有局部声明；其它成员仍只展开结构视图叶子。 */
     private fun isProjectLeafMember(element: PsiElement): Boolean {
         val file = element.containingFile ?: return false
         val vf = file.virtualFile ?: return false
         if (!fileIndex.isInContent(vf)) return false
+        if (isNamedFunction(element)) return true
         val outline = outline(file)
         return element in outline && outline.none { it != element && PsiTreeUtil.isAncestor(element, it, true) }
     }

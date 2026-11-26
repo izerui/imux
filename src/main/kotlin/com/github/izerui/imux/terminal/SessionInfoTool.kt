@@ -40,7 +40,7 @@ internal class SessionInfoTool(
         var job: Job? = null
         fun render(usage: SessionUsage) {
             val number = NumberFormat.getIntegerInstance()
-            val pi = file.piCapabilities?.takeIf { it.sessionId == key }
+            val pi = file.piCapabilitiesFor(key)
             val coordinator = monitor.peerCoordinator
             val runtime = buildList {
                 add(InfoRow(msg("session.info.cwd"), project.basePath ?: System.getProperty("user.home")))

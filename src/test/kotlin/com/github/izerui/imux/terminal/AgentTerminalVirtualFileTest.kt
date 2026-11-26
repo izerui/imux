@@ -27,6 +27,25 @@ class AgentTerminalVirtualFileTest {
         assertEquals(true, file.getUserData(FileEditorManagerKeys.FORBID_TAB_SPLIT))
     }
 
+    @Test
+    fun `旧报告迟到后切换到新 Pi 会话仍能读到其技能和工具`() {
+        val file = AgentTerminalVirtualFile("Pi", terminalView(), "old", AgentType.PI, "tab")
+        val fresh = com.github.izerui.imux.session.PiSessionReport(
+            com.github.izerui.imux.session.PiReportType.SESSION_START, "tab", "new", "/work",
+            activeTools = listOf("read"), skillNames = listOf("review"),
+        )
+        file.recordPiCapabilities(fresh)
+        file.recordPiCapabilities(fresh.copy(sessionId = "old", activeTools = emptyList(), skillNames = emptyList()))
+        file.sessionKey = "new"
+        assertEquals(listOf("review"), file.piCapabilitiesFor(file.sessionKey)?.skillNames)
+        assertEquals(listOf("read"), file.piCapabilitiesFor(file.sessionKey)?.activeTools)
+        file.sessionKey = "not-reported"
+        org.junit.Assert.assertNull(file.piCapabilitiesFor(file.sessionKey))
+        file.clearPiCapabilities()
+        org.junit.Assert.assertNull(file.piCapabilitiesFor("new"))
+        org.junit.Assert.assertNull(file.piCapabilitiesFor("old"))
+    }
+
     private fun terminalView(): TerminalView =
         Proxy.newProxyInstance(TerminalView::class.java.classLoader, arrayOf(TerminalView::class.java)) { _, method, _ ->
             when (method.name) {

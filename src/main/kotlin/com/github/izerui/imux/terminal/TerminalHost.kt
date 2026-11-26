@@ -117,7 +117,7 @@ class TerminalHost(
         if (launchContributions[tabId]?.updatePiRegistrationFailures(failed) == true) SessionDecorations.changed()
     }
     internal fun recordPiCapabilities(report: com.github.izerui.imux.session.PiSessionReport) {
-        files.values.firstOrNull { it.tabId == report.tabId && it.agentType == AgentType.PI }?.piCapabilities = report
+        files.values.firstOrNull { it.tabId == report.tabId && it.agentType == AgentType.PI }?.recordPiCapabilities(report)
     }
     private val preparationLock = Mutex()
 
@@ -255,6 +255,7 @@ class TerminalHost(
      * 用户半天就能攒下六七个隐形的 CLI 却无从收拾。
      */
     fun closeSession(file: AgentTerminalVirtualFile) {
+        file.clearPiCapabilities()
         launchContributions.remove(file.tabId)?.close()
         val key = file.sessionKey
         // key 会在会话迁移时变化，也可能被另一个终端重新占用。只有账上仍然是这个
