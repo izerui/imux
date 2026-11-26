@@ -1086,7 +1086,8 @@ internal class CodeNavigator(private val project: Project) {
      *   多行的 `extends ... implements ...` 也在内）；否则到括号外的第一个换行为止——Python 的类头部只有 `class User(Base):`
      *   这一行，类体里的类型注解（`tags: list[Tag]`）、文档字符串都不会混进来。字符串、注释里的字符不参与判断。
      * - 名字后面紧跟的那对括号是什么，看显示名：Python 的类显示成 `User(Base)`，括号里就是父类，只取括号里的；其它语言的
-     *   显示名不带括号（`Impl`、`RED`），那对括号是构造参数或枚举常量的参数，一律不算。
+     *   显示名不带括号（`Impl`、`RED`），头部里任何括号里的都不算：名字后面那对是构造参数或枚举常量的参数，
+     *   父类后面那对是传给父类构造函数的参数（`: LocalMcpHandler(CODE_MCP_PATH)`）。
      * - 头部里有参数声明的是函数（`fun foo(a: Int): Result`、`def greet(self)`），不标：函数的返回类型、参数类型都不是父类。
      * - 落在这个声明的成员范围里的不算（Kotlin 的构造参数、构造函数）；注解里的不算（`@Inject constructor`）；
      *   紧贴名字的尖括号、方括号里的不算（泛型参数和约束 `ArrayList<String>`、`<T extends Number>`，`a <= b` 这种比较不算尖括号）；
@@ -1180,8 +1181,9 @@ internal class CodeNavigator(private val project: Project) {
         val onlyInsideParens = displayName.contains('(')
         fun counts(offset: Int): Boolean {
             if (!header.contains(offset) || memberRanges.any { it.contains(offset) } || genericRanges.any { it.contains(offset) }) return false
-            val inParens = parenGroup?.contains(offset) == true
-            return if (onlyInsideParens) inParens else !inParens
+            // Python 只取类名后面那对括号里的（父类就写在那里）；其它语言头部里任何括号里的都不算：
+            // 类名后面那对是构造参数，父类后面那对是传给父类构造函数的参数（Kotlin 的 `: Base(CODE_PATH)` 里的 CODE_PATH）。
+            return if (onlyInsideParens) parenGroup?.contains(offset) == true else parenGroups.none { it.contains(offset) }
         }
         // 头部里有参数声明的是函数：返回类型、参数类型都不是父类。
         val elementsInHeader = ArrayList<PsiElement>()

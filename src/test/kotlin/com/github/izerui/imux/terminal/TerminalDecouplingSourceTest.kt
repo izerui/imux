@@ -75,6 +75,7 @@ class TerminalDecouplingSourceTest {
         assertTrue("同时给名字和列号时按列号挑", nav.contains(".sortedBy { offset -> query.column?.let { kotlin.math.abs(offset - (lineStart + it - 1)) } ?: 0 }"))
         assertTrue("只给有成员、显示名带括号、或用 extends/implements 的节点标父类，宁可少标不标错",
             nav.contains("(item.structureChildren.isNotEmpty() || name.contains('(') || inheritsByKeyword(value, document))"))
+        assertTrue("除 Python 外，头部里任何括号里的都不是父类（含传给父类构造函数的参数）", nav.contains("return if (onlyInsideParens) parenGroup?.contains(offset) == true else parenGroups.none { it.contains(offset) }"))
         assertTrue("父类一律按位置读，不搜索", nav.contains("when (val found = safeSupers(value, name, document, memberRanges)) {"))
         assertTrue("JS 一族名字后紧跟冒号的是类型注解", nav.contains("if (k < range.endOffset && chars[k] == ':') return emptyList()"))
         assertTrue("建索引中途打断要注明", nav.contains("if (!supersAvailable || supersInterrupted) addProperty(\"supers_skipped\""))
