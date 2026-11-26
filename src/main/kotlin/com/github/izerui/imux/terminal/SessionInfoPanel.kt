@@ -62,23 +62,27 @@ internal class SessionInfoPanel(
             }
         }, parent)
         preferredSize = JBUI.size(430, 475)
-        val header = JPanel(VerticalLayout(JBUI.scale(12))).apply { border = JBUI.Borders.empty(16, 16, 12, 16) }
+        val header = JPanel(VerticalLayout(0))
         val commands = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(10), 0)).apply {
             add(InplaceButton(IconButton(msg("action.refresh.text"), AllIcons.Actions.Refresh), { refresh() }))
             add(InplaceButton(IconButton(msg("action.peer.close"), AllIcons.Actions.Close), { close() }))
         }
-        header.add(JPanel(BorderLayout()).apply {
-            add(bold(msg("session.info.title")), BorderLayout.CENTER)
+        header.add(JPanel(BorderLayout(JBUI.scale(9), 0)).apply {
+            border = JBUI.Borders.empty(16, 20)
+            background = UIUtil.getPanelBackground()
+            commands.isOpaque = false
+            add(JBLabel(icon), BorderLayout.WEST)
+            add(JPanel(VerticalLayout(1)).apply { isOpaque = false; add(bold(title)); add(secondary(agent)) })
             add(commands, BorderLayout.EAST)
         })
-        header.add(JPanel(BorderLayout(JBUI.scale(9), 0)).apply {
-            add(JBLabel(icon), BorderLayout.WEST)
-            add(JPanel(VerticalLayout(1)).apply { add(bold(title)); add(secondary(agent)) })
-        })
         header.add(JPanel(java.awt.GridLayout(1, 2, JBUI.scale(14), 0)).apply {
-            border = JBUI.Borders.empty(4, 0, 2, 0)
-            fun metric(key: String, value: JBLabel) = JPanel(VerticalLayout(JBUI.scale(3))).apply {
-                add(secondary(msg(key)))
+            background = UIUtil.getListBackground()
+            border = JBUI.Borders.compound(JBUI.Borders.customLine(JBColor.border(), 1, 0, 1, 0), JBUI.Borders.empty(9, 20))
+            fun metric(key: String, value: JBLabel) = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+                isOpaque = false
+                add(secondary(msg(key)), BorderLayout.WEST)
+                value.horizontalAlignment = javax.swing.SwingConstants.RIGHT
+                value.font = UIUtil.getLabelFont().deriveFont(Font.BOLD)
                 add(value)
             }
             add(metric("session.info.total", tokenValue))
@@ -99,13 +103,14 @@ internal class SessionInfoPanel(
             tab.`object` to (tab.component as? JPanel)?.components?.filterIsInstance<JBScrollPane>()?.firstOrNull()?.verticalScrollBar?.value
         }
         tokenValue.text = tokens
-        tokenValue.font = UIUtil.getLabelFont().deriveFont(Font.BOLD, UIUtil.getLabelFont().size2D + 3f)
+        tokenValue.toolTipText = tokens
+        contextValue.toolTipText = context
         contextValue.text = context
         tabs.removeAllTabs()
         sections.forEach { page ->
-            val title = if (page.reported) "${page.name}  ${page.rows.size}" else page.name
+            val countHint = if (page.reported) "${page.name} · ${page.rows.size}" else page.name
             val content = pageComponent(page)
-            val tab = TabInfo(content).setText(title).setObject(page.name)
+            val tab = TabInfo(content).setText(page.name).setTooltipText(countHint).setObject(page.name)
             tabs.addTab(tab)
             markTab(tab, tabs.selectedInfo === tab)
             if (page.name == selected) tabs.select(tab, false)
@@ -129,34 +134,65 @@ internal class SessionInfoPanel(
     }
 
     private fun pageComponent(page: InfoPage): JPanel {
-        val rows = JPanel(VerticalLayout(0)).apply { border = JBUI.Borders.empty(0, 8) }
+        val rows = JPanel(VerticalLayout(0)).apply { border = JBUI.Borders.empty(8, 20) }
         fun filter(query: String) {
             rows.removeAll()
             page.rows.filter { listOf(it.title, it.detail, it.status, it.location.orEmpty()).any { value -> value.contains(query.trim(), true) } }
                 .forEach { row ->
-                    rows.add(JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-                        border = JBUI.Borders.compound(JBUI.Borders.customLineBottom(JBColor.border()), JBUI.Borders.empty(12, 10))
-                        add(JPanel(VerticalLayout(JBUI.scale(3))).apply {
-                            add(bold(row.title))
-                            if (row.detail.isNotEmpty()) add(secondary(row.detail).apply { toolTipText = row.detail })
+                    if (page.name == msg("session.info.runtime")) {
+                        rows.add(JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
+                            border = JBUI.Borders.compound(JBUI.Borders.customLineBottom(JBColor.border()), JBUI.Borders.empty(9, 0))
+                            add(secondary(row.title), BorderLayout.WEST)
+                            add(javax.swing.JTextPane().apply {
+                                isEditable = false
+                                isOpaque = false
+                                border = null
+                                font = UIUtil.getLabelFont()
+                                text = row.detail
+                                val alignment = javax.swing.text.SimpleAttributeSet()
+                                javax.swing.text.StyleConstants.setAlignment(alignment, javax.swing.text.StyleConstants.ALIGN_RIGHT)
+                                setParagraphAttributes(alignment, false)
+                            })
                         })
-                        if (row.status.isNotEmpty()) add(secondary(row.status).apply {
-                            foreground = if (row.failed) JBColor.namedColor("Component.warningFocusColor", JBColor.ORANGE) else JBUI.CurrentTheme.Link.Foreground.ENABLED
-                        }, BorderLayout.EAST)
+                        return@forEach
+                    }
+                    rows.add(JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+                        border = JBUI.Borders.compound(JBUI.Borders.customLineBottom(JBColor.border()), JBUI.Borders.empty(10, 0))
+                        val nameLine = JPanel(BorderLayout()).apply { isOpaque = false; add(bold(row.title)) }
+                        add(JPanel(BorderLayout(0, JBUI.scale(3))).apply {
+                            isOpaque = false
+                            add(nameLine, BorderLayout.NORTH)
+                            if (row.detail.isNotEmpty()) add(javax.swing.JTextArea(row.detail).apply {
+                                isEditable = false
+                                isFocusable = false
+                                lineWrap = true
+                                wrapStyleWord = true
+                                isOpaque = false
+                                border = null
+                                font = UIUtil.getLabelFont()
+                                foreground = UIUtil.getContextHelpForeground()
+                            })
+                            if (row.status.isNotEmpty()) nameLine.add(secondary(row.status).apply {
+                                icon = if (row.failed) AllIcons.General.Warning else AllIcons.General.GearPlain
+                            }, BorderLayout.EAST)
+                        })
                         row.location?.let { path ->
                             val entry = page.name to path
                             val detail = javax.swing.JTextArea(path).apply {
                                 isEditable = false
                                 lineWrap = true
                                 wrapStyleWord = false
-                                isOpaque = false
-                                font = UIUtil.getLabelFont()
+                                background = UIUtil.getPanelBackground()
+                                border = JBUI.Borders.empty(12, 20, 0, 20)
+                                font = Font(Font.MONOSPACED, Font.PLAIN, UIUtil.getLabelFont().size)
                                 isVisible = entry in expanded
                             }
                             add(detail, BorderLayout.SOUTH)
                             val expand = javax.swing.JToggleButton(AllIcons.General.ArrowRight).apply {
                                 toolTipText = path
                                 accessibleContext.accessibleName = row.title
+                                border = JBUI.Borders.emptyRight(3)
+                                margin = JBUI.emptyInsets()
                                 isContentAreaFilled = false
                                 isBorderPainted = false
                                 selectedIcon = AllIcons.General.ArrowDown
@@ -168,7 +204,7 @@ internal class SessionInfoPanel(
                                     rows.repaint()
                                 }
                             }
-                            add(expand, BorderLayout.EAST)
+                            nameLine.add(expand, BorderLayout.WEST)
                             val toggle = object : java.awt.event.MouseAdapter() {
                                 override fun mouseClicked(e: java.awt.event.MouseEvent) {
                                     if (javax.swing.SwingUtilities.isLeftMouseButton(e) && e.clickCount == 1) expand.doClick()
@@ -182,6 +218,15 @@ internal class SessionInfoPanel(
                                 if (component is java.awt.Container) component.components.forEach(::bind)
                             }
                             bind(this)
+                            val line = this
+                            val normal = background
+                            object : com.intellij.ui.hover.HoverListener() {
+                                override fun mouseEntered(component: java.awt.Component, x: Int, y: Int) {
+                                    line.background = JBUI.CurrentTheme.ActionButton.hoverBackground()
+                                }
+                                override fun mouseMoved(component: java.awt.Component, x: Int, y: Int) = Unit
+                                override fun mouseExited(component: java.awt.Component) { line.background = normal }
+                            }.addTo(line)
                         }
                     })
                 }
@@ -195,7 +240,7 @@ internal class SessionInfoPanel(
         filter(query)
         return JPanel(BorderLayout()).apply {
             if (page.searchable) add(SearchTextField(false).apply {
-                border = JBUI.Borders.empty(6, 12)
+                border = JBUI.Borders.empty(12, 20, 0, 20)
                 textEditor.emptyText.text = msg("session.info.search")
                 text = query
                 addDocumentListener(object : DocumentAdapter() {

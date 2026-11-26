@@ -5,6 +5,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SessionUsageTest {
+    @Test fun `Codex 技能说明与来源路径分开显示`() {
+        val row = """{"type":"world_state","payload":{"state":{"host_skills":{"body":"- docs: Find documentation (file: /skills/docs/SKILL.md)"}}}}"""
+        val usage = sessionUsage(AgentType.CODEX, sequenceOf(row))
+        assertEquals("Find documentation", usage.skillDescriptions["docs"])
+        assertEquals("/skills/docs/SKILL.md", usage.skillLocations["docs"])
+    }
+
+    @Test fun `Claude 技能说明按清单名称对应`() {
+        val row = """{"type":"attachment","attachment":{"type":"skill_listing","names":["review"],"content":"- review: Check code changes"}}"""
+        assertEquals("Check code changes", sessionUsage(AgentType.CLAUDE, sequenceOf(row)).skillDescriptions["review"])
+    }
+
+    @Test fun `Pi 从上报读取技能用途`() {
+        val row = """{"type":"session_start","tabId":"tab","sessionId":"s","cwd":"/project","skillNames":"review","skillDescriptions":{"review":"Check changes"}}"""
+        assertEquals("Check changes", parsePiReport(row)?.skillDescriptions?.get("review"))
+    }
     @Test fun `Claude 弹窗用本会话状态栏占比且不会借用相邻会话的快照`() {
         val root = java.nio.file.Files.createTempDirectory("imux-context")
         try {

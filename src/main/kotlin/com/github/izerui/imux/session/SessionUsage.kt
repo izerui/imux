@@ -16,6 +16,7 @@ internal data class SessionUsage(
     val skillLocations: Map<String, String> = emptyMap(),
     val skillsReported: Boolean = false,
     val reportedContextPercent: Int? = null,
+    val skillDescriptions: Map<String, String> = emptyMap(),
 )
 
 internal fun readSessionUsage(agent: AgentType, transcript: Path, onLine: () -> Unit): SessionUsage {
@@ -41,6 +42,7 @@ internal fun sessionUsage(agent: AgentType, lines: Sequence<String>): SessionUsa
     var skills = emptyList<String>()
     var locations = emptyMap<String, String>()
     var skillsReported = false
+    val descriptions = mutableMapOf<String, String>()
     val messages = mutableMapOf<String, Long>()
     for (line in lines) {
         if (line.none { it == '{' }) continue
@@ -51,6 +53,7 @@ internal fun sessionUsage(agent: AgentType, lines: Sequence<String>): SessionUsa
                 "turn_context" -> model = payload?.text("model") ?: model
                 "world_state" -> payload?.obj("state")?.obj("host_skills")?.text("body")?.let { body ->
                     skillsReported = true
+                    descriptions.clear()
                     val roots = body.lineSequence().mapNotNull { line ->
                         ROOT_ENTRY.matchEntire(line)?.destructured?.let { (key, path) -> key to path }
                     }.toMap()
@@ -59,7 +62,10 @@ internal fun sessionUsage(agent: AgentType, lines: Sequence<String>): SessionUsa
                             val path = line.substringAfterLast(" (file: ").removeSuffix(")")
                             val base = roots[path.substringBefore('/')]
                             val location = if (base != null && '/' in path) "$base/${path.substringAfter('/')}" else path
-                            line.removePrefix("- ").substringBefore(": ") to location
+                            val entry = line.removePrefix("- ").substringBeforeLast(" (file: ")
+                            val name = entry.substringBefore(": ")
+                            entry.substringAfter(": ", "").trim().takeIf(String::isNotEmpty)?.let { descriptions[name] = it }
+                            name to location
                         }
                     skills = locations.keys.sorted()
                 }
@@ -77,6 +83,13 @@ internal fun sessionUsage(agent: AgentType, lines: Sequence<String>): SessionUsa
             if (attachment?.text("type") == "skill_listing" && row.get("isSidechain")?.toString() != "true") {
                 val names = attachment.get("names")?.takeIf { it.isJsonArray }?.asJsonArray ?: continue
                 val listed = names.filter { it.isJsonPrimitive && it.asJsonPrimitive.isString }.map { it.asString }
+                if (attachment.get("isInitial")?.toString() == "true") descriptions.clear()
+                attachment.text("content")?.lineSequence()?.filter { it.startsWith("- ") }?.forEach { line ->
+                    val entry = line.removePrefix("- ")
+                    val name = entry.substringBefore(": ")
+                    val description = entry.substringAfter(": ", "").trim()
+                    if (name in listed && description.isNotEmpty()) descriptions[name] = description
+                }
                 skills = (if (attachment.get("isInitial")?.toString() == "true") listed else skills + listed).distinct().sorted()
                 skillsReported = true
             }
@@ -93,7 +106,8 @@ internal fun sessionUsage(agent: AgentType, lines: Sequence<String>): SessionUsa
         last = count
         model = message.text("model") ?: model
     }
-    return SessionUsage(total ?: messages.values.takeIf { it.isNotEmpty() }?.sum(), last, window, model, skills, locations, skillsReported)
+    return SessionUsage(total ?: messages.values.takeIf { it.isNotEmpty() }?.sum(), last, window, model,
+        skills, locations, skillsReported, skillDescriptions = descriptions)
 }
 
 private fun JsonObject.obj(key: String) = get(key)?.takeIf { it.isJsonObject }?.asJsonObject

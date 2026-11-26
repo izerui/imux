@@ -44,13 +44,13 @@ internal class SessionInfoTool(
             val coordinator = monitor.peerCoordinator
             val runtime = buildList {
                 add(InfoRow(msg("session.info.cwd"), project.basePath ?: System.getProperty("user.home")))
+                usage.model?.let { add(InfoRow(msg("session.info.model"), it)) }
+                usage.last?.let { add(InfoRow(msg("session.info.last"), number.format(it))) }
+                usage.window?.let { add(InfoRow(msg("session.info.window"), number.format(it))) }
                 add(InfoRow(msg("action.peer.group.text"), coordinator.status(key)?.targetAgentType?.displayName ?: msg("session.info.pairOff")))
                 add(InfoRow(msg("action.peer.once.hint"), coordinator.scheduledReview(key)?.displayName ?: msg("session.info.unscheduled")))
                 add(InfoRow(msg("bridge.tool.title"), msg(if (SessionDecorations.phoneConnected(project, file.tabId))
                     "session.info.bound" else "session.info.unbound")))
-                usage.model?.let { add(InfoRow(msg("session.info.model"), it)) }
-                usage.last?.let { add(InfoRow(msg("session.info.last"), number.format(it))) }
-                usage.window?.let { add(InfoRow(msg("session.info.window"), number.format(it))) }
             }
             val services = host.configuredServerNames(file.tabId).map { name ->
                 val description = host.serverLabelKey(file.tabId, name)?.let(::msg)
@@ -64,7 +64,8 @@ internal class SessionInfoTool(
                 add(InfoPage("MCP", services))
                 val skillNames = pi?.skillNames ?: usage.skills.takeIf { usage.skillsReported }
                 add(InfoPage(msg("session.info.skills"), skillNames.orEmpty().map {
-                    InfoRow(it, location = pi?.skillLocations?.get(it) ?: usage.skillLocations[it])
+                    InfoRow(it, detail = pi?.skillDescriptions?.get(it) ?: usage.skillDescriptions[it].orEmpty(),
+                        location = pi?.skillLocations?.get(it) ?: usage.skillLocations[it])
                 }, searchable = !skillNames.isNullOrEmpty(), reported = skillNames != null,
                     emptyKey = if (skillNames == null) "session.info.skillsUnknown" else "session.info.skillsEmpty"))
                 if (file.agentType == AgentType.PI) {

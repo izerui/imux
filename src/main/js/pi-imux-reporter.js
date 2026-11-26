@@ -196,6 +196,8 @@ export default function (pi) {
             body.skillNames = skills.map(c => c.name.replace(/^skill:/, "")).filter(n => n && !n.includes("\n")).join("\n");
             body.skillLocations = Object.fromEntries(skills.filter(c => typeof c.sourceInfo?.path === "string")
               .map(c => [c.name.replace(/^skill:/, ""), c.sourceInfo.path]));
+            body.skillDescriptions = Object.fromEntries(skills.filter(c => typeof c.description === "string" && c.description.trim())
+              .map(c => [c.name.replace(/^skill:/, ""), c.description.trim()]));
           }
         } catch { /* Skill discovery is optional. */ }
         if (type === "session_start") {
