@@ -1,0 +1,7 @@
+<idea-plugin>
+  <!-- 可选依赖 com.intellij.java 的配置：查代码工具判断「框架会自动调用」时，补上 Kotlin 写的 Spring 代码和程序入口（测试方法、main）。
+       没有 Java 插件的 IDE（PyCharm、GoLand 等）不加载本文件，查代码工具照常工作，只是少这两类标记。 -->
+  <extensions defaultExtensionNs="com.github.izerui.imux">
+    <implicitUsageSupplement implementation="com.github.izerui.imux.code.java.JavaImplicitUsageSupplement"/>
+  </extensions>
+</idea-plugin>

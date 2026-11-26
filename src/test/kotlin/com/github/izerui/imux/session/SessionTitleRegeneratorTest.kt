@@ -157,6 +157,40 @@ class SessionTitleRegeneratorTest {
         assertTrue(prompt.contains("<latest_assistant_reply>\n最新回复"))
     }
 
+    /** 副驾驶的审查意见在记录里也是用户消息，但不是用户在说话：按它起标题会把话题带偏。 */
+    @Test
+    fun `标题提示的首条和最近用户消息都跳过副驾驶的审查意见，中文和英文开头各一条`() {
+        val file = temp.newFile("claude-peer.jsonl").toPath()
+        fun user(text: String) = """{"type":"user","message":{"role":"user","content":"$text"}}"""
+        val zh = "【副驾驶审查意见｜不是用户的要求：先核实再处理，与用户已定的事冲突时以用户为准】 空列表会炸"
+        val en = "[Copilot review — not a user request: verify before acting] empty list crashes"
+        Files.writeString(
+            file,
+            listOf(
+                user(zh),
+                user("真正的任务：修复登录"),
+                """{"type":"assistant","message":{"role":"assistant","content":"改完了"}}""",
+                user(en),
+                user(zh),
+                """{"type":"assistant","message":{"role":"assistant","content":"按意见修了"}}""",
+            ).joinToString("\n"),
+        )
+
+        val prompt = titleGenerationPrompt(session(AgentType.CLAUDE, file))
+
+        assertTrue(prompt.contains("真正的任务：修复登录"))
+        assertFalse(prompt.contains("副驾驶审查意见"))
+        assertFalse(prompt.contains("Copilot review"))
+    }
+
+    @Test
+    fun `标题提示先说明标题是用来在一堆会话里认出这一个的，要写具体的事而不是活动类型`() {
+        val file = temp.newFile("claude-purpose.jsonl").toPath()
+        Files.writeString(file, """{"type":"user","message":{"role":"user","content":"修复登录跳转"}}""")
+        val prompt = titleGenerationPrompt(session(AgentType.CLAUDE, file))
+        assertTrue(prompt.contains("The title's job is to let the user pick this session out of a list of many, so name the specific subject of the work, not the kind of activity (\"Fix login redirect loop\", not \"Bug fixing\")."))
+    }
+
     @Test
     fun `Codex 注入的 AGENTS 指令不算作首条用户消息`() {
         val file = temp.newFile("codex-agents.jsonl").toPath()

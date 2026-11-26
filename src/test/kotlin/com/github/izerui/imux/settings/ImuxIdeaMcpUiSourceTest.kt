@@ -21,50 +21,13 @@ class ImuxIdeaMcpUiSourceTest {
     }
 
     @Test
-    fun `IDEA MCP 页面使用 effectiveLanguage 显示引导词`() {
+    fun `页面有查调用链工具的开关，引导词既无开关也不可编辑`() {
         val text = source.normalized
 
-        assertTrue(text.contains("""group(ImuxBundle.message("settings.idea.mcp.guidance.group"))"""))
-        assertTrue(text.contains("bindSelected(settings.state::ideaMcpGuidanceEnabled)"))
-        assertTrue(text.contains("textArea()"))
-        assertTrue(text.contains("settings::setIdeaMcpGuidance"))
-        assertTrue(text.contains("defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)"))
-        assertTrue(
-            source.compact(text).contains(
-                source.compact(
-                    """
-                    guidanceArea?.text = defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)
-                    resetGuidanceView(guidanceArea)
-                    """.trimIndent(),
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun `IDEA MCP 页面 MutableProperty getter 使用 effectiveLanguage`() {
-        val text = source.normalized
-
-        assertTrue(text.contains("settings.state.ideaMcpGuidanceOverride ?: defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)"))
-    }
-
-    @Test
-    fun `打开 IDEA MCP 页面时引导区定位到左上角`() {
-        val text = source.normalized
-
-        assertTrue(
-            source.compact(text).contains(
-                source.compact(
-                    """
-                    onReset {
-                        resetGuidanceView(guidanceArea)
-                    }
-                    """.trimIndent(),
-                ),
-            ),
-        )
-        assertTrue(text.contains("area.caretPosition = 0"))
-        assertTrue(text.contains("?.viewPosition = Point(0, 0)"))
+        assertTrue(text.contains("""group(ImuxBundle.message("settings.code.tools.group"))"""))
+        assertTrue(text.contains("bindSelected(settings.state::injectCodeTools)"))
+        assertFalse(text.contains("settings.idea.mcp.guidance"))
+        assertFalse(text.contains("textArea()"))
     }
 
     @Test
@@ -72,15 +35,6 @@ class ImuxIdeaMcpUiSourceTest {
         val main = SourceCode("src/main/kotlin/com/github/izerui/imux/settings/ImuxSettingsConfigurable.kt")
 
         assertFalse(main.normalized.contains("settings.group.idea.mcp"))
-    }
-
-    @Test
-    fun `IDEA MCP 页面监听语言变化并联动切换引导词`() {
-        val text = source.normalized
-
-        assertTrue(text.contains("addLanguageListener"))
-        assertTrue(text.contains("guidanceAfterLanguageSwitch"))
-        assertTrue(text.contains("settings.effectiveLanguage"))
     }
 
     @Test

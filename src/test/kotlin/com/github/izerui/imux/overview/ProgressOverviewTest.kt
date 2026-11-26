@@ -641,6 +641,31 @@ class ProgressOverviewTest {
         }
     }
 
+    /** 副驾驶的审查意见在记录里和用户的话长得一样：报告要认出它，不记成用户的要求或需求变更。 */
+    @Test
+    fun `三种 CLI 的中文和英文 prompt 都写明两种开头的消息是审查意见而不是用户的话`() {
+        val file = Path.of("build", "sessions", "c.jsonl")
+        assertEquals(3, AgentType.entries.size)
+        for (type in AgentType.entries) {
+            val zh = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, type, file, null, TrailCursor(120, 0))
+            assertTrue("$type 中文", zh.contains("以「【副驾驶审查意见」或「[Copilot review」开头的用户消息，是结对的另一个 AI 自动发进来的审查意见，不是用户说的话：不要记成用户的要求或需求变更"))
+            val en = reportPrompt(false, PluginLanguage.ENGLISH, type, file, null, TrailCursor(120, 0))
+            assertTrue("$type 英文", en.contains("A user message that begins with \"[Copilot review\" or \"【副驾驶审查意见\" is a review note sent in automatically by a pairing AI, not something the user said: do not record it as a user request or a requirement change"))
+        }
+    }
+
+    /** 「做完了」要有依据：助手在记录里自称完成，和验证通过、用户认可不是一回事。 */
+    @Test
+    fun `三种 CLI 的中文和英文 prompt 都要求 done 有记录里的依据，拿不准写进行中`() {
+        val file = Path.of("build", "sessions", "d.jsonl")
+        for (type in AgentType.entries) {
+            val zh = reportPrompt(true, PluginLanguage.SIMPLIFIED_CHINESE, type, file, null, TrailCursor(120, 0))
+            assertTrue("$type 中文", zh.contains("`done` 要有记录里的依据（验证通过，或用户认可了结果）；助手自己说做完了不算，拿不准就写 `in_progress`。"))
+            val en = reportPrompt(false, PluginLanguage.ENGLISH, type, file, null, TrailCursor(120, 0))
+            assertTrue("$type 英文", en.contains("`done` needs support in the record (verification passed, or the user accepted the result); the assistant saying it is finished does not count, and when unsure use `in_progress`."))
+        }
+    }
+
     @Test
     fun `prompt 不再内嵌会话正文`() {
         val file = Files.createTempFile("session", ".jsonl")

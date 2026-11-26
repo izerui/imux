@@ -87,17 +87,17 @@ class MobileMcpProtocol(private val backend: MobileToolsBackend, private val sco
 
         private fun tool(name: String, description: String, sends: Boolean, video: Boolean) = JsonObject().apply {
             addProperty("name", name)
-            addProperty("description", description + if (sends) " Use only when the user requests delivery. Media rejection automatically falls back to a file once when possible. Check outcome and delivered_as; accepted is not a read receipt. Never retry unknown delivery or repeat a successful file fallback. Recipients are determined by the plugin, not arguments." else "")
+            addProperty("description", description + if (sends) " Use only when the user requests delivery: it sends to a real person's chat and cannot be taken back. Media rejection automatically falls back to a file once when possible. Check outcome and delivered_as; accepted only means the platform took the message, not that anyone read it. Never retry when the outcome is unknown — the first attempt may have gone through, and a retry would send it twice — and do not repeat a successful file fallback. Recipients are determined by the plugin, not arguments." else "")
             add("inputSchema", JsonObject().apply {
                 addProperty("type", "object"); addProperty("additionalProperties", false)
                 add("properties", JsonObject().apply {
                     if (sends) {
                         add("path", JsonObject().apply { addProperty("type", "string"); addProperty("description", "Absolute path of an existing local file, after writing is complete.") })
-                        add("file_name", JsonObject().apply { addProperty("type", "string") })
+                        add("file_name", JsonObject().apply { addProperty("type", "string"); addProperty("description", "Optional name to show the recipient instead of the file's own name.") })
                     }
                     if (video) {
-                        add("duration_ms", JsonObject().apply { addProperty("type", "integer"); addProperty("minimum", 0) })
-                        add("thumbnail_path", JsonObject().apply { addProperty("type", "string") })
+                        add("duration_ms", JsonObject().apply { addProperty("type", "integer"); addProperty("minimum", 0); addProperty("description", "Optional video length in milliseconds, when known.") })
+                        add("thumbnail_path", JsonObject().apply { addProperty("type", "string"); addProperty("description", "Optional absolute path of an existing local image to use as the video cover.") })
                     }
                 })
                 if (sends) add("required", JsonArray().apply { add("path") })

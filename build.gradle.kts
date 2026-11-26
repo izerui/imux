@@ -6,10 +6,20 @@ plugins {
     // 元数据是 2.3.0 版本，用 2.1.x 编译会报「incompatible version of Kotlin」。
     id("org.jetbrains.kotlin.jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.18.1"
+    idea
+}
+
+// .verify（插件验证用的整套 IDE 副本，4.5G）和 .reference（JetBrains 官方文档与示例）都被 Git 忽略，
+// 但不排除的话 IDE 会把它们当项目代码建索引：符号搜索混进官方示例里的同名类，按名字找重写对象时
+// 还会去解析副本里几兆的打包 JS。这里声明排除，Gradle 同步时 IDE 照此设置；用 rg 检索不受影响。
+idea {
+    module {
+        excludeDirs.addAll(listOf(file(".verify"), file(".reference")))
+    }
 }
 
 group = "com.github.izerui"
-version = "1.4.14"
+version = "1.5.0"
 
 repositories {
     // repo.maven.apache.org 在本机网络下 TLS 握手被重置，改用可达镜像。
@@ -48,12 +58,15 @@ dependencies {
         // 使用平台 installer，runIde 才会拿到当前系统需要的原生组件。通用仓库 ZIP
         // 不包含 platform-daemon-plugin/jetbrainsd_mac_aarch64.tar.gz，IDE 虽能启动，
         // 但 JetBrains OS Integration 会因 bundled daemon 缺失连续重试并报 SEVERE。
-        // imux 只依赖 Platform 与捆绑 Terminal，不需要 Java、数据库、Spring 等
+        // imux 必需的只有 Platform 与捆绑 Terminal；Java 只是可选依赖（见下），不需要数据库、Spring 等
         // Ultimate 专属插件。使用 Community 发行版可避免依赖报告展开整套 IU 插件及其可选缺失模块。
         intellijIdea("262.10315.19")
         bundledPlugin("org.jetbrains.plugins.terminal")
         // 会话报告内嵌显示用 JCEF；2026.2 起它是可被禁用的内置插件，plugin.xml 里为可选依赖
         bundledPlugin("com.intellij.modules.jcef")
+        // 查代码工具补充判断「框架会自动调用」要用 Java 插件（UAST 翻译、程序入口清单）；plugin.xml 里为可选依赖，
+        // 只在 imux-java.xml 登记的那一个类里用到，没有 Java 插件的 IDE 不加载。
+        bundledPlugin("com.intellij.java")
         // 暂不引入 testFramework(TestFrameworkType.Platform)：
         // com.jetbrains.intellij.platform:test-framework 需从 JetBrains 仓库下载，
         // 本机网络下该主机 TLS 稳定被重置。它只服务于 BasePlatformTestCase 类的

@@ -46,7 +46,8 @@ class PeerCoordinatorDispatchTest {
             runCli = { _, _, _, _, _, _, _, _ -> "feedback" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { sessionKey, feedback ->
+            sendAutoFeedback = { sessionKey, sent ->
+                val feedback = peerBody(sent)
                 accepted.add("$sessionKey: $feedback")
                 latch.countDown()
                 true
@@ -155,7 +156,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 assertEquals("feedback", feedback)
                 if (attempts.incrementAndGet() == 1) {
                     firstAttempt.countDown()
@@ -210,7 +212,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
-            onFeedbackUndelivered = { sessionKey, feedback ->
+            onFeedbackUndelivered = { sessionKey, sent ->
+                val feedback = peerBody(sent)
                 undelivered.add("$sessionKey: $feedback")
                 done.countDown()
             },
@@ -575,7 +578,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { mcpConfig },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { sessionKey, feedback ->
+            sendAutoFeedback = { sessionKey, sent ->
+                val feedback = peerBody(sent)
                 injected.add("$sessionKey: $feedback")
                 feedbackSent.countDown()
                 true
@@ -980,7 +984,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { mcpConfig },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 injectedFeedback.add(feedback)
                 true
             },
@@ -1064,7 +1069,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { mcpConfig },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 injectedFeedback.add(feedback)
                 true
             },
@@ -1172,7 +1178,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { task, conversation -> "task=$task\nconversation=$conversation" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 assertEquals("feedback after shrink", feedback)
                 feedbackSent.countDown()
                 true
@@ -1440,7 +1447,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { task, conv -> "task=$task\nconv=$conv" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 assertEquals("feedback after exit0 retry", feedback)
                 feedbackSent.countDown()
                 true
@@ -1978,7 +1986,8 @@ class PeerCoordinatorDispatchTest {
             runCli = { _, _, _, _, _, _, _, _ -> "some actionable feedback" },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 autoInjected.add(feedback)
                 true
             },
@@ -2198,7 +2207,8 @@ class PeerCoordinatorDispatchTest {
             },
             resolveMcpConfig = { PeerMcpConfig(null, null, null) },
             buildPrompt = { _, _ -> "test prompt" },
-            sendAutoFeedback = { _, feedback ->
+            sendAutoFeedback = { _, sent ->
+                val feedback = peerBody(sent)
                 feedbackSent.add(feedback)
                 true
             },

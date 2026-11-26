@@ -2,6 +2,7 @@ package com.github.izerui.imux.peer
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.IdeaMcpEndpoint
+import com.github.izerui.imux.terminal.TerminalMcpServer
 import com.github.izerui.imux.terminal.dialectOf
 import com.github.izerui.imux.terminal.ideaMcpCliArgument
 import com.github.izerui.imux.terminal.ideaMcpEnvironment
@@ -18,9 +19,11 @@ internal fun peerCliCommand(
     ideaMcp: IdeaMcpEndpoint? = null,
     ideaMcpGuidance: String? = null,
     piIdeaMcpExtension: Path? = null,
+    additionalMcpServers: List<TerminalMcpServer> = emptyList(),
+    piPluginMcpExtension: Path? = null,
 ): List<String> {
     val dialect = dialectOf(shell)
-    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance)
+    val ideaMcpArgument = ideaMcpCliArgument(dialect, agentType, ideaMcp, ideaMcpGuidance, additionalMcpServers)
     val cli =
         when (agentType) {
             AgentType.CLAUDE ->
@@ -41,6 +44,7 @@ internal fun peerCliCommand(
                 buildString {
                     append("pi -p --no-session")
                     piIdeaMcpExtension?.let { append(" -e ${quote(dialect, it.toString())}") }
+                    piPluginMcpExtension?.let { append(" -e ${quote(dialect, it.toString())}") }
                     append(" --mode json")
                 }
         }
@@ -67,8 +71,12 @@ internal fun buildPeerCliInvocation(
     projectPath: String,
     mcpConfig: PeerMcpConfig,
 ): PeerCliInvocation = PeerCliInvocation(
-    command = peerCliCommand(shell, agentType, projectPath, mcpConfig.endpoint, mcpConfig.guidance, mcpConfig.piExtensionScript),
-    environment = ideaMcpEnvironment(agentType, mcpConfig.endpoint, mcpConfig.guidance),
+    command = peerCliCommand(
+        shell, agentType, projectPath, mcpConfig.endpoint, mcpConfig.guidance, mcpConfig.piExtensionScript,
+        additionalMcpServers = listOfNotNull(mcpConfig.codeTools?.server),
+        piPluginMcpExtension = mcpConfig.codeTools?.piExtension,
+    ),
+    environment = ideaMcpEnvironment(agentType, mcpConfig.endpoint, mcpConfig.guidance) + mcpConfig.codeTools?.environment.orEmpty(),
 )
 
 internal fun runPeerCli(

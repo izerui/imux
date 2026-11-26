@@ -758,6 +758,22 @@ class AgentCommandTest {
         assertNull(launchEnvironment(AgentType.CODEX, "tab-1", ideaMcp = endpoint, ideaMcpGuidance = "x")["IMUX_IDEA_MCP_GUIDANCE"])
     }
 
+    /** 两个扩展各自读到后写进同一段、哪个缺失都不丢，由 PiPluginMcpBehaviorTest 与 PiIdeaMcpBehaviorTest 分别验证扩展本身。 */
+    @Test
+    fun `pi 的引导词总放进插件内置 MCP 扩展的变量，开着 IDEA MCP 时也放进 IDEA MCP 扩展的变量`() {
+        val off = launchEnvironment(AgentType.PI, "tab-1", ideaMcp = null, ideaMcpGuidance = "map the chain")
+        assertEquals("map the chain", off[PI_PLUGIN_GUIDANCE_ENV])
+        assertNull(off["IMUX_IDEA_MCP_GUIDANCE"])
+
+        val on = launchEnvironment(AgentType.PI, "tab-1", ideaMcp = IdeaMcpEndpoint(64342, "/workspace"), ideaMcpGuidance = "map the chain")
+        assertEquals("map the chain", on["IMUX_IDEA_MCP_GUIDANCE"])
+        assertEquals("map the chain", on[PI_PLUGIN_GUIDANCE_ENV])
+
+        assertNull(launchEnvironment(AgentType.CLAUDE, "tab-1", ideaMcpGuidance = "x")[PI_PLUGIN_GUIDANCE_ENV])
+        assertNull(launchEnvironment(AgentType.CODEX, "tab-1", ideaMcpGuidance = "x")[PI_PLUGIN_GUIDANCE_ENV])
+        assertNull(launchEnvironment(AgentType.PI, "tab-1", ideaMcpGuidance = " ")[PI_PLUGIN_GUIDANCE_ENV])
+    }
+
     /** 令牌是这个接口唯一的门禁：平台在 HttpRequestHandler 这层不做任何校验。 */
     @Test
     fun `令牌不发给 pi 以外的 agent`() {

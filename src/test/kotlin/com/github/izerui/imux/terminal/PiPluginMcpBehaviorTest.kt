@@ -58,6 +58,47 @@ class PiPluginMcpBehaviorTest {
         assertEquals(listOf("imux_session"), sessionOnly.getAsJsonArray("registrations").map { it.asJsonObject["name"].asString })
     }
 
+    @Test fun `代码导航服务用自己的凭证注册且凭证读出后从环境里删除`() {
+        val result = run("""
+            process.env.IMUX_CODE_URL = "http://127.0.0.1:63342/imux/code-mcp";
+            process.env.IMUX_CODE_TOKEN = "code-token";
+            extension(api);
+            console.log(JSON.stringify({registrations, remaining: process.env.IMUX_CODE_TOKEN}));
+        """, mobile = false)
+        val registrations = result.getAsJsonArray("registrations").map { it.asJsonObject }
+        assertEquals(listOf("imux_code"), registrations.map { it["name"].asString })
+        val config = registrations[0].getAsJsonObject("config")
+        assertEquals("http://127.0.0.1:63342/imux/code-mcp", config["url"].asString)
+        assertEquals("Bearer code-token", config.getAsJsonObject("headers")["Authorization"].asString)
+        assertFalse(result.has("remaining"))
+    }
+
+    @Test fun `引导词由插件内置 MCP 扩展写进与 IDEA MCP 扩展同一段系统提示，重载后仍在且不留给子进程`() {
+        val result = run("""
+            process.env.IMUX_CODE_URL = "http://127.0.0.1:63342/imux/code-mcp";
+            process.env.IMUX_CODE_TOKEN = "code-token";
+            process.env.IMUX_MCP_GUIDANCE = "map the chain first";
+            extension(api);
+            extension(api);
+            const sections = handlers.map(({handler}) => {
+              const event = {systemPromptOptions: {sections: {}}};
+              handler(event);
+              return event.systemPromptOptions.sections.imux_idea_mcp;
+            });
+            console.log(JSON.stringify({sections, remaining: process.env.IMUX_MCP_GUIDANCE}));
+        """, mobile = false)
+        assertEquals(listOf("map the chain first", "map the chain first"), result.getAsJsonArray("sections").map { it.asString })
+        assertFalse(result.has("remaining"))
+    }
+
+    @Test fun `没有引导词时插件内置 MCP 扩展不注册系统提示钩子`() {
+        val result = run("""
+            extension(api);
+            console.log(JSON.stringify({hooks}));
+        """)
+        assertEquals(0, result["hooks"].asInt)
+    }
+
     private fun run(body: String, mobile: Boolean = true): com.google.gson.JsonObject {
         val module = Base64.getEncoder().encodeToString(Files.readAllBytes(Path.of("src/main/js/pi-imux-mcp.js")))
         val mobileEnv = if (mobile) {
@@ -70,16 +111,17 @@ class PiPluginMcpBehaviorTest {
             import extension from "data:text/javascript;base64,$module";
             $mobileEnv
             const registrations = [];
+            const handlers = [];
             let hooks = 0;
             const api = {
               registerMcpServer(name,config){registrations.push({name,config})},
-              on(){hooks++}
+              on(event,handler){hooks++; handlers.push({event,handler})}
             };
             $body
         """.trimIndent()
         val process = ProcessBuilder("node", "--input-type=module", "-e", script).apply {
             // 测试场景自己注入配置，不继承启动终端里的真实 MCP 服务。
-            listOf("IMUX_MOBILE_URL", "IMUX_MOBILE_TOKEN", "IMUX_SESSION_URL", "IMUX_SESSION_TOKEN")
+            listOf("IMUX_MOBILE_URL", "IMUX_MOBILE_TOKEN", "IMUX_SESSION_URL", "IMUX_SESSION_TOKEN", "IMUX_CODE_URL", "IMUX_CODE_TOKEN", "IMUX_MCP_GUIDANCE")
                 .forEach { environment().remove(it) }
         }.start()
         assertTrue("Node extension harness timed out", process.waitFor(10, TimeUnit.SECONDS))

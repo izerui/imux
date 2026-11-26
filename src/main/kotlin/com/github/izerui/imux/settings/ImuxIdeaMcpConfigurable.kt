@@ -7,23 +7,17 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.options.BoundConfigurable
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.MAX_LINE_LENGTH_WORD_WRAP
-import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Cell
 import com.intellij.ui.dsl.builder.MutableProperty
 import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindSelected
-import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.builder.selected
-import java.awt.Point
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.JButton
 import javax.swing.JCheckBox
-import javax.swing.JViewport
-import javax.swing.SwingUtilities
 
 /** IDEA MCP connection and agent-guidance settings. */
 class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
@@ -34,15 +28,13 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
     override fun createPanel(): DialogPanel {
         val settings = ImuxSettings.getInstance()
         lateinit var injectToggle: Cell<JCheckBox>
-        lateinit var guidanceToggle: Cell<JCheckBox>
         var portField: JBTextField? = null
-        var guidanceArea: JBTextArea? = null
         val status = JBLabel()
         checkStatus = status
 
         return panel {
             row {
-                comment(ImuxBundle.message("settings.idea.mcp.scope.note"))
+                comment(ImuxBundle.message("settings.idea.mcp.scope.note"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
             }
             group(ImuxBundle.message("settings.idea.mcp.connection.group")) {
                 row {
@@ -76,41 +68,13 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
                     cell(status)
                 }.enabledIf(injectToggle.selected)
             }
-            group(ImuxBundle.message("settings.idea.mcp.guidance.group")) {
+            // 使用引导没有单独开关：哪组工具开着，就自动带上哪部分引导（见 agentGuidance）。
+            group(ImuxBundle.message("settings.code.tools.group")) {
                 row {
-                    guidanceToggle =
-                        checkBox(ImuxBundle.message("settings.idea.mcp.guidance.enable"))
-                            .bindSelected(settings.state::ideaMcpGuidanceEnabled)
-                            .comment(ImuxBundle.message("settings.idea.mcp.guidance.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
+                    checkBox(ImuxBundle.message("settings.code.tools.inject"))
+                        .bindSelected(settings.state::injectCodeTools)
+                        .comment(ImuxBundle.message("settings.code.tools.inject.comment"), maxLineLength = MAX_LINE_LENGTH_WORD_WRAP)
                 }
-                row(ImuxBundle.message("settings.idea.mcp.guidance.prompt")) {
-                    guidanceArea =
-                        textArea()
-                            .applyToComponent { rows = 12 }
-                            .align(AlignX.FILL)
-                            .bindText(
-                                MutableProperty(
-                                    { settings.state.ideaMcpGuidanceOverride ?: defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage) },
-                                    settings::setIdeaMcpGuidance,
-                                ),
-                            ).component
-                }.resizableRow()
-                    .enabledIf(guidanceToggle.selected)
-                row {
-                    button(ImuxBundle.message("settings.idea.mcp.guidance.restore")) {
-                        guidanceArea?.text = defaultIdeaMcpGuidanceForLanguage(settings.effectiveLanguage)
-                        resetGuidanceView(guidanceArea)
-                    }
-                }.enabledIf(guidanceToggle.selected)
-            }
-            onReset {
-                resetGuidanceView(guidanceArea)
-            }
-        }.also {
-            settings.addLanguageListener(disposable!!) {
-                val area = guidanceArea ?: return@addLanguageListener
-                area.text = guidanceAfterLanguageSwitch(area.text, settings.effectiveLanguage)
-                resetGuidanceView(area)
             }
         }
     }
@@ -151,11 +115,4 @@ class ImuxIdeaMcpConfigurable : BoundConfigurable("IDEA MCP") {
             )
         }
     }
-}
-
-private fun resetGuidanceView(area: JBTextArea?) {
-    if (area == null) return
-    area.caretPosition = 0
-    (SwingUtilities.getAncestorOfClass(JViewport::class.java, area) as? JViewport)
-        ?.viewPosition = Point(0, 0)
 }

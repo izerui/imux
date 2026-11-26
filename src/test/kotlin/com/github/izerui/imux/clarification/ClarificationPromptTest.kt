@@ -41,6 +41,17 @@ class ClarificationPromptTest {
         }
     }
 
+    /** 先聊这一步为什么存在、聊到什么时候算够：没有这条，要么问个没完，要么急着收尾。判据两头都要写，不能只催交付。 */
+    @Test
+    fun `中英两套指南都说明为什么先聊，并给出继续还是交付的判据且两头都写`() {
+        val zh = loadGuidance(true)
+        assertTrue(zh.contains("先聊，是因为想偏了的事交给主 Agent，只会被认真地做偏。"))
+        assertTrue(zh.contains("该不该继续，看再聊下去还会不会改变要做的事——还会，就值得继续；不会了，就该交付。"))
+        val en = loadGuidance(false)
+        assertTrue(en.contains("the reason to talk first is that\na mistaken idea handed to the main agent only gets carried out carefully in the wrong direction."))
+        assertTrue(en.contains("Whether to go on depends on whether more talk would still change what gets done — if it would, it is worth continuing;\nonce it would not, hand off."))
+    }
+
     @Test
     fun `中英文开场将只读边界与核心指南分开`() {
         for (chinese in listOf(true, false)) {
@@ -98,27 +109,27 @@ class ClarificationPromptTest {
                 )
                 assertTrue(
                     "$chinese $phase：交付任务而不是调查报告",
-                    message.contains(if (chinese) "直接输出用户完善后的需求正文，不输出调查报告" else "Output the user's refined request itself, not an investigation report"),
+                    message.contains(if (chinese) "直接给出需求正文。它不是调查报告" else "give the request itself. It is not an investigation report"),
                 )
                 assertTrue(
                     "$chinese $phase：保留用户表达角度",
-                    message.contains(if (chinese) "沿用用户原来的人称、语气和表达角度" else "Preserve the user's original grammatical person, tone and perspective"),
+                    message.contains(if (chinese) "沿用用户原来的人称、语气和表达角度" else "keep the user's grammatical person, tone and perspective"),
                 )
                 assertTrue(
                     "$chinese $phase：不强制第一人称",
-                    message.contains(if (chinese) "不机械统一成第一人称或固定模板" else "Do not copy verbal repetitions, force first-person phrasing or impose a template"),
+                    message.contains(if (chinese) "也不机械统一成第一人称或固定模板" else "do not copy verbal repetitions, force first-person phrasing or impose a template"),
                 )
                 assertTrue(
                     "$chinese $phase：不把候选建议写成决定",
-                    message.contains(if (chinese) "涉及目标、范围、关键体验或重要代价的未确认取舍不得写成决定" else "do not settle unconfirmed tradeoffs about goals, scope, key experience or significant costs"),
+                    message.contains(if (chinese) "没有确认的事不能写成决定：涉及目标、范围、关键体验或重要代价的取舍，用户没确认就不写成已定" else "Nothing unconfirmed may be written as decided: a tradeoff about goals, scope, key experience or significant costs stays open until the user confirms it"),
                 )
                 assertTrue(
                     "$chinese $phase：保留探索任务的性质",
-                    message.contains(if (chinese) "探索目标不得擅自改成实施任务" else "or turn exploratory goals into implementation tasks"),
+                    message.contains(if (chinese) "探索性的目标不擅自改成实施任务" else "an exploratory goal is not turned into an implementation task"),
                 )
                 assertTrue(
                     "$chinese $phase：合理细化不逐项审批",
-                    message.contains(if (chinese) "不逐项要求用户批准" else "without asking for approval of each one"),
+                    message.contains(if (chinese) "不必逐项请用户批准" else "without asking for approval of each one"),
                 )
                 assertFalse(
                     "$chinese $phase：不再保留旧的泛化成果规则",
@@ -148,7 +159,7 @@ class ClarificationPromptTest {
         assertTrue("选中的选项与原话", opening.contains("只恢复连接 (DA); 连同滚动缓冲 (DB); Other: OWN"))
         assertTrue("不回答的写明默认处理", opening.contains("Not answered; use the default: 只恢复连接"))
         assertTrue("恢复时说明历史顺序", opening.contains("in chronological order"))
-        assertTrue("缺失调查不冒充已知", opening.contains("Missing investigation findings are not established facts"))
+        assertTrue("缺失调查不冒充已知", opening.contains("Earlier investigation findings were not kept: look up again any fact you need rather than treating it as established."))
         assertTrue(opening.trimEnd().endsWith(JSON_ONLY_EN))
     }
 
@@ -190,14 +201,14 @@ class ClarificationPromptTest {
             assertTrue("$chinese：新回答存在", message.contains("NEW-CHOICE"))
             assertTrue(
                 "$chinese：明确优先级",
-                message.contains(if (chinese) "用户最新明确修订优先，但只覆盖实际改变的要求" else "the user's latest explicit revision takes precedence only for requirements actually changed"),
+                message.contains(if (chinese) "用户最新的明确修订优先，但只覆盖实际改变的要求" else "The user's latest explicit revision takes precedence, but only for the requirements it actually changes"),
             )
             assertFalse("$chinese：不再整体覆盖旧决定", message.contains(if (chinese) "取代修订前的决定" else "replaces decisions made before the revision"))
         }
     }
 
     @Test
-    fun `中英文继续聊区分模型草稿和用户编辑`() {
+    fun `中英文继续聊区分模型草稿和用户编辑，没改就继续时提醒不要原样再交`() {
         val plan = "保留当前交互，只探索内部机制，不承诺实施任何候选方案。"
         for (chinese in listOf(true, false)) {
             val untouched = continueMessage(chinese, ReviewedDraft(plan, plan, ContentOrigin.AGENT, 0))
@@ -206,7 +217,15 @@ class ClarificationPromptTest {
             val edited = continueMessage(chinese, ReviewedDraft("EDITED", plan, ContentOrigin.AGENT, 0))
             assertTrue("$chinese：编辑前原文保留", edited.contains(plan))
             assertTrue("$chinese：明确编辑后的文字", edited.contains(if (chinese) "用户编辑后的文本：\nEDITED" else "User-edited text:\nEDITED"))
+            assertTrue(
+                "$chinese：只有改动的地方算用户明确表达",
+                edited.contains(if (chinese) "用户改动的地方是他明确表达的意思；原样留下的部分仍是草稿，不算确认。" else "what the user changed is what they explicitly meant; what they left as it was is still a draft, not approval."),
+            )
+            val nothingNew = if (chinese) "用户没有改动，也没说哪里不满意：不要把同一份内容原样再交一遍" else "The user changed nothing and did not say what falls short: do not hand the same content back unchanged"
+            assertTrue("$chinese：没改就继续时不原样再交", untouched.contains(nothingNew))
+            assertFalse("$chinese：改过的不说没有改动", edited.contains(nothingNew))
             val notes = continueMessage(chinese, ReviewedDraft("NOTES", "NOTES", ContentOrigin.NOTES, 0))
+            assertTrue("$chinese：材料没改就继续时同样提醒", notes.contains(nothingNew))
             assertTrue("$chinese：材料不被当作批准的计划", notes.contains(if (chinese) "不能直接当作已确认方案" else "not an approved plan"))
             assertFalse("$chinese：材料不声称由用户编辑", notes.contains(if (chinese) "用户编辑后的文本" else "User-edited text"))
         }
@@ -261,11 +280,11 @@ class ClarificationPromptTest {
             assertEquals("$chinese：交付细则只出现一次", 1, opening.split(detail).size - 1)
             assertTrue(
                 "$chinese：关键取舍未定时继续询问",
-                opening.contains(if (chinese) "这类取舍阻碍任务成立时继续询问，不返回 done" else "when such a tradeoff prevents a coherent task, keep asking instead of returning done"),
+                opening.contains(if (chinese) "这类取舍让任务无法成立时继续询问，不返回 done" else "When such a tradeoff prevents a coherent task, keep asking instead of returning done"),
             )
             assertTrue(
                 "$chinese：交付前核对遗漏",
-                opening.contains(if (chinese) "交付前核对是否遗漏用户的目标与明确要求" else "check that none of the user's goals or explicit requirements were omitted"),
+                opening.contains(if (chinese) "交付前自查三件事：用户的目标和明确要求有没有遗漏" else "check three things: that none of the user's goals or explicit requirements were omitted"),
             )
             assertTrue(
                 "$chinese：交付前核对业务和逻辑闭环",
@@ -276,6 +295,33 @@ class ClarificationPromptTest {
                 opening.contains(if (chinese) "有没有捡了芝麻丢了西瓜，让次要细节挤占或带偏了主要目标" else "minor details have not crowded out or diverted the main goal"),
             )
         }
+    }
+
+    /** 「什么算用户的决定」原来是七八条并列的规则；它们都出自同一条，写在前面，没列到的情形也能自己推。 */
+    @Test
+    fun `中英文运行边界分两段：先讲只读，再用一条原则统领四类不算用户决定的情形`() {
+        val zh = openingMessage(fresh, true, "g")
+        assertTrue(zh.contains("本次只讨论与调查：可以用工具读取相关代码、文档，查询网络上的事实；不修改文件、不运行构建或测试、不启动服务或长时间运行的命令。\n\n什么算用户的决定，只认一条：用户自己明确说过的。由此：\n"))
+        assertTrue(zh.contains("- 未回答的题目采用该题事先披露的默认处理"))
+        assertTrue(zh.contains("- 探索兴趣不代表实施授权：用户想了解、想聊聊的事，不等于要你安排去做。"))
+        assertTrue(zh.contains("- 模型草稿不是用户决定，点击继续聊不是确认。"))
+        assertTrue(zh.contains("- 用户最新的明确修订优先，但只覆盖实际改变的要求；草稿或编辑文本没提到的旧要求不自动取消，是否取消不明确时询问。"))
+        val en = openingMessage(fresh, false, "g")
+        assertTrue(en.contains("do not modify files, run builds or tests, start services or run long-lived commands.\n\nOnly one thing counts as the user's decision: what the user explicitly said. It follows that:\n"))
+        assertTrue(en.contains("- An unanswered item takes the default disclosed for it"))
+        assertTrue(en.contains("- Exploratory interest is not implementation authorization: wanting to understand or talk something through is not asking for it to be done."))
+        assertTrue(en.contains("- Model drafts are not user decisions, and continuing is not approval."))
+        assertTrue(en.contains("- The user's latest explicit revision takes precedence, but only for the requirements it actually changes; requirements omitted from a draft or edit are not automatically cancelled, so ask when cancellation is unclear."))
+    }
+
+    @Test
+    fun `中英文出题规则都给默认处理和选项说明配上理由`() {
+        val zh = openingMessage(fresh, true, "g")
+        assertTrue(zh.contains("- fallback：事先写明不回答时按什么处理——用户没见过的默认，他就没法拒绝。"))
+        assertTrue(zh.contains("description 要把这个选择的含义写完整：用户选了它，记下来的就是这句话。"))
+        val en = openingMessage(fresh, false, "g")
+        assertTrue(en.contains("- fallback: state in advance how you will proceed without an answer — a default the user never saw is one they could not decline."))
+        assertTrue(en.contains("The description must state the full meaning of the choice: when the user picks it, that sentence is what gets recorded."))
     }
 
     @Test

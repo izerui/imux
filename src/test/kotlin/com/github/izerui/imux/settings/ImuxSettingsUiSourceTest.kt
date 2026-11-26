@@ -1,6 +1,7 @@
 package com.github.izerui.imux.settings
 
 import com.github.izerui.imux.SourceCode
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,50 +41,14 @@ class ImuxSettingsUiSourceTest {
         assertTrue("至少一个智能体的错误应绑定到字段", source.contains("validationOnApply"))
     }
 
+    /** 回复引导词、副驾驶提示词都不开放编辑：页上只留开关，不能再出现文本框或「恢复默认」。 */
     @Test
-    fun `副驾驶默认提示词跟随界面语言`() {
-        assertTrue("应通过抽取函数选择提示词", source.contains("defaultPeerPromptForLanguage"))
-        assertTrue("语言切换应调用抽取函数", source.contains("promptAfterLanguageSwitch"))
-        assertTrue("语言切换时应联动更新提示词文本框", source.contains("addActionListener"))
-    }
-
-    @Test
-    fun `恢复默认同时更新提示词文本框`() {
-        assertTrue(source.contains("defaultPeerPromptForLanguage(selectedLanguage)"))
-    }
-
-    @Test
-    fun `语言切换后视口滚回顶部`() {
-        val block = source.substringAfter("promptAfterLanguageSwitch").substringBefore("selectedLanguage")
-        assertTrue("语言切换 addActionListener 块内缺少 scrollToTop", block.contains("scrollToTop(promptArea)"))
-    }
-
-    @Test
-    fun `恢复默认后视口滚回顶部`() {
-        val block = source.substringAfter("settings.peer.prompt.restore").substringBefore("settings.group.project.window")
-        assertTrue("恢复默认按钮回调内缺少 scrollToTop", block.contains("scrollToTop(promptArea)"))
-    }
-
-    @Test
-    fun `onReset 后视口滚回顶部`() {
-        val block = source.substringAfter("onReset").substringBefore("onIsModified")
-        assertTrue("onReset 回调内缺少 scrollToTop", block.contains("scrollToTop(promptArea)"))
-    }
-
-    /**
-     * 长文案不自动换行时，文本框按最长一行撑宽，整个设置页被往右撑出去（实测一句默认回复引导就撑到 889px）。
-     * 页上每个多行文本框都必须自动换行，宽度才跟着设置窗口走。
-     */
-    @Test
-    fun `设置页的回复引导与副驾驶提示词两个文本框都自动换行`() {
-        val compact = SourceCode.fromText(source).compact(source)
-        listOf("replyArea=textArea()", "promptArea=textArea()").forEach { area ->
-            val start = compact.indexOf(area)
-            assertTrue("找不到文本框：$area", start >= 0)
-            val setup = compact.substring(start, compact.indexOf(".align(", start))
-            assertTrue("$area 没开自动换行：$setup", setup.contains("lineWrap=true") && setup.contains("wrapStyleWord=true"))
-        }
-        assertTrue("页上多了一个文本框却没纳入本条守卫", Regex("""=textArea\(\)""").findAll(compact).count() == 2)
+    fun `回复风格只留开关，回复引导词和副驾驶提示词都没有文本框和恢复默认`() {
+        assertTrue(source.contains("bindSelected(settings.state::plainReplyEnabled)"))
+        assertFalse(source.contains("textArea()"))
+        assertFalse(source.contains("settings.reply.plain.prompt"))
+        assertFalse(source.contains("settings.reply.plain.restore"))
+        assertFalse(source.contains("settings.peer.prompt"))
     }
 
     /**

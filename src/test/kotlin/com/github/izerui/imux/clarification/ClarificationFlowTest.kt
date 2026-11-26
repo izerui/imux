@@ -222,7 +222,7 @@ class ClarificationFlowTest {
         assertTrue("开场带需求", reopening.contains("REQ-MARK"))
         assertTrue("开场带已确认的问答", reopening.contains("D-H1-b"))
         assertTrue("恢复时带上历史顺序", reopening.contains("in chronological order"))
-        assertTrue("保留用户后续修订的权利", reopening.contains("the user's latest explicit revision takes precedence"))
+        assertTrue("保留用户后续修订的权利", reopening.contains("The user's latest explicit revision takes precedence"))
         assertEquals("H3", asking.single().header)
     }
 
@@ -281,7 +281,7 @@ class ClarificationFlowTest {
         assertTrue("最初输入仍然存在", opening.contains("REQ-MARK"))
         assertTrue("被草稿漏掉的用户要求仍然存在", opening.contains("必须能够通知用户核实异常"))
         assertTrue("草稿注明非用户确认", opening.contains("Agent candidate task (not user approval):\n仅提供来源查询"))
-        assertTrue("不以未提及取消旧要求", opening.contains("Requirements omitted from a draft or edit are not automatically cancelled"))
+        assertTrue("不以未提及取消旧要求", opening.contains("requirements omitted from a draft or edit are not automatically cancelled"))
     }
 
     @Test
@@ -467,7 +467,7 @@ class ClarificationFlowTest {
         assertTrue("携带修订方案", opening.contains("REVISED-PLAN"))
         assertTrue("携带之后的新回答", opening.contains("LATEST-ANSWER"))
         assertTrue("新回答在方案之后", opening.indexOf("LATEST-ANSWER") > opening.indexOf("REVISED-PLAN"))
-        assertTrue("只覆盖明确改变的要求", opening.contains("only for requirements actually changed"))
+        assertTrue("只覆盖明确改变的要求", opening.contains("but only for the requirements it actually changes"))
         assertFalse("不能在结尾又要求以旧方案为准", opening.contains("Use the user's current edited outcome:"))
     }
 

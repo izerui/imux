@@ -11,7 +11,7 @@
 - **会话轨迹**：把几百轮对话整理成一份会话报告，手机、电脑都能看
 - **先聊再做**：动手前先把需求聊清楚
 - **会话转移**：把手上的活交给另一个智能体接着干
-- **回复说人话**：做完事用大白话汇报，少用类名术语，坏消息照实说；设置里可关可改
+- **回复说人话**：做完事用大白话汇报，少用类名术语，坏消息照实说；设置里可关
 
 https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 
@@ -36,6 +36,8 @@ https://github.com/user-attachments/assets/c6b6c55b-b073-4255-a722-fa830e134028
 <img src="docs/marketplace/readme/04-ide-mcp.png" width="760" alt="会话通过 IDEA MCP 调用语义重命名、断点调试、数据库查询、IDE 检查和运行配置">
 
 imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义重命名、调试器、inspections、运行配置、已保存的数据库连接和项目 Code Style，而不是全局文本替换、加 print 调试。
+
+改代码、审查改动、分析代码时，AI 会先查清相关方法被谁调用、又依赖什么、被谁重写或实现，不凭读到的几个文件下结论：imux 给每个会话挂上 `find_references`、`call_hierarchy`、`type_hierarchy` 三个工具，直接用 IDE 自己的「查找用法」引擎，用法里还标出哪些是读、哪些是写，哪些在测试代码里，哪些会被框架自动调用（免得被当成没人用删掉），并附上 IDE 配对的对应测试；另有 `file_outline` 先给出一个文件的总览（类、函数和所在行），帮 AI 决定从哪下手；它不替代阅读，要改的代码照样完整读。这些工具在 IDE 能解析的语言（Java、Kotlin、Go、Python、JS/TS……）里都能用；IDE 不认识的语言退回语言服务器。它们不经过 IDEA MCP，关掉 IDEA MCP 也照样可用。
 
 只对 imux 启动的会话生效，不改 CLI 的全局配置。可在 **Settings → Tools → Imux → IDEA MCP** 关闭或调整。
 
@@ -93,7 +95,7 @@ imux 启动的会话会自动接入 JetBrains MCP，AI 可以用 IDE 的语义�
 | 「做完让副驾驶审查一次」 | 这一轮结束后审查一次 |
 | 「把截图发我手机」/「把这个文件发给我」 | 发图片、视频、文件到手机 |
 
-只对新打开的会话生效；不想每次确认，可以把 `mcp__imux_session__*`、`mcp__imux_mobile__*` 加进 CLI 的权限白名单。
+只对新打开的会话生效；不想每次确认，可以把 `mcp__imux_session__*`、`mcp__imux_mobile__*`、`mcp__imux_code__*` 加进 CLI 的权限白名单。
 
 ## 还要知道的
 

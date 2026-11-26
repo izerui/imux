@@ -112,6 +112,36 @@ class PeerCliTest {
         assertTrue(script.contains("--no-session"))
     }
 
+    private val codeTools = com.github.izerui.imux.code.CodeToolsLease(
+        com.github.izerui.imux.terminal.TerminalMcpServer("imux_code", "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN"),
+        mapOf("IMUX_CODE_URL" to "http://127.0.0.1:63342/imux/code-mcp", "IMUX_CODE_TOKEN" to "code-token"),
+        Path.of("/tmp/pi-imux-mcp.js"),
+    ) {}
+
+    @Test
+    fun `Claude 副驾驶挂上查调用链工具，凭证走环境变量`() {
+        val inv = buildPeerCliInvocation("/bin/zsh", AgentType.CLAUDE, "/tmp/project", PeerMcpConfig(null, null, null, codeTools))
+        assertTrue(inv.command.last().contains("\"imux_code\""))
+        assertTrue(inv.command.last().contains("/imux/code-mcp"))
+        assertEquals("code-token", inv.environment["IMUX_CODE_TOKEN"])
+    }
+
+    @Test
+    fun `Codex 副驾驶挂上查调用链工具，凭证走环境变量`() {
+        val inv = buildPeerCliInvocation("/bin/zsh", AgentType.CODEX, "/tmp/project", PeerMcpConfig(null, null, null, codeTools))
+        assertTrue(inv.command.last().contains("mcp_servers.imux_code.url"))
+        assertTrue(inv.command.last().contains("IMUX_CODE_TOKEN"))
+        assertEquals("code-token", inv.environment["IMUX_CODE_TOKEN"])
+    }
+
+    @Test
+    fun `Pi 副驾驶加载插件内置 MCP 扩展挂上查调用链工具，凭证走环境变量`() {
+        val inv = buildPeerCliInvocation("/bin/zsh", AgentType.PI, "/tmp/project", PeerMcpConfig(null, null, null, codeTools))
+        assertTrue(inv.command.last().contains("-e '/tmp/pi-imux-mcp.js'"))
+        assertEquals("code-token", inv.environment["IMUX_CODE_TOKEN"])
+        assertEquals("http://127.0.0.1:63342/imux/code-mcp", inv.environment["IMUX_CODE_URL"])
+    }
+
     @Test
     fun `peerCliCommand 传入 null endpoint 时 Claude 命令不含 MCP 参数`() {
         val script = peerCliCommand("/bin/zsh", AgentType.CLAUDE, "/tmp/project", null, null).last()
