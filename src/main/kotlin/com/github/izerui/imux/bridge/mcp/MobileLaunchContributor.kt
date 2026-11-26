@@ -3,7 +3,7 @@ package com.github.izerui.imux.bridge.mcp
 import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.TerminalLaunchContribution
-import com.github.izerui.imux.terminal.TerminalLaunchContributor
+import com.github.izerui.imux.terminal.NamedLaunchContributor
 import com.github.izerui.imux.terminal.TerminalMcpServer
 import com.github.izerui.imux.terminal.claudeHookSettings
 import com.github.izerui.imux.terminal.piPluginMcpScript
@@ -12,7 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import org.jetbrains.ide.BuiltInServerManager
 
-class MobileLaunchContributor : TerminalLaunchContributor {
+class MobileLaunchContributor : NamedLaunchContributor {
+    override val toolLabelKey = "terminal.tools.mobile"
     override suspend fun prepare(project: Project, tabId: String, agentType: AgentType): TerminalLaunchContribution {
         val port = runInterruptible(Dispatchers.IO) { BuiltInServerManager.getInstance().waitForStart().port }
         check(port > 0)

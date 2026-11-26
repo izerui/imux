@@ -94,6 +94,7 @@ class SessionMonitorTest {
                 source.compact(
                     """
                     PiReportType.SESSION_START -> {
+                        report.failedMcpServers?.let { host.updatePiRegistrationFailures(report.tabId, it) }
                         val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
                         if (drifts.isNotEmpty()) driftCoordinator.applyDrifts(drifts)
                         refresh()

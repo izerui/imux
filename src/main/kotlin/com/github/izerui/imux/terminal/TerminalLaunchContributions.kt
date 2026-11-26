@@ -35,12 +35,27 @@ class TerminalLaunchContribution(
     ) : this(servers, environment, piExtensions, claudeSettings, emptySet(), release)
 
     private val closed = AtomicBoolean()
+    internal var unavailableTools: Set<String> = emptySet()
+    internal var piRegistrationFailures: Set<String> = emptySet()
+        private set
+    internal var serverLabels: Map<String, String> = emptyMap()
+
+    internal fun updatePiRegistrationFailures(failed: Set<String>): Boolean {
+        val labels = failed.mapNotNullTo(linkedSetOf(), serverLabels::get)
+        if (labels == piRegistrationFailures) return false
+        piRegistrationFailures = labels
+        return true
+    }
     override fun close() { if (closed.compareAndSet(false, true)) release() }
     override fun toString(): String = "TerminalLaunchContribution(servers=${servers.map { it.name }})"
 }
 
 interface TerminalLaunchContributor {
     suspend fun prepare(project: Project, tabId: String, agentType: AgentType): TerminalLaunchContribution
+}
+
+interface NamedLaunchContributor : TerminalLaunchContributor {
+    val toolLabelKey: String
 }
 
 object TerminalLaunchContributions {
@@ -98,25 +113,45 @@ object TerminalLaunchContributions {
     fun available(): Boolean = ep.extensionList.isNotEmpty()
 
     suspend fun prepare(project: Project, tabId: String, agentType: AgentType): TerminalLaunchContribution {
+        return prepareEach(ep.extensionList, 5_000) { it.prepare(project, tabId, agentType) }
+    }
+
+    internal suspend fun prepareEach(
+        providers: List<TerminalLaunchContributor>,
+        timeoutMillis: Long,
+        prepare: suspend (TerminalLaunchContributor) -> TerminalLaunchContribution,
+    ): TerminalLaunchContribution {
         val parts = mutableListOf<TerminalLaunchContribution>()
+        val unavailable = linkedSetOf<String>()
+        val labels = mutableMapOf<String, String>()
         try {
-            ep.extensionList.forEach { provider ->
+            providers.forEach { provider ->
+                val label = (provider as? NamedLaunchContributor)?.toolLabelKey ?: "terminal.tools.other"
                 var prepared: TerminalLaunchContribution? = null
                 try {
-                    val part = withTimeoutOrNull(5_000) {
-                        provider.prepare(project, tabId, agentType).also { prepared = it }
+                    val part = withTimeoutOrNull(timeoutMillis) {
+                        prepare(provider).also { prepared = it }
                     }
                     if (part == null) {
+                        unavailable += label
                         LOG.warn("Terminal integration timed out: ${provider.javaClass.name}")
                     } else {
                         parts += part
+                        part.servers.forEach { labels[it.name] = label }
                         prepared = null
                     }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException || e is com.intellij.openapi.progress.ProcessCanceledException) throw e
+                    unavailable += label
+                    LOG.warn("Terminal integration unavailable: ${provider.javaClass.name}", e)
                 } finally {
-                    prepared?.close()
+                    prepared?.let { closeAll(listOf(it)) }
                 }
             }
-            return merge(parts)
+            return merge(parts).also {
+                it.unavailableTools = unavailable.toSet()
+                it.serverLabels = labels
+            }
         } catch (e: Exception) {
             closeAll(parts)
             throw e

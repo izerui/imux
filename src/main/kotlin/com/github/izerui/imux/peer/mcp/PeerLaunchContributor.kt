@@ -2,7 +2,7 @@ package com.github.izerui.imux.peer.mcp
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.TerminalLaunchContribution
-import com.github.izerui.imux.terminal.TerminalLaunchContributor
+import com.github.izerui.imux.terminal.NamedLaunchContributor
 import com.github.izerui.imux.terminal.TerminalMcpServer
 import com.github.izerui.imux.terminal.piPluginMcpScript
 import com.intellij.openapi.project.Project
@@ -10,7 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import org.jetbrains.ide.BuiltInServerManager
 
-class PeerLaunchContributor : TerminalLaunchContributor {
+class PeerLaunchContributor : NamedLaunchContributor {
+    override val toolLabelKey = "terminal.tools.peer"
     override suspend fun prepare(project: Project, tabId: String, agentType: AgentType): TerminalLaunchContribution {
         val port = runInterruptible(Dispatchers.IO) { BuiltInServerManager.getInstance().waitForStart().port }
         check(port > 0)

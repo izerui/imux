@@ -8,6 +8,7 @@ data class PiSessionReport(
     val cwd: String,
     val stopReason: PiStopReason? = null,
     val messageId: String? = null,
+    val failedMcpServers: Set<String>? = null,
 )
 
 enum class PiReportType(
@@ -77,7 +78,10 @@ internal fun parsePiReport(body: String): PiSessionReport? {
             }
         }
     }
-    return PiSessionReport(type, tabId, sessionId, cwd, stopReason, messageId)
+    val failures = if (type == PiReportType.SESSION_START) {
+        JsonLineScanner.topLevelStringValue(body, "failedMcpServers")?.split(',')?.filter(String::isNotEmpty)?.toSet()
+    } else null
+    return PiSessionReport(type, tabId, sessionId, cwd, stopReason, messageId, failures)
 }
 
 private fun looksLikePiSessionId(value: String): Boolean = PI_SESSION_ID.matches(value)

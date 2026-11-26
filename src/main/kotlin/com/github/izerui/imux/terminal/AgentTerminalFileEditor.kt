@@ -343,9 +343,26 @@ class AgentTerminalFileEditor(
         this.scrollButton = scrollButton
         val navigatorComponent = messageNavigator.component
         val navigatorPreview = messageNavigator.previewComponent
+        fun missing() = TerminalHost.getInstance(project).unavailableTools(virtualFile.tabId)
+        val warning = ToolPill(object : SessionTool {
+            override fun state() = ToolState(
+                AllIcons.General.Warning, ImuxBundle.message("terminal.tools.unavailable"), ImuxBundle.message("terminal.tools.retry"),
+            )
+
+            override fun perform(anchor: JComponent) {
+                val title = ImuxBundle.message("terminal.tools.unavailable")
+                val panel = javax.swing.JPanel(java.awt.GridLayout(0, 1, 0, JBUI.scale(4))).apply {
+                    border = JBUI.Borders.empty(8, 12)
+                    missing().forEach { add(com.intellij.ui.components.JBLabel(ImuxBundle.message(it))) }
+                    add(com.intellij.ui.components.JBLabel(ImuxBundle.message("terminal.tools.retry")))
+                }
+                JBPopupFactory.getInstance().createComponentPopupBuilder(panel, null)
+                    .setTitle(title).createPopup().showUnderneathOf(anchor)
+            }
+        }, shown = { missing().isNotEmpty() })
         val toolButtons =
             listOf(ToolPill(pairTool, pinned = true), ToolPill(talkTool), ToolPill(trailOverlay.tool)) +
-                SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill)
+                SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill) + warning
         val toolStrip = TerminalToolStrip(resultChip, toolButtons)
         this.toolStrip = toolStrip
         toolStrip.refresh()

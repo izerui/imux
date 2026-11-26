@@ -183,6 +183,10 @@ export default function (pi) {
         };
         if (stopReason) body.stopReason = stopReason;
         if (messageId) body.messageId = messageId;
+        if (type === "session_start") {
+          const failures = globalThis[Symbol.for("com.github.izerui.imux.pi-mcp")]?.registrationFailures;
+          if (Array.isArray(failures)) body.failedMcpServers = failures.join(",");
+        }
         fetch(credentials.url, {
           method: "POST",
           headers: { "content-type": "application/json", "x-imux-token": credentials.token },

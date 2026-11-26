@@ -314,6 +314,7 @@ class SessionMonitor(
             val host = TerminalHost.getInstance(project)
             when (report.type) {
                 PiReportType.SESSION_START -> {
+                    report.failedMcpServers?.let { host.updatePiRegistrationFailures(report.tabId, it) }
                     val drifts = driftOf(host.openTabsByTabId(), listOf(LiveTab(report.tabId, report.sessionId)))
                     if (drifts.isNotEmpty()) driftCoordinator.applyDrifts(drifts)
                     // session_start 到达时 pi 已经创建会话文件，立即扫描即可拿到 watcher

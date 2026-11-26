@@ -21,6 +21,38 @@ class PiReporterBehaviorTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
+    @Test
+    fun `Pi 注册接口缺失和单项报错会随标签上报，重新注册成功后清空`() {
+        File(tmp.root, "mcp.mjs").writeText(File("src/main/js/pi-imux-mcp.js").readText())
+        assertEquals(
+            """[["imux-tab","imux_mobile,imux_code"],["imux-tab","imux_code"],["imux-tab",""]]""",
+            runReporter(
+                piExpression = "({on(name, handler) { if (name === 'session_start') globalThis.start = handler; }})",
+                beforeReport = """
+                    const {default: load} = await import("./mcp.mjs");
+                    Object.assign(process.env, {
+                      IMUX_MOBILE_URL: "http://localhost/mobile", IMUX_MOBILE_TOKEN: "mobile",
+                      IMUX_CODE_URL: "http://localhost/code", IMUX_CODE_TOKEN: "code",
+                    });
+                    const reports = [];
+                    console.error = () => {};
+                    globalThis.fetch = async (_, options) => {
+                      const body = JSON.parse(options.body);
+                      reports.push([body.tabId, body.failedMcpServers]);
+                    };
+                    const ctx = { sessionManager: { getSessionId: () => "test", getCwd: () => "/project" } };
+                    for (const api of [{}, {registerMcpServer(name) {
+                      if (name === "imux_code") throw Error();
+                    }}, {registerMcpServer() {}}]) {
+                      load(api);
+                      await start({}, ctx);
+                    }
+                """.trimIndent(),
+                report = "JSON.stringify(reports)",
+            ),
+        )
+    }
+
     /**
      * pi 换了扩展 API：`on` 不再存在。此时 `pi.on(...)` 抛 TypeError，
      * 若没被包住就会一路冒到 pi 的加载器。

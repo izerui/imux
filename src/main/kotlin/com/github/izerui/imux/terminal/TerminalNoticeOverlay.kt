@@ -296,6 +296,7 @@ internal class ToolPill(
     val tool: SessionTool,
     val pinned: Boolean = false,
     tipWindow: TipWindow? = null,
+    val shown: () -> Boolean = { true },
 ) : JComponent() {
     var state: ToolState = tool.state()
         private set
@@ -464,6 +465,7 @@ internal class TerminalToolStrip(
         }
     private val chipGap = javax.swing.Box.createRigidArea(JBUI.size(GAP, 0))
     private var separatorGap: java.awt.Component? = null
+    private val gaps = mutableMapOf<ToolPill, java.awt.Component>()
 
     val component: JComponent =
         TrailSurface().apply {
@@ -474,7 +476,7 @@ internal class TerminalToolStrip(
             add(separator)
             add(javax.swing.Box.createRigidArea(JBUI.size(GAP, 0)).also { separatorGap = it })
             pills.forEachIndexed { i, pill ->
-                if (i > 0) add(javax.swing.Box.createRigidArea(JBUI.size(GAP, 0)))
+                if (i > 0) add(javax.swing.Box.createRigidArea(JBUI.size(GAP, 0)).also { gaps[pill] = it })
                 pill.alignmentY = JComponent.CENTER_ALIGNMENT
                 add(pill)
             }
@@ -492,15 +494,16 @@ internal class TerminalToolStrip(
                 chip.widthFor(ChipFit.ICON) + chipExtra,
             )
         val insets = component.insets
+        val visible = pills.filter { it.isVisible }
         val fit =
             stripFit(
                 available,
                 insets.left + insets.right,
                 gap,
-                pills.map { PillWidth(it.iconWidth(), it.labelledWidth(), it.pinned) },
+                visible.map { PillWidth(it.iconWidth(), it.labelledWidth(), it.pinned) },
                 chipWidths,
             )
-        pills.forEachIndexed { i, pill -> pill.showLabel(i in fit.labelled) }
+        visible.forEachIndexed { i, pill -> pill.showLabel(i in fit.labelled) }
         chip.show(fit.chip)
         chipGap.isVisible = chip.isVisible
         separator.isVisible = chip.isVisible
@@ -510,7 +513,13 @@ internal class TerminalToolStrip(
 
     /** 只在有按钮宽度变化时重新布局；审查进行时每秒都会调用。 */
     fun refresh() {
-        val resized = pills.map { it.update() }.any { it }
+        val resized = pills.map { pill ->
+            val show = pill.shown()
+            val changed = pill.isVisible != show
+            pill.isVisible = show
+            gaps[pill]?.isVisible = show
+            pill.update() || changed
+        }.any { it }
         if (resized) {
             component.revalidate()
             component.repaint()

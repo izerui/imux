@@ -104,6 +104,13 @@ class TerminalHost(
     private val pendingOpens = mutableMapOf<String, Job>()
     private val pendingSelections = mutableMapOf<String, Boolean>()
     private val launchContributions = mutableMapOf<String, TerminalLaunchContribution>()
+    internal fun unavailableTools(tabId: String): Set<String> = launchContributions[tabId]?.let {
+        it.unavailableTools + it.piRegistrationFailures
+    }.orEmpty()
+
+    internal fun updatePiRegistrationFailures(tabId: String, failed: Set<String>) {
+        if (launchContributions[tabId]?.updatePiRegistrationFailures(failed) == true) SessionDecorations.changed()
+    }
     private val preparationLock = Mutex()
 
     /**
@@ -535,11 +542,7 @@ class TerminalHost(
                         } catch (e: CancellationException) { throw e }
                         catch (e: Exception) {
                             LOG.warn("终端附加工具未接入：${e.javaClass.simpleName}")
-                            withContext(Dispatchers.EDT) {
-                                NotificationGroupManager.getInstance().getNotificationGroup("imux.phoneBridge")
-                                    .createNotification(ImuxBundle.message("terminal.mobile.mcp.unavailable"), NotificationType.WARNING).notify(project)
-                            }
-                            TerminalLaunchContribution()
+                            TerminalLaunchContribution().also { it.unavailableTools = setOf("terminal.tools.other") }
                         }
                         withContext(Dispatchers.EDT) {
                             if (!pendingOpens.remove(key, openingJob)) return@withContext

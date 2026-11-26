@@ -8,6 +8,45 @@ import org.junit.Test
 import java.nio.file.Path
 
 class TerminalLaunchContributionsTest {
+    @Test
+    fun `Pi 上报只更新本标签已注入工具的注册状态，启动时的告警继续保留`() {
+        val tab = TerminalLaunchContribution(listOf(server("imux_mobile"), server("imux_code"))).apply {
+            unavailableTools = setOf("terminal.tools.peer")
+            serverLabels = mapOf("imux_mobile" to "terminal.tools.mobile", "imux_code" to "settings.code.tools.group")
+        }
+        fun receive(names: String) {
+            val body = """{"type":"session_start","tabId":"a","sessionId":"s","cwd":"/project","failedMcpServers":"$names"}"""
+            val report = checkNotNull(com.github.izerui.imux.session.parsePiReport(body))
+            tab.updatePiRegistrationFailures(checkNotNull(report.failedMcpServers))
+        }
+        receive("imux_code,imux_session")
+        assertEquals(setOf("settings.code.tools.group"), tab.piRegistrationFailures)
+        receive("")
+        assertEquals(emptySet<String>(), tab.piRegistrationFailures)
+        assertEquals(setOf("terminal.tools.peer"), tab.unavailableTools)
+    }
+    @Test
+    fun `手机超时与查代码失败按标签汇总，结对可用且重开成功后告警清空`() = kotlinx.coroutines.runBlocking {
+        val mobile = com.github.izerui.imux.bridge.mcp.MobileLaunchContributor()
+        val peer = com.github.izerui.imux.peer.mcp.PeerLaunchContributor()
+        val code = com.github.izerui.imux.code.CodeLaunchContributor()
+        val providers = listOf(mobile, peer, code)
+        val first = TerminalLaunchContributions.prepareEach(providers, 200) {
+            when (it) {
+                mobile -> kotlinx.coroutines.awaitCancellation()
+                code -> error("unavailable")
+                else -> TerminalLaunchContribution(listOf(server("imux_session")))
+            }
+        }
+        assertEquals(setOf("terminal.tools.mobile", "settings.code.tools.group"), first.unavailableTools)
+        assertEquals(listOf("imux_session"), first.servers.map { it.name })
+        assertEquals(mapOf("imux_session" to "terminal.tools.peer"), first.serverLabels)
+        val second = TerminalLaunchContributions.prepareEach(providers, 200) {
+            TerminalLaunchContribution()
+        }
+        assertTrue(second.unavailableTools.isEmpty())
+    }
+
     private fun server(name: String) = TerminalMcpServer(name, "http://127.0.0.1:1/$name", "${name.uppercase()}_TOKEN")
 
     @Test

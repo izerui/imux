@@ -20,8 +20,11 @@ export default function (pi) {
   delete process.env.IMUX_MCP_GUIDANCE;
   if (suppliedGuidance?.trim()) state.guidance = suppliedGuidance;
   const available = SERVERS.filter((server) => state[server.name]);
+  const failures = [];
+  state.registrationFailures = failures;
   if (available.length === 0) return;
   if (typeof pi?.registerMcpServer !== "function") {
+    failures.push(...available.map((server) => server.name));
     console.error(`${available.map((server) => server.name).join(", ")} unavailable: this Pi version has no native MCP support.`);
     return;
   }
@@ -35,6 +38,7 @@ export default function (pi) {
         timeout: 180,
       });
     } catch {
+      failures.push(server.name);
       console.error(`${server.name} unavailable: MCP registration failed.`);
     }
   }

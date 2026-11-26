@@ -48,7 +48,7 @@ class CodeToolsLease internal constructor(
             }
         }
 
-        private fun acquireOrThrow(project: Project, agentType: AgentType): CodeToolsLease? {
+        internal fun acquireOrThrow(project: Project, agentType: AgentType): CodeToolsLease? {
             val piExtension = if (agentType == AgentType.PI) piPluginMcpScript() ?: return null else null
             val port = BuiltInServerManager.getInstance().waitForStart().port.takeIf { it > 0 } ?: return null
             val service = CodeMcpService.getInstance()

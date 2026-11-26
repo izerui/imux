@@ -2,7 +2,8 @@ package com.github.izerui.imux.code
 
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.TerminalLaunchContribution
-import com.github.izerui.imux.terminal.TerminalLaunchContributor
+import com.github.izerui.imux.settings.ImuxSettings
+import com.github.izerui.imux.terminal.NamedLaunchContributor
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
@@ -15,10 +16,13 @@ import kotlin.coroutines.cancellation.CancellationException
  * 有自己的开关（「查用法、查调用链工具」），不跟「注入 IDEA MCP」走：它由 imux 自己直接调
  * IDE 引擎，不经过 IDEA MCP。挂上后，使用引导随之自动注入，没有单独开关。
  */
-class CodeLaunchContributor : TerminalLaunchContributor {
+class CodeLaunchContributor : NamedLaunchContributor {
+    override val toolLabelKey = "settings.code.tools.group"
     override suspend fun prepare(project: Project, tabId: String, agentType: AgentType): TerminalLaunchContribution {
-        val lease = acquireOnIo({ CodeToolsLease.acquire(project, agentType) }) { it.release() }
-            ?: return TerminalLaunchContribution()
+        if (!ImuxSettings.getInstance().state.injectCodeTools) return TerminalLaunchContribution()
+        val lease = checkNotNull(acquireOnIo({ CodeToolsLease.acquireOrThrow(project, agentType) }) { it.release() }) {
+            "Code navigation tools unavailable"
+        }
         return TerminalLaunchContribution(
             listOf(lease.server),
             lease.environment,
