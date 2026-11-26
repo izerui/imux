@@ -32,9 +32,7 @@ enum class GuidanceRole {
  *   （随「查用法、查调用链、查继承工具」开关）；会话报告只读会话记录，什么都不挂、也不给引导词。
  *
  * 写法上的几条约定：
- * - 开头先讲为什么（读文本只知道代码写了什么，IDE 知道每个名字指的是谁），再给一条原则（IDE 能回答的事实就问它，
- *   不要从文字里猜）；后面每一节都是这条原则在某个时刻的用法——流程没写到的场景，智能体靠原则自己判断；
- * - 每条做法带上理由（为什么重命名不用文本替换、为什么调试不加 print）：知道理由才能在没写到的情形里做对；
+ * - 介绍每项能力适用的情形以及能提供的证据；
  * - 按干活的时刻排：看清 → 摸清链路 → 改 → 证明改对了 → 运行时出错，冷门能力单独放在「用得上再用」；
  * - 没挂的工具一个字不提：提到用不了的工具，智能体会去调、失败、再换路，白白浪费回合；
  * - 各节不编号：节是按工具组合和角色取舍的，编号会断（只挂 IDEA MCP 时曾经从「2.」开始）。
@@ -83,7 +81,7 @@ private interface GuidanceText {
     fun look(codeTools: Boolean, worker: Boolean): String
     fun chain(ideaMcp: Boolean, worker: Boolean): String
     val whileEditing: String
-    /** [codeTools] 时多一句：先跑查用法给出的对应测试（`tests` 只在挂了查代码工具时才有）。 */
+    /** [codeTools] 时多一句：说明查用法结果里的对应测试（`tests` 只在挂了查代码工具时才有）。 */
     fun verify(codeTools: Boolean): String
     val debugging: String
 
@@ -93,277 +91,193 @@ private interface GuidanceText {
 }
 
 private object EN : GuidanceText {
+    private val outline = "- To see how a file fits together, `file_outline` lists declarations and their lines, including the parents and interfaces named by a class. A method's position can go straight into a reference or call query. Read the relevant implementation in full to understand its behavior. If several parts share state and their interaction is still unclear, read the whole file."
+
     override fun intro(ideaMcp: Boolean, codeTools: Boolean, worker: Boolean): String = buildString {
-        append("You are working inside a JetBrains IDE (IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider, CLion, or others). ")
-        append("Besides your own tools, you have MCP tools backed by this IDE:")
+        append("You are working inside a JetBrains IDE such as IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider or CLion. ")
+        append(if (ideaMcp && codeTools) "This session has two sets of MCP tools." else "This session has the following MCP tools.")
+        if (!worker) append("\n\nThis time you only investigate. The user and the agent doing the work decide what to change and how. Your role is to establish the facts.")
+        append("\n")
         if (ideaMcp) {
             append(
-                if (worker) "\n- `idea` (IDEA MCP): refactoring, inspections, builds, run configurations, the debugger, databases, formatting, and symbol lookup."
-                else "\n- `idea` (IDEA MCP): symbol lookup, inspections, library sources, and the module graph, among others.",
+                if (worker) "\n- `idea` provides symbol lookup, refactoring, inspections, builds, run configurations, debugging, database access and formatting in the current IDE project."
+                else "\n- `idea` provides symbol lookup, dependency sources, module structure and IDE diagnostics.",
             )
         }
-        if (codeTools) {
-            append(
-                "\n- `$CODE_TOOLS_SERVER`: `file_outline` (a file's structure, from the IDE's structure view) and `find_references`, `call_hierarchy`, `type_hierarchy` (from the IDE's own index). " +
-                    "They work for the languages the IDE understands and answer `language_not_supported` for the ones it does not.",
-            )
-        }
-        append(
-            "\n\nReading text only shows what the code says; the IDE has resolved the whole project and knows what each name refers to and where it is used. " +
-                "So one principle covers everything below: when the IDE can answer a question of fact, ask it instead of inferring from text — ",
-        )
-        append(if (worker) "gather evidence before you conclude or change anything." else "gather evidence before you conclude.")
-        if (!worker) {
-            append(
-                "\n\nThis time you only investigate. Deciding what to change and making the change belong to the user and the agent doing the work; " +
-                    "what you contribute is facts that have been checked. The test for any call: would the project, the repository, or an outside system be different afterwards? " +
-                    "If so, do not make it (renaming, formatting, builds, run configurations, the debugger, database writes).",
-            )
-        }
+        if (codeTools) append("\n- `$CODE_TOOLS_SERVER` provides `file_outline` from the IDE structure view and `find_references`, `call_hierarchy` and `type_hierarchy` from the IDE index. An unsupported language returns `language_not_supported`.")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
-        append(if (worker) "## See the code clearly\n\n" else "## Checking facts with the IDE\n\n")
-        append("- What a name refers to: `search_symbol` finds it by name; `get_symbol_info` shows its declaration, type, and docs.\n")
-        if (!codeTools) {
-            append(
-                "- Who calls a function and what it calls: `analyze_calls`. It resolves symbols by fully qualified name, which some language plugins (e.g. Go) do not provide; " +
-                    "when it answers `No callable symbol found`, do not guess names — use the LSP tool's `incomingCalls` / `findReferences`, or text search.\n",
-            )
-        }
-        if (!worker) append("- Errors and warnings in a file, as the IDE sees them: `lint_files`.\n")
-        append("- How a dependency actually behaves: `read_file` with the archive path reads sources inside JARs or node_modules and decompiled classes — do not infer a library's behavior from memory.\n")
-        append("- How modules depend on each other: `get_project_modules` / `get_project_dependencies`.\n")
-        append("- Which files the developer is editing right now: `get_all_open_file_paths`.\n")
-        append("\nFor quick go-to-definition and hover lookups, your own LSP tool is fine when it is active for the current language.")
+        append("## See the code clearly\n")
+        append("\n- To find what a name refers to, `search_symbol` locates candidate declarations and `get_symbol_info` shows their type, signature and documentation.")
+        if (codeTools) append("\n$outline")
+        append("\n- To see how a dependency actually behaves, `read_file` with an archive path can read source in JARs or node_modules and decompiled classes from the version this project uses.")
+        append("\n- To see how modules depend on each other, use `get_project_modules` and `get_project_dependencies`. When the user mentions a file they just opened, `get_all_open_file_paths` can narrow it down.")
+        if (!codeTools) append("\n- `analyze_calls` looks up call relationships by fully qualified name. Resolution depends on the language plugin. `No callable symbol found` means this query could not locate the target method.")
+        if (!worker) append("\n- `lint_files` shows errors and warnings in a file.")
     }
 
     override fun chain(ideaMcp: Boolean, worker: Boolean): String = buildString {
+        if (!ideaMcp) append("## See the code clearly\n\n$outline\n\n")
         append(
             """
-            ## Map the chain
+                ## Map the chain
 
-            What a piece of code is depends not only on what it says but on who relies on it and whose contract it has to keep. Those relations are not written in its own file, and text search only recognizes names that look alike: unrelated functions with the same name get mixed in, and a call made through an interface or base type cannot be told apart from one that never reaches it. So whenever a conclusion depends on how code is connected — changing code, reviewing a change, reading or explaining code, tracking down a bug, or answering "who uses this, and what breaks if it changes" — get the relations from the IDE first:
-            - Who relies on it and what it relies on: `call_hierarchy`, in both directions; calls made through an interface or base method are included and marked `via`.
-            - What it overrides or implements (whose contract it must keep) and what overrides or implements it (who must change with it): `type_hierarchy`, in both directions (`supers` and `implementations`).
-            - Where a value comes from and where it goes: `find_references` on the parameter, field, return value, or shared state, including other modules.
+                To understand a piece of code, consider who relies on it and whose contract it must keep. The IDE index connects declarations with the same name to their respective uses and follows interface dispatch and references across modules.
 
-            To get an overview of a file and decide where to start, use `file_outline`: it lists the file's declarations with the line each one is on, and those lines can be passed straight to the three tools above. For a class it also gives the parents written in its declaration and where they are, so you know which file to outline next. It is an overview, not a substitute for reading: whatever you will change or draw a conclusion about, still read in full, and when you are unsure how much is involved, read the whole file.
+                - To see who relies on a method or what it relies on, use `call_hierarchy`. Follow callers up to find affected entry points and callees down to see where the work goes. Calls found through an interface or base method are marked `via`.
+                - To see which contract a method or type implements, follow `supers` in `type_hierarchy`. When the contract changes, `implementations` shows which implementations may need updating.
+                - To trace a value, use `find_references` on its parameter, field or shared state and inspect the read and write sites. When the meaning of a return value changes, callers can reveal where the old meaning is still assumed.
+
+                Match the investigation to the reach of the change. A caller of the method behind a failing context menu might reveal a toolbar button that reaches the same code. In a review, an implementation in another module might still follow the old interface contract even if its file is outside the diff.
+
+                To locate a symbol, give its `file`, declaration `line` and `symbol` name. Add `column` to distinguish candidates on the same line. If a call fails, read the reason. It may give the actual declaration line.
+
+                Claim only what the results establish. `truncated` and `not_expanded` flag omitted results or branches. `overrides_incomplete`, `unanalyzed_mentions` and `unanalyzed_not_checked` indicate limits on override and reference coverage. Follow up on the branch your conclusion depends on.
             """.trimIndent(),
         )
-        if (worker) {
-            append("\n\n")
-            append(
-                """
-                Before editing, spend effort in proportion to how far the change reaches:
-                - A purely local change (the signature and the behavior others rely on stay the same): reading the function itself in full is enough.
-                - A change that touches a signature, shared behavior, or anything used outside the current function:
-                  1. Find each symbol you will change, read its declaration, and read the full body — not just the lines around a search hit.
-                  2. Trace the chain with the three checks above until you reach a boundary the change cannot affect: an entry point, a public API, or code whose behavior stays the same.
-                  3. Then edit, and update every affected caller, override, and implementation in the same change. If the chain turns out larger than expected, say so instead of quietly changing only part of it.
-                """.trimIndent(),
-            )
-        }
-        append(
-            if (worker) "\n\nWhen reviewing a change, trace the same chain for each changed symbol: callers, overrides, and implementations that should have changed but did not are the problems to report."
-            else "\n\nWhen reviewing a change, or weighing one that is only being discussed, trace this chain for each symbol involved: callers, overrides, and implementations that should have changed but did not are the problems to report, and the ones that would have to change are the cost to state up front.",
-        )
-        append("\n\n")
-        append(
-            """
-            Claim only as much as you found — not finding something is not the same as it not being there:
-            - A result that carries a not-complete marker (`unanalyzed_mentions`, `overrides_incomplete`, `truncated`, `not_expanded`, `unanalyzed_not_checked`) is not the whole chain yet: follow up as the tool description says before treating it as complete.
-            - If `$CODE_TOOLS_SERVER` answers `language_not_supported` or is unavailable, take another route and let your confidence follow the source: first the language server (the LSP tool's `findReferences` / `incomingCalls` / `outgoingCalls`, or its command line run from the project root); only with no language server either, text search — read each hit in context to confirm it is a real use, and say in your reply that the chain came from text search.
-            - A failed call is telling you the question is wrong or the route is closed: read the reason it returns before deciding what to do next, and do not retry it with different spellings.
-
-            Locating a symbol: give `file` + `line` plus its `symbol` name, and add `column` when that line has more than one symbol of the name (overloads, for example). Positions from search results, compiler errors, grep, or `file_outline` can be passed straight in.
-            """.trimIndent(),
-        )
-        if (ideaMcp) {
-            append("\nFor call relations use `call_hierarchy` rather than IDEA MCP's `analyze_calls`: the latter resolves symbols by fully qualified name, which some language plugins (e.g. Go) do not provide, and then answers `No callable symbol found`.")
-        }
     }
 
     override val whileEditing =
         """
-        ## While editing
+            ## While editing
 
-        - Rename any symbol (variable, method, class, and so on) with `rename_refactoring`: it changes what the name refers to, while text find-and-replace changes what looks alike and breaks same-name symbols in other scopes.
-        - Format with `reformat_file`: it applies this project's own code style, not an external formatter's.
+            - `rename_refactoring` updates references the IDE resolves to the declaration being renamed. It can distinguish a method with the same name in a different scope.
+            - When the project configures its code style in the IDE, `reformat_file` applies those settings.
         """.trimIndent()
 
-    override fun verify(codeTools: Boolean) =
-        """
-        ## After editing: prove it is right before saying it is done
+    override fun verify(codeTools: Boolean): String = buildString {
+        append(
+            """
+                ## After editing
 
-        "Done" is a claim that needs evidence. Gather it in this order, and say plainly which step you did not run:
-        1. It compiles: when the change involves compiled code, cross-file references, or public signatures, run `build_project`, which reports compilation errors with file and line. Skip it when the project has no effective IDE build step.
-        2. It introduced no new problems: run `lint_files` on every file you changed; it also checks framework rules the compiler ignores (Spring annotations, Android resources, JPA mappings, and so on). When the change touched a signature or shared behavior, also lint the files of the callers it affects: in languages without a compile step (Python, JavaScript), a caller left unchanged shows up only there.
-        3. Behavior still holds: before running tests, check `get_run_configurations`; when one matches, use `execute_run_configuration` so the environment is the one the developer gets from Run. With no match, use the project's own test command.
-        """.trimIndent() + if (codeTools) " Run first the tests `find_references` lists under `tests` for what you changed; run the full suite only after those pass, and only when the change reaches further." else ""
+                Saying the work is done takes evidence. The IDE can help verify different aspects of the change.
+
+                - For changes involving cross-file references or public signatures, `build_project` builds the current IDE project and reports compiler errors with file and line.
+                - `lint_files` reports errors, warnings and framework inspections enabled for the project, such as Spring annotations, Android resources and JPA mappings. When a shared contract changes, the callers' files are also worth checking.
+            """.trimIndent(),
+        )
+        append("\n- ")
+        if (codeTools) append("To find related tests, look under `tests` in the reference results. ")
+        append("To reproduce what happens when the developer clicks Run, `get_run_configurations` lists existing run configurations and `execute_run_configuration` runs one with its arguments and environment.")
+    }
 
     override val debugging =
         """
-        ## When it fails at runtime: look at the scene instead of guessing
+            ## When it fails at runtime
 
-        Adding print statements means guessing where the problem is and then editing code to test the guess; a breakpoint shows you the values at the moment it goes wrong. Prefer interactive debugging: set breakpoints with `xdebug_set_breakpoint`, start with `xdebug_start_debugger_session`, inspect with `xdebug_get_frame_values` and `xdebug_evaluate_expression`, and step with `xdebug_control_session`. One run can test several hypotheses without edit-rebuild-rerun cycles.
+            To see values at the point of failure, set a breakpoint with `xdebug_set_breakpoint` and start debugging with `xdebug_start_debugger_session`. Once paused, `xdebug_get_frame_values` shows values in the current frame and `xdebug_evaluate_expression` evaluates an expression. Use `xdebug_control_session` to step into the next call.
         """.trimIndent()
 
     override val onDemand =
         """
-        ## Use when the task calls for it
+            ## Use when the task calls for it
 
-        - Databases: `list_database_connections` → `execute_sql_query`, using the credentials the IDE already holds.
-        - Python interpreters (venv, Conda, system): `get_python_environment` / `configure_python_interpreter`.
-        - A custom check over the code's structure: `generate_psi_tree` + `run_inspection_kts`.
+            - For a database query, `list_database_connections` shows saved IDE connections and `execute_sql_query` runs a query on the selected connection.
+            - For Python environment questions, `get_python_environment` identifies the project's interpreter and `configure_python_interpreter` can adjust it.
+            - For a custom structural inspection, `generate_psi_tree` shows how the IDE parses the code and `run_inspection_kts` can run the check.
         """.trimIndent()
 
     override fun ownTools(worker: Boolean): String =
-        if (worker) {
-            """
-            ## Use your own tools for
+        """
+            ## Follow up with your own tools
 
-            Text search (grep/rg), reading, writing and editing files, directory listings, git, and shell commands: there is nothing semantic to ask here, so doing them directly is faster than an IDE round-trip.
-            """.trimIndent()
-        } else {
-            """
-            ## Use your own tools for
-
-            Text search (grep/rg), reading files, directory listings, and read-only git and shell commands (log, diff, status and the like): there is nothing semantic to ask here, so doing them directly is faster than an IDE round-trip. The same test applies to them: nothing that leaves things different afterwards.
-            """.trimIndent()
-        }
+            Use the IDE findings to carry the investigation forward. If a relationship remains unclear or the findings differ from what actually happens, use your own tools to investigate that question. Choose where to look and how to verify it based on the evidence and the problem the user wants to solve.
+        """.trimIndent() + if (worker) "" else " Keep that follow-up within your read-only scope."
 }
 
 private object ZH : GuidanceText {
+    private val outline = "- 想先纵观一个文件、决定从哪下手，用 `file_outline`。它列出文件里的声明和各自所在的行，类还会标出声明里写明的父类和接口。认准一个方法以后，它的位置可以直接交给引用或调用查询。要判断一段代码的实际行为，先把相关实现读完整。如果几处逻辑共用同一份状态，读完局部仍拿不准它们怎样配合，就通读这个文件。"
+
     override fun intro(ideaMcp: Boolean, codeTools: Boolean, worker: Boolean): String = buildString {
-        append("你正在 JetBrains IDE（IntelliJ IDEA、PyCharm、WebStorm、GoLand、Rider、CLion 等）里工作。除了你自己的工具，还有这个 IDE 提供的 MCP 工具：")
+        append("你正在 JetBrains IDE（IntelliJ IDEA、PyCharm、WebStorm、GoLand、Rider、CLion 等）里工作。")
+        append(if (ideaMcp && codeTools) "当前会话接入了两组 MCP 工具。" else "当前会话接入了以下 MCP 工具。")
+        if (!worker) append("\n\n你这次只查不改。改不改、怎么改，是用户和负责干活的智能体的事。你的用处是把事实查实。")
+        append("\n")
         if (ideaMcp) {
             append(
-                if (worker) "\n- `idea`（IDEA MCP）：重构、代码检查、构建、运行配置、调试器、数据库、格式化和符号查询。"
-                else "\n- `idea`（IDEA MCP）：符号查询、代码检查、依赖库源码、模块结构等。",
+                if (worker) "\n- `idea` 提供符号查询、重构、代码检查、构建、运行配置、调试器、数据库和格式化等能力，使用的是当前 IDE 的工程环境。"
+                else "\n- `idea` 可以查询符号、依赖源码、模块结构和 IDE 诊断。",
             )
         }
-        if (codeTools) {
-            append("\n- `$CODE_TOOLS_SERVER`：`file_outline`（文件结构，来自 IDE 的结构视图）和 `find_references`、`call_hierarchy`、`type_hierarchy`（走 IDE 自己的索引）；IDE 能解析的语言都能用，解析不了会明确返回 `language_not_supported`。")
-        }
-        append("\n\n读文本只能看到代码写了什么；IDE 解析过整个项目，知道每个名字指的是谁、哪里用到了它。所以下面的内容都出自一条原则：IDE 能回答的事实就问它，不要从文字里猜——")
-        append(if (worker) "下结论、动手改之前先取证。" else "下结论之前先取证。")
-        if (!worker) {
-            append(
-                "\n\n你这次只查不改。改不改、怎么改，是用户和负责干活的智能体的事；你的用处是把事实查实。" +
-                    "判断一次调用该不该做，只看一条：做完之后，项目、仓库或外部系统会不会和之前不一样。会，就不做（重命名、格式化、构建、运行配置、调试器、写数据库都属于这一类）。",
-            )
-        }
+        if (codeTools) append("\n- `$CODE_TOOLS_SERVER` 提供 `file_outline`（来自 IDE 的结构视图）和 `find_references`、`call_hierarchy`、`type_hierarchy`（来自 IDE 的索引）。当前语言不受支持时，工具会返回 `language_not_supported`。")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
-        append(if (worker) "## 看清代码\n\n" else "## 用 IDE 查证事实\n\n")
-        append("- 一个名字指的是什么：`search_symbol` 按名字找到它，`get_symbol_info` 看它的声明、类型和文档。\n")
-        if (!codeTools) {
-            append(
-                "- 谁调用了某个函数、它又调用了谁：`analyze_calls`。它按完整限定名解析符号，有些语言插件（如 Go）不提供这项换算；" +
-                    "返回 `No callable symbol found` 时不要猜名字，改用 LSP 工具的 `incomingCalls` / `findReferences`，或文本搜索。\n",
-            )
-        }
-        if (!worker) append("- IDE 眼里某个文件有哪些错误和警告：`lint_files`。\n")
-        append("- 依赖库实际是怎么实现的：`read_file` 加归档路径，可以读 JAR、node_modules 里的源码和反编译的类——不要凭印象推断库的行为。\n")
-        append("- 模块之间怎么依赖：`get_project_modules` / `get_project_dependencies`。\n")
-        append("- 开发者此刻正在编辑哪些文件：`get_all_open_file_paths`。\n")
-        append("\n快速跳转定义、看悬停信息，你自己的 LSP 工具对当前语言可用时用它就行。")
+        append("## 看清代码\n")
+        append("\n- 一个名字指的是什么，`search_symbol` 按名字找到候选声明，`get_symbol_info` 看它的类型、签名和文档。")
+        if (codeTools) append("\n$outline")
+        append("\n- 依赖库实际是怎么实现的，`read_file` 加归档路径，可以读 JAR、node_modules 里的源码和反编译的类。遇到版本差异时，可以查到当前工程实际引用的那份实现。")
+        append("\n- 模块之间怎么依赖，用 `get_project_modules` 和 `get_project_dependencies` 看工程结构。用户提到“刚才打开的那个文件”时，`get_all_open_file_paths` 可以列出 IDE 当前打开的文件，帮助缩小范围。")
+        if (!codeTools) append("\n- 调用关系可以用 `analyze_calls`。它按完整限定名定位目标，解析能力取决于语言插件。返回 `No callable symbol found` 表示这次查询没有定位到目标方法。")
+        if (!worker) append("\n- `lint_files` 可以查看文件里的错误和警告。")
     }
 
     override fun chain(ideaMcp: Boolean, worker: Boolean): String = buildString {
+        if (!ideaMcp) append("## 看清代码\n\n$outline\n\n")
         append(
             """
-            ## 摸清链路
+                ## 摸清链路
 
-            一段代码是什么，不只看它自己写了什么，还看谁在依赖它、它得遵守谁的约定。这些关系不写在它自己的文件里，文本搜索又只认得长得一样的名字：同名的无关函数会混进来，经由接口、父类发生的调用也分不出是不是落到它头上。所以凡是结论取决于代码之间怎么连着的——改代码、审查改动、阅读或讲解代码、排查 bug、回答「谁在用它、改了会影响哪里」——都先向 IDE 把关系查出来：
-            - 谁在依赖它、它又依赖谁：`call_hierarchy`，两个方向都看；经由接口或父类方法的调用也会列出，并标明 `via`。
-            - 它重写、实现了谁（它得遵守谁的约定），又被谁重写、实现（谁得跟着它变）：`type_hierarchy`，上下两个方向（`supers` 和 `implementations`）。
-            - 一个值从哪来、流到哪去：对参数、字段、返回值、共享状态用 `find_references`，包括其它模块。
+                一段代码是什么，还要看谁在依赖它、它得遵守谁的约定。遇到同名符号、接口分派或跨模块引用时，IDE 索引能把这些关系连起来。
 
-            想先纵观一个文件、决定从哪下手，用 `file_outline`：它列出文件里的声明和各自所在的行，行号可以直接交给上面三个工具；类还会标出声明里写明的父类、接口及其位置，接下来该去看哪个文件就清楚了。它只是总览，不替代阅读：要改的、要下结论的地方，照样把相关代码完整读完；拿不准牵涉多大时，就读全文件。
+                - 谁在依赖它、它又依赖谁，用 `call_hierarchy`。想知道哪些入口会受影响，往上看调用方。想知道这一步把事情交给了谁，往下看被调用方。经由接口或父类方法找到的调用会标明 `via`，可以看出这层关系是怎么连上的。
+                - 它重写、实现了谁，又被谁重写、实现，用 `type_hierarchy`。往上看 `supers`，能找到它得遵守的约定。改的是约定本身，往下看 `implementations`，能找到哪些实现也得跟着变。
+                - 一个值从哪来、流到哪去，可以对参数、字段或共享状态用 `find_references`，沿 IDE 找到的使用位置看谁在写、谁在读。改了方法返回值的含义，也可以沿调用处看，哪些地方还按旧约定处理结果。
+
+                力气花在和改动的波及面相称的地方。比如用户从右键菜单碰到了问题，定位到出错的方法以后，往上看一层调用方，可能会发现工具栏按钮也走这里。审查改动时也一样，接口改了，另一个模块的实现还沿用旧约定，即使那个文件没出现在本次改动里，也值得看一眼。
+
+                定位符号时，给出文件 `file`、声明所在行 `line` 和符号名 `symbol`。同一行有几个候选时，再加列号 `column`。一次调用失败，先看返回的原因，有时结果里已经指出了声明实际在哪一行。
+
+                查到多少，就说到多少。`truncated` 和 `not_expanded` 表示结果被截断或分支尚未展开。`overrides_incomplete`、`unanalyzed_mentions` 和 `unanalyzed_not_checked` 提醒你留意重写关系和引用的覆盖范围。结论取决于哪一支，就沿那一支补查。
             """.trimIndent(),
         )
-        if (worker) {
-            append("\n\n")
-            append(
-                """
-                改代码之前，力气花在和改动的波及面相称的地方：
-                - 纯局部的改动（签名和别处依赖的行为都不变）：把这个函数完整读完就够。
-                - 改动涉及签名、共享行为或当前函数之外用到的东西：
-                  1. 找到要改的每个符号，看它的声明，并把方法体完整读完——不要只看搜索命中的那几行。
-                  2. 按上面三项把链路查清，一路追到改动影响不到的边界为止：入口、公开 API，或行为保持不变的代码。
-                  3. 摸清之后再动手，并在同一次改动里把受影响的调用方、重写和实现一并改掉。链路比预想的大时如实说明，不要悄悄只改其中一部分。
-                """.trimIndent(),
-            )
-        }
-        append(
-            if (worker) "\n\n审查改动时，对每个改过的符号查同样的链路：该跟着改却没改的调用方、重写和实现，就是要指出的问题。"
-            else "\n\n审查一处改动、或者评估一个还在讨论的改动时，对涉及的每个符号查这条链路：该跟着改却没改的调用方、重写和实现，就是要指出的问题；将来得跟着改的，就是要提前说清的代价。",
-        )
-        append("\n\n")
-        append(
-            """
-            查到多少，就说到多少——没查到不等于没有：
-            - 结果里带「没查全」的标记（`unanalyzed_mentions`、`overrides_incomplete`、`truncated`、`not_expanded`、`unanalyzed_not_checked`）时，这条链路还不完整：按工具说明把缺的部分补查完，才能当作完整链路。
-            - `$CODE_TOOLS_SERVER` 返回 `language_not_supported` 或不可用时，换一条路查，结论的把握跟着来源走：先用语言服务器（LSP 工具的 `findReferences` / `incomingCalls` / `outgoingCalls`，或在项目根目录运行它的命令行）；这门语言也没有语言服务器，才用文本搜索——逐个打开命中处读上下文，确认是真实用法，并在回复里说明这条链路是靠文本搜索得出的。
-            - 一次调用失败，是在告诉你这个问法不对或这条路不通：先读它返回的原因再决定下一步，不要换个写法反复重试。
-
-            定位符号：给 `file` + `line`，再加符号名 `symbol`；同一行有几个同名符号时（比如重载）再加上 `column`。搜索结果、编译错误、grep 或 `file_outline` 给出的位置可以直接传入。
-            """.trimIndent(),
-        )
-        if (ideaMcp) {
-            append("\n查调用关系用 `call_hierarchy`，不用 IDEA MCP 的 `analyze_calls`：后者按完整限定名解析符号，有些语言插件（如 Go）不提供这项换算，这时它只会返回 `No callable symbol found`。")
-        }
     }
 
     override val whileEditing =
         """
-        ## 改的时候
+            ## 改的时候
 
-        - 重命名任何符号（变量、方法、类……）用 `rename_refactoring`：它按「指的是谁」来改，文本查找替换按「长得像」来改，会误伤别的作用域里的同名符号。
-        - 格式化用 `reformat_file`：用的是这个项目自己的代码风格，不是外部格式化工具的。
+            - 重命名符号时，`rename_refactoring` 按声明身份更新 IDE 识别出的引用。其他作用域里恰好有同名方法时，IDE 能把两者区分开。
+            - 工程在 IDE 里配置了代码风格时，`reformat_file` 可以按这套设置格式化文件。
         """.trimIndent()
 
-    override fun verify(codeTools: Boolean) =
-        """
-        ## 改完以后：证明它是对的，再说做完了
+    override fun verify(codeTools: Boolean): String = buildString {
+        append(
+            """
+                ## 改完以后
 
-        「做完了」是一个需要证据的判断。按下面的顺序取证，哪一步没做就如实说没做：
-        1. 能编译：改动涉及编译型代码、跨文件引用或公共签名时运行 `build_project`，它给出带文件和行号的编译错误。项目没有有效的 IDE 构建步骤就跳过。
-        2. 没引入新问题：对每个改过的文件运行 `lint_files`，编译器不管的框架规则（Spring 注解、Android 资源、JPA 映射等）它也查。改动涉及签名或共享行为时，受它影响的调用方所在文件也一并检查：没有编译步骤的语言（Python、JavaScript）里，漏改的调用方只有这样才露得出来。
-        3. 行为没坏：跑测试前先看 `get_run_configurations`，有匹配的就用 `execute_run_configuration`，环境和开发者点 Run 时一致；没有匹配的就用项目自己的测试命令。
-        """.trimIndent() + if (codeTools) "先跑查用法结果里 `tests` 列出的、和改动相关的测试；它们通过后，改动波及更广时再跑全量。" else ""
+                “做完了”是一个需要证据的判断。看这次改动要验证什么，IDE 能在相应的环节提供证据。
+
+                - 能不能编译。改动涉及跨文件引用或公共签名时，`build_project` 可以按当前 IDE 工程构建，给出带文件和行号的编译错误。
+                - IDE 能查到哪些问题。`lint_files` 可以看文件里的错误和警告，也能查到工程启用的框架规则，例如 Spring 注解、Android 资源和 JPA 映射。共享约定发生变化时，调用方所在的文件也值得一起看。
+            """.trimIndent(),
+        )
+        append("\n- ")
+        if (codeTools) append("哪些测试已经涉及这段行为。查用法结果里的 `tests` 会列出找到的相关测试。")
+        append("想复现开发者平时点 Run 的情形，`get_run_configurations` 可以查看项目已有的运行配置，`execute_run_configuration` 可以带上对应的参数和环境运行。")
+    }
 
     override val debugging =
         """
-        ## 运行时出错：看现场，不要猜
+            ## 运行时出错
 
-        加 print 是先猜问题在哪、再改代码去验证这个猜测；断点让你直接看到出错那一刻的值。优先交互式调试：`xdebug_set_breakpoint` 设断点，`xdebug_start_debugger_session` 启动，`xdebug_get_frame_values` 和 `xdebug_evaluate_expression` 查看，`xdebug_control_session` 单步。一次运行能验证好几个假设，不用反复改、编译、重跑。
+            想看出错那一刻的值，可以用 `xdebug_set_breakpoint` 设断点，用 `xdebug_start_debugger_session` 启动调试。停住以后，`xdebug_get_frame_values` 能看到当前栈帧里的值，`xdebug_evaluate_expression` 可以核对具体表达式。想知道这个值传进下一层以后发生了什么，用 `xdebug_control_session` 单步跟进去。
         """.trimIndent()
 
     override val onDemand =
         """
-        ## 用得上再用
+            ## 用得上再用
 
-        - 查数据库：`list_database_connections` → `execute_sql_query`，用的是 IDE 已经保存的凭据。
-        - Python 解释器（venv、Conda、系统）：`get_python_environment` / `configure_python_interpreter`。
-        - 按代码结构做自定义检查：`generate_psi_tree` + `run_inspection_kts`。
+            - 查数据库时，`list_database_connections` 能看到 IDE 已保存的连接，`execute_sql_query` 可以在对应连接上执行查询。
+            - 问题跟 Python 环境有关时，`get_python_environment` 能确认当前工程使用的解释器，需要调整时可以用 `configure_python_interpreter`。
+            - 想按代码结构查一类问题，`generate_psi_tree` 能看到 IDE 怎样解析这段代码，`run_inspection_kts` 可以据此运行自定义检查。
         """.trimIndent()
 
     override fun ownTools(worker: Boolean): String =
-        if (worker) {
-            """
-            ## 这些用你自己的工具
+        """
+            ## 用自己的工具继续核实
 
-            文本搜索（grep/rg）、读写和编辑文件、列目录、git、shell 命令：这些事没有语义可问，直接做比绕经 IDE 更快。
-            """.trimIndent()
-        } else {
-            """
-            ## 这些用你自己的工具
-
-            文本搜索（grep/rg）、读文件、列目录，以及只读的 git 和 shell 命令（log、diff、status 这类）：这些事没有语义可问，直接做比绕经 IDE 更快。它们同样守上面那一条：做完之后不能有任何东西变了样。
-            """.trimIndent()
-        }
+            IDE 查到的结果可以顺着往下用。如果还有一段关系没查清，或者查到的结果和实际表现对不上，就围绕那个疑点，用你自己的工具继续核实。接下来查哪里、用什么方法，由你根据手里的证据和用户要解决的问题判断。
+        """.trimIndent() + if (worker) "" else "继续核实时也保持只读范围。"
 }
