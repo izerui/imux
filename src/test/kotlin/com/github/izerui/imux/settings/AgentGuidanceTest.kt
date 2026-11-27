@@ -126,6 +126,20 @@ class AgentGuidanceTest {
     // region 只查不改的角色
 
     @Test
+    fun `索引取证规则按语言和角色注入并随查代码开关关闭`() {
+        for (zh in listOf(true, false)) for (idea in listOf(true, false)) for (role in GuidanceRole.entries) {
+            val text = agentGuidance(zh, idea, true, role)!!
+            val rule = if (zh) "下结论前先对相关符号查一次对应的 IDE 索引" else "query the relevant symbol in the IDE index before drawing a conclusion"
+            val editing = if (zh) "动手前先查受影响的用法" else "Before editing a signature"
+            val reviewing = if (zh) "先查谁依赖涉及的共享约定" else "When reviewing an existing or proposed change"
+            assertTrue(text.contains(rule))
+            assertEquals(role == GuidanceRole.WORKER, text.contains(editing))
+            assertEquals(role == GuidanceRole.INVESTIGATOR, text.contains(reviewing))
+            assertFalse(agentGuidance(zh, idea, false, role).orEmpty().contains(rule))
+        }
+    }
+
+    @Test
     fun `只查不改的英文引导词在三种工具组合下都写明不改和判断标准，不提任何会改动状态的工具，也不说可以写文件`() {
         for ((ideaMcp, codeTools) in listOf(true to true, true to false, false to true)) {
             val text = investigator(chinese = false, ideaMcp, codeTools)

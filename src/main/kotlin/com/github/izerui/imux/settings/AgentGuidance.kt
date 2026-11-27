@@ -104,7 +104,7 @@ private object EN : GuidanceText {
                 else "\n- `idea` provides symbol lookup, dependency sources, module structure and IDE diagnostics.",
             )
         }
-        if (codeTools) append("\n- `$CODE_TOOLS_SERVER` provides `file_outline` from the IDE structure view and `find_references`, `call_hierarchy` and `type_hierarchy` from the IDE index. An unsupported language returns `language_not_supported`.")
+        if (codeTools) append("\n- Use `$CODE_TOOLS_SERVER` to establish relationships in the code before drawing conclusions about them. Start with `file_outline` to navigate an unfamiliar file. Query `find_references`, `call_hierarchy` or `type_hierarchy` for the relationship you need.")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
@@ -123,17 +123,17 @@ private object EN : GuidanceText {
             """
                 ## Map the chain
 
-                Use text search to find text or locate files. Once you have identified a symbol, prefer the IDE index when your conclusion depends on who calls it, what implements it, or which uses a change would affect. Read the relevant code to confirm how it behaves.
+                Use text search to locate a declaration. When fixing a bug, reviewing a change or explaining behavior that spans functions, query the relevant symbol in the IDE index before drawing a conclusion. For a question confined to one function, reading its implementation is enough.
 
                 - To see who relies on a method or what it relies on, use `call_hierarchy`. Follow callers up to find affected entry points and callees down to see where the work goes. Calls found through an interface or base method are marked `via`.
                 - To see which contract a method or type implements, follow `supers` in `type_hierarchy`. When the contract changes, `implementations` shows which implementations may need updating.
                 - To trace a value, use `find_references` on its parameter, field or shared state and inspect the read and write sites. When the meaning of a return value changes, callers can reveal where the old meaning is still assumed.
 
-                When shared behavior changes, who else depends on the old contract?
+                ${if (worker) "Before editing a signature, shared state or behavior that other code relies on, trace the affected uses." else "When reviewing an existing or proposed change to a shared contract, trace the affected uses."} Look beyond the diff. Read the relevant callers and implementations and follow each affected path to its entry point or to code whose behavior stays the same. Check which paths the tests actually exercise.
 
                 To locate a symbol, give its `file`, declaration `line` and `symbol` name. Add `column` to distinguish candidates on the same line. If a call fails, read the reason. It may give the actual declaration line.
 
-                Claim only what the results establish. `truncated` and `not_expanded` flag omitted results or branches. `overrides_incomplete`, `unanalyzed_mentions` and `unanalyzed_not_checked` indicate limits on override and reference coverage. Follow up on the branch your conclusion depends on.
+                Follow up where `truncated`, `not_expanded`, `overrides_incomplete`, `unanalyzed_mentions` or `unanalyzed_not_checked` affects your conclusion. For `language_not_supported` or an unavailable index, use an available language server, or search for candidates and read their call sites. Report any material gap. For runtime behavior, verify the result at the actual entry point.
             """.trimIndent(),
         )
     }
@@ -200,7 +200,7 @@ private object ZH : GuidanceText {
                 else "\n- `idea` 可以查询符号、依赖源码、模块结构和 IDE 诊断。",
             )
         }
-        if (codeTools) append("\n- `$CODE_TOOLS_SERVER` 提供 `file_outline`（来自 IDE 的结构视图）和 `find_references`、`call_hierarchy`、`type_hierarchy`（来自 IDE 的索引）。当前语言不受支持时，工具会返回 `language_not_supported`。")
+        if (codeTools) append("\n- 判断代码之间的关系前，先用 `$CODE_TOOLS_SERVER` 查证。对陌生文件先用 `file_outline` 找到声明，再按要查的关系选用 `find_references`、`call_hierarchy` 或 `type_hierarchy`。")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
@@ -219,17 +219,17 @@ private object ZH : GuidanceText {
             """
                 ## 摸清链路
 
-                查找文本或定位文件时，用文本搜索。定位到具体符号后，如果结论取决于谁调用它、谁实现它，或改动会影响哪些使用方，优先用 IDE 索引核对，再阅读相关源码确认实际行为。
+                可以用文本搜索定位声明。排查问题、审查改动或讲解代码时，只要涉及多个函数怎样配合，下结论前先对相关符号查一次对应的 IDE 索引。问题只涉及单个函数内部时，读完实现即可。
 
                 - 谁在依赖它、它又依赖谁，用 `call_hierarchy`。想知道哪些入口会受影响，往上看调用方。想知道这一步把事情交给了谁，往下看被调用方。经由接口或父类方法找到的调用会标明 `via`，可以看出这层关系是怎么连上的。
                 - 它重写、实现了谁，又被谁重写、实现，用 `type_hierarchy`。往上看 `supers`，能找到它得遵守的约定。改的是约定本身，往下看 `implementations`，能找到哪些实现也得跟着变。
                 - 一个值从哪来、流到哪去，可以对参数、字段或共享状态用 `find_references`，沿 IDE 找到的使用位置看谁在写、谁在读。改了方法返回值的含义，也可以沿调用处看，哪些地方还按旧约定处理结果。
 
-                改动涉及共享行为时，还有谁依赖原来的约定？
+                ${if (worker) "准备修改签名、共享状态或其他代码依赖的行为时，动手前先查受影响的用法。" else "审查已有改动或评估拟议方案时，先查谁依赖涉及的共享约定。"} 查看差异之外的调用方和实现，沿受影响的分支追到实际入口，或追到行为保持不变的地方，再核对测试实际覆盖了哪条路径。
 
                 定位符号时，给出文件 `file`、声明所在行 `line` 和符号名 `symbol`。同一行有几个候选时，再加列号 `column`。一次调用失败，先看返回的原因，有时结果里已经指出了声明实际在哪一行。
 
-                查到多少，就说到多少。`truncated` 和 `not_expanded` 表示结果被截断或分支尚未展开。`overrides_incomplete`、`unanalyzed_mentions` 和 `unanalyzed_not_checked` 提醒你留意重写关系和引用的覆盖范围。结论取决于哪一支，就沿那一支补查。
+                `truncated`、`not_expanded`、`overrides_incomplete`、`unanalyzed_mentions` 或 `unanalyzed_not_checked` 涉及结论所依赖的分支时，继续补查。遇到 `language_not_supported` 或索引不可用，先用可用的语言服务器；也可以搜索候选位置，逐处阅读调用上下文。仍有影响判断的缺口就说明。运行时行为要从实际入口验证结果。
             """.trimIndent(),
         )
     }
