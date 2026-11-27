@@ -9,6 +9,7 @@ import org.junit.Test
 class PeerMcpProtocolTest {
     private class Backend : PeerToolsBackend {
         val calls = mutableListOf<String>()
+        override suspend fun progress(args: JsonObject) = result("progress")
         override suspend fun status() = result("status")
         override suspend fun enable(agent: String?) = result("enable:$agent")
         override suspend fun reviewOnce(agent: String?, instruction: String?) = result("review:$agent:$instruction")
@@ -19,14 +20,32 @@ class PeerMcpProtocolTest {
     private fun call(name: String, args: String = "{}") =
         json("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"$name","arguments":$args}}""")
 
-    @Test fun `工具列表是三个开关加审查一次，都不带会话参数`() = runBlocking {
+    @Test fun `工具列表是会话工具包含单个进度入口且不暴露内部身份`() = runBlocking {
         val reply = PeerMcpProtocol(Backend(), this).receive(json("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")).body!!.await()
         val tools = reply.getAsJsonObject("result").getAsJsonArray("tools").map { it.asJsonObject }
-        assertEquals(listOf("get_pair_status", "enable_pair_programming", "review_once", "disable_pair_programming"), tools.map { it["name"].asString })
+        assertEquals(listOf("get_pair_status", "enable_pair_programming", "review_once", "report_progress", "disable_pair_programming"), tools.map { it["name"].asString })
         val properties = tools.map { it.getAsJsonObject("inputSchema").getAsJsonObject("properties").keySet() }
-        assertEquals(listOf(emptySet(), setOf("agent"), setOf("agent", "instruction"), emptySet()), properties)
+        assertEquals(listOf(emptySet(), setOf("agent"), setOf("agent", "instruction"), setOf("percent", "message"), emptySet()), properties)
         assertTrue(tools[2]["description"].asString.contains("starts when your current turn ends"))
-        assertTrue(tools[3]["description"].asString.contains("explicitly asks"))
+        val progressDescription = tools[3]["description"].asString
+        assertTrue(progressDescription.contains("directly", true))
+        assertFalse(progressDescription.contains("stale", true))
+        assertFalse(progressDescription.contains("observed foreground turn", true))
+        assertTrue(tools[4]["description"].asString.contains("explicitly asks"))
+    }
+
+    @Test fun `上报缺少字段不能当成获取上下文`() = runBlocking {
+        val backend = Backend()
+        val reply = PeerMcpProtocol(backend, this).receive(call("report_progress")).body!!.await()
+        assertEquals(-32602, reply.getAsJsonObject("error")["code"].asInt)
+        assertTrue(backend.calls.isEmpty())
+    }
+
+    @Test fun `只传百分比和说明即可分派上报`() = runBlocking {
+        val backend = Backend()
+        val reply = PeerMcpProtocol(backend, this).receive(call("report_progress", """{"percent":60,"message":"正在测试"}""")).body!!.await()
+        assertNotNull(reply.getAsJsonObject("result"))
+        assertEquals(listOf("progress"), backend.calls)
     }
 
     @Test fun `初始化报告会话服务名`() = runBlocking {
@@ -59,6 +78,8 @@ class PeerMcpProtocolTest {
             call("review_once", """{"instruction":1}"""),
             call("review_once", """{"session":"other"}"""),
             call("send_image"),
+            call("get_progress_context"),
+            call("report_progress", """{"percent":60,"message":"测试","progressId":"old"}"""),
         ).forEach {
             val reply = protocol.receive(it).body!!.await()
             assertEquals(-32602, reply.getAsJsonObject("error")["code"].asInt)

@@ -27,13 +27,31 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.event.DocumentEvent
 
-internal data class InfoRow(val title: String, val detail: String = "", val status: String = "", val failed: Boolean = false, val location: String? = null)
-internal data class InfoPage(val name: String, val rows: List<InfoRow>, val searchable: Boolean = true, val reported: Boolean = true, val emptyKey: String = "session.info.noData")
+internal data class InfoRow(
+    val title: String,
+    val detail: String = "",
+    val status: String = "",
+    val failed: Boolean = false,
+    val location: String? = null
+)
+
+internal data class InfoPage(
+    val name: String,
+    val rows: List<InfoRow>,
+    val searchable: Boolean = true,
+    val reported: Boolean = true,
+    val emptyKey: String = "session.info.noData"
+)
 
 internal class SessionInfoPanel(
     project: Project, parent: Disposable,
     title: String, agent: String, icon: Icon, refresh: () -> Unit, close: () -> Unit,
 ) : JPanel(BorderLayout()) {
+    private val progressPanel = SessionProgressPanel()
+    fun updateProgress(snapshot: com.github.izerui.imux.progress.ProgressSnapshot) {
+        progressPanel.update(snapshot)
+    }
+
     private val tokenValue = JBLabel()
     private val contextValue = JBLabel()
     private val tabs = JBTabsFactory.createEditorTabs(project, parent).apply {
@@ -45,11 +63,17 @@ internal class SessionInfoPanel(
     private val expanded = mutableSetOf<Pair<String, String>>()
     private val readStatus = secondary("")
 
-    fun reading() { readStatus.text = msg("session.info.reading") }
-    fun readFailed() { readStatus.text = msg("session.info.readFailed") }
+    fun reading() {
+        readStatus.text = msg("session.info.reading")
+    }
+
+    fun readFailed() {
+        readStatus.text = msg("session.info.readFailed")
+    }
 
     fun missingRuntimeHeight(): Int {
-        val viewport = (tabs.getTabAt(0).component as JPanel).components.filterIsInstance<JBScrollPane>().single().viewport
+        val viewport =
+            (tabs.getTabAt(0).component as JPanel).components.filterIsInstance<JBScrollPane>().single().viewport
         if (viewport.extentSize.height <= 0) return 0
         return (viewport.view.preferredSize.height - viewport.extentSize.height).coerceAtLeast(0)
     }
@@ -77,7 +101,8 @@ internal class SessionInfoPanel(
         })
         header.add(JPanel(java.awt.GridLayout(1, 2, JBUI.scale(14), 0)).apply {
             background = UIUtil.getListBackground()
-            border = JBUI.Borders.compound(JBUI.Borders.customLine(JBColor.border(), 1, 0, 1, 0), JBUI.Borders.empty(9, 20))
+            border =
+                JBUI.Borders.compound(JBUI.Borders.customLine(JBColor.border(), 1, 0, 1, 0), JBUI.Borders.empty(9, 20))
             fun metric(key: String, value: JBLabel) = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
                 isOpaque = false
                 add(secondary(msg(key)), BorderLayout.WEST)
@@ -100,7 +125,8 @@ internal class SessionInfoPanel(
     fun display(tokens: String, context: String, sections: List<InfoPage>) {
         val selected = tabs.selectedInfo?.`object`
         val offsets = tabs.tabs.associate { tab ->
-            tab.`object` to (tab.component as? JPanel)?.components?.filterIsInstance<JBScrollPane>()?.firstOrNull()?.verticalScrollBar?.value
+            tab.`object` to (tab.component as? JPanel)?.components?.filterIsInstance<JBScrollPane>()
+                ?.firstOrNull()?.verticalScrollBar?.value
         }
         tokenValue.text = tokens
         tokenValue.toolTipText = tokens
@@ -137,11 +163,22 @@ internal class SessionInfoPanel(
         val rows = JPanel(VerticalLayout(0)).apply { border = JBUI.Borders.empty(8, 20) }
         fun filter(query: String) {
             rows.removeAll()
-            page.rows.filter { listOf(it.title, it.detail, it.status, it.location.orEmpty()).any { value -> value.contains(query.trim(), true) } }
+            if (page.name == msg("session.info.runtime")) rows.add(progressPanel)
+            page.rows.filter {
+                listOf(
+                    it.title,
+                    it.detail,
+                    it.status,
+                    it.location.orEmpty()
+                ).any { value -> value.contains(query.trim(), true) }
+            }
                 .forEach { row ->
                     if (page.name == msg("session.info.runtime")) {
                         rows.add(JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
-                            border = JBUI.Borders.compound(JBUI.Borders.customLineBottom(JBColor.border()), JBUI.Borders.empty(9, 0))
+                            border = JBUI.Borders.compound(
+                                JBUI.Borders.customLineBottom(JBColor.border()),
+                                JBUI.Borders.empty(9, 0)
+                            )
                             add(secondary(row.title), BorderLayout.WEST)
                             add(javax.swing.JTextPane().apply {
                                 isEditable = false
@@ -150,14 +187,20 @@ internal class SessionInfoPanel(
                                 font = UIUtil.getLabelFont()
                                 text = row.detail
                                 val alignment = javax.swing.text.SimpleAttributeSet()
-                                javax.swing.text.StyleConstants.setAlignment(alignment, javax.swing.text.StyleConstants.ALIGN_RIGHT)
+                                javax.swing.text.StyleConstants.setAlignment(
+                                    alignment,
+                                    javax.swing.text.StyleConstants.ALIGN_RIGHT
+                                )
                                 setParagraphAttributes(alignment, false)
                             })
                         })
                         return@forEach
                     }
                     rows.add(JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-                        border = JBUI.Borders.compound(JBUI.Borders.customLineBottom(JBColor.border()), JBUI.Borders.empty(10, 0))
+                        border = JBUI.Borders.compound(
+                            JBUI.Borders.customLineBottom(JBColor.border()),
+                            JBUI.Borders.empty(10, 0)
+                        )
                         val nameLine = JPanel(BorderLayout()).apply { isOpaque = false; add(bold(row.title)) }
                         add(JPanel(BorderLayout(0, JBUI.scale(3))).apply {
                             isOpaque = false
@@ -210,6 +253,7 @@ internal class SessionInfoPanel(
                                     if (javax.swing.SwingUtilities.isLeftMouseButton(e) && e.clickCount == 1) expand.doClick()
                                 }
                             }
+
                             // Summary and arrow are one disclosure target, as in the prototype.
                             fun bind(component: java.awt.Component) {
                                 if (component === expand || component === detail) return
@@ -224,8 +268,11 @@ internal class SessionInfoPanel(
                                 override fun mouseEntered(component: java.awt.Component, x: Int, y: Int) {
                                     line.background = JBUI.CurrentTheme.ActionButton.hoverBackground()
                                 }
+
                                 override fun mouseMoved(component: java.awt.Component, x: Int, y: Int) = Unit
-                                override fun mouseExited(component: java.awt.Component) { line.background = normal }
+                                override fun mouseExited(component: java.awt.Component) {
+                                    line.background = normal
+                                }
                             }.addTo(line)
                         }
                     })
@@ -236,6 +283,7 @@ internal class SessionInfoPanel(
             rows.revalidate()
             rows.repaint()
         }
+
         val query = filters[page.name].orEmpty()
         filter(query)
         return JPanel(BorderLayout()).apply {
@@ -254,7 +302,9 @@ internal class SessionInfoPanel(
         }
     }
 
-    private fun plain(value: String) = JBLabel().apply { putClientProperty("html.disable", true); text = value; toolTipText = value }
+    private fun plain(value: String) =
+        JBLabel().apply { putClientProperty("html.disable", true); text = value; toolTipText = value }
+
     private fun bold(value: String) = plain(value).apply { font = font.deriveFont(Font.BOLD) }
     private fun secondary(value: String) = plain(value).apply { foreground = UIUtil.getContextHelpForeground() }
     private fun msg(key: String) = ImuxBundle.message(key)

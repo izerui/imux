@@ -153,7 +153,13 @@ class ImuxSettings : SimplePersistentStateComponent<ImuxSettings.State>(State())
         ideaMcp: Boolean,
         capabilities: Set<GuidanceCapability>,
         role: GuidanceRole = GuidanceRole.WORKER,
-    ): String? = agentGuidanceForLanguage(language, ideaMcp, codeTools = GuidanceCapability.CODE_TOOLS in capabilities, role)
+    ): String? = listOfNotNull(
+        agentGuidanceForLanguage(language, ideaMcp, codeTools = GuidanceCapability.CODE_TOOLS in capabilities, role),
+        if (GuidanceCapability.TURN_PROGRESS in capabilities && role == GuidanceRole.WORKER) {
+            if (language.isChinese()) "直接调用 imux_session.report_progress 上报 percent（0–100整数）和 message（当前动作），无需步骤或计划。已做完直接报100，否则报告当前估计。有实际进展、开始等待或收到子任务结果时主动更新，不限制次数，不必每次工具调用都报，不按时间编造增长。结束由插件判断。无需预先获取上下文或填写身份参数；失败继续工作，不轮询重试。由主会话统一上报，等待子任务可写入当前动作；子代理不得覆盖主进度，独立后台服务和副驾驶不混入比例。"
+            else "Call imux_session.report_progress directly with percent (integer 0–100) and message (current action). No steps or plan required. If already finished report 100; otherwise report your current estimate. Proactively update when meaningful progress occurs, you begin waiting, or subagent results arrive. No fixed count or timer; not every tool call needs an update. The plugin detects turn end. No context lookup, identity, or revision arguments are required. On failure continue work without polling or retries. The main conversation aggregates progress and may describe waiting for subagents. Subagents must not overwrite it; exclude independent background services and copilot review."
+        } else null,
+    ).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
 
     val plainReplyGuidance: String
         get() = defaultPlainReplyGuidanceForLanguage(language)

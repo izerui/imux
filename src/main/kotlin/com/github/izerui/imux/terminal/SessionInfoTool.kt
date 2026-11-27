@@ -51,10 +51,26 @@ internal class SessionInfoTool(
                 usage.model?.let { add(InfoRow(msg("session.info.model"), it)) }
                 usage.last?.let { add(InfoRow(msg("session.info.last"), number.format(it))) }
                 usage.window?.let { add(InfoRow(msg("session.info.window"), number.format(it))) }
-                add(InfoRow(msg("action.peer.group.text"), coordinator.status(key)?.targetAgentType?.displayName ?: msg("session.info.pairOff")))
-                add(InfoRow(msg("action.peer.once.hint"), coordinator.scheduledReview(key)?.displayName ?: msg("session.info.unscheduled")))
-                add(InfoRow(msg("bridge.tool.title"), msg(if (SessionDecorations.phoneConnected(project, file.tabId))
-                    "session.info.bound" else "session.info.unbound")))
+                add(
+                    InfoRow(
+                        msg("action.peer.group.text"),
+                        coordinator.status(key)?.targetAgentType?.displayName ?: msg("session.info.pairOff")
+                    )
+                )
+                add(
+                    InfoRow(
+                        msg("action.peer.once.hint"),
+                        coordinator.scheduledReview(key)?.displayName ?: msg("session.info.unscheduled")
+                    )
+                )
+                add(
+                    InfoRow(
+                        msg("bridge.tool.title"), msg(
+                            if (SessionDecorations.phoneConnected(project, file.tabId))
+                                "session.info.bound" else "session.info.unbound"
+                        )
+                    )
+                )
             }
             val services = host.configuredServerNames(file.tabId).map { name ->
                 val description = host.serverLabelKey(file.tabId, name)?.let(::msg)
@@ -67,35 +83,55 @@ internal class SessionInfoTool(
                 add(InfoPage(msg("session.info.runtime"), runtime, searchable = false))
                 add(InfoPage("MCP", services))
                 val skillNames = pi?.skillNames ?: usage.skills.takeIf { usage.skillsReported }
-                add(InfoPage(msg("session.info.skills"), skillNames.orEmpty().map {
-                    InfoRow(it, detail = pi?.skillDescriptions?.get(it) ?: usage.skillDescriptions[it].orEmpty(),
-                        location = pi?.skillLocations?.get(it) ?: usage.skillLocations[it])
-                }, searchable = !skillNames.isNullOrEmpty(), reported = skillNames != null,
-                    emptyKey = if (skillNames == null) "session.info.skillsUnknown" else "session.info.skillsEmpty"))
+                add(
+                    InfoPage(
+                        msg("session.info.skills"), skillNames.orEmpty().map {
+                            InfoRow(
+                                it, detail = pi?.skillDescriptions?.get(it) ?: usage.skillDescriptions[it].orEmpty(),
+                                location = pi?.skillLocations?.get(it) ?: usage.skillLocations[it]
+                            )
+                        }, searchable = !skillNames.isNullOrEmpty(), reported = skillNames != null,
+                        emptyKey = if (skillNames == null) "session.info.skillsUnknown" else "session.info.skillsEmpty"
+                    )
+                )
                 if (file.agentType == AgentType.PI) {
                     val tools = pi?.activeTools
-                    add(InfoPage(msg("session.info.tools"), tools.orEmpty().map(::InfoRow),
-                        searchable = !tools.isNullOrEmpty(), reported = tools != null,
-                        emptyKey = if (tools == null) "session.info.toolsUnknown" else "session.info.toolsEmpty"))
+                    add(
+                        InfoPage(
+                            msg("session.info.tools"), tools.orEmpty().map(::InfoRow),
+                            searchable = !tools.isNullOrEmpty(), reported = tools != null,
+                            emptyKey = if (tools == null) "session.info.toolsUnknown" else "session.info.toolsEmpty"
+                        )
+                    )
                 }
             }
-            val context = (pi?.contextPercent ?: usage.reportedContextPercent)?.let { "$it%" } ?: usage.window?.takeIf { it > 0 }?.let { window ->
-                usage.last?.let { last -> "≈ " + NumberFormat.getPercentInstance().format(last.toDouble() / window) }
-            } ?: msg("session.info.contextUnknown")
+            val context =
+                (pi?.contextPercent ?: usage.reportedContextPercent)?.let { "$it%" } ?: usage.window?.takeIf { it > 0 }
+                    ?.let { window ->
+                        usage.last?.let { last ->
+                            "≈ " + NumberFormat.getPercentInstance().format(last.toDouble() / window)
+                        }
+                    } ?: msg("session.info.contextUnknown")
             panel.display(usage.total?.let(number::format) ?: msg("session.info.usagePending"), context, sections)
             javax.swing.SwingUtilities.invokeLater {
                 if (popup.isDisposed || !panel.isShowing) return@invokeLater
                 panel.validate()
                 val screen = com.intellij.ui.ScreenUtil.getScreenRectangle(panel)
                 val size = popup.size
-                val available = screen.y + screen.height - panel.locationOnScreen.y - size.height - com.intellij.util.ui.JBUI.scale(4)
+                val available =
+                    screen.y + screen.height - panel.locationOnScreen.y - size.height - com.intellij.util.ui.JBUI.scale(
+                        4
+                    )
                 val extra = minOf(panel.missingRuntimeHeight(), available)
                 if (extra > 0) popup.setSize(java.awt.Dimension(size.width, size.height + extra))
             }
         }
+
         fun reload() {
             job?.cancel()
-            if (file.sessionKey != key) { popup.cancel(); return }
+            if (file.sessionKey != key) {
+                popup.cancel(); return
+            }
             val transcript = monitor.model.sessionOf(key)?.takeIf { it.agentType == file.agentType }?.filePath
             panel.reading()
             job = file.terminalView.coroutineScope.launch(Dispatchers.IO) {
@@ -103,7 +139,9 @@ internal class SessionInfoTool(
                 val usage = try {
                     if (transcript == null) SessionUsage()
                     else readSessionUsage(file.agentType, transcript) { ensureActive() }
-                } catch (_: java.io.IOException) { null }
+                } catch (_: java.io.IOException) {
+                    null
+                }
                 withContext(Dispatchers.EDT) {
                     if (!popup.isDisposed) {
                         when {
@@ -118,22 +156,37 @@ internal class SessionInfoTool(
                 }
             }
         }
+
         val contentLifetime = Disposer.newDisposable()
-        panel = SessionInfoPanel(project, contentLifetime, file.tabTitle, "${file.agentType.displayName} · ${project.name}", AgentIcons.forAgent(file.agentType),
-            ::reload, { popup.cancel() })
+        panel = SessionInfoPanel(
+            project,
+            contentLifetime,
+            file.tabTitle,
+            "${file.agentType.displayName} · ${project.name}",
+            AgentIcons.forAgent(file.agentType),
+            ::reload,
+            { popup.cancel() })
         popup = JBPopupFactory.getInstance().createComponentPopupBuilder(panel, panel)
             .setRequestFocus(true).setResizable(true).createPopup()
         Disposer.register(parent, popup)
         Disposer.register(popup, contentLifetime)
         Disposer.register(popup, Disposable { job?.cancel() })
-        project.messageBus.connect(popup).subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
-            override fun selectionChanged(event: FileEditorManagerEvent) {
-                if (event.oldFile === file && event.newFile !== file) popup.cancel()
-            }
-        })
+        project.messageBus.connect(popup)
+            .subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
+                override fun selectionChanged(event: FileEditorManagerEvent) {
+                    if (event.oldFile === file && event.newFile !== file) popup.cancel()
+                }
+            })
+        val progress = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
+        fun updateProgress() {
+            if (!popup.isDisposed && file.sessionKey == key) panel.updateProgress(progress.snapshot(key))
+        }
+        progress.listen(contentLifetime, ::updateProgress)
         render(SessionUsage())
+        updateProgress()
         val strip = buttonStrip() ?: anchor
-        val offset = java.awt.Point(strip.width - panel.preferredSize.width, strip.height + com.intellij.util.ui.JBUI.scale(4))
+        val offset =
+            java.awt.Point(strip.width - panel.preferredSize.width, strip.height + com.intellij.util.ui.JBUI.scale(4))
         popup.show(com.intellij.ui.awt.RelativePoint(strip, offset))
         reload()
     }

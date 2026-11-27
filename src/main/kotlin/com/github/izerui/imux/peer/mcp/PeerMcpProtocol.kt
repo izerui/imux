@@ -18,6 +18,7 @@ interface PeerToolsBackend {
     suspend fun enable(agent: String?): PeerToolResult
     suspend fun disable(): PeerToolResult
     suspend fun reviewOnce(agent: String?, instruction: String?): PeerToolResult
+    suspend fun progress(args: JsonObject): PeerToolResult = PeerToolResult(JsonObject(), failed = true)
 }
 
 /** `imux_session` 服务：调用方终端自己这个会话的结对编程开关。 */
@@ -26,6 +27,15 @@ class PeerMcpProtocol(private val backend: PeerToolsBackend, private val scope: 
 
     private fun call(id: JsonElement, name: String, args: JsonObject): McpRpcReply {
         fun error(code: Int, text: String) = McpJsonRpc.reply(rpcError(id, code, text))
+        if (name == REPORT_PROGRESS) {
+            val allowed = setOf("percent", "message")
+            if (args.keySet().any { it !in allowed }) return error(-32602, "Unsupported argument")
+            if (args.keySet() != allowed) return error(-32602, "Missing progress arguments")
+            return McpRpcReply(200, scope.async {
+                val result = backend.progress(args)
+                rpcResult(id, toolResult(result.value, result.failed))
+            })
+        }
         if (name !in setOf(STATUS, ENABLE, DISABLE, REVIEW_ONCE)) return error(-32602, "Unknown tool")
         val allowed = when (name) {
             ENABLE -> setOf("agent")
@@ -47,6 +57,7 @@ class PeerMcpProtocol(private val backend: PeerToolsBackend, private val scope: 
     }
 
     companion object {
+        private const val REPORT_PROGRESS = "report_progress"
         private const val STATUS = "get_pair_status"
         private const val ENABLE = "enable_pair_programming"
         private const val DISABLE = "disable_pair_programming"
@@ -64,6 +75,10 @@ class PeerMcpProtocol(private val backend: PeerToolsBackend, private val scope: 
                     addProperty("description", "Optional extra request for the reviewer this time, e.g. what to focus on. Pass on what the user asked for; do not invent one.")
                 })
             })
+            add(tool(REPORT_PROGRESS, "Proactively report estimated progress for this terminal's current work whenever meaningful progress occurs, waiting begins, or subagent results arrive. No fixed report count. No plan or steps are required. Send percent (integer 0..100) and message (current action). The plugin saves these two values directly for this terminal session; it does not read the CLI transcript or require a context, identity, or revision call. If work is already finished, report 100. Otherwise report your current estimate; update it as work advances, not on a timer or every tool call. Only the main conversation aggregates these updates; subagents must not overwrite them. Describe waiting for relevant subagents in message, but exclude independent background services and copilot review. This is an estimate, not remaining time or a completion signal.", readOnly = false) {
+                add("percent", JsonObject().apply { addProperty("type", "integer"); addProperty("minimum", 0); addProperty("maximum", 100) })
+                add("message", JsonObject().apply { addProperty("type", "string"); addProperty("minLength", 1); addProperty("maxLength", 200) })
+            }.apply { getAsJsonObject("inputSchema").add("required", JsonArray().apply { listOf("percent", "message").forEach(::add) }) })
             add(tool(DISABLE, "Turn off pair programming for this terminal's own session and cancel a running review. Call only when the user explicitly asks to turn it off; never to skip, avoid or end a review of your own work.", readOnly = false))
         }
 

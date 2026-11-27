@@ -23,6 +23,7 @@ class PeerLaunchContributor : NamedLaunchContributor {
             listOf(TerminalMcpServer("imux_session", url, "IMUX_SESSION_TOKEN")),
             mapOf("IMUX_SESSION_URL" to url, "IMUX_SESSION_TOKEN" to token),
             listOfNotNull(script),
+            guidance = setOf(com.github.izerui.imux.settings.GuidanceCapability.TURN_PROGRESS),
         ) { service.revoke(token) }
     }
 }

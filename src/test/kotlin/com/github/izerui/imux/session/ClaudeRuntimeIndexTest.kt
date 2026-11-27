@@ -49,6 +49,35 @@ class ClaudeRuntimeIndexTest {
     }
 
     @Test
+    fun `项目内 Claude 隔离工作区仍归属于原工程`() {
+        writeSession(1001, "worktree", cwd = "/Users/demo/proj/.claude/worktrees/random-plugin")
+        writeSession(1002, "nested", cwd = "/Users/demo/proj/.claude/worktrees/random-plugin/packages/demo")
+        writeSession(1003, "other", cwd = "/Users/demo/other/.claude/worktrees/random-plugin")
+
+        val loaded = index().load("/Users/demo/proj")
+
+        assertEquals(setOf("worktree", "nested"), loaded.keys)
+    }
+
+    @Test
+    fun `Windows 分隔符下 Claude 隔离工作区仍归属于原工程`() {
+        assertTrue(
+            claudeCwdBelongsToProject(
+                """C:\Users\demo\proj\.claude\worktrees\task""",
+                "C:/Users/demo/proj",
+                isWindows = true,
+            ),
+        )
+        assertFalse(
+            claudeCwdBelongsToProject(
+                """C:\Users\demo\project-two\.claude\worktrees\task""",
+                "C:/Users/demo/proj",
+                isWindows = true,
+            ),
+        )
+    }
+
+    @Test
     fun `claude -p 这类无头进程不算会话`() {
         // 轨迹生成、peer 审查都在项目目录里起 `claude -p --no-session-persistence`。
         // 它同样写运行态文件，带工具时还会走 busy -> idle，被当成「一轮跑完」标未读；

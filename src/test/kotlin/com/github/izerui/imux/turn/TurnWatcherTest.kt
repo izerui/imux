@@ -500,6 +500,7 @@ class TurnWatcherTest {
         watcher.reportPiSettled("p1", PiStopReason.ERROR, "a2")
 
         assertEquals(listOf("p1"), watcher.poll())
+        assertEquals("a2", watcher.settledFailureMessageId("p1"))
         assertTrue(watcher.workingIds(AgentType.PI).isEmpty())
     }
 

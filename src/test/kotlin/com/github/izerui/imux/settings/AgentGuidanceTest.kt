@@ -121,7 +121,11 @@ class AgentGuidanceTest {
     @Test
     fun `两组都挂时英文按看清、摸清链路、改、验证、排错的顺序排列，冷门能力放最后`() {
         val order = listOf(
-            "## See the code clearly", "## Map the chain", "## While editing", "## After editing", "## When it fails at runtime",
+            "## See the code clearly",
+            "## Map the chain",
+            "## While editing",
+            "## After editing",
+            "## When it fails at runtime",
             "## Use when the task calls for it",
         ).map(enFull::indexOf)
         assertTrue(order.toString(), order.all { it >= 0 })
@@ -150,7 +154,10 @@ class AgentGuidanceTest {
             }
         }
         assertEquals(12, all.size)
-        for (text in all) assertFalse(text.lineSequence().first { it.startsWith("## ") }, numbered.containsMatchIn(text))
+        for (text in all) assertFalse(
+            text.lineSequence().first { it.startsWith("## ") },
+            numbered.containsMatchIn(text)
+        )
     }
 
     // endregion
@@ -161,7 +168,8 @@ class AgentGuidanceTest {
     fun `MCP初步定位和细读实现的引导按语言角色注入并随查代码开关关闭`() {
         for (zh in listOf(true, false)) for (idea in listOf(true, false)) for (role in GuidanceRole.entries) {
             val text = agentGuidance(zh, idea, true, role)!!
-            val rule = if (zh) "先用这组 MCP 工具快速找到相关声明" else "start with these MCP tools to quickly locate relevant declarations"
+            val rule =
+                if (zh) "先用这组 MCP 工具快速找到相关声明" else "start with these MCP tools to quickly locate relevant declarations"
             val editing = if (zh) "动手前先查受影响的用法" else "Before editing a signature"
             val reviewing = if (zh) "先查谁依赖涉及的共享约定" else "When reviewing an existing or proposed change"
             assertTrue(text.contains(rule))
@@ -252,7 +260,10 @@ class AgentGuidanceTest {
         val en = agentGuidance(chinese = false, ideaMcp = true, codeTools = true)
         assertEquals(zh, agentGuidanceForLanguage(PluginLanguage.SIMPLIFIED_CHINESE, true, true))
         assertEquals(zh, agentGuidanceForLanguage(PluginLanguage.TRADITIONAL_CHINESE, true, true))
-        for (language in PluginLanguage.entries - setOf(PluginLanguage.SIMPLIFIED_CHINESE, PluginLanguage.TRADITIONAL_CHINESE)) {
+        for (language in PluginLanguage.entries - setOf(
+            PluginLanguage.SIMPLIFIED_CHINESE,
+            PluginLanguage.TRADITIONAL_CHINESE
+        )) {
             assertEquals(language.name, en, agentGuidanceForLanguage(language, true, true))
         }
     }
@@ -261,10 +272,17 @@ class AgentGuidanceTest {
     fun `设置按当前语言、工具组合和角色取引导词`() {
         val settings = ImuxSettings()
         settings.setLanguage(PluginLanguage.SIMPLIFIED_CHINESE)
-        assertEquals(zhCodeOnly, settings.agentGuidance(ideaMcp = false, capabilities = setOf(GuidanceCapability.CODE_TOOLS)))
+        assertEquals(
+            zhCodeOnly,
+            settings.agentGuidance(ideaMcp = false, capabilities = setOf(GuidanceCapability.CODE_TOOLS))
+        )
         assertEquals(
             investigator(chinese = true, ideaMcp = true, codeTools = true),
-            settings.agentGuidance(ideaMcp = true, capabilities = setOf(GuidanceCapability.CODE_TOOLS), role = GuidanceRole.INVESTIGATOR),
+            settings.agentGuidance(
+                ideaMcp = true,
+                capabilities = setOf(GuidanceCapability.CODE_TOOLS),
+                role = GuidanceRole.INVESTIGATOR
+            ),
         )
         settings.setLanguage(PluginLanguage.ENGLISH)
         assertEquals(enIdeaOnly, settings.agentGuidance(ideaMcp = true, capabilities = emptySet()))
@@ -283,9 +301,16 @@ class AgentGuidanceTest {
             val lookAt = text.indexOf(look)
             val onDemandAt = text.indexOf(onDemand)
             assertTrue(lookAt >= 0 && onDemandAt > lookAt)
-            for (tool in listOf("search_symbol", "get_symbol_info", "analyze_calls", "read_file", "get_project_modules", "get_all_open_file_paths")) {
+            for (tool in listOf(
+                "search_symbol",
+                "get_symbol_info",
+                "analyze_calls",
+                "get_project_modules",
+                "get_all_open_file_paths"
+            )) {
                 assertTrue(tool, text.indexOf("`$tool`") in lookAt until onDemandAt)
             }
+            assertFalse("read_file", text.contains("`read_file`"))
             for (tool in listOf("execute_sql_query", "configure_python_interpreter", "run_inspection_kts")) {
                 assertTrue(tool, text.indexOf("`$tool`") > onDemandAt)
             }
@@ -310,7 +335,14 @@ class AgentGuidanceTest {
     fun `大纲之后提示细读相关实现，局部仍不清楚时通读文件`() {
         for (role in GuidanceRole.entries) for (idea in listOf(false, true)) {
             assertTrue(agentGuidance(true, idea, true, role)!!.contains("读完局部仍拿不准它们怎样配合，就通读这个文件"))
-            assertTrue(agentGuidance(false, idea, true, role)!!.contains("their interaction is still unclear, read the whole file"))
+            assertTrue(
+                agentGuidance(
+                    false,
+                    idea,
+                    true,
+                    role
+                )!!.contains("their interaction is still unclear, read the whole file")
+            )
         }
     }
 
@@ -319,8 +351,14 @@ class AgentGuidanceTest {
         for (zh in listOf(false, true)) for (role in GuidanceRole.entries) {
             for ((idea, code) in listOf(true to true, true to false, false to true)) {
                 val intro = agentGuidance(zh, idea, code, role)!!.substringBefore("\n## ")
-                assertEquals(role == GuidanceRole.INVESTIGATOR, intro.contains(if (zh) "只读范围" else "read-only scope"))
-                assertEquals(role == GuidanceRole.INVESTIGATOR, intro.contains(if (zh) "证据不足的地方要说明" else "Explain where the evidence is insufficient"))
+                assertEquals(
+                    role == GuidanceRole.INVESTIGATOR,
+                    intro.contains(if (zh) "只读范围" else "read-only scope")
+                )
+                assertEquals(
+                    role == GuidanceRole.INVESTIGATOR,
+                    intro.contains(if (zh) "证据不足的地方要说明" else "Explain where the evidence is insufficient")
+                )
             }
         }
     }

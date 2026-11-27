@@ -261,6 +261,7 @@ class TerminalHost(
         // key 会在会话迁移时变化，也可能被另一个终端重新占用。只有账上仍然是这个
         // VirtualFile，才允许清掉 key 对应的 view 与 watcher；否则只结束自身的 view。
         if (files.remove(key, file)) {
+            com.github.izerui.imux.progress.TurnProgressStore.getInstance(project).forget(key)
             turnWatcher.unwatch(key)
             rememberClosedSession(key)
             if (views[key] === file.terminalView) views.remove(key)
@@ -403,6 +404,7 @@ class TerminalHost(
         views[newKey] = view
         files[newKey] = file
         turnWatcher.unwatch(oldKey)
+        com.github.izerui.imux.progress.TurnProgressStore.getInstance(project).forget(oldKey)
 
         // 必须同步：未读标记按 sessionKey 清除，留着旧的 pending key 会清不掉；
         // 终端正文右键复制则读取真实 sessionId，二者要在同一次迁移中更新。

@@ -24,16 +24,53 @@ class PeerMcpService(val scope: CoroutineScope) : Disposable {
     fun register(project: Project, tabId: String, agentType: AgentType): String {
         val tools = PeerSessionTools(
             agentType,
-            sessionKey = { if (project.isDisposed) null else TerminalHost.getInstance(project).openTabsByTabId()[tabId] },
+            sessionKey = {
+                if (project.isDisposed) null else TerminalHost.getInstance(project).openTabsByTabId()[tabId]
+            },
             coordinator = { if (project.isDisposed) null else SessionMonitor.getInstance(project).peerCoordinator },
             onSwitched = { partner -> notifySwitched(project, tabId, partner) },
-            onScheduled = { reviewer -> notify(project, ImuxBundle.message("action.peer.mcp.scheduled", titleOf(project, tabId), reviewer.displayName)) },
+            onScheduled = { reviewer ->
+                notify(
+                    project,
+                    ImuxBundle.message("action.peer.mcp.scheduled", titleOf(project, tabId), reviewer.displayName)
+                )
+            },
         )
         return protocols.register(PeerMcpProtocol(object : PeerToolsBackend {
+            override suspend fun progress(args: com.google.gson.JsonObject): PeerToolResult {
+                return withContext(Dispatchers.EDT) {
+                    val key =
+                        if (project.isDisposed) null else TerminalHost.getInstance(project).openTabsByTabId()[tabId]
+                    if (key == null) return@withContext PeerToolResult(
+                        com.google.gson.JsonObject().apply { addProperty("reason", "session_closed") }, failed = true
+                    )
+                    val store = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
+                    val accepted = runCatching {
+                        require(args.keySet() == setOf("percent", "message"))
+                        fun string(obj: com.google.gson.JsonObject, key: String): String {
+                            val value = obj[key]
+                            require(value != null && value.isJsonPrimitive && value.asJsonPrimitive.isString)
+                            return value.asString
+                        }
+
+                        val rawPercent = args["percent"]
+                        require(rawPercent != null && rawPercent.isJsonPrimitive && rawPercent.asJsonPrimitive.isNumber)
+                        val percent = rawPercent.asBigDecimal.intValueExact()
+                        store.report(key, percent, string(args, "message"))
+                    }.getOrDefault(false)
+                    PeerToolResult(com.google.gson.JsonObject().apply {
+                        addProperty("available", accepted)
+                        addProperty("accepted", accepted)
+                        if (!accepted) addProperty("reason", "invalid_progress")
+                    }, failed = !accepted)
+                }
+            }
+
             override suspend fun status() = withContext(Dispatchers.EDT) { tools.status() }
             override suspend fun enable(agent: String?) = withContext(Dispatchers.EDT) { tools.enable(agent) }
             override suspend fun disable() = withContext(Dispatchers.EDT) { tools.disable() }
-            override suspend fun reviewOnce(agent: String?, instruction: String?) = withContext(Dispatchers.EDT) { tools.reviewOnce(agent, instruction) }
+            override suspend fun reviewOnce(agent: String?, instruction: String?) =
+                withContext(Dispatchers.EDT) { tools.reviewOnce(agent, instruction) }
         }, scope))
     }
 
@@ -59,7 +96,9 @@ class PeerMcpService(val scope: CoroutineScope) : Disposable {
             .notify(project)
     }
 
-    override fun dispose() { protocols.clear() }
+    override fun dispose() {
+        protocols.clear()
+    }
 
     companion object {
         private const val NOTIFICATION_GROUP = "imux.turnCompleted"

@@ -3,6 +3,7 @@ package com.github.izerui.imux.session
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.SystemInfo
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -105,7 +106,10 @@ class ClaudeRuntimeIndex(
                     .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".json") }
                     .mapNotNull { readOne(it) }
                     .filterNot { it.isHeadless }
-                    .filter { projectPath == null || it.cwd == projectPath }
+                    .filter {
+                        projectPath == null ||
+                            it.cwd?.let { cwd -> claudeCwdBelongsToProject(cwd, projectPath) } == true
+                    }
                     .filter { isProcessAlive(it.pid) }
                     .associateBy { it.sessionId }
             }
@@ -148,6 +152,16 @@ class ClaudeRuntimeIndex(
     private companion object {
         val LOG = logger<ClaudeRuntimeIndex>()
     }
+}
+
+internal fun claudeCwdBelongsToProject(
+    cwd: String,
+    projectPath: String,
+    isWindows: Boolean = SystemInfo.isWindows,
+): Boolean {
+    val current = codexCwdKey(cwd, isWindows).trimEnd('/')
+    val project = codexCwdKey(projectPath, isWindows).trimEnd('/')
+    return current == project || current.startsWith("$project/.claude/worktrees/")
 }
 
 private fun defaultIsProcessAlive(pid: Long): Boolean =

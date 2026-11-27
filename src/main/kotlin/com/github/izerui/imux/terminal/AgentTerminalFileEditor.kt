@@ -158,6 +158,7 @@ class AgentTerminalFileEditor(
 
             override fun mouseReleased(event: EditorMouseEvent) {
                 toolStrip?.component?.isVisible = true
+                refreshProgressVisibility?.invoke()
             }
         }
 
@@ -166,8 +167,10 @@ class AgentTerminalFileEditor(
         object : EditorMouseMotionListener {
             override fun mouseDragged(event: EditorMouseEvent) {
                 toolStrip?.component?.isVisible = false
+                refreshProgressVisibility?.invoke()
             }
         }
+    private var refreshProgressVisibility: (() -> Unit)? = null
     private var activeModelJob: Job? = null
     private var keyEventsJob: Job? = null
     private var followBottomOnActivation = false
@@ -360,10 +363,20 @@ class AgentTerminalFileEditor(
                     .setTitle(title).createPopup().showUnderneathOf(anchor)
             }
         }, shown = { missing().isNotEmpty() })
+        val infoTool = SessionInfoTool(project, virtualFile, this) { toolStrip?.component }
+        val progressStore = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
+        val progressBar = javax.swing.JProgressBar(0, 100).apply {
+            isVisible = false
+            addMouseListener(object : java.awt.event.MouseAdapter() {
+                override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                    if (javax.swing.SwingUtilities.isLeftMouseButton(e)) infoTool.perform(this@apply)
+                }
+            })
+        }
         val toolButtons =
             listOf(ToolPill(pairTool, pinned = true), ToolPill(talkTool), ToolPill(trailOverlay.tool)) +
                 SessionDecorations.tools(project, virtualFile, this, noticeOverlay.sink(NoticeSource.PHONE)).map(::ToolPill) +
-                ToolPill(SessionInfoTool(project, virtualFile, this) { toolStrip?.component }) + warning
+                ToolPill(infoTool) + warning
         val toolStrip = TerminalToolStrip(resultChip, toolButtons)
         this.toolStrip = toolStrip
         toolStrip.refresh()
@@ -394,6 +407,8 @@ class AgentTerminalFileEditor(
                     setLayer(navigatorPreview, JLayeredPane.POPUP_LAYER)
                     add(trailOverlay.card)
                     setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
+                    add(progressBar)
+                    setLayer(progressBar, JLayeredPane.PALETTE_LAYER)
                     add(toolStrip.component)
                     setLayer(toolStrip.component, JLayeredPane.PALETTE_LAYER)
                     // 提示条压在提问导航横线之上
@@ -445,10 +460,33 @@ class AgentTerminalFileEditor(
                         strip.width,
                         strip.height,
                     )
-                    trailOverlay.layout(width, height, rightReserve, stripY + strip.height)
+                    val progressHeight = if (progressBar.isVisible) JBUI.scale(3) else 0
+                    progressBar.setBounds(toolStrip.component.x, stripY + strip.height, strip.width, progressHeight)
+                    trailOverlay.layout(width, height, rightReserve, stripY + strip.height + progressHeight)
                 }
             }
         this.terminalLayer = terminalLayer
+        var lastProgress: com.github.izerui.imux.progress.ProgressSnapshot? = null
+        var lastProgressToolsVisible = true
+        fun updateProgress() {
+            if (disposed || project.isDisposed) return
+            val snapshot = progressStore.snapshot(virtualFile.sessionKey)
+            if (snapshot == lastProgress && lastProgressToolsVisible == toolStrip.component.isVisible) return
+            lastProgress = snapshot
+            lastProgressToolsVisible = toolStrip.component.isVisible
+            progressBar.isVisible = snapshot.active && toolStrip.component.isVisible
+            progressBar.isIndeterminate = snapshot.active && snapshot.progress == null
+            progressBar.value = snapshot.progress?.percent ?: 0
+            progressBar.toolTipText = listOfNotNull(snapshot.progress?.message, progressSummary(snapshot), snapshot.progress?.let {
+                "≈ ${it.percent}%"
+            }, ImuxBundle.message("progress.estimate")).joinToString(" · ")
+            terminalLayer.revalidate()
+            terminalLayer.repaint()
+        }
+        refreshProgressVisibility = ::updateProgress
+        progressStore.listen(this, ::updateProgress)
+        trailOutsideClicks.attach(progressBar)
+        updateProgress()
         terminalLayer.addHierarchyListener { event ->
             val showingChanged = event.changeFlags and java.awt.event.HierarchyEvent.SHOWING_CHANGED.toLong() != 0L
             if (showingChanged && terminalLayer.isShowing && !disposed) refreshPeer()

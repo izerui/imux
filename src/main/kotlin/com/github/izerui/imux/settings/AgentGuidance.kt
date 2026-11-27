@@ -10,6 +10,7 @@ internal const val CODE_TOOLS_SERVER = "imux_code"
 enum class GuidanceCapability {
     /** 看文件大纲、查用法、查调用链、查继承：引导词带上「摸清链路」一节。 */
     CODE_TOOLS,
+    TURN_PROGRESS,
 }
 
 /**
@@ -109,7 +110,6 @@ private object EN : GuidanceText {
         append("## See the code clearly\n")
         append("\n- To find what a name refers to, `search_symbol` locates candidate declarations and `get_symbol_info` shows their type, signature and documentation.")
         if (codeTools) append("\n$outline")
-        append("\n- To see how a dependency actually behaves, `read_file` with an archive path can read source in JARs or node_modules and decompiled classes from the version this project uses.")
         append("\n- To see how modules depend on each other, use `get_project_modules` and `get_project_dependencies`. When the user mentions a file they just opened, `get_all_open_file_paths` can narrow it down.")
         if (!codeTools) append("\n- `analyze_calls` looks up call relationships by fully qualified name. Resolution depends on the language plugin. `No callable symbol found` means this query could not locate the target method.")
         if (!worker) append("\n- `lint_files` shows errors and warnings in a file.")
@@ -200,7 +200,6 @@ private object ZH : GuidanceText {
         append("## 看清代码\n")
         append("\n- 一个名字指的是什么，`search_symbol` 按名字找到候选声明，`get_symbol_info` 看它的类型、签名和文档。")
         if (codeTools) append("\n$outline")
-        append("\n- 依赖库实际是怎么实现的，`read_file` 加归档路径，可以读 JAR、node_modules 里的源码和反编译的类。遇到版本差异时，可以查到当前工程实际引用的那份实现。")
         append("\n- 模块之间怎么依赖，用 `get_project_modules` 和 `get_project_dependencies` 看工程结构。用户提到“刚才打开的那个文件”时，`get_all_open_file_paths` 可以列出 IDE 当前打开的文件，帮助缩小范围。")
         if (!codeTools) append("\n- 调用关系可以用 `analyze_calls`。它按完整限定名定位目标，解析能力取决于语言插件。返回 `No callable symbol found` 表示这次查询没有定位到目标方法。")
         if (!worker) append("\n- `lint_files` 可以查看文件里的错误和警告。")

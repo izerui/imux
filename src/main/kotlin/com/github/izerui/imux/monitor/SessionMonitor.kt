@@ -150,8 +150,10 @@ internal fun isRunningWithoutTab(
 enum class DeleteResult {
     /** 删除已受理：标签页已关闭、状态已清理，文件删除在 IO 线程异步进行。 */
     ACCEPTED,
+
     /** 会话正在运行且没有可关闭的标签页，imux 无法终止进程。 */
     RUNNING_WITHOUT_TAB,
+
     /** 用户在关闭标签页的确认框中取消了操作。 */
     CLOSE_REJECTED,
 }
@@ -163,7 +165,9 @@ internal fun executeDelete(
 ): DeleteResult = when {
     isRunningWithoutTab -> DeleteResult.RUNNING_WITHOUT_TAB
     !closeTab() -> DeleteResult.CLOSE_REJECTED
-    else -> { onAccepted(); DeleteResult.ACCEPTED }
+    else -> {
+        onAccepted(); DeleteResult.ACCEPTED
+    }
 }
 
 internal fun dispatchCompletedPeerReview(
@@ -312,7 +316,9 @@ class SessionMonitor(
         coroutineScope.launch(Dispatchers.EDT) {
             if (project.isDisposed) return@launch
             val host = TerminalHost.getInstance(project)
-            if (report.activeTools != null || report.contextPercent != null || report.skillNames != null) host.recordPiCapabilities(report)
+            if (report.activeTools != null || report.contextPercent != null || report.skillNames != null) host.recordPiCapabilities(
+                report
+            )
             when (report.type) {
                 PiReportType.SESSION_START -> {
                     report.failedMcpServers?.let { host.updatePiRegistrationFailures(report.tabId, it) }
@@ -714,6 +720,7 @@ class SessionMonitor(
                 // 按项目过滤：运行态目录是全机器共享的，本机实测常年同时跑着五六个项目的
                 // claude。不过滤就会为别的项目的会话弹提醒，而那些会话不在本项目列表里，
                 // 连标题都查不到，只能显示一串会话 id。
+                val progress = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
                 val snapshot = runtimeIndex.load(projectPath)
                 val watcher = host.turnWatcher()
                 // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
@@ -723,6 +730,11 @@ class SessionMonitor(
                 val inferredWorking = watcher.workingIds()
                 val running = RunningSessions.of(snapshot, inferredWorking)
                 val working = RunningSessions.workingOf(snapshot, inferredWorking)
+                val progressSessionIds = withContext(Dispatchers.EDT) {
+                    host.openTabsByTabId().values.toSet().also { sessionIds ->
+                        sessionIds.forEach(progress::register)
+                    }
+                }
 
                 withContext(Dispatchers.EDT) {
                     val previousRunning = runningIds
@@ -789,6 +801,18 @@ class SessionMonitor(
                             )
                         }
                     }
+                    progressSessionIds.forEach { sessionId ->
+                        val waiting = snapshot[sessionId]?.isWaiting == true
+                        progress.observe(
+                            sessionId = sessionId,
+                            active = sessionId in working || waiting,
+                            waiting = waiting,
+                            endReason =
+                                com.github.izerui.imux.progress.ProgressEndReason.FAILED.takeIf {
+                                    watcher.settledFailureMessageId(sessionId) != null
+                                },
+                        )
+                    }
                 }
             } finally {
                 checkingCompletedTurns.set(false)
@@ -801,8 +825,17 @@ class SessionMonitor(
             SessionStoreWatcher(
                 claudeHome = agentHomes.claude,
                 codexHome = agentHomes.codex,
-                claudeProjectDirName = ClaudeSessionReader(agentHomes.claude).let { reader -> { reader.projectDirName(projectPath) } },
-                piSessionDir = PiSessionReader(agentHomes.piAgent, agentHomes.piSessions).let { reader -> { reader.sessionDir(projectPath) } },
+                claudeProjectDirName = ClaudeSessionReader(agentHomes.claude).let { reader ->
+                    {
+                        reader.projectDirName(
+                            projectPath
+                        )
+                    }
+                },
+                piSessionDir = PiSessionReader(
+                    agentHomes.piAgent,
+                    agentHomes.piSessions
+                ).let { reader -> { reader.sessionDir(projectPath) } },
                 onChange = ::refresh,
                 onTick = ::checkCompletedTurns,
                 // 一个标签页都没开时没人看运行中标记，退回慢节奏
