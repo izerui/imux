@@ -34,6 +34,38 @@ class AgentGuidanceTest {
     private fun toolNames(text: String): Set<String> =
         Regex("""`([a-z]+(?:_[a-z]+)+)`""").findAll(text).map { it.groupValues[1] }.toSet()
 
+    @Test
+    fun `索引引导按问题选工具并将关系用于工作范围判断`() {
+        for (ideaMcp in listOf(false, true)) {
+            for (worker in listOf(false, true)) {
+                val role = if (worker) GuidanceRole.WORKER else GuidanceRole.INVESTIGATOR
+                val zh = agentGuidance(true, ideaMcp, true, role)!!
+                val en = agentGuidance(false, ideaMcp, true, role)!!
+                assertTrue(zh.contains("尚不知道位置时，先用可用的搜索工具找到候选"))
+                assertTrue(en.contains("use available search tools to find candidates first"))
+                assertTrue(zh.contains("不必固定顺序或全部调用"))
+                assertTrue(en.contains("without a fixed order or a requirement to use them all"))
+                assertTrue(zh.contains("不代表当前路径一定执行它"))
+                assertTrue(en.contains("does not prove the current path executes it"))
+                assertTrue(zh.contains("异常退出时是否遗漏"))
+                assertTrue(en.contains("whether exceptional exits skip cleanup"))
+                assertTrue(zh.contains("无关分支不必展开"))
+                assertTrue(en.contains("unrelated branches need not be expanded"))
+                assertTrue(zh.contains("未列出不代表不存在"))
+                assertTrue(en.contains("Their absence does not prove there are none"))
+                if (worker) {
+                    assertTrue(zh.contains("确定需要检查、修改或验证的范围"))
+                    assertTrue(en.contains("determine what to inspect, change or verify"))
+                } else {
+                    assertTrue(zh.contains("确定需要核查的范围"))
+                    assertTrue(en.contains("determine what to investigate"))
+                    assertFalse(zh.contains("确定需要检查、修改或验证的范围"))
+                    assertFalse(en.contains("determine what to inspect, change or verify"))
+                }
+            }
+        }
+    }
+
     // region 工具组合
 
     @Test

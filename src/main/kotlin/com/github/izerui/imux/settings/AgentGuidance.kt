@@ -89,7 +89,7 @@ private interface GuidanceText {
 }
 
 private object EN : GuidanceText {
-    private val outline = "- To see how a file fits together, `file_outline` lists declarations and their lines, including the parents and interfaces named by a class. A method's position can go straight into a reference or call query. Read the relevant implementation in full to understand its behavior. If several parts share state and their interaction is still unclear, read the whole file."
+    private val outline = "- To see how a file fits together, `file_outline` lists declarations and their lines, including parent types and interfaces when available. Their absence does not prove there are none; use `type_hierarchy` when inheritance matters to the conclusion. A method's position can go straight into a reference or call query. Read the relevant implementation in full to understand its behavior. If several parts share state and their interaction is still unclear, read the whole file."
 
     override fun intro(ideaMcp: Boolean, codeTools: Boolean, worker: Boolean): String = buildString {
         append("You are working inside a JetBrains IDE such as IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider or CLion. ")
@@ -102,7 +102,7 @@ private object EN : GuidanceText {
                 else "\n- `idea` provides symbol lookup, dependency sources, module structure and IDE diagnostics.",
             )
         }
-        if (codeTools) append("\n- Start with `$CODE_TOOLS_SERVER` to quickly locate relevant code and get an initial view of its structure, relationships and call chains. `file_outline`, `find_references`, `call_hierarchy` and `type_hierarchy` use the IDE's file structure and symbol index to find relevant code and its relationships faster than text search alone. Once you find where to look, read the relevant implementations carefully and in full to understand the details.")
+        if (codeTools) append("\n- When you know the relevant file or symbol location, prefer `$CODE_TOOLS_SERVER` to understand structure, relationships and call chains; otherwise, use available search tools to find candidates first. Choose tools for the current question, without a fixed order or a requirement to use them all. `file_outline`, `find_references`, `call_hierarchy` and `type_hierarchy` use the IDE's file structure and symbol index to find relevant code and its relationships faster than text search alone. Once you find where to look, read the relevant implementations carefully and in full to understand the details.")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
@@ -123,11 +123,11 @@ private object EN : GuidanceText {
 
                 When reading, changing, reviewing or debugging code, start with these MCP tools to quickly locate relevant declarations and understand how they connect. The results show which implementations and call sites to read next. Read those in detail to establish actual behavior, and query further relationships as the investigation develops.
 
-                - To see who relies on a method or what it relies on, use `call_hierarchy`. Follow callers up to find affected entry points and callees down to see where the work goes. Calls found through an interface or base method are marked `via`.
+                - To see who relies on a method or what it relies on, use `call_hierarchy`. Follow callers up to find affected entry points and callees down to see where the work goes. Calls found through an interface or base method are marked `via`. Read the conditions, arguments, return handling and exception handling at the call sites to establish actual behavior; a call relationship does not prove the current path executes it.
                 - To see which contract a method or type implements, follow `supers` in `type_hierarchy`. When the contract changes, `implementations` shows which implementations may need updating.
-                - To trace a value, use `find_references` on its parameter, field or shared state and inspect the read and write sites. When the meaning of a return value changes, callers can reveal where the old meaning is still assumed.
+                - To trace a value, use `find_references` on its parameter, field or shared state and inspect the read and write sites; for state lifecycle questions, also check who clears it and whether exceptional exits skip cleanup. When the meaning of a return value changes, callers can reveal where the old meaning is still assumed.
 
-                ${if (worker) "Before editing a signature, shared state or behavior that other code relies on, trace the affected uses." else "When reviewing an existing or proposed change to a shared contract, trace the affected uses."} Follow the locations returned by the queries and read the relevant callers and implementations, including code outside the diff, to understand how each entry point reaches the behavior.
+                ${if (worker) "Before editing a signature, shared state or behavior that other code relies on, trace the affected uses." else "When reviewing an existing or proposed change to a shared contract, trace the affected uses."} Follow the locations returned by the queries and read the relevant callers and implementations, including code outside the diff, to understand how each entry point reaches the behavior and ${if (worker) "determine what to inspect, change or verify" else "determine what to investigate"}. Follow relationships that may affect the conclusion; unrelated branches need not be expanded.
 
                 To locate a symbol, give its `file`, declaration `line` and `symbol` name. Add `column` to distinguish candidates on the same line. If a call fails, read the reason. It may give the actual declaration line.
 
@@ -180,7 +180,7 @@ private object EN : GuidanceText {
 }
 
 private object ZH : GuidanceText {
-    private val outline = "- 想先纵观一个文件、决定从哪下手，用 `file_outline`。它列出文件里的声明和各自所在的行，类还会标出声明里写明的父类和接口。认准一个方法以后，它的位置可以直接交给引用或调用查询。要判断一段代码的实际行为，先把相关实现读完整。如果几处逻辑共用同一份状态，读完局部仍拿不准它们怎样配合，就通读这个文件。"
+    private val outline = "- 想先纵观一个文件、决定从哪下手，用 `file_outline`。它列出文件里的声明和各自所在的行，可用时还会标出父类和接口。未列出不代表不存在；继承关系影响判断时，用 `type_hierarchy` 确认。认准一个方法以后，它的位置可以直接交给引用或调用查询。要判断一段代码的实际行为，先把相关实现读完整。如果几处逻辑共用同一份状态，读完局部仍拿不准它们怎样配合，就通读这个文件。"
 
     override fun intro(ideaMcp: Boolean, codeTools: Boolean, worker: Boolean): String = buildString {
         append("你正在 JetBrains IDE（IntelliJ IDEA、PyCharm、WebStorm、GoLand、Rider、CLion 等）里工作。")
@@ -193,7 +193,7 @@ private object ZH : GuidanceText {
                 else "\n- `idea` 可以查询符号、依赖源码、模块结构和 IDE 诊断。",
             )
         }
-        if (codeTools) append("\n- 优先用 `$CODE_TOOLS_SERVER` 快速定位相关代码，初步了解结构、逻辑关系和调用链。`file_outline`、`find_references`、`call_hierarchy` 和 `type_hierarchy` 利用 IDE 的文件结构和符号索引，比单靠文本搜索更快找到相关代码、了解它们怎样联系。找到位置后，把相关实现仔细读完整，理解具体细节。")
+        if (codeTools) append("\n- 已知相关文件或符号位置时，优先用 `$CODE_TOOLS_SERVER` 了解结构、逻辑关系和调用链；尚不知道位置时，先用可用的搜索工具找到候选。按当前问题选择工具，不必固定顺序或全部调用。`file_outline`、`find_references`、`call_hierarchy` 和 `type_hierarchy` 利用 IDE 的文件结构和符号索引，比单靠文本搜索更快找到相关代码、了解它们怎样联系。找到位置后，把相关实现仔细读完整，理解具体细节。")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
@@ -214,11 +214,11 @@ private object ZH : GuidanceText {
 
                 读代码、修改、审查或排查问题时，先用这组 MCP 工具快速找到相关声明，了解它们怎样连在一起。查询结果会告诉你接下来该读哪些实现、看哪些调用位置，再仔细读这些代码，判断具体行为。深入过程中需要了解更多关系时，再沿着相关符号继续查。
 
-                - 谁在依赖它、它又依赖谁，用 `call_hierarchy`。想知道哪些入口会受影响，往上看调用方。想知道这一步把事情交给了谁，往下看被调用方。经由接口或父类方法找到的调用会标明 `via`，可以看出这层关系是怎么连上的。
+                - 谁在依赖它、它又依赖谁，用 `call_hierarchy`。想知道哪些入口会受影响，往上看调用方。想知道这一步把事情交给了谁，往下看被调用方。经由接口或父类方法找到的调用会标明 `via`。结合调用位置的条件、参数、返回值和异常处理判断实际行为；查到调用关系，不代表当前路径一定执行它。
                 - 它重写、实现了谁，又被谁重写、实现，用 `type_hierarchy`。往上看 `supers`，能找到它得遵守的约定。改的是约定本身，往下看 `implementations`，能找到哪些实现也得跟着变。
-                - 一个值从哪来、流到哪去，可以对参数、字段或共享状态用 `find_references`，沿 IDE 找到的使用位置看谁在写、谁在读。改了方法返回值的含义，也可以沿调用处看，哪些地方还按旧约定处理结果。
+                - 一个值从哪来、流到哪去，可以对参数、字段或共享状态用 `find_references`，沿 IDE 找到的使用位置看谁在写、谁在读；涉及状态生命周期时，还要看谁负责清理，以及异常退出时是否遗漏。改了方法返回值的含义，也可以沿调用处看，哪些地方还按旧约定处理结果。
 
-                ${if (worker) "准备修改签名、共享状态或其他代码依赖的行为时，动手前先查受影响的用法。" else "审查已有改动或评估拟议方案时，先查谁依赖涉及的共享约定。"} 顺着查到的位置阅读相关调用方和实现，包括差异之外的代码，弄清各个入口是怎样走到这段逻辑的。
+                ${if (worker) "准备修改签名、共享状态或其他代码依赖的行为时，动手前先查受影响的用法。" else "审查已有改动或评估拟议方案时，先查谁依赖涉及的共享约定。"} 顺着查到的位置阅读相关调用方和实现，包括差异之外的代码，弄清各个入口是怎样走到这段逻辑的，并据此${if (worker) "确定需要检查、修改或验证的范围" else "确定需要核查的范围"}。可能影响结论的关系继续追查，无关分支不必展开。
 
                 定位符号时，给出文件 `file`、声明所在行 `line` 和符号名 `symbol`。同一行有几个候选时，再加列号 `column`。一次调用失败，先看返回的原因，有时结果里已经指出了声明实际在哪一行。
 

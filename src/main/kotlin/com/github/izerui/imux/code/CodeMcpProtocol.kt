@@ -213,7 +213,7 @@ class CodeMcpProtocol(private val backend: CodeToolsBackend, private val scope: 
                     "each with its display name (with signature where the language shows one), kind, the line and column of its name, and its end line. " +
                     "Use it to see how a file is laid out and decide where to look. It is an overview, not a substitute for reading: read in full whatever you will change or draw a conclusion about. " +
                     "To query a node with the other tools, pass this file, its `line` and `column`, and its `symbol` (the plain name, when the display name has a signature) or its name. " +
-                    "Types list in `supers` the parents written in their declaration, with file and line (`in_project: false` means a library), so you know which file to outline next; " +
+                    "When available, types list in `supers` the parents written in their declaration, with file and line (`in_project: false` means a library). Missing parents do not prove there are none; use `type_hierarchy` when inheritance matters to the conclusion. " +
                     "inherited members are not listed — use `type_hierarchy` for the full inheritance. " +
                     "`non_public: true` marks non-public members when `visibility_known` is true; otherwise the IDE gives no visibility, so unmarked does not mean public. " +
                     "When nodes exceed max_results, top levels come first; `top_level_omitted` and `children_omitted` say what was left out, and `total_nodes` the size " +
