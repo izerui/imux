@@ -90,7 +90,7 @@ internal class CodexRuntimeIndex(
         val run = queryRow(
             db,
             "SELECT process_uuid, ts FROM logs WHERE process_uuid LIKE ? " +
-                "ORDER BY ts DESC, ts_nanos DESC, id DESC LIMIT 1",
+                    "ORDER BY ts DESC, ts_nanos DESC, id DESC LIMIT 1",
             "pid:$pid:%",
         ) { rows -> rows.getString(1)?.let { uuid -> uuid to rows.getLong(2) } } ?: return null
         val (processUuid, seconds) = run
@@ -98,7 +98,7 @@ internal class CodexRuntimeIndex(
         return queryRow(
             db,
             "SELECT thread_id FROM logs WHERE process_uuid = ? AND thread_id IS NOT NULL " +
-                "ORDER BY ts DESC, ts_nanos DESC, id DESC",
+                    "ORDER BY ts DESC, ts_nanos DESC, id DESC",
             processUuid,
         ) { rows ->
             // 子任务共享 process_uuid，最新日志不一定属于交互会话。

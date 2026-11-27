@@ -27,8 +27,8 @@ private const val TAB_ID_PREFIX = "imux-"
  */
 internal fun isTabId(value: String): Boolean =
     value.startsWith(TAB_ID_PREFIX) &&
-        value.length > TAB_ID_PREFIX.length &&
-        value.none(Char::isWhitespace)
+            value.length > TAB_ID_PREFIX.length &&
+            value.none(Char::isWhitespace)
 
 /** 某个 imux 终端此刻真正在跑的会话。 */
 data class LiveTab(val tabId: String, val sessionId: String)
@@ -207,9 +207,9 @@ internal fun fileNameOf(
 
 private fun looksLikeUuid(value: String): Boolean =
     value.length == UUID_LENGTH &&
-        value.withIndex().all { (index, char) ->
-            if (index in UUID_DASH_POSITIONS) char == '-' else char.isLetterOrDigit()
-        }
+            value.withIndex().all { (index, char) ->
+                if (index in UUID_DASH_POSITIONS) char == '-' else char.isLetterOrDigit()
+            }
 
 private const val ROLLOUT_PREFIX = "rollout-"
 private const val JSONL_SUFFIX = ".jsonl"

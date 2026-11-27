@@ -47,8 +47,10 @@ class CodexSessionSourceTest {
     @Test
     fun `后续正文中的子任务字样不改变首行来源`() {
         val file = File(tmp.root, "main.jsonl").apply {
-            writeText("""{"type":"session_meta","payload":{"source":"cli"}}""" + "\n" +
-                """{"type":"response_item","payload":{"text":"subagent"}}""" + "\n")
+            writeText(
+                """{"type":"session_meta","payload":{"source":"cli"}}""" + "\n" +
+                        """{"type":"response_item","payload":{"text":"subagent"}}""" + "\n"
+            )
         }
         assertTrue(isInteractiveCodexRollout(file.path))
     }

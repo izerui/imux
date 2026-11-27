@@ -25,13 +25,17 @@ class LiveSessionProbeTest {
     @Test
     fun `子任务完成后主会话仍显示运行并在主会话结束时提醒`() {
         val main = File(tmp.root, "rollout-2026-11-27T08-14-20-$oldThread.jsonl").apply {
-            writeText("""{"type":"session_meta","payload":{"id":"$oldThread","source":"cli"}}""" + "\n" +
-                """{"type":"event_msg","payload":{"type":"task_started"}}""" + "\n")
+            writeText(
+                """{"type":"session_meta","payload":{"id":"$oldThread","source":"cli"}}""" + "\n" +
+                        """{"type":"event_msg","payload":{"type":"task_started"}}""" + "\n"
+            )
         }
         val child = File(tmp.root, "rollout-2026-11-27T10-35-57-$newThread.jsonl").apply {
-            writeText("""{"type":"session_meta","payload":{"id":"$newThread","source":{"subagent":{"thread_spawn":{"parent_thread_id":"$oldThread","depth":1}}}}}""" + "\n" +
-                """{"type":"event_msg","payload":{"type":"task_started"}}""" + "\n" +
-                """{"type":"event_msg","payload":{"type":"task_complete"}}""" + "\n")
+            writeText(
+                """{"type":"session_meta","payload":{"id":"$newThread","source":{"subagent":{"thread_spawn":{"parent_thread_id":"$oldThread","depth":1}}}}}""" + "\n" +
+                        """{"type":"event_msg","payload":{"type":"task_started"}}""" + "\n" +
+                        """{"type":"event_msg","payload":{"type":"task_complete"}}""" + "\n"
+            )
         }
         val probe = LiveSessionProbe(
             pidsOf = { if (it == AgentType.CODEX) listOf(1L) else emptyList() },

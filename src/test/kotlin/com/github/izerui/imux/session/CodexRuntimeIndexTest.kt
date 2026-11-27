@@ -27,9 +27,9 @@ class CodexRuntimeIndexTest {
             conn.createStatement().use {
                 it.executeUpdate(
                     "CREATE TABLE logs (" +
-                        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                        "ts INTEGER, ts_nanos INTEGER DEFAULT 0, " +
-                        "thread_id TEXT, process_uuid TEXT)",
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                            "ts INTEGER, ts_nanos INTEGER DEFAULT 0, " +
+                            "thread_id TEXT, process_uuid TEXT)",
                 )
             }
             conn.prepareStatement("INSERT INTO logs (process_uuid, thread_id, ts) VALUES (?, ?, ?)")
@@ -192,9 +192,9 @@ class CodexRuntimeIndexTest {
             conn.createStatement().use {
                 it.executeUpdate(
                     "CREATE TABLE logs (" +
-                        "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                        "ts INTEGER, ts_nanos INTEGER DEFAULT 0, " +
-                        "thread_id TEXT, process_uuid TEXT)",
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                            "ts INTEGER, ts_nanos INTEGER DEFAULT 0, " +
+                            "thread_id TEXT, process_uuid TEXT)",
                 )
             }
             conn.prepareStatement(
@@ -384,7 +384,7 @@ class CodexRuntimeIndexTest {
                     withQueryDeadline(stmt, 200L) {
                         stmt.executeQuery(
                             "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c " +
-                                "WHERE x < 400000000) SELECT max(x) FROM c",
+                                    "WHERE x < 400000000) SELECT max(x) FROM c",
                         ).use { rows -> if (rows.next()) rows.getLong(1) else -1L }
                     }
                 }

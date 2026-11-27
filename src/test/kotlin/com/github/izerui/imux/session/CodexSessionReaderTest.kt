@@ -187,17 +187,17 @@ class CodexSessionReaderTest {
             conn.createStatement().use {
                 it.executeUpdate(
                     "CREATE TABLE local_thread_catalog (host_id TEXT, thread_id TEXT, display_title TEXT, " +
-                        "source_created_at REAL, source_updated_at REAL, source_kind TEXT, " +
-                        "observation_sequence INTEGER, missing_candidate INTEGER DEFAULT 0, " +
-                        "source_recency_at REAL DEFAULT 0, pending_observed_title INTEGER DEFAULT 0, " +
-                        "PRIMARY KEY (host_id, thread_id))",
+                            "source_created_at REAL, source_updated_at REAL, source_kind TEXT, " +
+                            "observation_sequence INTEGER, missing_candidate INTEGER DEFAULT 0, " +
+                            "source_recency_at REAL DEFAULT 0, pending_observed_title INTEGER DEFAULT 0, " +
+                            "PRIMARY KEY (host_id, thread_id))",
                 )
             }
             if (ids.isNotEmpty()) {
                 conn.prepareStatement(
                     "INSERT INTO local_thread_catalog (host_id, thread_id, display_title, " +
-                        "source_created_at, source_updated_at, source_kind, observation_sequence) " +
-                        "VALUES ('host', ?, '', 0, 0, 'cli', 0)",
+                            "source_created_at, source_updated_at, source_kind, observation_sequence) " +
+                            "VALUES ('host', ?, '', 0, 0, 'cli', 0)",
                 ).use { stmt ->
                     ids.forEach { id -> stmt.setString(1, id); stmt.executeUpdate() }
                 }
