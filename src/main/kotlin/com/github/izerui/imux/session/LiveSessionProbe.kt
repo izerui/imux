@@ -86,6 +86,8 @@ class LiveSessionProbe(
      * 会改坏 macOS 上正在工作的行为。默认取 `SystemInfo`，测试显式传两侧。
      */
     private val isWindows: Boolean = SystemInfo.isWindows,
+    /** 同一个进程会持有并行子任务的文件；只从交互会话中选当前终端。 */
+    private val interactiveRollout: (String) -> Boolean = ::isInteractiveCodexRollout,
 ) {
 
     /**
@@ -111,10 +113,11 @@ class LiveSessionProbe(
 
     /**
      * 进程可能同时持有新旧两个 rollout——`/new` 之后旧句柄未必立刻关闭。
-     * 文件名里的时间戳是零填充的 `YYYY-MM-DDThh-mm-ss`，字典序即时间序，取最大者。
+     * 子任务也在同一进程中持有文件，必须先排除，不能把新建子任务当作 `/new`。
+     * 交互会话文件名里的时间戳是零填充的 `YYYY-MM-DDThh-mm-ss`，字典序即时间序。
      */
     private fun currentThreadOf(rollouts: List<String>): String? =
-        rollouts.filter { threadIdOfRollout(it, isWindows) != null }
+        rollouts.filter { threadIdOfRollout(it, isWindows) != null && interactiveRollout(it) }
             .maxByOrNull { fileNameOf(it, isWindows) }
             ?.let { threadIdOfRollout(it, isWindows) }
 }

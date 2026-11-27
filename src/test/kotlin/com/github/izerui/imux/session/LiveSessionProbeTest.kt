@@ -1,11 +1,15 @@
 package com.github.izerui.imux.session
 
 import com.github.izerui.imux.model.AgentType
+import com.github.izerui.imux.turn.TurnWatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * 探测「每个 imux 终端此刻真正在跑哪个会话」。
@@ -15,6 +19,47 @@ import org.junit.Test
  * 全部错位，再点新会话还会重开一个终端去抢同一个会话。
  */
 class LiveSessionProbeTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    @Test
+    fun `子任务完成后主会话仍显示运行并在主会话结束时提醒`() {
+        val main = File(tmp.root, "rollout-2026-11-27T08-14-20-$oldThread.jsonl").apply {
+            writeText("""{"type":"session_meta","payload":{"id":"$oldThread","source":"cli"}}""" + "\n" +
+                """{"type":"event_msg","payload":{"type":"task_started"}}""" + "\n")
+        }
+        val child = File(tmp.root, "rollout-2026-11-27T10-35-57-$newThread.jsonl").apply {
+            writeText("""{"type":"session_meta","payload":{"id":"$newThread","source":{"subagent":{"thread_spawn":{"parent_thread_id":"$oldThread","depth":1}}}}}""" + "\n" +
+                """{"type":"event_msg","payload":{"type":"task_started"}}""" + "\n" +
+                """{"type":"event_msg","payload":{"type":"task_complete"}}""" + "\n")
+        }
+        val probe = LiveSessionProbe(
+            pidsOf = { if (it == AgentType.CODEX) listOf(1L) else emptyList() },
+            tabIdOf = { "tab" },
+            claudeSessionOf = { null },
+            rolloutsHeldBy = { listOf(main.path, child.path) },
+            isWindows = false,
+        )
+        val live = probe.probe()
+        assertEquals(listOf(LiveTab("tab", oldThread)), live)
+        assertTrue("子任务不应把标签迁走", driftOf(mapOf("tab" to oldThread), live).isEmpty())
+        assertEquals(
+            "已误绑到子任务的标签可迁回主会话",
+            listOf(KeyDrift("tab", newThread, oldThread)),
+            driftOf(mapOf("tab" to newThread), live),
+        )
+
+        val watcher = TurnWatcher()
+        watcher.watch(live.single().sessionId, AgentType.CODEX, main.toPath())
+        assertEquals(setOf(oldThread), watcher.workingIds())
+        assertTrue("子任务结束不提醒主会话完成", watcher.poll().isEmpty())
+        main.appendText("""{"type":"event_msg","payload":{"type":"task_complete"}}""" + "\n")
+        assertEquals(listOf(oldThread), watcher.poll())
+        assertTrue(watcher.workingIds().isEmpty())
+
+        main.delete()
+        assertTrue("主会话已不可读时不能转而认领子任务", probe.probe().isEmpty())
+    }
 
     private fun probe(
         claudePids: List<Long> = emptyList(),
@@ -38,6 +83,8 @@ class LiveSessionProbeTest {
         // 默认 false：绝大多数用例说的是 macOS 上正在工作的行为，
         // 不显式传的话它们会在 Windows 主机上换一条路走。
         isWindows = isWindows,
+        // 此组只验证进程与路径分派；真实来源文件由子任务回归用例覆盖。
+        interactiveRollout = { true },
     )
 
     private fun rollout(threadId: String, stamp: String = "2026-08-06T13-59-47") =

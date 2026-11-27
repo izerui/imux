@@ -59,7 +59,6 @@ internal fun agentGuidance(
             add(text.debugging)
             add(text.onDemand)
         }
-        add(text.ownTools(worker))
     }.joinToString("\n\n")
 }
 
@@ -87,7 +86,6 @@ private interface GuidanceText {
 
     /** 特定场景才用得上的能力，和每次都该用的分开放，免得冷门的冲淡常用的。 */
     val onDemand: String
-    fun ownTools(worker: Boolean): String
 }
 
 private object EN : GuidanceText {
@@ -96,7 +94,7 @@ private object EN : GuidanceText {
     override fun intro(ideaMcp: Boolean, codeTools: Boolean, worker: Boolean): String = buildString {
         append("You are working inside a JetBrains IDE such as IntelliJ IDEA, PyCharm, WebStorm, GoLand, Rider or CLion. ")
         append(if (ideaMcp && codeTools) "This session has two sets of MCP tools." else "This session has the following MCP tools.")
-        if (!worker) append("\n\nThis time you only investigate. The user and the agent doing the work decide what to change and how. Your role is to establish the facts.")
+        if (!worker) append("\n\nThis time you only investigate. The user and the agent doing the work decide what to change and how. Your role is to establish the facts within your read-only scope. Explain where the evidence is insufficient.")
         append("\n")
         if (ideaMcp) {
             append(
@@ -104,7 +102,7 @@ private object EN : GuidanceText {
                 else "\n- `idea` provides symbol lookup, dependency sources, module structure and IDE diagnostics.",
             )
         }
-        if (codeTools) append("\n- Use `$CODE_TOOLS_SERVER` to establish relationships in the code before drawing conclusions about them. Start with `file_outline` to navigate an unfamiliar file. Query `find_references`, `call_hierarchy` or `type_hierarchy` for the relationship you need.")
+        if (codeTools) append("\n- Start with `$CODE_TOOLS_SERVER` to quickly locate relevant code and get an initial view of its structure, relationships and call chains. `file_outline`, `find_references`, `call_hierarchy` and `type_hierarchy` use the IDE's file structure and symbol index to find relevant code and its relationships faster than text search alone. Once you find where to look, read the relevant implementations carefully and in full to understand the details.")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
@@ -123,17 +121,19 @@ private object EN : GuidanceText {
             """
                 ## Map the chain
 
-                Use text search to locate a declaration. When fixing a bug, reviewing a change or explaining behavior that spans functions, query the relevant symbol in the IDE index before drawing a conclusion. For a question confined to one function, reading its implementation is enough.
+                When reading, changing, reviewing or debugging code, start with these MCP tools to quickly locate relevant declarations and understand how they connect. The results show which implementations and call sites to read next. Read those in detail to establish actual behavior, and query further relationships as the investigation develops.
 
                 - To see who relies on a method or what it relies on, use `call_hierarchy`. Follow callers up to find affected entry points and callees down to see where the work goes. Calls found through an interface or base method are marked `via`.
                 - To see which contract a method or type implements, follow `supers` in `type_hierarchy`. When the contract changes, `implementations` shows which implementations may need updating.
                 - To trace a value, use `find_references` on its parameter, field or shared state and inspect the read and write sites. When the meaning of a return value changes, callers can reveal where the old meaning is still assumed.
 
-                ${if (worker) "Before editing a signature, shared state or behavior that other code relies on, trace the affected uses." else "When reviewing an existing or proposed change to a shared contract, trace the affected uses."} Look beyond the diff. Read the relevant callers and implementations and follow each affected path to its entry point or to code whose behavior stays the same. Check which paths the tests actually exercise.
+                ${if (worker) "Before editing a signature, shared state or behavior that other code relies on, trace the affected uses." else "When reviewing an existing or proposed change to a shared contract, trace the affected uses."} Follow the locations returned by the queries and read the relevant callers and implementations, including code outside the diff, to understand how each entry point reaches the behavior.
 
                 To locate a symbol, give its `file`, declaration `line` and `symbol` name. Add `column` to distinguish candidates on the same line. If a call fails, read the reason. It may give the actual declaration line.
 
-                Follow up where `truncated`, `not_expanded`, `overrides_incomplete`, `unanalyzed_mentions` or `unanalyzed_not_checked` affects your conclusion. For `language_not_supported` or an unavailable index, use an available language server, or search for candidates and read their call sites. Report any material gap. For runtime behavior, verify the result at the actual entry point.
+                An empty result means this query found nothing, not that the code is unused. If the answer matters, check the declared interfaces, base methods, registrations or callbacks against the implementation. A call marked `via` is found through a shared contract; inspect the receiver before claiming which implementation runs.
+
+                Follow up where `truncated`, `not_expanded`, `overrides_incomplete`, `unanalyzed_mentions` or `unanalyzed_not_checked` affects your conclusion. For `language_not_supported` or an unavailable index, use an available language server; if that cannot resolve the relationship, search for candidates and read their call sites. Explain any gap that still affects the answer. Read the error before retrying a failed query.
             """.trimIndent(),
         )
     }
@@ -151,7 +151,7 @@ private object EN : GuidanceText {
             """
                 ## After editing
 
-                Saying the work is done takes evidence. What result will the user get in practice? How much of that have you verified? If the evidence covers only an intermediate step, verify the final result through the entry point the user normally uses. If the environment limits what you can check, say how far you got and what still needs confirmation. The IDE can help verify different aspects of the change.
+                Saying the work is done takes evidence. What result will the user get in practice? How much of that have you verified? Check which paths the test assertions actually cover. If the evidence covers only an intermediate step, verify the final result through the entry point the user normally uses. If the environment limits what you can check, say how far you got and what still needs confirmation. The IDE can help verify different aspects of the change.
 
                 - For changes involving cross-file references or public signatures, `build_project` builds the current IDE project and reports compiler errors with file and line.
                 - `lint_files` reports errors, warnings and framework inspections enabled for the project, such as Spring annotations, Android resources and JPA mappings. When a shared contract changes, the callers' files are also worth checking.
@@ -177,13 +177,6 @@ private object EN : GuidanceText {
             - For Python environment questions, `get_python_environment` identifies the project's interpreter and `configure_python_interpreter` can adjust it.
             - For a custom structural inspection, `generate_psi_tree` shows how the IDE parses the code and `run_inspection_kts` can run the check.
         """.trimIndent()
-
-    override fun ownTools(worker: Boolean): String =
-        """
-            ## Follow up with your own tools
-
-            Use the IDE findings to carry the investigation forward. If a relationship remains unclear or the findings differ from what actually happens, use your own tools to investigate that question. Choose where to look and how to verify it based on the evidence and the problem the user wants to solve.
-        """.trimIndent() + if (worker) "" else " Keep that follow-up within your read-only scope."
 }
 
 private object ZH : GuidanceText {
@@ -192,7 +185,7 @@ private object ZH : GuidanceText {
     override fun intro(ideaMcp: Boolean, codeTools: Boolean, worker: Boolean): String = buildString {
         append("你正在 JetBrains IDE（IntelliJ IDEA、PyCharm、WebStorm、GoLand、Rider、CLion 等）里工作。")
         append(if (ideaMcp && codeTools) "当前会话接入了两组 MCP 工具。" else "当前会话接入了以下 MCP 工具。")
-        if (!worker) append("\n\n你这次只查不改。改不改、怎么改，是用户和负责干活的智能体的事。你的用处是把事实查实。")
+        if (!worker) append("\n\n你这次只查不改。改不改、怎么改，是用户和负责干活的智能体的事。你的用处是在只读范围内把事实查实，证据不足的地方要说明。")
         append("\n")
         if (ideaMcp) {
             append(
@@ -200,7 +193,7 @@ private object ZH : GuidanceText {
                 else "\n- `idea` 可以查询符号、依赖源码、模块结构和 IDE 诊断。",
             )
         }
-        if (codeTools) append("\n- 判断代码之间的关系前，先用 `$CODE_TOOLS_SERVER` 查证。对陌生文件先用 `file_outline` 找到声明，再按要查的关系选用 `find_references`、`call_hierarchy` 或 `type_hierarchy`。")
+        if (codeTools) append("\n- 优先用 `$CODE_TOOLS_SERVER` 快速定位相关代码，初步了解结构、逻辑关系和调用链。`file_outline`、`find_references`、`call_hierarchy` 和 `type_hierarchy` 利用 IDE 的文件结构和符号索引，比单靠文本搜索更快找到相关代码、了解它们怎样联系。找到位置后，把相关实现仔细读完整，理解具体细节。")
     }
 
     override fun look(codeTools: Boolean, worker: Boolean): String = buildString {
@@ -219,17 +212,19 @@ private object ZH : GuidanceText {
             """
                 ## 摸清链路
 
-                可以用文本搜索定位声明。排查问题、审查改动或讲解代码时，只要涉及多个函数怎样配合，下结论前先对相关符号查一次对应的 IDE 索引。问题只涉及单个函数内部时，读完实现即可。
+                读代码、修改、审查或排查问题时，先用这组 MCP 工具快速找到相关声明，了解它们怎样连在一起。查询结果会告诉你接下来该读哪些实现、看哪些调用位置，再仔细读这些代码，判断具体行为。深入过程中需要了解更多关系时，再沿着相关符号继续查。
 
                 - 谁在依赖它、它又依赖谁，用 `call_hierarchy`。想知道哪些入口会受影响，往上看调用方。想知道这一步把事情交给了谁，往下看被调用方。经由接口或父类方法找到的调用会标明 `via`，可以看出这层关系是怎么连上的。
                 - 它重写、实现了谁，又被谁重写、实现，用 `type_hierarchy`。往上看 `supers`，能找到它得遵守的约定。改的是约定本身，往下看 `implementations`，能找到哪些实现也得跟着变。
                 - 一个值从哪来、流到哪去，可以对参数、字段或共享状态用 `find_references`，沿 IDE 找到的使用位置看谁在写、谁在读。改了方法返回值的含义，也可以沿调用处看，哪些地方还按旧约定处理结果。
 
-                ${if (worker) "准备修改签名、共享状态或其他代码依赖的行为时，动手前先查受影响的用法。" else "审查已有改动或评估拟议方案时，先查谁依赖涉及的共享约定。"} 查看差异之外的调用方和实现，沿受影响的分支追到实际入口，或追到行为保持不变的地方，再核对测试实际覆盖了哪条路径。
+                ${if (worker) "准备修改签名、共享状态或其他代码依赖的行为时，动手前先查受影响的用法。" else "审查已有改动或评估拟议方案时，先查谁依赖涉及的共享约定。"} 顺着查到的位置阅读相关调用方和实现，包括差异之外的代码，弄清各个入口是怎样走到这段逻辑的。
 
                 定位符号时，给出文件 `file`、声明所在行 `line` 和符号名 `symbol`。同一行有几个候选时，再加列号 `column`。一次调用失败，先看返回的原因，有时结果里已经指出了声明实际在哪一行。
 
-                `truncated`、`not_expanded`、`overrides_incomplete`、`unanalyzed_mentions` 或 `unanalyzed_not_checked` 涉及结论所依赖的分支时，继续补查。遇到 `language_not_supported` 或索引不可用，先用可用的语言服务器；也可以搜索候选位置，逐处阅读调用上下文。仍有影响判断的缺口就说明。运行时行为要从实际入口验证结果。
+                查不到，只能说明这次没找到，不能直接说没人用。这个判断关系到结论时，沿声明中的接口、父类、注册位置或回调继续核对。结果标了 `via`，说明调用经过共同的约定；具体落到哪个实现，还要看实际传入的对象。
+
+                `truncated`、`not_expanded`、`overrides_incomplete`、`unanalyzed_mentions` 或 `unanalyzed_not_checked` 涉及结论所依赖的分支时，继续补查。遇到 `language_not_supported` 或索引不可用，先用可用的语言服务器；仍查不清，再搜索候选位置并逐处读调用上下文。影响判断的缺口要说明。查询失败先看原因，再决定下一步。
             """.trimIndent(),
         )
     }
@@ -247,7 +242,7 @@ private object ZH : GuidanceText {
             """
                 ## 改完以后
 
-                “做完了”是一个需要证据的判断。用户实际使用时会得到什么结果？手里的证据验证到了哪一步？如果只验证了中间一段，就从实际入口核对最终结果。受环境限制时，说清楚已经验证到哪里，哪一步还有待确认。看这次改动要验证什么，IDE 能在相应的环节提供证据。
+                “做完了”是一个需要证据的判断。用户实际使用时会得到什么结果？手里的证据验证到了哪一步？看看测试断言实际覆盖了哪些路径。如果只验证了中间一段，就从实际入口核对最终结果。受环境限制时，说清楚已经验证到哪里，哪一步还有待确认。看这次改动要验证什么，IDE 能在相应的环节提供证据。
 
                 - 能不能编译。改动涉及跨文件引用或公共签名时，`build_project` 可以按当前 IDE 工程构建，给出带文件和行号的编译错误。
                 - IDE 能查到哪些问题。`lint_files` 可以看文件里的错误和警告，也能查到工程启用的框架规则，例如 Spring 注解、Android 资源和 JPA 映射。共享约定发生变化时，调用方所在的文件也值得一起看。
@@ -273,11 +268,4 @@ private object ZH : GuidanceText {
             - 问题跟 Python 环境有关时，`get_python_environment` 能确认当前工程使用的解释器，需要调整时可以用 `configure_python_interpreter`。
             - 想按代码结构查一类问题，`generate_psi_tree` 能看到 IDE 怎样解析这段代码，`run_inspection_kts` 可以据此运行自定义检查。
         """.trimIndent()
-
-    override fun ownTools(worker: Boolean): String =
-        """
-            ## 用自己的工具继续核实
-
-            IDE 查到的结果可以顺着往下用。如果还有一段关系没查清，或者查到的结果和实际表现对不上，就围绕那个疑点，用你自己的工具继续核实。接下来查哪里、用什么方法，由你根据手里的证据和用户要解决的问题判断。
-        """.trimIndent() + if (worker) "" else "继续核实时也保持只读范围。"
 }

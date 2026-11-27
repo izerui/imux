@@ -48,6 +48,7 @@ internal class CodexRuntimeIndex(
     private val queryTimeoutMs: Long = QUERY_TIMEOUT_MS,
     /** `CODEX_SQLITE_HOME`，见 [codexSqliteDir]。 */
     private val sqliteHome: Path? = null,
+    private val interactiveRollout: (String) -> Boolean = ::isInteractiveCodexRollout,
 ) {
 
     /** 该进程此刻在写的 rollout 路径；查不到返回 null。 */
@@ -97,9 +98,21 @@ internal class CodexRuntimeIndex(
         return queryRow(
             db,
             "SELECT thread_id FROM logs WHERE process_uuid = ? AND thread_id IS NOT NULL " +
-                "ORDER BY ts DESC, ts_nanos DESC, id DESC LIMIT 1",
+                "ORDER BY ts DESC, ts_nanos DESC, id DESC",
             processUuid,
-        ) { rows -> rows.getString(1) }
+        ) { rows ->
+            // 子任务共享 process_uuid，最新日志不一定属于交互会话。
+            // 在同一次运行内向前查，重复 thread 只读一次文件；查询仍受既有超时约束。
+            val checked = HashSet<String>()
+            do {
+                val thread = rows.getString(1) ?: continue
+                if (checked.add(thread)) {
+                    val path = rolloutOf(thread, dir) ?: continue
+                    if (interactiveRollout(path)) return@queryRow thread
+                }
+            } while (rows.next())
+            null
+        }
     }
 
     /**

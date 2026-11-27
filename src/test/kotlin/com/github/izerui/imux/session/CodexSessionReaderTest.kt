@@ -64,6 +64,17 @@ class CodexSessionReaderTest {
     }
 
     @Test
+    fun `没有 thread_source 的并行子任务不进入会话列表`() {
+        writeRollout("uuid-parent", "/Users/demo/proj")
+        writeRollout(
+            "uuid-child", "/Users/demo/proj",
+            source = """{"subagent":{"thread_spawn":{"parent_thread_id":"uuid-parent","depth":1}}}""",
+        )
+
+        assertEquals(listOf("uuid-parent"), reader().read("/Users/demo/proj").map { it.id })
+    }
+
+    @Test
     fun `只列交互式来源，过滤 codex exec 会话`() {
         writeRollout("uuid-cli", "/Users/demo/proj")
         writeRollout("uuid-vscode", "/Users/demo/proj", source = "\"vscode\"")

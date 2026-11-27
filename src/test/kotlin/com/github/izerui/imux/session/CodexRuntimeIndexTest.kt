@@ -74,7 +74,7 @@ class CodexRuntimeIndexTest {
      * 当成陈旧运行挡掉，这批用例会随机器而红。陈旧判断本身由下面那组用例专测。
      */
     private fun index(processStartOf: (Long) -> Instant? = { null }) =
-        CodexRuntimeIndex(tmp.root.toPath(), processStartOf)
+        CodexRuntimeIndex(tmp.root.toPath(), processStartOf, interactiveRollout = { true })
 
     // ---- 纯函数：版本化文件名 ----
 
@@ -147,6 +147,22 @@ class CodexRuntimeIndexTest {
         createStateDb("state_5.sqlite", thread to rollout)
 
         assertEquals(rollout, index().rolloutPathOf(4197))
+    }
+
+    @Test
+    fun `Windows 日志最近来自子任务时仍定位主会话`() {
+        val main = File(tmp.root, "main.jsonl").apply {
+            writeText("""{"type":"session_meta","payload":{"id":"main","source":"cli"}}""" + "\n")
+        }
+        val child = File(tmp.root, "child.jsonl").apply {
+            writeText("""{"type":"session_meta","payload":{"id":"child","source":{"subagent":{"thread_spawn":{"parent_thread_id":"main","depth":1}}}}}""" + "\n")
+        }
+        createLogsDb("logs_2.sqlite", Triple("pid:4197:u", "main", 100L), Triple("pid:4197:u", "child", 200L))
+        createStateDb("state_5.sqlite", "main" to main.path, "child" to child.path)
+
+        assertEquals(main.path, CodexRuntimeIndex(tmp.root.toPath(), { null }).rolloutPathOf(4197))
+        main.delete()
+        assertNull("只有子任务文件可读时不认领", CodexRuntimeIndex(tmp.root.toPath(), { null }).rolloutPathOf(4197))
     }
 
     @Test

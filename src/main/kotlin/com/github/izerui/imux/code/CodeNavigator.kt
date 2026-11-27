@@ -258,7 +258,7 @@ internal class CodeNavigator(private val project: Project) {
         // 再按名字扫，只用于写在类型外面的方法（Go 的方法、顶层函数）：Go 的接口是隐式实现的，只能靠同名候选。
         // 写在类型里面的方法（Java、Kotlin、TS、Python）按结构找已经可靠；对它们按名字扫，常见名字（dispose、get）
         // 有几十上百个候选，每个都要做一次「谁重写了它」的搜索，一次查询就会超时。扫描设时间和数量上限，扫不完如实标出。
-        if (owner == null && membersOf(element).isEmpty() && name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '_' || it == '$' }) {
+        if (owner == null && canOverrideMember(element) && name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '_' || it == '$' }) {
             val deadline = minOf(System.nanoTime() + SUPER_SCAN_BUDGET_NANOS, scanDeadline)
             // 同时限制候选数和扫过的文件数：常见名字（get、run）出现在成千上万个文件里，每个文件都要建结构视图。
             var scanned = 0
@@ -297,10 +297,15 @@ internal class CodeNavigator(private val project: Project) {
      * 只接受 `Marker` 的代码就全被算成经由接口用到了 `Impl`。
      */
     private inline fun memberSupers(element: PsiElement, supers: () -> List<PsiElement>): List<PsiElement> {
-        if (membersOf(element).isNotEmpty()) return emptyList()
+        if (!canOverrideMember(element)) return emptyList()
         val name = nameOf(element)
-        return supers().filter { nameOf(it) == name && membersOf(it).isEmpty() }
+        return supers().filter { nameOf(it) == name && canOverrideMember(it) }
     }
+
+    private fun canOverrideMember(element: PsiElement): Boolean =
+        acceptsMemberDeclaration(isNamedFunction(element), element.node?.elementType?.toString()) {
+            membersOf(element).isEmpty()
+        }
 
     /** 结构视图里直接包含它的类型节点（有成员的节点）；顶层函数返回 null。 */
     private fun enclosingType(element: PsiElement): PsiElement? {
@@ -1418,6 +1423,18 @@ internal class CodeNavigator(private val project: Project) {
         return if (path.startsWith("$base/")) path.removePrefix("$base/") else path
     }
 }
+
+private val typeDeclarationRoles = setOf(
+    "CLASS", "INTERFACE", "ENUM", "RECORD", "CLASS_DECLARATION", "INTERFACE_DECLARATION",
+    "OBJECT_DECLARATION", "TYPE_DECLARATION", "TYPE_ALIAS", "TYPEALIAS",
+)
+
+internal inline fun acceptsMemberDeclaration(namedFunction: Boolean, nodeType: String?, isOutlineLeaf: () -> Boolean): Boolean =
+    when {
+        namedFunction -> true
+        nodeType?.substringAfterLast(':')?.trim()?.uppercase() in typeDeclarationRoles -> false
+        else -> isOutlineLeaf()
+    }
 
 /** 智能体给的路径（相对项目根或绝对路径）换成 VFS 认的路径；VFS 只认正斜杠，Windows 的反斜杠要先统一。 */
 internal fun resolveQueryPath(project: Project, path: String): String? {

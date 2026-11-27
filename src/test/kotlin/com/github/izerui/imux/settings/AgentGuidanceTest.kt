@@ -90,7 +90,7 @@ class AgentGuidanceTest {
     fun `两组都挂时英文按看清、摸清链路、改、验证、排错的顺序排列，冷门能力放最后`() {
         val order = listOf(
             "## See the code clearly", "## Map the chain", "## While editing", "## After editing", "## When it fails at runtime",
-            "## Use when the task calls for it", "## Follow up with your own tools",
+            "## Use when the task calls for it",
         ).map(enFull::indexOf)
         assertTrue(order.toString(), order.all { it >= 0 })
         assertEquals(order.sorted(), order)
@@ -100,7 +100,7 @@ class AgentGuidanceTest {
     fun `两组都挂时中文按看清、摸清链路、改、验证、排错的顺序排列，冷门能力放最后`() {
         val order = listOf(
             "## 看清代码", "## 摸清链路", "## 改的时候", "## 改完以后", "## 运行时出错",
-            "## 用得上再用", "## 用自己的工具继续核实",
+            "## 用得上再用",
         ).map(zhFull::indexOf)
         assertTrue(order.toString(), order.all { it >= 0 })
         assertEquals(order.sorted(), order)
@@ -126,16 +126,49 @@ class AgentGuidanceTest {
     // region 只查不改的角色
 
     @Test
-    fun `索引取证规则按语言和角色注入并随查代码开关关闭`() {
+    fun `MCP初步定位和细读实现的引导按语言角色注入并随查代码开关关闭`() {
         for (zh in listOf(true, false)) for (idea in listOf(true, false)) for (role in GuidanceRole.entries) {
             val text = agentGuidance(zh, idea, true, role)!!
-            val rule = if (zh) "下结论前先对相关符号查一次对应的 IDE 索引" else "query the relevant symbol in the IDE index before drawing a conclusion"
+            val rule = if (zh) "先用这组 MCP 工具快速找到相关声明" else "start with these MCP tools to quickly locate relevant declarations"
             val editing = if (zh) "动手前先查受影响的用法" else "Before editing a signature"
             val reviewing = if (zh) "先查谁依赖涉及的共享约定" else "When reviewing an existing or proposed change"
             assertTrue(text.contains(rule))
+            val intro = text.substringBefore("\n## ")
+            assertTrue(intro.contains(if (zh) "比单靠文本搜索更快" else "faster than text search alone"))
+            assertTrue(intro.contains(if (zh) "把相关实现仔细读完整" else "read the relevant implementations carefully and in full"))
             assertEquals(role == GuidanceRole.WORKER, text.contains(editing))
             assertEquals(role == GuidanceRole.INVESTIGATOR, text.contains(reviewing))
             assertFalse(agentGuidance(zh, idea, false, role).orEmpty().contains(rule))
+        }
+    }
+
+    @Test
+    fun `中英文工具引导保留空结果和实际实现的核实说明`() {
+        for (zh in listOf(true, false)) for (idea in listOf(true, false)) for (role in GuidanceRole.entries) {
+            val text = agentGuidance(zh, idea, true, role)!!
+            assertTrue(text.contains(if (zh) "不能直接说没人用" else "not that the code is unused"))
+            assertTrue(text.contains(if (zh) "具体落到哪个实现" else "inspect the receiver"))
+        }
+    }
+
+    @Test
+    fun `验证说明只进入开启 IDEA MCP 的工作角色且不再重复结论段`() {
+        for (zh in listOf(true, false)) for (role in GuidanceRole.entries) {
+            for ((idea, code) in listOf(true to true, true to false, false to true)) {
+                val text = agentGuidance(zh, idea, code, role)!!
+                val verify = if (zh) "## 改完以后" else "## After editing"
+                assertEquals(idea && role == GuidanceRole.WORKER, text.contains(verify))
+                assertFalse(text.contains(if (zh) "## 核对结论" else "## Check the conclusion"))
+                if (idea && role == GuidanceRole.WORKER) {
+                    val section = text.substringAfter(verify).substringBefore("\n## ")
+                    assertTrue(section.contains(if (zh) "从实际入口核对最终结果" else "verify the final result through the entry point"))
+                    assertTrue(section.contains(if (zh) "测试断言实际覆盖了哪些路径" else "which paths the test assertions actually cover"))
+                }
+                if (role == GuidanceRole.INVESTIGATOR) {
+                    assertFalse(text.contains(if (zh) "留下能重复验证的回归案例" else "Keep the regression case reproducible"))
+                    assertFalse(text.contains(if (zh) "当前运行环境是否已经用上改动" else "whether the running environment has the change"))
+                }
+            }
         }
     }
 
@@ -250,13 +283,12 @@ class AgentGuidanceTest {
     }
 
     @Test
-    fun `末尾提示按疑点继续核实，只读角色保留职责边界`() {
+    fun `只读职责和证据缺口说明按角色注入开头`() {
         for (zh in listOf(false, true)) for (role in GuidanceRole.entries) {
             for ((idea, code) in listOf(true to true, true to false, false to true)) {
-                val last = agentGuidance(zh, idea, code, role)!!.substringAfterLast("\n## ")
-                assertTrue(last.startsWith(if (zh) "用自己的工具继续核实" else "Follow up with your own tools"))
-                assertTrue(last.contains(if (zh) "用户要解决的问题" else "the problem the user wants to solve"))
-                assertEquals(role == GuidanceRole.INVESTIGATOR, last.contains(if (zh) "只读范围" else "read-only scope"))
+                val intro = agentGuidance(zh, idea, code, role)!!.substringBefore("\n## ")
+                assertEquals(role == GuidanceRole.INVESTIGATOR, intro.contains(if (zh) "只读范围" else "read-only scope"))
+                assertEquals(role == GuidanceRole.INVESTIGATOR, intro.contains(if (zh) "证据不足的地方要说明" else "Explain where the evidence is insufficient"))
             }
         }
     }
