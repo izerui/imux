@@ -18,6 +18,7 @@ import com.github.izerui.imux.terminal.NoticeTone
 import com.github.izerui.imux.terminal.SessionDecorationsListener
 import com.github.izerui.imux.terminal.SessionTool
 import com.github.izerui.imux.terminal.ToolState
+import com.github.izerui.imux.terminal.ToolPill
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.DefaultActionGroup
@@ -28,6 +29,9 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.awt.RelativePoint
+import com.intellij.util.ui.JBUI
+import java.awt.Point
 import javax.swing.JComponent
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -326,7 +330,7 @@ class PhoneTool(
         group: DefaultActionGroup,
         anchor: JComponent,
     ) {
-        JBPopupFactory.getInstance()
+        val popup = JBPopupFactory.getInstance()
             .createActionGroupPopup(
                 null,
                 group,
@@ -335,6 +339,16 @@ class PhoneTool(
                 // 不可选的也显示：当前连着的机器人、未配对的机器人要看得到
                 true,
             )
-            .showUnderneathOf(anchor)
+        // Tool pills are direct children of the strip. Notice actions have their
+        // own anchor and should keep their menu next to the notice.
+        val strip = (anchor as? ToolPill)?.parent as? JComponent
+        if (strip == null) {
+            popup.showUnderneathOf(anchor)
+        } else {
+            popup.show(RelativePoint(strip, Point(
+                strip.width - popup.content.preferredSize.width,
+                strip.height + JBUI.scale(4),
+            )))
+        }
     }
 }

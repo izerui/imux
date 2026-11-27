@@ -40,6 +40,7 @@ internal class SessionInfoTool(
         lateinit var panel: SessionInfoPanel
         lateinit var popup: JBPopup
         var job: Job? = null
+        val snapshot = SessionInfoSnapshot()
         fun render(usage: SessionUsage, branch: String? = null) {
             val number = NumberFormat.getIntegerInstance()
             val pi = file.piCapabilitiesFor(key)
@@ -108,8 +109,9 @@ internal class SessionInfoTool(
                         when {
                             file.sessionKey != key -> popup.cancel()
                             else -> {
-                                render(usage ?: SessionUsage(), branch)
-                                if (usage == null) panel.readFailed()
+                                snapshot.update(usage, branch)
+                                render(snapshot.usage, snapshot.branch)
+                                if (snapshot.readFailed) panel.readFailed()
                             }
                         }
                     }

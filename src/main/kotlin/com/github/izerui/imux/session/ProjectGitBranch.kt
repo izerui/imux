@@ -18,6 +18,9 @@ internal fun projectGitBranch(directory: Path): String? = try {
                 root.resolve(pointer.removePrefix("gitdir: ")).normalize()
             }
             val head = Files.readString(gitDir.resolve("HEAD")).trim()
+            // Reftable stores the actual HEAD elsewhere and leaves this placeholder.
+            // Without a reftable reader, omit the row instead of reporting a fake branch.
+            if (head == "ref: refs/heads/.invalid") break
             branch = head.takeIf { it.startsWith("ref: refs/heads/") }
                 ?.removePrefix("ref: refs/heads/")?.takeIf { it.isNotBlank() }
             break

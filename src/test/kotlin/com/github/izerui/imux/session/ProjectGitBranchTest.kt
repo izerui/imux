@@ -53,6 +53,13 @@ class ProjectGitBranchTest {
     }
 
     @Test
+    fun `新式引用存储的占位名称不显示成分支`() {
+        val repo = repository()
+        repo.resolve(".git/HEAD").writeText("ref: refs/heads/.invalid\n")
+        assertNull(projectGitBranch(repo.toPath()))
+    }
+
+    @Test
     fun `游离HEAD不冒充当前分支`() {
         val repo = repository()
         repo.resolve(".git/HEAD").writeText("a".repeat(40) + "\n")
