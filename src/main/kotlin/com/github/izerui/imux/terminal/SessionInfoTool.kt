@@ -6,6 +6,7 @@ import com.github.izerui.imux.monitor.SessionMonitor
 import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.session.SessionUsage
 import com.github.izerui.imux.session.readSessionUsage
+import com.github.izerui.imux.session.projectGitBranch
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
@@ -21,6 +22,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.NumberFormat
+import java.nio.file.Path
 import javax.swing.JComponent
 
 internal class SessionInfoTool(
@@ -38,12 +40,13 @@ internal class SessionInfoTool(
         lateinit var panel: SessionInfoPanel
         lateinit var popup: JBPopup
         var job: Job? = null
-        fun render(usage: SessionUsage) {
+        fun render(usage: SessionUsage, branch: String? = null) {
             val number = NumberFormat.getIntegerInstance()
             val pi = file.piCapabilitiesFor(key)
             val coordinator = monitor.peerCoordinator
             val runtime = buildList {
                 add(InfoRow(msg("session.info.cwd"), project.basePath ?: System.getProperty("user.home")))
+                branch?.let { add(InfoRow(msg("session.info.branch"), it)) }
                 usage.model?.let { add(InfoRow(msg("session.info.model"), it)) }
                 usage.last?.let { add(InfoRow(msg("session.info.last"), number.format(it))) }
                 usage.window?.let { add(InfoRow(msg("session.info.window"), number.format(it))) }
@@ -93,18 +96,21 @@ internal class SessionInfoTool(
             job?.cancel()
             if (file.sessionKey != key) { popup.cancel(); return }
             val transcript = monitor.model.sessionOf(key)?.takeIf { it.agentType == file.agentType }?.filePath
-            if (transcript == null) { render(SessionUsage()); return }
             panel.reading()
             job = file.terminalView.coroutineScope.launch(Dispatchers.IO) {
+                val branch = project.basePath?.let { projectGitBranch(Path.of(it)) }
                 val usage = try {
-                    readSessionUsage(file.agentType, transcript) { ensureActive() }
+                    if (transcript == null) SessionUsage()
+                    else readSessionUsage(file.agentType, transcript) { ensureActive() }
                 } catch (_: java.io.IOException) { null }
                 withContext(Dispatchers.EDT) {
                     if (!popup.isDisposed) {
                         when {
                             file.sessionKey != key -> popup.cancel()
-                            usage == null -> panel.readFailed()
-                            else -> render(usage)
+                            else -> {
+                                render(usage ?: SessionUsage(), branch)
+                                if (usage == null) panel.readFailed()
+                            }
                         }
                     }
                 }
