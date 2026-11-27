@@ -49,6 +49,7 @@ class BridgeHub(parentScope: CoroutineScope) {
             channels::get,
             BundleBridgeTexts,
             onDelivery = ::logDelivery,
+            reviewDeliveryScope = scope,
             attachmentStore = ProjectAttachmentStore(),
             onWarning = { LOG.warn(it) },
             awaitOnline = { id ->

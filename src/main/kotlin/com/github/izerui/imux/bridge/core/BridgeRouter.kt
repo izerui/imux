@@ -57,6 +57,7 @@ class BridgeRouter(
      * 标题由调用方传入：断开时标签可能已关，只能用它还开着时记下的名字。
      */
     private val sessionNameOf: (Binding, String) -> String = { _, title -> title },
+    reviewDeliveryScope: kotlinx.coroutines.CoroutineScope? = null,
 ) {
     /** 每个机器人一把提交锁：同一机器人按到达顺序提交，不同机器人互不阻塞。只在 [lock] 内取用。 */
     private val submitLocks = HashMap<RobotId, Mutex>()
@@ -68,10 +69,14 @@ class BridgeRouter(
 
     /** 各标签挂起的 hook 请求，只在 [lock] 内访问；与 [tabs] 分开存放，清掉轮次状态时不会漏回还挂着的请求。 */
     private val hookQueues = HashMap<String, HookPromptQueue>()
+    private val reviewMenus = CodexReviewDialogs(sessionPort, texts, reviewDeliveryScope) { binding, message, current ->
+        send(binding, message, stillRelevant = current)
+    }
 
     /** 加锁提交阶段的结果。 */
     private sealed interface SubmitPhase {
         data class Done(val result: SubmitResult) : SubmitPhase
+        data object ReviewReplyRejected : SubmitPhase
         data object BindingGone : SubmitPhase
         data object BindingChanged : SubmitPhase
 
@@ -135,13 +140,21 @@ class BridgeRouter(
 
                 // 在锁内取定目标标签：之后所有回显登记与清除都用它，不再回读可能已换绑的绑定
                 val tabId = current.target.tabId
-                // 停止词先于一切：挂着确认时也不当作答，直接中断这一轮
+                // Stop words apply even to a custom review text field.
                 if (message.attachments.isEmpty() && TerminalKeys.isStop(message.text)) {
                     return@withLock try {
                         stop(current)
                     } catch (e: CancellationException) {
                         unmarkSeen(message.robotId, message.externalMessageId)
                         throw e
+                    }
+                }
+                if (sessionPort.supportsReviewMenu(current.target)) {
+                    when (reviewMenus.answer(current, typed, message.attachments.isEmpty(), message.quote)) {
+                        ReviewReply.ACCEPTED -> return@withLock SubmitPhase.Done(SubmitResult.SUBMITTED_TO_TERMINAL)
+                        ReviewReply.REJECTED -> return@withLock SubmitPhase.ReviewReplyRejected
+                        ReviewReply.OFFLINE -> return@withLock SubmitPhase.Done(SubmitResult.OFFLINE)
+                        ReviewReply.NO_MENU -> Unit
                     }
                 }
                 // hook 送来的确认优先：已送达这台手机的队首，译成决定回给 hook，不按任何键
@@ -170,6 +183,7 @@ class BridgeRouter(
                 }
             }
         return when (phase) {
+            SubmitPhase.ReviewReplyRejected -> InboundOutcome.PROMPT_REJECTED
             SubmitPhase.BindingGone -> {
                 reply(message.robotId, owner, texts.unbound())
                 InboundOutcome.UNBOUND
@@ -213,10 +227,27 @@ class BridgeRouter(
                             InboundOutcome.NOTHING_TO_STOP
                         }
                         StopResult.OFFLINE -> outcomeOf(message.robotId, owner, SubmitResult.OFFLINE)
+                        StopResult.NOT_READY -> outcomeOf(message.robotId, owner, SubmitResult.NOT_READY)
                     }
                 }
             is SubmitPhase.Done -> outcomeOf(message.robotId, owner, phase.result)
         }
+    }
+
+    suspend fun onCodexReviewMenu(binding: Binding, menu: CodexReviewMenu?) {
+        if (!sessionPort.supportsReviewMenu(binding.target)) return
+        submitLock(binding.robotId).withLock {
+            if (bindings.bindingOf(binding.robotId) != binding) return
+            reviewMenus.prepare(binding, menu)
+        }?.invoke()
+    }
+
+    suspend fun onCodexReviewRefresh(binding: Binding, screen: suspend () -> String?) {
+        submitLock(binding.robotId).withLock {
+            if (bindings.bindingOf(binding.robotId) != binding) return
+            val current = screen() ?: return
+            reviewMenus.prepare(binding, CodexReviewMenu.parse(current))
+        }?.invoke()
     }
 
     /**
@@ -239,7 +270,7 @@ class BridgeRouter(
             }
         val result =
             try {
-                sessionPort.stop(binding.target, turnRunning = !idle)
+                sessionPort.stop(binding, turnRunning = !idle) { menu -> reviewMenus.closedByStop(binding, menu) }
             } catch (e: CancellationException) {
                 giveBack(tabId, drained)
                 abandon(next)
@@ -677,6 +708,13 @@ class BridgeRouter(
             // 先复核绑定：换绑后旧标签的确认、框都与这句无关，按绑定已变回复
             if (!bindings.isCurrent(robotId, binding.epoch)) return SubmitPhase.BindingChanged
             if (attempt > 0) {
+                if (sessionPort.supportsReviewMenu(binding.target)) {
+                    val menu = (sessionPort.readReview(binding.target) as? ReviewScreen.Open)?.menu
+                    if (menu != null) {
+                        reviewMenus.observe(binding, menu)
+                        return SubmitPhase.ReviewReplyRejected
+                    }
+                }
                 // 等待期间来了确认请求或停到了框上：不再提交。这句是在确认出现之前发的，不当作答，请手机先回答它
                 when (val gate = gate(binding)) {
                     is Gate.Answer -> return SubmitPhase.AnswerFirst
@@ -978,6 +1016,16 @@ class BridgeRouter(
             return
         }
         send(binding, texts.connected(project, agent, sessionTitle), label = null)
+        if (sessionPort.supportsReviewMenu(binding.target)) {
+            submitLock(binding.robotId).withLock {
+                if (bindings.bindingOf(binding.robotId) != binding) return@withLock null
+                when (val screen = sessionPort.readReview(binding.target)) {
+                    is ReviewScreen.Open -> reviewMenus.prepare(binding, screen.menu)
+                    ReviewScreen.Closed -> reviewMenus.prepare(binding, null)
+                    ReviewScreen.Unavailable -> null
+                }
+            }?.invoke()
+        }
         // 之前没送达（机器人离线、推送失败）的确认，连上后补推
         push(binding, synchronized(lock) { hookQueues[binding.target.tabId]?.nextPush(binding) })
     }
@@ -998,6 +1046,7 @@ class BridgeRouter(
         binding: Binding,
         sessionTitle: String,
     ) {
+        submitLock(binding.robotId).withLock { reviewMenus.forget(binding) }
         send(binding, texts.suspended(sessionNameOf(binding, sessionTitle)), label = null)
     }
 
@@ -1010,6 +1059,7 @@ class BridgeRouter(
         sessionTitle: String,
     ) {
         val tabId = binding.target.tabId
+        submitLock(binding.robotId).withLock { reviewMenus.forget(binding) }
         synchronized(lock) {
             // 换绑时新绑定先建立、旧绑定的清理后执行：标签已被接管时，它的状态属于新绑定
             if (bindings.bindingForTab(tabId) == null) tabs.remove(tabId)
@@ -1029,6 +1079,7 @@ class BridgeRouter(
         binding: Binding,
         text: String,
         label: String? = sessionLabelOf(binding),
+        stillRelevant: () -> Boolean = { true },
     ): Boolean {
         val owner = ownerOf(binding.robotId) ?: return false
         val channel = channelOf(binding.robotId) ?: return false
@@ -1038,8 +1089,9 @@ class BridgeRouter(
         for ((index, part) in segments.withIndex()) {
             val segment = if (index == segments.lastIndex) part + footer else part
             // 每段发送前都核对：分段途中被换绑，剩余内容不能落到新目标的聊天里
-            if (!bindings.isCurrent(binding.robotId, binding.epoch)) return false
-            if (!deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment)) { bindings.isCurrent(binding.robotId, binding.epoch) }) {
+            fun current() = bindings.isCurrent(binding.robotId, binding.epoch) && stillRelevant()
+            if (!current()) return false
+            if (!deliver(channel, OutboundMessage(binding.robotId, owner.chatId, segment), ::current)) {
                 return false
             }
         }

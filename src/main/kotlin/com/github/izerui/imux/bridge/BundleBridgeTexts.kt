@@ -5,6 +5,13 @@ import com.github.izerui.imux.bridge.core.BridgeTexts
 import com.github.izerui.imux.turn.waitingReason
 
 internal object BundleBridgeTexts : BridgeTexts {
+    override val reviewChoiceHint get() = ImuxBundle.message("bridge.review.choiceHint")
+    override val reviewSearchHint get() = ImuxBundle.message("bridge.review.searchHint")
+    override val reviewTextHint get() = ImuxBundle.message("bridge.review.textHint")
+    override val reviewDraftHint get() = ImuxBundle.message("bridge.review.draftHint")
+    override val reviewChangedHint get() = ImuxBundle.message("bridge.review.changedHint")
+    override fun reviewClosed(title: String) = ImuxBundle.message("bridge.review.closed", title)
+
     override fun unbound() = ImuxBundle.message("bridge.reply.unbound")
 
     override fun offline() = ImuxBundle.message("bridge.reply.offline")

@@ -149,6 +149,8 @@ enum class StopResult {
     /** 没有在跑的一轮，这个 CLI 也没有能停的后台任务：没有按键。 */
     NOTHING_TO_STOP,
 
+    /** The live screen could not confirm a safe next key. */
+    NOT_READY,
     OFFLINE,
 }
 

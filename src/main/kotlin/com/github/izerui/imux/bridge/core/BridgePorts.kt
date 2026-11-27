@@ -22,12 +22,29 @@ fun interface InboundSink {
     fun accept(message: InboundMessage)
 }
 
+sealed interface ReviewScreen {
+    data object Unavailable : ReviewScreen
+    data object Closed : ReviewScreen
+    data class Open(val menu: CodexReviewMenu) : ReviewScreen
+}
+
 /** 向现有终端提交一条文字。实现方不得启动或恢复 CLI。 */
 fun interface TerminalSessionPort {
     suspend fun submit(
         target: SessionTarget,
         text: String,
     ): SubmitResult
+
+    fun supportsReviewMenu(target: SessionTarget): Boolean = false
+
+    suspend fun currentReviewMenu(target: SessionTarget): CodexReviewMenu? = null
+
+    suspend fun readReview(target: SessionTarget): ReviewScreen =
+        currentReviewMenu(target)?.let(ReviewScreen::Open) ?: ReviewScreen.Closed
+
+    suspend fun answerReviewMenu(binding: Binding, expected: CodexReviewMenu, reply: String): Boolean = false
+
+    suspend fun reviewTargetOnline(target: SessionTarget): Boolean = true
 
     /**
      * 手机发了停止：[turnRunning] 时先中断正在跑的一轮（等同按 Esc），再按这个 CLI 的方式停掉后台任务。
@@ -37,10 +54,23 @@ fun interface TerminalSessionPort {
         target: SessionTarget,
         turnRunning: Boolean,
     ): StopResult = StopResult.OFFLINE
+
+    suspend fun stop(
+        binding: Binding,
+        turnRunning: Boolean,
+        closedMenu: (CodexReviewMenu) -> Unit,
+    ): StopResult = stop(binding.target, turnRunning)
 }
 
 /** 发往手机的提示文案，由资源包实现，测试用假实现。 */
 interface BridgeTexts {
+    val reviewChoiceHint: String get() = "Reply with a listed number to choose, or 0 to cancel or go back."
+    val reviewSearchHint: String get() = "Send prev or next to page through the list, /keyword to search, or / to clear the search."
+    val reviewTextHint: String get() = "Send your custom review instructions, or reply 0 to cancel."
+    val reviewDraftHint: String get() = "There is a draft on the computer. Finish it there or reply 0 to go back."
+    val reviewChangedHint: String get() = "The review menu changed. Your reply was not applied. Check the current menu."
+    fun reviewClosed(title: String): String = "The \"$title\" menu closed on the computer. The selection is unknown."
+
     fun unbound(): String
 
     fun offline(): String

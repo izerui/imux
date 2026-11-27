@@ -1,7 +1,11 @@
 package com.github.izerui.imux.bridge.terminal
 
+import com.github.izerui.imux.bridge.BridgeHub
 import com.github.izerui.imux.bridge.TerminalBridgeService
 import com.github.izerui.imux.bridge.core.Binding
+import com.github.izerui.imux.bridge.core.BindingRegistry
+import com.github.izerui.imux.bridge.core.CodexReviewMenu
+import com.github.izerui.imux.bridge.core.ReviewScreen
 import com.github.izerui.imux.bridge.core.SessionTarget
 import com.github.izerui.imux.bridge.core.StopResult
 import com.github.izerui.imux.bridge.core.SubmitResult
@@ -10,6 +14,7 @@ import com.github.izerui.imux.model.AgentType
 import com.github.izerui.imux.terminal.TerminalHost
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.serviceIfCreated
+import com.intellij.openapi.editor.VisualPosition
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.terminal.frontend.view.TerminalView
@@ -28,10 +33,71 @@ import org.jetbrains.plugins.terminal.view.TerminalSendTextBuilder
  * 每次调用只在 EDT 上尝试一次。未就绪（括号粘贴尚未开启）直接返回 NOT_READY，
  * 有限重试由 BridgeRouter 负责：它在每次重试前复核绑定，换绑后不会再提交到旧终端。
  */
-class ImuxTerminalSessionPort(
+class ImuxTerminalSessionPort internal constructor(
     private val viewAt: (Project, SessionTarget) -> TerminalView? = ::viewInProject,
+    private val bindings: () -> BindingRegistry = { BridgeHub.getInstance().bindings },
+    private val pickerEntries: (SessionTarget, GitPicker) -> List<String> = { target, picker -> pickerEntriesForTab(target, picker) },
     private val projectAt: (String) -> Project? = ::openProjectAt,
 ) : TerminalSessionPort {
+    override fun supportsReviewMenu(target: SessionTarget): Boolean = target.agentType == AgentType.CODEX
+
+    override suspend fun reviewTargetOnline(target: SessionTarget): Boolean =
+        withContext(Dispatchers.EDT) { isAvailable(target) }
+
+    override suspend fun currentReviewMenu(target: SessionTarget): CodexReviewMenu? = (readReview(target) as? ReviewScreen.Open)?.menu
+
+    override suspend fun readReview(target: SessionTarget): ReviewScreen =
+        withContext(Dispatchers.EDT) {
+            val binding = bindings().bindingForTab(target.tabId)
+            if (binding?.target != target) return@withContext ReviewScreen.Unavailable
+            val screen = reviewView(binding)?.let { reviewScreen(binding, it) } ?: return@withContext ReviewScreen.Unavailable
+            CodexReviewMenu.parse(screen)?.let(ReviewScreen::Open) ?: ReviewScreen.Closed
+        }
+
+    override suspend fun answerReviewMenu(binding: Binding, expected: CodexReviewMenu, reply: String): Boolean =
+        withContext(Dispatchers.EDT) {
+            val view = reviewView(binding) ?: return@withContext false
+            val current = reviewScreen(binding, view)?.let(CodexReviewMenu::parse) ?: return@withContext false
+            answerCurrentReview(bindings(), binding, expected, current, reply) { keys ->
+                view.createSendTextBuilder().trySend(keys)
+            }
+        }
+
+    internal fun reviewView(binding: Binding): TerminalView? {
+        val target = binding.target
+        if (target.agentType != AgentType.CODEX || bindings().bindingOf(binding.robotId) != binding) return null
+        val view = liveView(target) ?: return null
+        val host = projectAt(target.projectPath)?.serviceIfCreated<TerminalHost>() ?: return null
+        return view.takeIf { host.fileFor(it)?.agentType == AgentType.CODEX }
+    }
+
+    internal suspend fun reviewScreen(binding: Binding, view: TerminalView): String? =
+        gitPickerScreens.read(binding, raw = {
+            if (bindings().bindingOf(binding.robotId) == binding && liveView(binding.target) === view) rawReviewScreen(binding, view) else null
+        }, load = { pickerEntries(binding.target, it) })
+
+    internal fun forgetReviewScreen(binding: Binding) = gitPickerScreens.forget(binding)
+
+    /** Read the live grid from its bottom even when the IDE user has scrolled into history. */
+    private fun rawReviewScreen(binding: Binding, view: TerminalView): String? {
+        val models = view.outputModels
+        val model = models.active.value
+        // The alternative buffer has no scrollback, even when its editor is detached.
+        if (model === models.alternative) return model.getText(model.startOffset, model.endOffset).toString()
+        val rows = view.gridSize?.rows?.takeIf { it > 0 } ?: return null
+        val host = projectAt(binding.target.projectPath)?.serviceIfCreated<TerminalHost>()
+        val editor = host?.currentTerminalEditor(view)
+        val start = if (editor != null && !editor.isDisposed && editor.document.textLength == model.textLength) {
+            val bottom = editor.offsetToVisualPosition(model.textLength).line
+            val top = VisualPosition((bottom - rows + 1).coerceAtLeast(0), 0)
+            model.startOffset + editor.visualPositionToOffset(top).toLong()
+        } else {
+            val first = model.firstLineIndex + (model.lineCount - rows).coerceAtLeast(0).toLong()
+            model.getStartOfLine(first)
+        }
+        return model.getText(start, model.endOffset).toString()
+    }
+
     override suspend fun submit(
         target: SessionTarget,
         text: String,
@@ -42,6 +108,11 @@ class ImuxTerminalSessionPort(
         target: SessionTarget,
         turnRunning: Boolean,
     ): StopResult {
+        if (supportsReviewMenu(target)) {
+            val binding = BridgeHub.getInstance().bindings.bindingForTab(target.tabId)
+                ?.takeIf { it.target == target } ?: return StopResult.OFFLINE
+            return stop(binding, turnRunning) {}
+        }
         val keys = stopKeys(target.agentType, turnRunning)
         if (keys.isEmpty()) {
             return withContext(Dispatchers.EDT) {
@@ -57,14 +128,38 @@ class ImuxTerminalSessionPort(
         }
     }
 
+    override suspend fun stop(binding: Binding, turnRunning: Boolean, closedMenu: (CodexReviewMenu) -> Unit): StopResult {
+        if (!supportsReviewMenu(binding.target)) return stop(binding.target, turnRunning)
+        val sequence = CodexStopSequence(turnRunning, closedMenu)
+        while (true) {
+            val result = withContext(Dispatchers.EDT) {
+                val view = reviewView(binding) ?: return@withContext StopResult.OFFLINE
+                val screen = reviewScreen(binding, view) ?: return@withContext StopResult.NOT_READY
+                sequence.advance(CodexReviewMenu.parse(screen)) { key ->
+                    BridgeHub.getInstance().bindings.claimCurrent(binding.robotId, binding.epoch) {
+                        view.createSendTextBuilder().trySend(key)
+                    }
+                }
+            }
+            if (result != null) return result
+            delay(sequence.delayMs)
+        }
+    }
+
     /** 界面与提交消息使用同一个存活判据；保留的恢复绑定不代表终端在线。 */
     internal fun isAvailable(target: SessionTarget): Boolean = liveView(target) != null
 
-    private fun submitOnce(
+    internal suspend fun submitOnce(
         target: SessionTarget,
         text: String,
     ): SubmitResult {
         val view = liveView(target) ?: return SubmitResult.OFFLINE
+        if (target.agentType == AgentType.CODEX) {
+            val binding = bindings().bindingForTab(target.tabId)
+            if (binding?.target != target) return SubmitResult.OFFLINE
+            if (reviewScreen(binding, view)?.let(CodexReviewMenu::parse) != null) return SubmitResult.NOT_READY
+            if (bindings().bindingOf(binding.robotId) != binding || liveView(target) !== view) return SubmitResult.OFFLINE
+        }
         return if (submitText(view.createSendTextBuilder(), text)) SubmitResult.SUBMITTED_TO_TERMINAL else SubmitResult.NOT_READY
     }
 
@@ -73,6 +168,26 @@ class ImuxTerminalSessionPort(
         if (project.serviceIfCreated<TerminalBridgeService>()?.isClosing() == true) return null
         val view = viewAt(project, target) ?: return null
         return view.takeIf { it.sessionState.value is TerminalViewSessionState.Running }
+    }
+}
+
+// The observer and input router have separate ports but read the same live picker.
+private val gitPickerScreens = GitPickerScreens<Binding>()
+
+internal fun answerCurrentReview(
+    bindings: BindingRegistry,
+    binding: Binding,
+    expected: CodexReviewMenu,
+    current: CodexReviewMenu,
+    reply: String,
+    enqueue: (String) -> Boolean,
+): Boolean {
+    if (!current.sameChoices(expected)) return false
+    val keys = current.keysFor(reply)?.takeIf { it.isNotEmpty() } ?: return false
+    val input = keys.joinToString("")
+    // One asynchronous terminal input event. A rebind cannot interleave with registration.
+    return bindings.claimCurrent(binding.robotId, binding.epoch) {
+        bindings.bindingOf(binding.robotId) == binding && enqueue(input)
     }
 }
 

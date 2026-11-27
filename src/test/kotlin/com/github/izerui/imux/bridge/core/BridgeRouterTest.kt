@@ -31,6 +31,20 @@ class BridgeRouterTest {
 
     private class FakePort(var result: SubmitResult = SubmitResult.SUBMITTED_TO_TERMINAL) : TerminalSessionPort {
         val submitted = mutableListOf<Pair<String, String>>()
+        var reviewMenu: CodexReviewMenu? = null
+        var screenUnavailable = false
+        override suspend fun readReview(target: SessionTarget): ReviewScreen =
+            if (screenUnavailable) ReviewScreen.Unavailable else super.readReview(target)
+        override fun supportsReviewMenu(target: SessionTarget) = target.agentType == AgentType.CODEX
+        val reviewAnswers = mutableListOf<String>()
+
+        override suspend fun currentReviewMenu(target: SessionTarget) = reviewMenu
+
+        override suspend fun answerReviewMenu(binding: Binding, expected: CodexReviewMenu, reply: String): Boolean {
+            if (reviewMenu?.sameChoices(expected) != true) return false
+            reviewAnswers += reply
+            return true
+        }
 
         /** 每次停止：标签与是否要中断一轮。 */
         val stops = mutableListOf<Pair<String, Boolean>>()
@@ -39,6 +53,11 @@ class BridgeRouterTest {
 
         /** 按键期间发生的事（比如轮询已经读到这一轮中断）。 */
         var duringStop: suspend () -> Unit = {}
+
+        override suspend fun stop(binding: Binding, turnRunning: Boolean, closedMenu: (CodexReviewMenu) -> Unit): StopResult {
+            if (stopResult == StopResult.SENT) reviewMenu?.let(closedMenu)
+            return stop(binding.target, turnRunning)
+        }
 
         override suspend fun stop(
             target: SessionTarget,
@@ -248,6 +267,204 @@ class BridgeRouterTest {
     ) = InboundMessage(robot, id, sender, chat, text)
 
     private fun sentTexts() = channel.sent.map { it.text }
+
+    @Test(timeout = 5000)
+    fun `手机回错编号后的菜单重发受限时仍能停止且不重试已停止的菜单`() = runBlocking {
+        val blocked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var attempts = 0
+        val adapter = object : ChannelAdapter {
+            override val robotId = robot
+            override val maxTextBytes = 4000
+            override suspend fun send(message: OutboundMessage): DeliveryResult {
+                if (message.text.contains("Select a review preset") && ++attempts == 2) {
+                    blocked.complete(Unit)
+                    release.await()
+                    return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
+                }
+                return DeliveryResult.Accepted
+            }
+        }
+        val r = BridgeRouter(registry, { owner }, port, { adapter }, Texts, reviewDeliveryScope = this, rateLimitRetryDelayMs = 0)
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        port.reviewMenu = CodexReviewMenu("Select a review preset", listOf("changes"), 0)
+        r.onCodexReviewMenu(binding, port.reviewMenu)
+        yield()
+        assertEquals(InboundOutcome.PROMPT_REJECTED, r.onInbound(inbound("invalid", "99")))
+        blocked.await()
+        try {
+            assertEquals(InboundOutcome.STOPPED, r.onInbound(inbound("stop", "停止")))
+            assertEquals(target.tabId, port.stops.single().first)
+        } finally {
+            release.complete(Unit)
+        }
+        yield()
+        assertEquals(2, attempts)
+    }
+
+    @Test(timeout = 5000)
+    fun `首次推送限流期间终端关闭菜单会作废待重试消息`() = runBlocking {
+        val blocked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var attempts = 0
+        val adapter = object : ChannelAdapter {
+            override val robotId = robot
+            override val maxTextBytes = 4000
+            override suspend fun send(message: OutboundMessage): DeliveryResult {
+                attempts++
+                blocked.complete(Unit)
+                release.await()
+                return DeliveryResult.Rejected(DeliveryResult.RATE_LIMITED)
+            }
+        }
+        val r = BridgeRouter(registry, { owner }, port, { adapter }, Texts, reviewDeliveryScope = this, rateLimitRetryDelayMs = 0)
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        r.onCodexReviewRefresh(binding) { "Select a review preset\n› 2. Review uncommitted changes\nenter select · esc back" }
+        blocked.await()
+        r.onCodexReviewRefresh(binding) { "› Ask Codex to do anything" }
+        release.complete(Unit)
+        yield()
+        assertEquals(1, attempts)
+    }
+
+    @Test
+    fun `电脑结束自定义审查后手机第一条普通任务直接提交`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        port.reviewMenu = CodexReviewMenu("Custom review instructions", emptyList(), -1)
+        router.onCodexReviewMenu(binding, port.reviewMenu)
+        port.reviewMenu = null
+        router.onCodexReviewMenu(binding, null)
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("next", "帮我跑测试")))
+        assertEquals(listOf(target.tabId to "帮我跑测试"), port.submitted)
+    }
+
+    @Test
+    fun `审查范围还在推送时手机停止立即抵达终端`() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        val stalled = object : ChannelAdapter {
+            override val robotId = robot
+            override val maxTextBytes = 4000
+            override suspend fun send(message: OutboundMessage): DeliveryResult {
+                if (message.text.contains("Select a review preset")) {
+                    entered.complete(Unit)
+                    resume.await()
+                }
+                return DeliveryResult.Accepted
+            }
+        }
+        val r = BridgeRouter(registry, { owner }, port, { stalled }, Texts)
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        port.reviewMenu = CodexReviewMenu("Select a review preset", listOf("changes"), 0)
+        val push = launch { r.onCodexReviewMenu(binding, port.reviewMenu) }
+        entered.await()
+        try {
+            assertEquals(InboundOutcome.STOPPED, kotlinx.coroutines.withTimeout(2000) { r.onInbound(inbound("stop", "停止")) })
+            assertEquals(target.tabId, port.stops.single().first)
+        } finally {
+            resume.complete(Unit)
+            push.join()
+        }
+    }
+
+    @Test
+    fun `终端画面暂不可读时普通任务仍提交而已推送的菜单等恢复后再答`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        port.screenUnavailable = true
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("task", "列出改动")))
+        port.screenUnavailable = false
+        port.reviewMenu = CodexReviewMenu("Select a review preset", listOf("base", "changes"), 0)
+        router.onCodexReviewMenu(binding, port.reviewMenu)
+        val quote = sentTexts().last()
+        port.screenUnavailable = true
+        assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("early", "2").copy(quote = quote)))
+        assertTrue(port.reviewAnswers.isEmpty())
+        assertEquals(listOf("tab-1" to "列出改动"), port.submitted)
+        port.screenUnavailable = false
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("retry", "2").copy(quote = quote)))
+        assertEquals(listOf("2"), port.reviewAnswers)
+    }
+
+    @Test
+    fun `引用上一份菜单的编号不能选中新菜单里的分支`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        port.reviewMenu = CodexReviewMenu("Select a review preset", listOf("base", "changes"), 0)
+        router.onCodexReviewMenu(binding, port.reviewMenu)
+        val old = sentTexts().last()
+        port.reviewMenu = CodexReviewMenu("Select a base branch", listOf("main", "release"), 0)
+        router.onCodexReviewMenu(binding, port.reviewMenu)
+        val current = sentTexts().last()
+        assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("old", "2").copy(quote = old)))
+        assertTrue(port.reviewAnswers.isEmpty())
+        assertTrue(port.submitted.isEmpty())
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("current", "2").copy(quote = current)))
+        assertEquals(listOf("2"), port.reviewAnswers)
+        port.reviewMenu = null
+        router.onCodexReviewMenu(binding, null)
+        assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("closed", "2").copy(quote = old)))
+        assertTrue(port.submitted.isEmpty())
+    }
+
+    @Test
+    fun `手机收到审查选项后按编号继续且终端重绘不重发`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        val menu = CodexReviewMenu("Select a review preset", listOf("base", "uncommitted"), 0)
+        port.reviewMenu = menu
+        router.onCodexReviewMenu(binding, menu)
+        router.onCodexReviewMenu(binding, menu)
+        assertTrue(sentTexts().single().contains("2. uncommitted"))
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("a", "2")))
+        port.reviewMenu = null
+        router.onCodexReviewMenu(binding, null)
+        assertEquals(listOf("2"), port.reviewAnswers)
+        assertTrue(port.submitted.isEmpty())
+        assertEquals(1, channel.sent.size)
+    }
+
+    @Test
+    fun `电脑先关闭审查菜单后迟到的编号不当作新任务`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        val menu = CodexReviewMenu("Select a review preset", listOf("base", "uncommitted"), 0)
+        port.reviewMenu = menu
+        router.onCodexReviewMenu(binding, menu)
+        port.reviewMenu = null
+        router.onCodexReviewMenu(binding, null)
+        assertTrue(sentTexts().last().contains(menu.title))
+        assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("late", "1")))
+        assertTrue(port.submitted.isEmpty())
+        assertTrue(port.reviewAnswers.isEmpty())
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("next", "继续工作")))
+    }
+
+    @Test
+    fun `编号早于推送到达时先显示审查范围允许重新选择`() = runBlocking {
+        registry.bind(robot, target)
+        port.reviewMenu = CodexReviewMenu("Select a review preset", listOf("base", "uncommitted"), 0)
+        assertEquals(InboundOutcome.PROMPT_REJECTED, router.onInbound(inbound("early", "2")))
+        assertTrue(sentTexts().single().contains("2. uncommitted"))
+        assertTrue(port.reviewAnswers.isEmpty())
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("retry", "2")))
+        assertEquals(listOf("2"), port.reviewAnswers)
+    }
+
+    @Test
+    fun `手机选分支后收到分支列表并能返回审查范围`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        val menu = CodexReviewMenu("Select a review preset", listOf("base", "uncommitted"), 0)
+        val branches = CodexReviewMenu("Select a base branch", listOf("main", "feature"), 0)
+        port.reviewMenu = menu
+        router.onCodexReviewMenu(binding, menu)
+        router.onInbound(inbound("open", "1"))
+        port.reviewMenu = branches
+        router.onCodexReviewMenu(binding, branches)
+        assertTrue(sentTexts().last().contains("2. feature"))
+        assertEquals(InboundOutcome.SUBMITTED_TO_TERMINAL, router.onInbound(inbound("back", "0")))
+        port.reviewMenu = menu
+        router.onCodexReviewMenu(binding, menu)
+        assertTrue(sentTexts().last().contains(menu.title))
+        assertEquals(3, channel.sent.size)
+        assertEquals(listOf("1", "0"), port.reviewAnswers)
+    }
 
     @Test
     fun `非本人或其它聊天的消息不进入终端也不回复`() =
@@ -1864,6 +2081,33 @@ class BridgeRouterTest {
             stopClocked.onInbound(inbound("2", "停"))
             assertEquals(listOf("tab-1" to false), port.stops)
         }
+
+    @Test
+    fun `手机在自定义审查里发停止时停掉会话且不误报电脑关闭`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        val menu = CodexReviewMenu("Custom review instructions", emptyList(), -1)
+        port.reviewMenu = menu
+        router.onCodexReviewMenu(binding, menu)
+        assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("stop", "停止")))
+        port.reviewMenu = null
+        router.onCodexReviewMenu(binding, null)
+        assertEquals(listOf("tab-1" to true), port.stops)
+        assertTrue(port.reviewAnswers.isEmpty())
+        assertTrue(port.submitted.isEmpty())
+        assertEquals(1, sentTexts().size)
+    }
+
+    @Test
+    fun `手机发停止前电脑已关掉审查菜单仍通知电脑关闭`() = runBlocking {
+        val binding = (registry.bind(robot, target) as BindResult.Bound).binding
+        val menu = CodexReviewMenu("Select a review preset", listOf("base"), 0)
+        port.reviewMenu = menu
+        router.onCodexReviewMenu(binding, menu)
+        port.reviewMenu = null
+        assertEquals(InboundOutcome.STOPPED, router.onInbound(inbound("stop", "停止")))
+        router.onCodexReviewMenu(binding, null)
+        assertTrue(sentTexts().last().contains(Texts.reviewClosed(menu.title)))
+    }
 
 
     @Test

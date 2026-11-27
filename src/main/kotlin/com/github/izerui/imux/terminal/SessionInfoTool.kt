@@ -29,7 +29,7 @@ internal class SessionInfoTool(
     private val parent: Disposable,
     private val buttonStrip: () -> JComponent?,
 ) : SessionTool {
-    override fun state() = ToolState(AllIcons.General.Information, msg("session.info.title"), msg("session.info.runtime"))
+    override fun state() = ToolState(AllIcons.General.ShowInfos, msg("session.info.title"), msg("session.info.runtime"))
 
     override fun perform(anchor: JComponent) {
         val key = file.sessionKey

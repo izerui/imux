@@ -2,6 +2,8 @@ package com.github.izerui.imux.bridge
 
 import com.github.izerui.imux.bridge.core.Binding
 import com.github.izerui.imux.bridge.core.RobotId
+import com.github.izerui.imux.bridge.terminal.CodexReviewObserver
+import com.github.izerui.imux.bridge.terminal.ImuxTerminalSessionPort
 import com.github.izerui.imux.bridge.terminal.TabChange
 import com.github.izerui.imux.bridge.terminal.SessionStateObserver
 import com.github.izerui.imux.bridge.terminal.tabChangeFor
@@ -60,6 +62,7 @@ class TerminalBridgeService(
         )
 
     private val poller = TabPoller(tails, hub.router) { !project.isDisposed }
+    private val reviewMenus = CodexReviewObserver(scope, ImuxTerminalSessionPort(), hub.router::onCodexReviewRefresh)
 
     /** 结对审查提示按发生顺序逐条处理。 */
     private val peerEvents = Dispatchers.IO.limitedParallelism(1)
@@ -91,6 +94,9 @@ class TerminalBridgeService(
         seenTabs += host.openTabsByTabId().keys
         host.addSessionsChangedListener(this) { onSessionsChanged() }
         host.addSessionKeyMigratedListener(this) { _, to -> onMigrated(to) }
+        scope.launch(Dispatchers.EDT) {
+            hub.revision.collect { reviewMenus.update(bindingsInProject()) }
+        }
         project.messageBus.connect(this).subscribe(
             ProjectCloseListener.TOPIC,
             bridgeProjectCloseListener(project, ::notifyClosing),

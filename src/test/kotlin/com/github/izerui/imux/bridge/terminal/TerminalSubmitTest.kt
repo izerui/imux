@@ -98,7 +98,7 @@ class TerminalSubmitTest {
     @Test
     fun `终端端口的停止按 pressStopKeys 汇报结果`() {
         val port = com.github.izerui.imux.SourceCode("src/main/kotlin/com/github/izerui/imux/bridge/terminal/ImuxTerminalSessionPort.kt")
-        val stop = port.bodyAfter("override suspend fun stop(", '{')
+        val stop = port.bodyAfter("override suspend fun stop( target: SessionTarget,", '{')
         assertTrue(stop, stop.contains("return pressStopKeys(keys, wait = { delay(it) })"))
         assertTrue("不能再有按到一半也算已发送的分支：$stop", !stop.contains("StopResult.SENT"))
     }
