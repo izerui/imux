@@ -45,8 +45,8 @@ class WindowsLaunchTransportTest(private val launcher: String, private val agent
         val endpoint = IdeaMcpEndpoint(64342, "C:\\项目 空格\\O'Brien\\app")
         val server = TerminalMcpServer("imux_mobile", "http://127.0.0.1:63342/imux/mobile-mcp", "IMUX_MOBILE_TOKEN")
         val settings = claudeHookSettings("http://127.0.0.1:63342/imux/claude-hook", "IMUX_MOBILE_TOKEN")
-        val guidance = "保留 \"双引号\"、O'Brien、\$IMUX_MOBILE_TOKEN 和 C:\\work\\app"
-        val prompt = "检查 \"JSON\" 与 O'Brien；不要执行 \$(Write-Output unexpected)"
+        val guidance = "保留 \"双引号\"、O'Brien、\$IMUX_MOBILE_TOKEN；引号前反斜杠 \\\"；末尾 C:\\work with space\\"
+        val prompt = "检查 \"JSON\" 与 O'Brien；不要执行 \$(Write-Output unexpected)；独立引号 \"；末尾 C:\\work with space\\"
         val id = "b7848d12-c684-4caf-bbc0-7197392c702d"
         val extension = File(report, "扩展 with space.js").toPath()
         val command = launchCommand(

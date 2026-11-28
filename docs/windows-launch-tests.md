@@ -10,6 +10,8 @@ GitHub Actions 的 `Windows tests` 包含三类任务：原有的数据目录与
 
 `powershell-modes` 在 Windows Server 2022 和 2025 上分别执行 `PowerShellLaunchArgumentsTest`，显式设置 `IMUX_TEST_PWSH=pwsh.exe`。每个环境另有 18 个用例：Legacy、Standard、Windows 三种模式 × 三个 CLI × 新建/恢复。通过 PowerShell 脚本转发到 Node 接收进程，核对 JSON、TOML、引号、反斜杠、换行和变量占位符。该任务与原生 exe/npm 包装器矩阵互补，不替代真实 cmd.exe 的验证。
 
+Windows PowerShell 5.1 与 PowerShell 7 的 Legacy 模式不能视为相同实现：5.1 在判断是否自动包裹参数时，也会计算反斜杠转义的双引号，导致含空格的 JSON/TOML 被拆成多个参数。启动层在 5.1 下使用外层引号内的成对双引号编码，PowerShell 6+ 保持原有编码。必须保留真实 `powershell.exe` 矩阵，不能只靠 PowerShell 7 的 Legacy 测试判断兼容。回归输入还覆盖独立双引号、引号前的反斜杠及含空格路径末尾的反斜杠。
+
 断言内容：
 
 - Claude 的 `--settings` hook JSON、MCP JSON 和系统引导完整抵达，环境变量占位符不被提前展开。
