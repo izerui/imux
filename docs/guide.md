@@ -32,6 +32,8 @@ imux 不负责安装这些 CLI，也不管它们的登录和配置。你在系�
 
 **用 Claude 的请留意 `--settings`**：imux 启动 Claude 时会用 `--settings` 为这次会话注入 hook（用于在手机上确认，见「手机桥接」），不改任何配置文件，与 `settings.json` 里的设置照常合并。但命令行上的多个 `--settings` 不合并，后一个整体覆盖前一个：如果你的 alias 里自带 `--settings`，那一份在 imux 启动的会话里不生效，需要的设置请挪到 `settings.json`。
 
+**PowerShell 启动参数**：imux 按 PowerShell 的 Legacy、Standard 和 Windows 传参模式处理配置中的引号，不修改用户的 Shell 默认设置。旧版插件在 Legacy 模式下可能丢失 JSON 的双引号，导致 Claude 启动就报 `Invalid JSON provided to --settings`；更新插件后需重新打开会话，使新的启动命令生效。修复同时覆盖 Claude 的 MCP 配置、Codex 的 TOML 配置，以及三个 CLI 的初始消息。
+
 装一个也能用，面板里其余分组空着就是了。
 
 ## 安装

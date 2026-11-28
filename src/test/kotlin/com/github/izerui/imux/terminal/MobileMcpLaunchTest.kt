@@ -101,6 +101,6 @@ class MobileMcpLaunchTest {
         assertTrue(posix, posix.contains("\${IMUX_MOBILE_TOKEN}"))
         assertTrue(windows, windows.contains("\${IMUX_MOBILE_TOKEN}"))
         assertTrue(posix, posix.contains("--mcp-config '"))
-        assertTrue(windows, windows.contains("--mcp-config (") && windows.contains("[char]34"))
+        assertTrue(windows, windows.contains("--mcp-config \$(") && windows.contains("[char]34"))
     }
 }

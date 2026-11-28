@@ -1,16 +1,19 @@
 name: Windows tests
 
-# 数据目录解析（AgentHomes）与各 reader 的路径逻辑在 Windows 上走盘符路径，
-# macOS 开发机上验证不到，必须在真实 Windows 上跑。
+# 路径测试和真实 Windows 进程参数传递测试；不调用模型 API，也不需要 CLI 登录。
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +34,140 @@ jobs:
           --tests "com.github.izerui.imux.session.SessionTitleRegeneratorTest"
           --tests "com.github.izerui.imux.session.CodexRuntimeIndexTest"
           --tests "com.github.izerui.imux.watch.SessionStoreWatcherTest"
+          --tests "com.github.izerui.imux.terminal.AgentCommandTest"
+          --tests "com.github.izerui.imux.terminal.ShellDialectTest"
+          --tests "com.github.izerui.imux.terminal.MobileMcpLaunchTest"
+          --tests "com.github.izerui.imux.terminal.TerminalLaunchContributionsTest"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-test-results
-          path: build/test-results/test/
+          path: |
+            build/test-results/test/
+            build/reports/tests/test/
+
+  powershell-modes:
+    name: PowerShell argument modes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    env:
+      IMUX_TEST_PWSH: pwsh.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Record runtime versions
+        shell: pwsh
+        run: |
+          $PSVersionTable
+          java -version
+          node --version
+
+      - name: Verify Legacy Standard and Windows argument modes
+        shell: pwsh
+        run: ./gradlew.bat test --console=plain --tests "com.github.izerui.imux.terminal.PowerShellLaunchArgumentsTest"
+
+      - name: Require executed mode tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$report = Get-Content -Raw 'build/test-results/test/TEST-com.github.izerui.imux.terminal.PowerShellLaunchArgumentsTest.xml'
+          if ([int]$report.testsuite.tests -ne 18 -or [int]$report.testsuite.skipped -ne 0 -or [int]$report.testsuite.failures -ne 0 -or [int]$report.testsuite.errors -ne 0) {
+            throw 'Expected 18 executed and passing mode tests, with no skips.'
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: powershell-modes-${{ matrix.os }}
+          path: |
+            build/test-results/test/
+            build/reports/tests/test/
+          if-no-files-found: warn
+
+  launch-transport:
+    name: Launch transport (${{ matrix.os }}, ${{ matrix.shell }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        shell: [powershell.exe, pwsh.exe]
+    env:
+      IMUX_TEST_SHELL: ${{ matrix.shell }}
+      IMUX_WINDOWS_PROBE_ROOT: ${{ github.workspace }}\build\windows-probe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Record runtime versions
+        shell: pwsh
+        run: |
+          & $env:IMUX_TEST_SHELL -NoProfile -Command '$PSVersionTable'
+          java -version
+          node --version
+          npm --version
+
+      - name: Build native Windows argument receiver
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nativeDir = Join-Path $env:IMUX_WINDOWS_PROBE_ROOT 'native'
+          New-Item -ItemType Directory -Force $nativeDir | Out-Null
+          $probeExe = Join-Path $nativeDir 'argv-probe.exe'
+          Add-Type -Path 'src/test/resources/windows-launch-probe/ArgvProbe.cs' -ReferencedAssemblies 'System.Web.Extensions' -OutputAssembly $probeExe -OutputType ConsoleApplication
+          foreach ($cli in @('claude', 'codex', 'pi')) {
+            Copy-Item $probeExe (Join-Path $nativeDir "$cli.exe")
+          }
+
+      - name: Create real npm launch wrappers
+        shell: pwsh
+        run: |
+          npm install --prefix "$env:IMUX_WINDOWS_PROBE_ROOT" --no-save --package-lock=false --ignore-scripts cmd-shim@6.0.3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node src/test/resources/windows-launch-probe/create-shims.cjs "$env:IMUX_WINDOWS_PROBE_ROOT"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify arguments received by Windows processes
+        shell: pwsh
+        # Never reuse skipped results from a non-Windows run or another shell matrix entry.
+        run: ./gradlew.bat test --console=plain --rerun-tasks --no-build-cache --tests "com.github.izerui.imux.terminal.WindowsLaunchTransportTest"
+
+      - name: Require executed transport tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$report = Get-Content -Raw 'build/test-results/test/TEST-com.github.izerui.imux.terminal.WindowsLaunchTransportTest.xml'
+          if ([int]$report.testsuite.tests -ne 18 -or [int]$report.testsuite.skipped -ne 0 -or [int]$report.testsuite.failures -ne 0 -or [int]$report.testsuite.errors -ne 0) {
+            throw 'Expected 18 executed and passing transport tests, with no skips.'
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-launch-${{ matrix.os }}-${{ matrix.shell }}
+          path: |
+            build/test-results/test/
+            build/reports/tests/test/
+            build/reports/windows-launch/
+          if-no-files-found: warn

@@ -199,46 +199,6 @@ class AgentCommandTest {
         assertTrue("Codex 的双引号必须以 [char]34 拼出来，而不是被删掉：$codex", codex.contains("[char]34"))
     }
 
-    /** PowerShell 求值那串拼接之后，CLI 真正收到的应当与 POSIX 上一模一样。 */
-    @Test
-    fun `PowerShell 拼出的注入参数求值后与 POSIX 等价`() {
-        assertEquals(
-            """--mcp-config {"mcpServers":{"idea":{"type":"http","url":"${IDEA_MCP.url}",""" +
-                """"headers":{"IJ_MCP_SERVER_PROJECT_PATH":"/workspace"}}}}""",
-            evaluatePowerShellLiterals(
-                launchCommand("powershell.exe", AgentType.CLAUDE, null, ideaMcp = IDEA_MCP)
-                    .last()
-                    .removePrefix("claude "),
-            ),
-        )
-        assertEquals(
-            """-c mcp_servers.idea.url="${IDEA_MCP.url}" """ +
-                """-c mcp_servers.idea.http_headers.IJ_MCP_SERVER_PROJECT_PATH="/workspace"""",
-            evaluatePowerShellLiterals(
-                launchCommand("powershell.exe", AgentType.CODEX, null, ideaMcp = IDEA_MCP)
-                    .last()
-                    .removePrefix("$CODEX_WINDOWS "),
-            ),
-        )
-    }
-
-    /**
-     * 把 `('a' + [char]34 + 'b')` 这种 PowerShell 字面量拼接求值成它实际会产生的字符串。
-     *
-     * 只认这一种形状——测试要验的就是 [quoteEmbeddingDoubleQuotes] 生成的东西，
-     * 写成通用 PowerShell 解释器反而会把「生成了别的形状」这类错误吞掉。
-     */
-    private fun evaluatePowerShellLiterals(argument: String): String =
-        Regex("""\(([^()]*)\)""").replace(argument) { match ->
-            match.groupValues[1].split(" + ").joinToString("") { part ->
-                when {
-                    part == "[char]34" -> "\""
-                    part.startsWith("'") && part.endsWith("'") -> part.removeSurrounding("'").replace("''", "'")
-                    else -> throw AssertionError("不认识的 PowerShell 片段：$part（整段：$argument）")
-                }
-            }
-        }
-
     /**
      * 两个扩展**各断一条**。
      *
@@ -599,7 +559,7 @@ class AgentCommandTest {
         assertEquals(
             listOf(
                 "pwsh.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-                "claude -- 'it''s'",
+                "claude '--' 'it''s'",
             ),
             launchCommand("pwsh.exe", AgentType.CLAUDE, resumeId = null, initialPrompt = "it's"),
         )
@@ -711,7 +671,7 @@ class AgentCommandTest {
                 "Bypass",
                 "-Command",
                 "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
-                    "claude --resume 'abc-123' -- 'say hi'",
+                    "claude --resume 'abc-123' '--' 'say hi'",
             ),
             launchCommand(
                 "pwsh.exe",
@@ -860,7 +820,7 @@ class AgentCommandTest {
     fun `codex 的 pid 自报与初始 prompt 共存`() {
         assertEquals(
             "\$PID | Set-Content -LiteralPath 'C:\\t\\x.pid' -Encoding ascii; " +
-                "$CODEX_WINDOWS resume 'abc-123' -- 'say hi'",
+                "$CODEX_WINDOWS resume 'abc-123' '--' 'say hi'",
             launchCommand(
                 "pwsh.exe",
                 AgentType.CODEX,

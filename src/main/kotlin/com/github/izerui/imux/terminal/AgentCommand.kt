@@ -69,7 +69,7 @@ internal fun launchCommand(
     // 值内部含双引号（JSON），走 quoteEmbeddingDoubleQuotes 保证 Windows 不丢引号。
     val settingsArgument = claudeSettings
         ?.takeIf { agentType == AgentType.CLAUDE }
-        ?.let { "--settings ${quoteEmbeddingDoubleQuotes(dialect, it)}" }
+        ?.let { "--settings ${quoteEmbeddingDoubleQuotes(dialect, it, agentType.cli)}" }
     val script =
         when {
             resumeId == null -> {
@@ -80,25 +80,25 @@ internal fun launchCommand(
             // 所以新建与续聊是同一条命令——新建时 id 由 imux 预先生成传进来。
             agentType == AgentType.PI -> {
                 buildString {
-                    append("$cli --session-id ${quote(dialect, resumeId)}")
+                    append("$cli --session-id ${quoteCliValue(dialect, resumeId, agentType.cli)}")
                     // 脚本缺失时调用方不把它放进列表：拼出一个加载不了的扩展会让 pi
                     // 启动失败，而少一个集成扩展只会让对应能力降级。
-                    piExtensions.forEach { append(" -e ${quote(dialect, it.toString())}") }
+                    piExtensions.forEach { append(" -e ${quoteCliValue(dialect, it.toString(), agentType.cli)}") }
                 }
             }
 
             // claude 的 --session-id 只能创建：id 已存在会直接报错退出，所以只用于新建，
             // 续聊仍走 --resume。
             agentType == AgentType.CLAUDE && newSession -> {
-                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, "--session-id", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, "--session-id", quoteCliValue(dialect, resumeId, agentType.cli)).joinToString(" ")
             }
 
             agentType == AgentType.CODEX -> {
-                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, "resume", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, "resume", quoteCliValue(dialect, resumeId, agentType.cli)).joinToString(" ")
             }
 
             else -> {
-                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, "--resume", quote(dialect, resumeId)).joinToString(" ")
+                listOfNotNull(cli, ideaMcpArgument, guidanceArgument, settingsArgument, "--resume", quoteCliValue(dialect, resumeId, agentType.cli)).joinToString(" ")
             }
         }
     // 初始 prompt 是**位置参数**，前面必须有 `--` 把选项解析截断。
@@ -114,7 +114,11 @@ internal fun launchCommand(
     val command =
         initialPrompt
             ?.takeIf { it.isNotBlank() }
-            ?.let { "$script -- ${quote(dialect, it)}" }
+            ?.let {
+                // PowerShell consumes bare -- for npm's .ps1 shims; a quoted token reaches the CLI.
+                val separator = if (dialect == ShellDialect.POWERSHELL) "'--'" else "--"
+                "$script $separator ${quoteCliValue(dialect, it, agentType.cli)}"
+            }
             ?: script
     // pid 自报只在 Windows 分支生成：POSIX 方言下 pidFileRecordCommand 恒为 null，
     // macOS 与 Linux 的启动命令因此一个字都不加。
@@ -129,6 +133,13 @@ internal fun launchCommand(
             ?: command
     return listOf(shell) + shellArgs(dialect) + prefixed
 }
+
+private fun quoteCliValue(dialect: ShellDialect, value: String, cli: String): String =
+    if (dialect == ShellDialect.POWERSHELL && ('"' in value || value.isEmpty())) {
+        quoteEmbeddingDoubleQuotes(dialect, value, cli)
+    } else {
+        quote(dialect, value)
+    }
 
 private fun cliWithDisplayOption(dialect: ShellDialect, cli: String, option: String, vararg values: String): String {
     val arguments = listOf(option, *values).map { quote(dialect, it) }
@@ -164,7 +175,7 @@ internal fun ideaMcpCliArgument(
             AgentType.CLAUDE -> {
                 val config = claudeIdeaMcpConfig(endpoint, additionalServers)
                 buildString {
-                    append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config)}")
+                    append("--mcp-config ${quoteEmbeddingDoubleQuotes(dialect, config, agentType.cli)}")
                     systemGuidanceArgument(dialect, agentType, ideaMcpGuidance)?.let { append(" $it") }
                 }
             }
@@ -174,8 +185,8 @@ internal fun ideaMcpCliArgument(
                     if (endpoint != null) {
                         val url = "mcp_servers.idea.url=${tomlBasicString(endpoint.url)}"
                         val header = "mcp_servers.idea.http_headers.$IDEA_MCP_PROJECT_HEADER=${tomlBasicString(endpoint.projectPath)}"
-                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, url)} ")
-                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, header)}")
+                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, url, agentType.cli)} ")
+                        append("-c ${quoteEmbeddingDoubleQuotes(dialect, header, agentType.cli)}")
                     }
                     additionalServers.forEach { server ->
                         val prefix = "mcp_servers.${server.name}"
@@ -185,7 +196,7 @@ internal fun ideaMcpCliArgument(
                             "$prefix.tool_timeout_sec=${server.timeoutSeconds}",
                         ).forEach { argument ->
                             if (isNotEmpty()) append(' ')
-                            append("-c ${quoteEmbeddingDoubleQuotes(dialect, argument)}")
+                            append("-c ${quoteEmbeddingDoubleQuotes(dialect, argument, agentType.cli)}")
                         }
                     }
                     systemGuidanceArgument(dialect, agentType, ideaMcpGuidance)?.let { append(" $it") }
@@ -212,8 +223,8 @@ internal fun systemGuidanceArgument(
 ): String? {
     val text = guidance?.takeIf(String::isNotBlank) ?: return null
     return when (agentType) {
-        AgentType.CLAUDE -> "--append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, text)}"
-        AgentType.CODEX -> "-c ${quoteEmbeddingDoubleQuotes(dialect, "developer_instructions=${tomlBasicString(text)}")}"
+        AgentType.CLAUDE -> "--append-system-prompt ${quoteEmbeddingDoubleQuotes(dialect, text, agentType.cli)}"
+        AgentType.CODEX -> "-c ${quoteEmbeddingDoubleQuotes(dialect, "developer_instructions=${tomlBasicString(text)}", agentType.cli)}"
         AgentType.PI -> null
     }
 }

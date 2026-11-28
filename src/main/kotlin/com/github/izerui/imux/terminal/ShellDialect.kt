@@ -155,24 +155,39 @@ internal fun quote(
  * `mcp_servers.idea.url=http://…`（非法 TOML），两者都会让 CLI 拒绝参数直接退出——
  * 而 IDEA MCP 注入默认开启，症状是 **Windows 上每个 Claude/Codex 标签一片空白**。
  *
- * 这与 [probeScript] 用 `[char]9` 而不是插值拼制表符是同一个坑，解法也一样：让脚本
- * 文本里**一个双引号都不出现**。把值按 `"` 切开，用 `[char]34` 串回来，外面包一层
- * 括号——PowerShell 会先求值再把结果当作一个参数交给原生命令。
+ * 第一层用 `[char]34` 重建双引号，避免 JVM 到 PowerShell 的转交破坏脚本文本。
+ * 第二层是 PowerShell 到原生程序：Legacy 会再次解析引号，须预先按原生命令行规则
+ * 包裹并转义；Standard 则原样传递，不能重复转义。Windows 模式对 cmd/bat 仍走 Legacy。
+ * 旧版 PowerShell 没有 PSNativeCommandArgumentPassing 变量，按 Legacy 处理。
+ * [nativeCommand] 用来辨认 Windows 模式下实际选中的启动脚本，不修改用户的 shell 设置。
  *
  * POSIX 没有这个问题（单引号内一切都是字面量，且不存在二次拼接），原样走 [quote]。
  */
 internal fun quoteEmbeddingDoubleQuotes(
     dialect: ShellDialect,
     value: String,
+    nativeCommand: String,
 ): String =
     when (dialect) {
         ShellDialect.POSIX -> quote(dialect, value)
-        ShellDialect.POWERSHELL ->
-            value
-                .split('"')
-                .joinToString(" + [char]34 + ") { quote(dialect, it) }
-                .let { "($it)" }
+        ShellDialect.POWERSHELL -> {
+            val literal = powerShellString(value)
+            if ('"' !in value && value.isNotEmpty()) literal else {
+                val command = quote(ShellDialect.POWERSHELL, nativeCommand)
+                val legacyMode = "\$PSNativeCommandArgumentPassing -notin @('Standard', 'Windows') -or " +
+                    "(\$PSNativeCommandArgumentPassing -eq 'Windows' -and " +
+                    "(Get-Command $command -ErrorAction SilentlyContinue | Select-Object -First 1).Definition -match '\\.(cmd|bat)$')"
+                // Keep one copy of the value: hook JSON and guidance can approach Windows' command-line limit.
+                // Legacy's native parser needs doubled backslashes before quotes and the closing quote.
+                val escapedQuotes = "[regex]::Replace(\$imuxNativeArgument, '(\\\\*)' + [char]34, '\$1\$1\\' + [char]34)"
+                val legacy = "[char]34 + [regex]::Replace($escapedQuotes, '(\\\\+)\$', '\$1\$1') + [char]34"
+                "\$(\$imuxNativeArgument = $literal; if ($legacyMode) { $legacy } else { \$imuxNativeArgument })"
+            }
+        }
     }
+
+private fun powerShellString(value: String): String =
+    value.split('"').joinToString(" + [char]34 + ") { quote(ShellDialect.POWERSHELL, it) }.let { "($it)" }
 
 /**
  * 一次问完一批二进制在不在 PATH 里的脚本。

@@ -185,6 +185,11 @@ tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask> 
 // 把这三个源码目录显式声明成 `:test` 的输入，源文件一变（哪怕只变注释）就重跑。
 // 代价是注释改动也会触发一次测试，相对于假绿是划算的。
 tasks.test {
+    // Native process tests depend on installed executables, not just their names or PATH.
+    // Installing pwsh into an existing PATH directory must not reuse a previously skipped run.
+    // Compilation and packaging keep their caches; only test execution is always fresh.
+    outputs.upToDateWhen { false }
+    outputs.doNotCacheIf("Native process test prerequisites can change without source or PATH changes") { true }
     inputs.dir("src/main/cli-capabilities")
     listOf("src/main/kotlin", "src/main/resources", "src/main/js").forEach { dir ->
         inputs
