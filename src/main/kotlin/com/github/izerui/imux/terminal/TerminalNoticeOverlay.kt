@@ -200,17 +200,6 @@ internal class TerminalNoticeOverlay(
         private var remaining = 1f
         private var flash = first.flash
         private val progressBar = first.notice.progress?.let { sessionProgressBar() }
-        private val percentLabel = progressBar?.let {
-            JBLabel("", javax.swing.SwingConstants.RIGHT).apply {
-                foreground = JBUI.CurrentTheme.Banner.FOREGROUND
-                border = JBUI.Borders.empty(0, 8, 0, 12)
-                preferredSize = java.awt.Dimension(
-                    getFontMetrics(font).stringWidth("100%") + insets.left + insets.right,
-                    preferredSize.height,
-                )
-                toolTipText = com.github.izerui.imux.ImuxBundle.message("progress.estimate")
-            }
-        }
         private val view =
             viewFactory(if (progressBar != null) NoticeTone.SUCCESS else first.notice.tone).apply {
                 first.notice.actions.forEachIndexed { index, action ->
@@ -232,7 +221,6 @@ internal class TerminalNoticeOverlay(
             } else {
                 view.component.isOpaque = false
                 progressBar.add(view.component, BorderLayout.CENTER)
-                progressBar.add(percentLabel, BorderLayout.EAST)
                 add(progressBar, BorderLayout.CENTER)
             }
         }
@@ -247,7 +235,6 @@ internal class TerminalNoticeOverlay(
             view.setIcon(notice.notice.icon ?: defaultIcon(notice.notice.tone))
             flash = notice.flash
             remaining = notice.remainingFraction
-            percentLabel?.text = notice.notice.progress?.percent?.let { "$it%" }.orEmpty()
             progressBar?.apply {
                 isIndeterminate = notice.notice.progress?.percent == null
                 value = notice.notice.progress?.percent ?: 0

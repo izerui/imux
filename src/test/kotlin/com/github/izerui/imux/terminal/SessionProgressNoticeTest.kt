@@ -25,7 +25,7 @@ class SessionProgressNoticeTest {
         record.report(40, "检查调用链")
         record.observe(active = true, waiting = true)
         val waiting = checkNotNull(sessionProgressNotice("session", record.snapshot()))
-        assertEquals(ImuxBundle.message("progress.waiting") + " · 检查调用链", waiting.text)
+        assertEquals(ImuxBundle.message("progress.waiting") + " 40% · 检查调用链", waiting.text)
         assertEquals(40, waiting.progress?.percent)
         assertSame(com.intellij.icons.AllIcons.Actions.Pause, waiting.icon)
 

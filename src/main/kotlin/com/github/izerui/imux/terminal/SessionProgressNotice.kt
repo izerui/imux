@@ -13,10 +13,11 @@ internal fun sessionProgressNotice(sessionKey: String, snapshot: ProgressSnapsho
         else -> "progress.running"
     })
     val progress = snapshot.progress
+    val stateWithPercent = progress?.let { "$state ${it.percent}%" } ?: state
     return Notice(
         key = "progress:$sessionKey",
         tone = NoticeTone.INFO,
-        text = listOfNotNull(state, progress?.message).joinToString(" · "),
+        text = listOfNotNull(stateWithPercent, progress?.message).joinToString(" · "),
         icon = if (snapshot.waiting) AllIcons.Actions.Pause else AnimatedIcon.Default.INSTANCE,
         closable = false,
         progress = NoticeProgress(progress?.percent),

@@ -146,8 +146,7 @@ class TerminalNoticeOverlayTest {
             val row = overlay.component.getComponent(0) as javax.swing.JPanel
             val bar = row.components.filterIsInstance<javax.swing.JProgressBar>().single()
             assertTrue(bar.isIndeterminate)
-            val percent = bar.components.filterIsInstance<javax.swing.JLabel>().single()
-            assertEquals("", percent.text)
+            assertEquals(com.github.izerui.imux.ImuxBundle.message("progress.unknown"), views.single().text)
 
             sink.persistent(sessionProgressNotice("session",
                 com.github.izerui.imux.progress.ProgressSnapshot(active = true,
@@ -157,18 +156,16 @@ class TerminalNoticeOverlayTest {
             assertEquals(1, views.size)
             org.junit.Assert.assertFalse(bar.isIndeterminate)
             assertEquals(65, bar.value)
-            assertEquals("65%", percent.text)
-            org.junit.Assert.assertFalse(views.single().text.contains("%"))
-            assertTrue(views.single().text.contains("核对手机连接"))
+            assertEquals(com.github.izerui.imux.ImuxBundle.message("progress.running") +
+                " 65% · 核对手机连接", views.single().text)
+            assertEquals(1, bar.componentCount)
             org.junit.Assert.assertFalse(views.single().component.isOpaque)
             for (width in listOf(280, 800)) {
                 row.setSize(width, 36)
                 row.doLayout()
                 bar.doLayout()
                 assertEquals("进度覆盖整条高度", row.height, bar.height)
-                assertEquals("百分比在最右侧", width, percent.x + percent.width)
-                assertTrue("描述不能与百分比重叠",
-                    views.single().component.x + views.single().component.width <= percent.x)
+                assertEquals("状态和百分比共用整行", width, views.single().component.width)
             }
 
             sink.persistent(null)
@@ -264,7 +261,7 @@ class TerminalNoticeOverlayTest {
     }
 
     @Test
-    fun `原生通知文字覆盖绿色进度背景并保留右侧百分比`() {
+    fun `原生通知显示底部细线且百分比紧跟状态`() {
         javax.swing.SwingUtilities.invokeAndWait {
             val foreground = UIManager.get("Label.foreground")
             val bannerForeground = UIManager.get("Banner.foreground")
@@ -300,12 +297,22 @@ class TerminalNoticeOverlayTest {
             layoutTree(row)
             val image = java.awt.image.BufferedImage(width, row.height, java.awt.image.BufferedImage.TYPE_INT_RGB)
             image.createGraphics().let { g -> try { row.paint(g) } finally { g.dispose() } }
-            org.junit.Assert.assertNotEquals("原生通知不能盖住已填充背景",
+            org.junit.Assert.assertNotEquals("原生通知不能盖住底部进度线",
+                image.getRGB(2, row.height - 1), image.getRGB(width - 2, row.height - 1))
+            assertEquals("文字区域保持统一背景",
                 image.getRGB(2, row.height / 2), image.getRGB(width - 2, row.height / 2))
             val bar = row.components.filterIsInstance<javax.swing.JProgressBar>().single()
-            val percent = bar.components.filterIsInstance<javax.swing.JLabel>().single()
-            assertEquals("65%", percent.text)
-            assertEquals(width, percent.x + percent.width)
+            assertEquals(1, bar.componentCount)
+            fun editor(root: java.awt.Container): javax.swing.JEditorPane? =
+                root.components.firstNotNullOfOrNull {
+                    when (it) {
+                        is javax.swing.JEditorPane -> it
+                        is java.awt.Container -> editor(it)
+                        else -> null
+                    }
+                }
+            assertEquals(com.github.izerui.imux.ImuxBundle.message("progress.running") +
+                " 65% · 核对手机连接与审查结果", checkNotNull(editor(bar)).toolTipText)
             val file = java.io.File("build/reports/progress-preview-$theme-$width.png")
             file.parentFile.mkdirs()
             javax.imageio.ImageIO.write(image, "png", file)
