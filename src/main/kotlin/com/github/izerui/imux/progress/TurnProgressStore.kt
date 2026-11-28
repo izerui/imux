@@ -29,12 +29,13 @@ internal class TurnProgressStore : Disposable {
         endReason: ProgressEndReason? = null,
         transitions: List<com.github.izerui.imux.turn.TurnTransition> = emptyList(),
         sampledAt: Long = System.currentTimeMillis(),
+        sessionRunning: Boolean? = null,
     ) {
         val changed =
             synchronized(this) {
                 val record = entries.getOrPut(sessionId) { ProgressRecord() }
                 val before = record.snapshot()
-                record.observe(active, waiting, endReason, transitions, sampledAt)
+                record.observe(active, waiting, endReason, transitions, sampledAt, sessionRunning)
                 before != record.snapshot()
             }
         if (changed) publish()

@@ -71,6 +71,7 @@ internal class ProgressRecord(private val clock: () -> Long = System::currentTim
         endReason: ProgressEndReason? = null,
         transitions: List<TurnTransition> = emptyList(),
         sampledAt: Long = clock(),
+        sessionRunning: Boolean? = null,
     ) {
         var staleEnd = false
         for (transition in transitions) {
@@ -110,7 +111,10 @@ internal class ProgressRecord(private val clock: () -> Long = System::currentTim
             runtimeSeenActive = true
             return
         }
-        if (runtimeSeenActive || endReason != null || finishRequestedAt != null) {
+        // Reuse the tab's running state when a start/report never received a matching end.
+        // Waiting is deliberately excluded: a paused tab is not a finished turn.
+        val idleFallback = sessionRunning == false && !(waiting ?: externalWaiting)
+        if (runtimeSeenActive || endReason != null || finishRequestedAt != null || idleFallback && value.active) {
             finish(endReason ?: ProgressEndReason.NORMAL, sampledAt)
         }
     }

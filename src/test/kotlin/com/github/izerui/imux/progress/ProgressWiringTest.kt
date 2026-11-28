@@ -23,6 +23,10 @@ class ProgressWiringTest {
         val monitor = SourceCode("src/main/kotlin/com/github/izerui/imux/monitor/SessionMonitor.kt").normalized
         assertTrue(monitor.contains("val sampledAt = System.currentTimeMillis() val snapshot = runtimeIndex.load(projectPath)"))
         assertTrue(monitor.contains("transitions = watcher.progressTransitions(sessionId), sampledAt = sampledAt,"))
+        assertTrue(monitor.contains("runningIds = running"))
+        assertTrue(monitor.contains("sessionRunning = sessionId in running,"))
+        val store = SourceCode("src/main/kotlin/com/github/izerui/imux/progress/TurnProgressStore.kt").normalized
+        assertTrue(store.contains("record.observe(active, waiting, endReason, transitions, sampledAt, sessionRunning)"))
         assertTrue(monitor.contains("if (sessionId !in currentProgressSessions) return@forEach"))
         assertTrue(monitor.contains("PiReportType.UI_PROMPT_START, PiReportType.UI_PROMPT_END"))
         assertTrue(monitor.contains("report.type == PiReportType.UI_PROMPT_START,"))

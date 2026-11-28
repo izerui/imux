@@ -831,6 +831,7 @@ class SessionMonitor(
                                 },
                             transitions = watcher.progressTransitions(sessionId),
                             sampledAt = sampledAt,
+                            sessionRunning = sessionId in running,
                         )
                     }
                 }
