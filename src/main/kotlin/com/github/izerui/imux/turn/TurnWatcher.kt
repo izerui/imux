@@ -64,6 +64,10 @@ class TurnWatcher(
     /** pi 最终失败的明确终态；等文件里的 error / length 先把状态推进到 WORKING 后再收口。 */
     private val piSettled = ConcurrentHashMap<String, PiSettlement>()
     private val settledFailures = ConcurrentHashMap<String, String>()
+    private val progressTransitions = ConcurrentHashMap<String, List<TurnTransition>>()
+
+    /** All boundaries in the last poll, including aborts and a finish followed by another start. */
+    fun progressTransitions(sessionId: String): List<TurnTransition> = progressTransitions[sessionId].orEmpty()
 
     /** 仅返回本次 poll 确认收口的失败消息，调用方必须匹配当前源记录。 */
     fun settledFailureMessageId(sessionId: String): String? = settledFailures[sessionId]
@@ -126,6 +130,7 @@ class TurnWatcher(
         durations.remove(sessionId)
         piSettled.remove(sessionId)
         settledFailures.remove(sessionId)
+        progressTransitions.remove(sessionId)
     }
 
     /**
@@ -173,6 +178,7 @@ class TurnWatcher(
     /** 返回本轮刚完成、需要提醒的 sessionId。 */
     fun poll(): List<String> {
         settledFailures.clear()
+        progressTransitions.clear()
         val completed = mutableListOf<String>()
         for ((sessionId, entry) in entries) {
             val fileEvent = advance(sessionId, entry)
@@ -193,6 +199,8 @@ class TurnWatcher(
         if (entry.lastPiMessageId != settled.messageId) return TurnEvent.NONE
         piSettled.remove(sessionId, settled)
         settledFailures[sessionId] = settled.messageId
+        progressTransitions[sessionId] = progressTransitions(sessionId) +
+            TurnTransition(TurnState.WORKING, TurnState.IDLE, TurnEvent.COMPLETED, clock().toEpochMilli())
 
         entry.state = TurnState.IDLE
         entry.workingSince?.let { durations[sessionId] = Duration.between(it, clock()) }
@@ -222,6 +230,7 @@ class TurnWatcher(
 
             val lines = appended.lines()
             val result = TurnSignalParser.parse(entry.agentType, entry.state, lines)
+            progressTransitions[sessionId] = result.transitions
             if (entry.agentType == AgentType.PI) {
                 lastPiMessageId(lines)?.let { entry.lastPiMessageId = it }
             }

@@ -4,8 +4,6 @@ import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.terminal.frontend.view.TerminalView
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Proxy
 
@@ -49,7 +47,7 @@ class AgentTerminalVirtualFileTest {
     }
 
     @Test
-    fun `Pi 上下文变化时报告需要刷新，事件字段变化不刷新`() {
+    fun `Pi 最新上下文缓存供下次查看读取`() {
         val file = AgentTerminalVirtualFile("Pi", terminalView(), "session", AgentType.PI, "tab")
         val report = com.github.izerui.imux.session.PiSessionReport(
             com.github.izerui.imux.session.PiReportType.SESSION_START,
@@ -60,23 +58,14 @@ class AgentTerminalVirtualFileTest {
             skillNames = listOf("review"),
         )
 
-        assertTrue(file.recordPiCapabilities(report))
-        assertFalse(file.recordPiCapabilities(report))
+        file.recordPiCapabilities(report)
         val withContext = report.copy(contextPercent = 42)
-        assertTrue(file.recordPiCapabilities(withContext))
-        assertFalse(
-            file.recordPiCapabilities(
-                withContext.copy(
-                    type = com.github.izerui.imux.session.PiReportType.AGENT_SETTLED,
-                    stopReason = com.github.izerui.imux.session.PiStopReason.ERROR,
-                    messageId = "message",
-                )
-            )
-        )
+        file.recordPiCapabilities(withContext)
+        assertEquals(42, file.piCapabilitiesFor("session")?.contextPercent)
     }
 
     @Test
-    fun `Pi 工具技能位置和说明变化分别报告需要刷新`() {
+    fun `Pi 最新工具技能位置和说明分别写入缓存`() {
         val file = AgentTerminalVirtualFile("Pi", terminalView(), "session", AgentType.PI, "tab")
         val report = com.github.izerui.imux.session.PiSessionReport(
             com.github.izerui.imux.session.PiReportType.SESSION_START,
@@ -89,15 +78,19 @@ class AgentTerminalVirtualFileTest {
             skillDescriptions = mapOf("review" to "Review changes"),
         )
         var current = report
-        assertTrue(file.recordPiCapabilities(current))
+        file.recordPiCapabilities(current)
         current = current.copy(activeTools = listOf("read", "write"))
-        assertTrue(file.recordPiCapabilities(current))
+        file.recordPiCapabilities(current)
+        assertEquals(listOf("read", "write"), file.piCapabilitiesFor("session")?.activeTools)
         current = current.copy(skillNames = listOf("review", "test"))
-        assertTrue(file.recordPiCapabilities(current))
+        file.recordPiCapabilities(current)
+        assertEquals(listOf("review", "test"), file.piCapabilitiesFor("session")?.skillNames)
         current = current.copy(skillLocations = mapOf("review" to "/new/SKILL.md"))
-        assertTrue(file.recordPiCapabilities(current))
+        file.recordPiCapabilities(current)
+        assertEquals("/new/SKILL.md", file.piCapabilitiesFor("session")?.skillLocations?.get("review"))
         current = current.copy(skillDescriptions = mapOf("review" to "New description"))
-        assertTrue(file.recordPiCapabilities(current))
+        file.recordPiCapabilities(current)
+        assertEquals("New description", file.piCapabilitiesFor("session")?.skillDescriptions?.get("review"))
     }
 
     private fun terminalView(): TerminalView =

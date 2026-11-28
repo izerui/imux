@@ -1,6 +1,7 @@
 package com.github.izerui.imux.mcp
 
 import com.google.gson.JsonNull
+import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import io.netty.buffer.Unpooled
@@ -47,11 +48,18 @@ internal fun bearerToken(request: FullHttpRequest): String? {
 internal fun loopbackBearer(request: FullHttpRequest, context: ChannelHandlerContext): String? =
     if (loopbackAllowed(request, context)) bearerToken(request) else null
 
+internal class McpRequestTooLargeException : IllegalArgumentException()
+
 /** 内置 HTTP 服务上按终端凭证鉴权的 MCP 入口：只接受本机、本端口、持有效 Bearer 的 JSON POST。 */
 abstract class LocalMcpHandler(private val path: String) : HttpRequestHandler() {
     /** 凭证对应的 RPC 接收者；凭证无效或已撤销时返回 null。 */
     protected abstract fun receiver(token: String): ((JsonObject) -> McpRpcReply)?
     protected abstract val scope: CoroutineScope
+
+    protected open fun readBody(request: FullHttpRequest): JsonElement {
+        if (request.content().readableBytes() > 64 * 1024) throw McpRequestTooLargeException()
+        return JsonParser.parseString(request.content().toString(Charsets.UTF_8))
+    }
 
     override fun isSupported(request: FullHttpRequest): Boolean = request.uri().substringBefore('?') == path
 
@@ -77,8 +85,14 @@ abstract class LocalMcpHandler(private val path: String) : HttpRequestHandler() 
         if (!accept.contains("application/json") || !accept.contains("text/event-stream")) { respond(406); return true }
         val protocolVersion = request.headers().get("MCP-Protocol-Version")
         if (protocolVersion != null && protocolVersion !in McpJsonRpc.VERSIONS) { respond(400); return true }
-        if (request.content().readableBytes() > 64 * 1024) { respond(413); return true }
-        val root = runCatching { JsonParser.parseString(request.content().toString(Charsets.UTF_8)) }.getOrNull()
+        val root = try {
+            readBody(request)
+        } catch (_: McpRequestTooLargeException) {
+            respond(413)
+            return true
+        } catch (_: Exception) {
+            null
+        }
         if (root == null || !root.isJsonObject) {
             respond(400, McpJsonRpc.rpcError(JsonNull.INSTANCE, -32700, "Invalid JSON object").toString())
             return true

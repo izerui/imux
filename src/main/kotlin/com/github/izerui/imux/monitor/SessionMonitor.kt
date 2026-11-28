@@ -331,6 +331,8 @@ class SessionMonitor(
 
                 PiReportType.USER_MESSAGE -> {
                     if (host.openTabsByTabId()[report.tabId] != report.sessionId) return@launch
+                    com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
+                        .start(report.sessionId, report.timestampMillis ?: System.currentTimeMillis(), report.sequence)
                     // 用户已经开始新一轮，立即终止上一轮副驾驶；不能等下一次运行态轮询。
                     peerCoordinator.onTurnStarted(report.sessionId)
                     transcriptGenerations
@@ -345,6 +347,16 @@ class SessionMonitor(
                     val messageId = report.messageId ?: return@launch
                     host.turnWatcher().reportPiSettled(report.sessionId, reason, messageId)
                     checkCompletedTurns()
+                }
+
+                PiReportType.UI_PROMPT_START, PiReportType.UI_PROMPT_END -> {
+                    if (host.openTabsByTabId()[report.tabId] != report.sessionId) return@launch
+                    com.github.izerui.imux.progress.TurnProgressStore.getInstance(project).setWaiting(
+                        report.sessionId,
+                        report.type == PiReportType.UI_PROMPT_START,
+                        report.timestampMillis ?: System.currentTimeMillis(),
+                        report.sequence,
+                    )
                 }
             }
         }
@@ -721,6 +733,7 @@ class SessionMonitor(
                 // claude。不过滤就会为别的项目的会话弹提醒，而那些会话不在本项目列表里，
                 // 连标题都查不到，只能显示一串会话 id。
                 val progress = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
+                val sampledAt = System.currentTimeMillis()
                 val snapshot = runtimeIndex.load(projectPath)
                 val watcher = host.turnWatcher()
                 // 必须先 poll 再读 workingIds：状态由 poll 推进，顺序反了拿到的是上一轮的
@@ -801,16 +814,23 @@ class SessionMonitor(
                             )
                         }
                     }
+                    val currentProgressSessions = host.openTabKeys()
                     progressSessionIds.forEach { sessionId ->
-                        val waiting = snapshot[sessionId]?.isWaiting == true
+                        if (sessionId !in currentProgressSessions) return@forEach
+                        val waiting = if (model.sessionOf(sessionId)?.agentType == AgentType.CLAUDE)
+                            snapshot[sessionId]?.isWaiting == true else null
                         progress.observe(
                             sessionId = sessionId,
-                            active = sessionId in working || waiting,
+                            active = sessionId in working || waiting == true,
                             waiting = waiting,
                             endReason =
                                 com.github.izerui.imux.progress.ProgressEndReason.FAILED.takeIf {
                                     watcher.settledFailureMessageId(sessionId) != null
+                                } ?: com.github.izerui.imux.progress.ProgressEndReason.NORMAL.takeIf {
+                                    sessionId in completed && sessionId !in working
                                 },
+                            transitions = watcher.progressTransitions(sessionId),
+                            sampledAt = sampledAt,
                         )
                     }
                 }

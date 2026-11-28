@@ -37,6 +37,17 @@ class PeerMcpService(val scope: CoroutineScope) : Disposable {
             },
         )
         return protocols.register(PeerMcpProtocol(object : PeerToolsBackend {
+            override suspend fun lifecycle(event: String, sessionId: String) {
+                if (agentType != AgentType.CLAUDE) return
+                withContext(Dispatchers.EDT) {
+                    if (project.isDisposed) return@withContext
+                    val key = TerminalHost.getInstance(project).openTabsByTabId()[tabId] ?: return@withContext
+                    if (key != sessionId && !key.startsWith("pending-")) return@withContext
+                    val store = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
+                    if (event == "UserPromptSubmit") store.start(key) else store.requestFinish(key)
+                }
+            }
+
             override suspend fun progress(args: com.google.gson.JsonObject): PeerToolResult {
                 return withContext(Dispatchers.EDT) {
                     val key =

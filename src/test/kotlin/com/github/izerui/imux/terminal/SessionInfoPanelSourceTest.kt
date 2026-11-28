@@ -9,6 +9,14 @@ class SessionInfoPanelSourceTest {
     private val code = source.compact(source.normalized)
 
     @Test
+    fun `运行页入口使用支持局部更新的组件`() {
+        val page = source.compact(source.bodyAfter("private fun pageComponent(page: InfoPage)", '{'))
+        assertTrue(page.contains(
+            source.compact("""if (page.name == msg("session.info.runtime")) return SessionRuntimeInfoPage(page.rows)""")
+        ))
+    }
+
+    @Test
     fun `会话信息里的横向分隔线不与弹窗边线相交`() {
         assertTrue(
             "顶部统计区应先留左右边距，再画上下分隔线",
@@ -74,7 +82,7 @@ class SessionInfoPanelSourceTest {
     }
 
     @Test
-    fun `自动刷新后恢复搜索焦点选择和滚动位置`() {
+    fun `手动刷新保留搜索和滚动位置的恢复路径`() {
         assertTrue(code.contains("privatevardisplayRevision=0L"))
         assertTrue(code.contains("valfocusedSearch=focusedSearchState()"))
         assertTrue(code.contains("if(revision!=displayRevision)return@invokeLater"))

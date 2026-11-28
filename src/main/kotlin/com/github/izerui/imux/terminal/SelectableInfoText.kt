@@ -9,6 +9,8 @@ internal class SelectableInfoText(value: String = "") : JBTextField(value) {
         isEditable = false
         isOpaque = false
         border = null
+        // The IDE text-field UI adds margins even without a border.
+        putClientProperty("TextFieldWithoutMargins", true)
         font = UIUtil.getLabelFont()
         foreground = UIUtil.getLabelForeground()
         toolTipText = value

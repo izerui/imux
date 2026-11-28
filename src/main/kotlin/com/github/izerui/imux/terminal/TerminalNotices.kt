@@ -4,7 +4,7 @@ import java.util.EnumMap
 import javax.swing.Icon
 
 /** 顶部提示条的来源。每个来源同一时刻最多一条，同等严重程度时按这里的顺序排。 */
-enum class NoticeSource { PHONE, PAIR, TRAIL, TALK }
+enum class NoticeSource { PHONE, PAIR, TRAIL, TALK, PROGRESS }
 
 /** 严重程度：黄 > 蓝 > 绿，叠放时严重的在上。 */
 enum class NoticeTone(internal val rank: Int) { WARNING(3), INFO(2), SUCCESS(1) }
@@ -14,6 +14,9 @@ class NoticeAction(
     val text: String,
     val run: (anchor: javax.swing.JComponent) -> Unit,
 )
+
+/** null percent means the task is running without an estimate yet. */
+data class NoticeProgress(val percent: Int?)
 
 /**
  * 一条提示。[key] 标识它对应的状态：用户按 × 收起的是这个 key，
@@ -26,6 +29,7 @@ data class Notice(
     val icon: Icon? = null,
     val actions: List<NoticeAction> = emptyList(),
     val closable: Boolean = true,
+    val progress: NoticeProgress? = null,
 )
 
 /** 某个来源往顶部发提示的入口。只在 EDT 上调用。 */

@@ -14,6 +14,8 @@ data class PiSessionReport(
     val skillNames: List<String>? = null,
     val skillLocations: Map<String, String> = emptyMap(),
     val skillDescriptions: Map<String, String> = emptyMap(),
+    val sequence: Long? = null,
+    val timestampMillis: Long? = null,
 )
 
 enum class PiReportType(
@@ -22,6 +24,8 @@ enum class PiReportType(
     SESSION_START("session_start"),
     USER_MESSAGE("user_message"),
     AGENT_SETTLED("agent_settled"),
+    UI_PROMPT_START("ui_prompt_start"),
+    UI_PROMPT_END("ui_prompt_end"),
     ;
 
     companion object {
@@ -70,7 +74,7 @@ internal fun parsePiReport(body: String): PiSessionReport? {
             Unit
         }
 
-        PiReportType.USER_MESSAGE -> {
+        PiReportType.USER_MESSAGE, PiReportType.UI_PROMPT_START, PiReportType.UI_PROMPT_END -> {
             if (stopReason != null) return null
         }
 
@@ -83,6 +87,11 @@ internal fun parsePiReport(body: String): PiSessionReport? {
             }
         }
     }
+    fun positiveLong(key: String) = JsonLineScanner.topLevelStringValue(body, key)?.toLongOrNull()?.takeIf { it > 0 }
+    val sequence = positiveLong("sequence")
+    val timestamp = positiveLong("timestampMillis")
+    if (type in setOf(PiReportType.UI_PROMPT_START, PiReportType.UI_PROMPT_END) &&
+        (sequence == null || timestamp == null)) return null
     val failures = if (type == PiReportType.SESSION_START) {
         JsonLineScanner.topLevelStringValue(body, "failedMcpServers")?.split(',')?.filter(String::isNotEmpty)?.toSet()
     } else null
@@ -95,7 +104,7 @@ internal fun parsePiReport(body: String): PiSessionReport? {
         .filter { it.key in skills.orEmpty() && it.value.isJsonPrimitive && it.value.asJsonPrimitive.isString }
         .associate { it.key to it.value.asString }
     return PiSessionReport(type, tabId, sessionId, cwd, stopReason, messageId, failures, tools, percent, skills,
-        skillStrings("skillLocations"), skillStrings("skillDescriptions"))
+        skillStrings("skillLocations"), skillStrings("skillDescriptions"), sequence, timestamp)
 }
 
 private fun looksLikePiSessionId(value: String): Boolean = PI_SESSION_ID.matches(value)

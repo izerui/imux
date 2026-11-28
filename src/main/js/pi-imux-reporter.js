@@ -168,6 +168,7 @@ export default function (pi) {
     delete process.env.IMUX_TAB;
 
     const credentials = globalThis[stateKey];
+    const progressState = globalThis[Symbol.for("com.github.izerui.imux.pi-progress-events")] ??= { sequence: 0 };
 
     const report = (type, ctx, stopReason, messageId) => {
       if (!credentials?.url || !credentials?.token || !credentials?.tabId) return;
@@ -180,6 +181,8 @@ export default function (pi) {
           tabId: credentials.tabId,
           sessionId,
           cwd,
+          sequence: String(++progressState.sequence),
+          timestampMillis: String(Date.now()),
         };
         if (stopReason) body.stopReason = stopReason;
         if (messageId) body.messageId = messageId;
@@ -234,6 +237,14 @@ export default function (pi) {
       if (event?.message?.role !== "user") return;
       report("user_message", ctx);
     });
+
+    // Pi emits these around its outermost blocking UI prompt, including cancellation and errors.
+    try {
+      pi.on("ui_prompt_start", (_event, ctx) => report("ui_prompt_start", ctx));
+      pi.on("ui_prompt_end", (_event, ctx) => report("ui_prompt_end", ctx));
+    } catch {
+      // Older Pi versions may not expose prompt events; keep the existing lifecycle integration.
+    }
 
     // error / length 可能先触发 pi 的自动重试或自动压缩，不能在会话文件刚写下时
     // 就当作整轮结束。agent_settled 是 pi 明确提供给状态集成的最终信号：

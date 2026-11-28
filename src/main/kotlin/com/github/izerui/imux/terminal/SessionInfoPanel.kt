@@ -61,6 +61,10 @@ internal fun updateInfoTabContent(
     if (previous == page) return false
     // JBTabs owns this root. Replacing it can leave the previous component attached.
     val root = tab.component as JPanel
+    if (root is SessionRuntimeInfoPage) {
+        root.update(page.rows)
+        return true
+    }
     val replacement = create(page)
     val layout = replacement.layout as BorderLayout
     val children = replacement.components.map { it to layout.getConstraints(it) }
@@ -76,12 +80,7 @@ internal class SessionInfoPanel(
     project: Project, parent: Disposable,
     title: String, agent: String, icon: Icon, refresh: () -> Unit, close: () -> Unit,
 ) : JPanel(BorderLayout()) {
-    private val progressPanel = SessionProgressPanel()
     private val titleValue = bold(title)
-
-    fun updateProgress(snapshot: com.github.izerui.imux.progress.ProgressSnapshot) {
-        progressPanel.update(snapshot)
-    }
 
     fun updateTitle(value: String) {
         titleValue.text = value
@@ -237,10 +236,10 @@ internal class SessionInfoPanel(
     }
 
     private fun pageComponent(page: InfoPage): JPanel {
+        if (page.name == msg("session.info.runtime")) return SessionRuntimeInfoPage(page.rows)
         val rows = SessionInfoRows().apply { border = JBUI.Borders.empty(8, 0) }
         fun filter(query: String) {
             rows.removeAll()
-            if (page.name == msg("session.info.runtime")) rows.add(progressPanel)
             page.rows.filter {
                 listOf(
                     it.title,
@@ -250,29 +249,6 @@ internal class SessionInfoPanel(
                 ).any { value -> value.contains(query.trim(), true) }
             }
                 .forEach { row ->
-                    if (page.name == msg("session.info.runtime")) {
-                        rows.add(JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
-                            border = JBUI.Borders.compound(
-                                JBUI.Borders.customLineBottom(JBColor.border()),
-                                JBUI.Borders.empty(9, 0)
-                            )
-                            add(secondary(row.title), BorderLayout.WEST)
-                            add(javax.swing.JTextPane().apply {
-                                isEditable = false
-                                isOpaque = false
-                                border = null
-                                font = UIUtil.getLabelFont()
-                                text = row.detail
-                                val alignment = javax.swing.text.SimpleAttributeSet()
-                                javax.swing.text.StyleConstants.setAlignment(
-                                    alignment,
-                                    javax.swing.text.StyleConstants.ALIGN_RIGHT
-                                )
-                                setParagraphAttributes(alignment, false)
-                            })
-                        })
-                        return@forEach
-                    }
                     rows.add(JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
                         border = JBUI.Borders.compound(
                             JBUI.Borders.customLineBottom(JBColor.border()),

@@ -9,7 +9,6 @@ import com.github.izerui.imux.session.readSessionUsage
 import com.github.izerui.imux.session.projectGitBranch
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -19,17 +18,12 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.NumberFormat
 import java.nio.file.Path
 import javax.swing.JComponent
-import kotlin.time.Duration.Companion.seconds
-
-private val SESSION_INFO_REFRESH_INTERVAL = 1.seconds
 
 internal class SessionInfoTool(
     private val project: Project,
@@ -49,7 +43,6 @@ internal class SessionInfoTool(
         val snapshot = SessionInfoSnapshot()
         val coordinator = monitor.peerCoordinator
         val projectPath = project.basePath?.let { runCatching { Path.of(it) }.getOrNull() }
-        val watchedTranscript = java.util.concurrent.atomic.AtomicReference<Path?>()
         fun transcript(): Path? =
             monitor.model.sessionOf(key)?.takeIf { it.agentType == file.agentType }?.filePath
 
@@ -139,19 +132,23 @@ internal class SessionInfoTool(
         }
 
         fun refreshView() {
+            if (popup.isDisposed) return
+            if (file.sessionKey != key) {
+                popup.cancel(); return
+            }
             panel.updateTitle(file.tabTitle)
             render(snapshot.usage, snapshot.branch)
             if (snapshot.readFailed) panel.readFailed()
         }
 
-        fun reload(showReading: Boolean = false) {
+        fun reload() {
+            if (popup.isDisposed) return
             job?.cancel()
             if (file.sessionKey != key) {
                 popup.cancel(); return
             }
             val transcript = transcript()
-            watchedTranscript.set(transcript)
-            if (showReading) panel.reading()
+            panel.reading()
             job = file.terminalView.coroutineScope.launch(Dispatchers.IO) {
                 val branch = projectPath?.let(::projectGitBranch)
                 val usage = try {
@@ -181,7 +178,7 @@ internal class SessionInfoTool(
             file.tabTitle,
             "${file.agentType.displayName} · ${project.name}",
             AgentIcons.forAgent(file.agentType),
-            { reload(true) },
+            ::reload,
             { popup.cancel() })
         popup = JBPopupFactory.getInstance().createComponentPopupBuilder(panel, panel)
             .setRequestFocus(true).setResizable(true).createPopup()
@@ -194,49 +191,15 @@ internal class SessionInfoTool(
                     if (event.oldFile === file && event.newFile !== file) popup.cancel()
                 }
             })
-        val progress = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
-        fun updateProgress() {
-            if (!popup.isDisposed && file.sessionKey == key) panel.updateProgress(progress.snapshot(key))
+        host.addSessionKeyMigratedListener(contentLifetime) { oldKey, _ ->
+            if (oldKey == key) popup.cancel()
         }
-        watchedTranscript.set(transcript())
-        progress.listen(contentLifetime, ::updateProgress)
-        monitor.addListener(contentLifetime) {
-            val latest = transcript()
-            if (watchedTranscript.getAndSet(latest) != latest) reload()
-        }
-        coordinator.addStateListener(contentLifetime) { changedKey ->
-            if (changedKey == key) refreshView()
-        }
-        host.addSessionInfoChangedListener(contentLifetime) { changedFile ->
-            if (changedFile === file) refreshView()
-        }
-        ApplicationManager.getApplication().messageBus.connect(contentLifetime).subscribe(
-            SessionDecorationsListener.TOPIC,
-            SessionDecorationsListener { refreshView() },
-        )
         render(SessionUsage())
-        updateProgress()
         val strip = buttonStrip() ?: anchor
         val offset =
             java.awt.Point(strip.width - panel.preferredSize.width, strip.height + com.intellij.util.ui.JBUI.scale(4))
         popup.show(com.intellij.ui.awt.RelativePoint(strip, offset))
-        val autoRefreshJob = file.terminalView.coroutineScope.launch(Dispatchers.IO) {
-            var observed = sessionInfoFingerprint(watchedTranscript.get(), projectPath, file.agentType)
-            withContext(Dispatchers.EDT) {
-                if (!popup.isDisposed && file.sessionKey == key) reload()
-            }
-            while (isActive) {
-                delay(SESSION_INFO_REFRESH_INTERVAL)
-                val current = sessionInfoFingerprint(watchedTranscript.get(), projectPath, file.agentType)
-                if (current != observed) {
-                    observed = current
-                    withContext(Dispatchers.EDT) {
-                        if (!popup.isDisposed && file.sessionKey == key) reload()
-                    }
-                }
-            }
-        }
-        Disposer.register(popup, Disposable { autoRefreshJob.cancel() })
+        reload()
     }
 
     private fun msg(key: String) = ImuxBundle.message(key)

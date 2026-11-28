@@ -19,11 +19,25 @@ interface PeerToolsBackend {
     suspend fun disable(): PeerToolResult
     suspend fun reviewOnce(agent: String?, instruction: String?): PeerToolResult
     suspend fun progress(args: JsonObject): PeerToolResult = PeerToolResult(JsonObject(), failed = true)
+    suspend fun lifecycle(event: String, sessionId: String) = Unit
 }
 
 /** `imux_session` 服务：调用方终端自己这个会话的结对编程开关。 */
 class PeerMcpProtocol(private val backend: PeerToolsBackend, private val scope: CoroutineScope) {
-    fun receive(root: JsonObject): McpRpcReply = McpJsonRpc.receive(root, "imux_session", ::tools, call = ::call)
+    fun receive(root: JsonObject): McpRpcReply {
+        // Passive Claude HTTP hooks share the terminal credential, but are not model-facing tools.
+        if (root.has("hook_event_name")) {
+            val event = root.text("hook_event_name")
+            val sessionId = root.text("session_id")
+            return McpRpcReply(200, scope.async {
+                if (event in setOf("UserPromptSubmit", "Stop", "StopFailure") &&
+                    !sessionId.isNullOrBlank() && root.text("agent_id").isNullOrBlank()
+                ) backend.lifecycle(event!!, sessionId)
+                JsonObject()
+            })
+        }
+        return McpJsonRpc.receive(root, "imux_session", ::tools, call = ::call)
+    }
 
     private fun call(id: JsonElement, name: String, args: JsonObject): McpRpcReply {
         fun error(code: Int, text: String) = McpJsonRpc.reply(rpcError(id, code, text))

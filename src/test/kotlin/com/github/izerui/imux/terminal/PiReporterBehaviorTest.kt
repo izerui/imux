@@ -75,11 +75,49 @@ class PiReporterBehaviorTest {
     @Test
     fun `API 正常时注册会话切换与最终结束回调`() {
         assertEquals(
-            "ok:session_start,message_end,agent_settled",
+            "ok:session_start,message_end,ui_prompt_start,ui_prompt_end,agent_settled",
             runReporter(
                 piExpression = "({ on(name) { (globalThis.__registered ??= []).push(name); } })",
                 report = """"ok:" + (globalThis.__registered?.join(",") ?? "none")""",
             ),
+        )
+    }
+
+    @Test
+    fun `等待开始与结束从真实扩展回调上报且重载后序号延续`() {
+        assertEquals(
+            """[["ui_prompt_start","1","1000"],["ui_prompt_end","2","1000"],["ui_prompt_start","3","1000"]]""",
+            runReporter(
+                piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
+                beforeReport = """
+                    const reports = [];
+                    globalThis.fetch = (_, options) => {
+                      const body = JSON.parse(options.body);
+                      reports.push([body.type, body.sequence, body.timestampMillis]);
+                      return Promise.resolve({});
+                    };
+                    const ctx = {sessionManager: {getSessionId: () => "s", getCwd: () => "/work"}};
+                    __handlers.ui_prompt_start({kind: "confirm"}, ctx);
+                    __handlers.ui_prompt_end({kind: "confirm"}, ctx);
+                    reporter({on(name, handler) { __handlers[name] = handler; }});
+                    __handlers.ui_prompt_start({kind: "input"}, ctx);
+                """.trimIndent(),
+                report = "JSON.stringify(reports)",
+            )
+        )
+    }
+
+    @Test
+    fun `旧版不支持等待事件时仍注册原有结束回调`() {
+        assertEquals(
+            "session_start,message_end,agent_settled",
+            runReporter(
+                piExpression = """({ on(name) {
+                    if (name.startsWith("ui_prompt")) throw Error("unsupported");
+                    (globalThis.__registered ??= []).push(name);
+                } })""",
+                report = "globalThis.__registered.join(',')",
+            )
         )
     }
 
@@ -438,7 +476,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `用户消息提示不携带正文且不等待请求完成`() {
         assertEquals(
-            "returned|{\"type\":\"user_message\",\"tabId\":\"imux-tab\",\"sessionId\":\"s1\",\"cwd\":\"/tmp\"}",
+            "returned|{\"type\":\"user_message\",\"tabId\":\"imux-tab\",\"sessionId\":\"s1\",\"cwd\":\"/tmp\",\"sequence\":\"1\",\"timestampMillis\":\"1000\"}",
             runReporter(
                 piExpression = "({ on(name, handler) { (globalThis.__handlers ??= {})[name] = handler; } })",
                 beforeReport =
@@ -461,7 +499,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `上报官方会话 id 与 cwd 并清除子进程环境凭据`() {
         assertEquals(
-            """{"envCleared":true,"body":{"type":"session_start","tabId":"imux-tab","sessionId":"custom.id-1","cwd":"/Users/demo/project"}}""",
+            """{"envCleared":true,"body":{"type":"session_start","tabId":"imux-tab","sessionId":"custom.id-1","cwd":"/Users/demo/project","sequence":"1","timestampMillis":"1000"}}""",
             runReporter(
                 piExpression =
                     """
@@ -497,7 +535,7 @@ class PiReporterBehaviorTest {
     @Test
     fun `扩展重载后从 globalThis 恢复凭据并上报 settled`() {
         assertEquals(
-            """{"type":"agent_settled","tabId":"imux-tab","sessionId":"abc-1","cwd":"/tmp/project","stopReason":"error","messageId":"a1"}""",
+            """{"type":"agent_settled","tabId":"imux-tab","sessionId":"abc-1","cwd":"/tmp/project","sequence":"1","timestampMillis":"1000","stopReason":"error","messageId":"a1"}""",
             runReporter(
                 piExpression =
                     """
@@ -571,6 +609,7 @@ class PiReporterBehaviorTest {
         driver.writeText(
             """
             import reporter from "./reporter.mjs";
+            Date.now = () => 1000;
             reporter($piExpression);
             $beforeReport
             console.log($report);

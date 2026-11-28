@@ -21,6 +21,7 @@ data class TurnTransition(
     val from: TurnState,
     val to: TurnState,
     val event: TurnEvent,
+    val timestampMillis: Long? = null,
 )
 
 data class TurnParseResult(
@@ -56,7 +57,9 @@ object TurnSignalParser {
                 } else {
                     TurnEvent.NONE
                 }
-                transitions += TurnTransition(state, signal.state, event)
+                val timestamp = JsonLineScanner.topLevelStringValue(line, "timestamp")
+                    ?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+                transitions += TurnTransition(state, signal.state, event, timestamp)
             }
             state = signal.state
         }

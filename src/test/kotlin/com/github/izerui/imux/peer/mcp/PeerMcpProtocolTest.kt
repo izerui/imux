@@ -10,6 +10,7 @@ class PeerMcpProtocolTest {
     private class Backend : PeerToolsBackend {
         val calls = mutableListOf<String>()
         override suspend fun progress(args: JsonObject) = result("progress")
+        override suspend fun lifecycle(event: String, sessionId: String) { calls += "$event:$sessionId" }
         override suspend fun status() = result("status")
         override suspend fun enable(agent: String?) = result("enable:$agent")
         override suspend fun reviewOnce(agent: String?, instruction: String?) = result("review:$agent:$instruction")
@@ -19,6 +20,48 @@ class PeerMcpProtocolTest {
     private fun json(text: String) = JsonParser.parseString(text).asJsonObject
     private fun call(name: String, args: String = "{}") =
         json("""{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"$name","arguments":$args}}""")
+
+    @Test fun `主会话开始和结束的被动钩子不返回审批决定`() = runBlocking {
+        val backend = Backend()
+        val protocol = PeerMcpProtocol(backend, this)
+        for (event in listOf("UserPromptSubmit", "Stop", "StopFailure")) {
+            val reply = protocol.receive(json("""{"hook_event_name":"$event","session_id":"main"}"""))
+            assertEquals(0, reply.body!!.await().asJsonObject.size())
+            assertEquals("$event:main", backend.calls.last())
+        }
+        assertEquals(3, backend.calls.size)
+        protocol.receive(json("""{"hook_event_name":"Stop","session_id":"main","agent_id":"child"}""")).body!!.await()
+        assertEquals("子代理结束不能关闭主会话进度", 3, backend.calls.size)
+    }
+
+    @Test fun `进度钩子配置沿用会话凭证并保持短超时`() {
+        val hooks = json(progressHookSettings("http://127.0.0.1:123/imux/session-mcp")).getAsJsonObject("hooks")
+        assertEquals(setOf("UserPromptSubmit", "Stop", "StopFailure"), hooks.keySet())
+        for (event in hooks.keySet()) {
+            val hook = hooks.getAsJsonArray(event)[0].asJsonObject.getAsJsonArray("hooks")[0].asJsonObject
+            assertEquals("http", hook["type"].asString)
+            assertEquals("http://127.0.0.1:123/imux/session-mcp?progress-hook", hook["url"].asString)
+            assertEquals("Bearer \$IMUX_SESSION_TOKEN", hook.getAsJsonObject("headers")["Authorization"].asString)
+            assertEquals(1, hook["timeout"].asInt)
+        }
+    }
+
+    @Test fun `长正文钩子只保留生命周期元信息且仍隔离子代理`() = runBlocking {
+        val input = JsonObject().apply {
+            addProperty("last_assistant_message", "正文".repeat(100_000))
+            addProperty("hook_event_name", "Stop")
+            addProperty("session_id", "main")
+            addProperty("agent_id", "child")
+        }
+        val metadata = readProgressHook(input.toString().reader())
+        assertEquals(setOf("hook_event_name", "session_id", "agent_id"), metadata.keySet())
+        val backend = Backend()
+        PeerMcpProtocol(backend, this).receive(metadata).body!!.await()
+        assertTrue(backend.calls.isEmpty())
+        input.remove("agent_id")
+        PeerMcpProtocol(backend, this).receive(readProgressHook(input.toString().reader())).body!!.await()
+        assertEquals(listOf("Stop:main"), backend.calls)
+    }
 
     @Test fun `工具列表是会话工具包含单个进度入口且不暴露内部身份`() = runBlocking {
         val reply = PeerMcpProtocol(Backend(), this).receive(json("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")).body!!.await()

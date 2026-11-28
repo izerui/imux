@@ -23,7 +23,30 @@ class PeerLaunchContributor : NamedLaunchContributor {
             listOf(TerminalMcpServer("imux_session", url, "IMUX_SESSION_TOKEN")),
             mapOf("IMUX_SESSION_URL" to url, "IMUX_SESSION_TOKEN" to token),
             listOfNotNull(script),
+            claudeSettings = if (agentType == AgentType.CLAUDE) progressHookSettings(url) else null,
             guidance = setOf(com.github.izerui.imux.settings.GuidanceCapability.TURN_PROGRESS),
         ) { service.revoke(token) }
     }
+}
+
+internal fun progressHookSettings(url: String): String {
+    val hooks = com.google.gson.JsonObject()
+    for (event in listOf("UserPromptSubmit", "Stop", "StopFailure")) {
+        val hook = com.google.gson.JsonObject().apply {
+            addProperty("type", "http")
+            addProperty("url", "$url?progress-hook")
+            addProperty("timeout", 1)
+            add("headers", com.google.gson.JsonObject().apply {
+                addProperty("Authorization", "Bearer \$IMUX_SESSION_TOKEN")
+                addProperty("Accept", "application/json, text/event-stream")
+            })
+            add("allowedEnvVars", com.google.gson.JsonArray().apply { add("IMUX_SESSION_TOKEN") })
+        }
+        hooks.add(event, com.google.gson.JsonArray().apply {
+            add(com.google.gson.JsonObject().apply {
+                add("hooks", com.google.gson.JsonArray().apply { add(hook) })
+            })
+        })
+    }
+    return com.google.gson.JsonObject().apply { add("hooks", hooks) }.toString()
 }

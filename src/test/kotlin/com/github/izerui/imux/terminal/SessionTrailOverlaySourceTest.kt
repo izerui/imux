@@ -14,7 +14,7 @@ class SessionTrailOverlaySourceTest {
         assertTrue(editor.normalized.contains("setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)"))
         assertTrue("终端仍占满正文", editor.normalized.contains("terminal.setBounds(0, 0, width, height)"))
         assertTrue("面板让出提问导航横线列", editor.normalized.contains("val rightReserve = navigatorWidth + JBUI.scale(NAVIGATOR_RIGHT_INSET)"))
-        assertTrue(editor.normalized.contains("trailOverlay.layout(width, height, rightReserve, stripY + strip.height + progressHeight)"))
+        assertTrue(editor.normalized.contains("trailOverlay.layout(width, height, rightReserve, stripY + strip.height)"))
     }
 
     @Test

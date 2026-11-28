@@ -39,7 +39,7 @@ class TerminalBannerHostSourceTest {
         assertTrue(create.contains("val stripY = noticeHeight + margin"))
         assertTrue("图标组宽度受终端宽度约束，不能直接用 preferredSize", create.contains("val strip = toolStrip.fit(stripRoom)"))
         assertTrue(create.contains("val stripRoom = (width - rightReserve - margin * 2).coerceAtLeast(0)"))
-        assertTrue(create.contains("trailOverlay.layout(width, height, rightReserve, stripY + strip.height + progressHeight)"))
+        assertTrue(create.contains("trailOverlay.layout(width, height, rightReserve, stripY + strip.height)"))
     }
 
     @Test

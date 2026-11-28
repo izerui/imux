@@ -6,6 +6,18 @@ import org.junit.Test
 
 class PiSessionReportTest {
     @Test
+    fun `等待开始和结束携带顺序与时间并拒绝无序新协议`() {
+        fun body(type: String, extra: String) =
+            """{"type":"$type","tabId":"tab","sessionId":"s","cwd":"/work"$extra}"""
+        val metadata = ""","sequence":"2","timestampMillis":"1000""""
+        assertEquals(PiReportType.UI_PROMPT_START, parsePiReport(body("ui_prompt_start", metadata))?.type)
+        assertEquals(PiReportType.UI_PROMPT_END, parsePiReport(body("ui_prompt_end", metadata))?.type)
+        assertEquals(2L, parsePiReport(body("ui_prompt_end", metadata))?.sequence)
+        assertNull(parsePiReport(body("ui_prompt_start", "")))
+        assertNull(parsePiReport(body("ui_prompt_end", "")))
+    }
+
+    @Test
     fun `解析会话切换上报体`() {
         val body =
             """{"type":"session_start","tabId":"imux-1","sessionId":"team.custom_1","cwd":"/Users/demo/proj"}"""

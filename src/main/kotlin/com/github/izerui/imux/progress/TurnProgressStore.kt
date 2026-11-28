@@ -25,16 +25,36 @@ internal class TurnProgressStore : Disposable {
     fun observe(
         sessionId: String,
         active: Boolean,
-        waiting: Boolean,
+        waiting: Boolean?,
         endReason: ProgressEndReason? = null,
+        transitions: List<com.github.izerui.imux.turn.TurnTransition> = emptyList(),
+        sampledAt: Long = System.currentTimeMillis(),
     ) {
         val changed =
             synchronized(this) {
                 val record = entries.getOrPut(sessionId) { ProgressRecord() }
                 val before = record.snapshot()
-                record.observe(active, waiting, endReason)
+                record.observe(active, waiting, endReason, transitions, sampledAt)
                 before != record.snapshot()
             }
+        if (changed) publish()
+    }
+
+    fun start(sessionId: String, at: Long = System.currentTimeMillis(), sequence: Long? = null) =
+        update(sessionId) { if (it.acceptExternalSequence(sequence)) it.start(at) }
+
+    fun requestFinish(sessionId: String) = update(sessionId) { it.requestFinish() }
+
+    fun setWaiting(sessionId: String, waiting: Boolean, at: Long = System.currentTimeMillis(), sequence: Long? = null) =
+        update(sessionId) { if (it.acceptExternalSequence(sequence)) it.setWaiting(waiting, at) }
+
+    private fun update(sessionId: String, action: (ProgressRecord) -> Unit) {
+        val changed = synchronized(this) {
+            val record = entries.getOrPut(sessionId) { ProgressRecord() }
+            val before = record.snapshot()
+            action(record)
+            before != record.snapshot()
+        }
         if (changed) publish()
     }
 

@@ -43,10 +43,25 @@ internal interface NoticeView {
     fun setCloseAction(run: () -> Unit)
 }
 
+private class CompactNoticePanel(status: EditorNotificationPanel.Status) : EditorNotificationPanel(status) {
+    init {
+        border = JBUI.Borders.empty(2, 12)
+    }
+
+    override fun getPreferredSize(): java.awt.Dimension =
+        super.getPreferredSize().apply { height = maxOf(height, JBUI.scale(28)) }
+
+    fun updateText(value: String) {
+        if (text != value) text(value)
+        // The native copyable label owns the mouse events, not its outer panel.
+        myTextLabel.toolTipText = value
+    }
+}
+
 internal fun platformNoticeView(tone: NoticeTone): NoticeView =
     object : NoticeView {
         private val panel =
-            EditorNotificationPanel(
+            CompactNoticePanel(
                 when (tone) {
                     NoticeTone.WARNING -> EditorNotificationPanel.Status.Warning
                     NoticeTone.INFO -> EditorNotificationPanel.Status.Info
@@ -56,7 +71,7 @@ internal fun platformNoticeView(tone: NoticeTone): NoticeView =
         override val component: JComponent get() = panel
 
         override fun setText(text: String) {
-            if (panel.text != text) panel.text(text)
+            panel.updateText(text)
         }
 
         override fun setIcon(icon: Icon) {
@@ -184,8 +199,20 @@ internal class TerminalNoticeOverlay(
         private var actions = first.notice.actions
         private var remaining = 1f
         private var flash = first.flash
+        private val progressBar = first.notice.progress?.let { sessionProgressBar() }
+        private val percentLabel = progressBar?.let {
+            JBLabel("", javax.swing.SwingConstants.RIGHT).apply {
+                foreground = JBUI.CurrentTheme.Banner.FOREGROUND
+                border = JBUI.Borders.empty(0, 8, 0, 12)
+                preferredSize = java.awt.Dimension(
+                    getFontMetrics(font).stringWidth("100%") + insets.left + insets.right,
+                    preferredSize.height,
+                )
+                toolTipText = com.github.izerui.imux.ImuxBundle.message("progress.estimate")
+            }
+        }
         private val view =
-            viewFactory(first.notice.tone).apply {
+            viewFactory(if (progressBar != null) NoticeTone.SUCCESS else first.notice.tone).apply {
                 first.notice.actions.forEachIndexed { index, action ->
                     // 提示行会复用，点击时读取最新动作，避免保留更新前的会话身份。
                     addAction(action.text) { anchor -> actions[index].run(anchor) }
@@ -200,11 +227,19 @@ internal class TerminalNoticeOverlay(
 
         init {
             isOpaque = false
-            add(view.component, BorderLayout.CENTER)
+            if (progressBar == null) {
+                add(view.component, BorderLayout.CENTER)
+            } else {
+                view.component.isOpaque = false
+                progressBar.add(view.component, BorderLayout.CENTER)
+                progressBar.add(percentLabel, BorderLayout.EAST)
+                add(progressBar, BorderLayout.CENTER)
+            }
         }
 
         fun canShow(notice: ShownNotice): Boolean =
-            notice.id == id && notice.notice.actions.map { it.text } == actionTexts && notice.notice.closable == closable
+            notice.id == id && notice.notice.actions.map { it.text } == actionTexts && notice.notice.closable == closable &&
+                (notice.notice.progress != null) == (progressBar != null)
 
         fun update(notice: ShownNotice) {
             actions = notice.notice.actions
@@ -212,6 +247,12 @@ internal class TerminalNoticeOverlay(
             view.setIcon(notice.notice.icon ?: defaultIcon(notice.notice.tone))
             flash = notice.flash
             remaining = notice.remainingFraction
+            percentLabel?.text = notice.notice.progress?.percent?.let { "$it%" }.orEmpty()
+            progressBar?.apply {
+                isIndeterminate = notice.notice.progress?.percent == null
+                value = notice.notice.progress?.percent ?: 0
+                toolTipText = com.github.izerui.imux.ImuxBundle.message("progress.estimate")
+            }
         }
 
         override fun paintChildren(g: Graphics) {
