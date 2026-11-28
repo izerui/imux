@@ -265,18 +265,22 @@ class TerminalNoticeOverlayTest {
         javax.swing.SwingUtilities.invokeAndWait {
             val foreground = UIManager.get("Label.foreground")
             val bannerForeground = UIManager.get("Banner.foreground")
+            val panelBackground = UIManager.get("Panel.background")
+            val wasDark = !com.intellij.ui.JBColor.isBright()
             try {
                 for (dark in listOf(false, true)) {
                     com.intellij.ui.JBColor.setDark(dark)
                     val textColor = java.awt.Color(if (dark) 0xBBBBBB else 0x333333)
                     UIManager.put("Label.foreground", textColor)
                     UIManager.put("Banner.foreground", textColor)
+                    UIManager.put("Panel.background", java.awt.Color(if (dark) 0x2B2D30 else 0xF7F8FA))
                     renderNativePreview(if (dark) "dark" else "light")
                 }
             } finally {
-                com.intellij.ui.JBColor.setDark(true)
+                com.intellij.ui.JBColor.setDark(wasDark)
                 UIManager.put("Label.foreground", foreground)
                 UIManager.put("Banner.foreground", bannerForeground)
+                UIManager.put("Panel.background", panelBackground)
             }
         }
     }
@@ -299,6 +303,15 @@ class TerminalNoticeOverlayTest {
             image.createGraphics().let { g -> try { row.paint(g) } finally { g.dispose() } }
             org.junit.Assert.assertNotEquals("原生通知不能盖住底部进度线",
                 image.getRGB(2, row.height - 1), image.getRGB(width - 2, row.height - 1))
+            val expectedBlue = if (theme == "dark") 0x548AF7 else 0x3574F0
+            val expectedBackground = if (theme == "dark") 0x2B2D30 else 0xF7F8FA
+            val progressEnd = (width * 0.65).toInt()
+            assertEquals("完整提示条中的蓝线颜色", expectedBlue,
+                image.getRGB(progressEnd - 1, row.height - 1) and 0xFFFFFF)
+            assertEquals("65%之后不画进度线", expectedBackground,
+                image.getRGB(progressEnd, row.height - 1) and 0xFFFFFF)
+            assertEquals("蓝线不覆盖文字背景", expectedBackground,
+                image.getRGB(2, row.height - com.intellij.util.ui.JBUI.scale(2) - 1) and 0xFFFFFF)
             assertEquals("文字区域保持统一背景",
                 image.getRGB(2, row.height / 2), image.getRGB(width - 2, row.height / 2))
             val bar = row.components.filterIsInstance<javax.swing.JProgressBar>().single()
