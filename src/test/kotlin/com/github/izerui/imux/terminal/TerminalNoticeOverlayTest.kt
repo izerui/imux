@@ -333,6 +333,40 @@ class TerminalNoticeOverlayTest {
     }
 
     @Test
+    fun `搜索期间更新的进度恢复为最新值，已结束的进度不再显示`() {
+        javax.swing.SwingUtilities.invokeAndWait {
+            val terminal = javax.swing.JPanel()
+            val search = javax.swing.JPanel()
+            val layer = TerminalOverlayPane(terminal, parent) { it === search }
+            val overlay = TerminalNoticeOverlay(parent, {})
+            layer.add(overlay.component)
+            overlay.start()
+            val sink = overlay.sink(NoticeSource.PROGRESS)
+            sink.persistent(sessionProgressNotice("session",
+                com.github.izerui.imux.progress.ProgressSnapshot(active = true)))
+
+            terminal.add(search)
+            org.junit.Assert.assertFalse(layer.isVisible)
+            sink.persistent(sessionProgressNotice("session",
+                com.github.izerui.imux.progress.ProgressSnapshot(active = true,
+                    progress = com.github.izerui.imux.progress.TurnProgress(65, "核对结果"))))
+            org.junit.Assert.assertFalse("状态更新不能越过搜索浮层开关", layer.isVisible)
+            terminal.remove(search)
+            assertTrue(layer.isVisible)
+            assertTrue(overlay.component.isVisible)
+            val row = overlay.component.getComponent(0) as javax.swing.JPanel
+            assertEquals(65, row.components.filterIsInstance<javax.swing.JProgressBar>().single().value)
+
+            terminal.add(search)
+            sink.persistent(null)
+            terminal.remove(search)
+            assertTrue(layer.isVisible)
+            org.junit.Assert.assertFalse("搜索结束不能复活已结束的进度", overlay.component.isVisible)
+            assertEquals(0, overlay.component.componentCount)
+        }
+    }
+
+    @Test
     fun `轨迹已失败时打开终端不会在初始化途中回调编辑器`() {
         val editor = FakeEditor(parent) { true }
         assertEquals("start 之后才画出失败提示并回调一次", 1, editor.refreshCount)

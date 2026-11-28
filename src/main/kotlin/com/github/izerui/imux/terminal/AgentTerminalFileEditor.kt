@@ -382,26 +382,30 @@ class AgentTerminalFileEditor(
         startScrollTracking()
         startInputTracking()
 
+        val overlays = TerminalOverlayPane(terminal, this).apply {
+            add(scrollButton)
+            setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
+            add(navigatorComponent)
+            setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
+            // 悬停卡片压在图标组与轨迹面板之上，位置由导航器自己摆
+            add(navigatorPreview)
+            setLayer(navigatorPreview, JLayeredPane.POPUP_LAYER)
+            add(trailOverlay.card)
+            setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
+            add(toolStrip.component)
+            setLayer(toolStrip.component, JLayeredPane.PALETTE_LAYER)
+            // 提示条压在提问导航横线之上
+            add(notices)
+            setLayer(notices, JLayeredPane.PALETTE_LAYER + 1)
+        }
         val terminalLayer =
             object : JBLayeredPane(), UiDataProvider {
                 init {
                     isOpaque = false
                     add(terminal)
                     setLayer(terminal, JLayeredPane.DEFAULT_LAYER)
-                    add(scrollButton)
-                    setLayer(scrollButton, JLayeredPane.PALETTE_LAYER)
-                    add(navigatorComponent)
-                    setLayer(navigatorComponent, JLayeredPane.PALETTE_LAYER)
-                    // 悬停卡片压在图标组与轨迹面板之上，位置由导航器自己摆
-                    add(navigatorPreview)
-                    setLayer(navigatorPreview, JLayeredPane.POPUP_LAYER)
-                    add(trailOverlay.card)
-                    setLayer(trailOverlay.card, JLayeredPane.PALETTE_LAYER)
-                    add(toolStrip.component)
-                    setLayer(toolStrip.component, JLayeredPane.PALETTE_LAYER)
-                    // 提示条压在提问导航横线之上
-                    add(notices)
-                    setLayer(notices, JLayeredPane.PALETTE_LAYER + 1)
+                    add(overlays)
+                    setLayer(overlays, JLayeredPane.PALETTE_LAYER)
                 }
 
                 override fun uiDataSnapshot(sink: DataSink) {
@@ -416,6 +420,7 @@ class AgentTerminalFileEditor(
 
                 override fun doLayout() {
                     terminal.setBounds(0, 0, width, height)
+                    overlays.setBounds(0, 0, width, height)
 
                     val horizontalInset = JBUI.scale(SCROLL_ROW_HORIZONTAL_INSET)
                     val minimumButtonSize = ActionToolbar.DEFAULT_MINIMUM_BUTTON_SIZE

@@ -43,6 +43,15 @@ class TerminalBannerHostSourceTest {
     }
 
     @Test
+    fun `浮层容器观察当前终端并绑定编辑器生命周期`() {
+        val create = editor.bodyAfter("private fun createEditorComponent()", '{')
+        assertTrue(create.contains("val overlays = TerminalOverlayPane(terminal, this)"))
+        assertTrue(create.contains("add(overlays)"))
+        assertTrue(create.contains("overlays.setBounds(0, 0, width, height)"))
+        assertFalse("布局不能覆盖拖选等独立显隐状态", create.contains("toolStrip.component.isVisible ="))
+    }
+
+    @Test
     fun `拖选终端文字时藏起图标组，松开后恢复，监听随编辑器切换摘除`() {
         val drag = editor.bodyAfter("object : EditorMouseMotionListener", '{')
         assertTrue(drag.contains("toolStrip?.component?.isVisible = false"))
