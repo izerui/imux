@@ -59,8 +59,16 @@ internal fun updateInfoTabContent(
     create: (InfoPage) -> JPanel,
 ): Boolean {
     if (previous == page) return false
-    // The JComponent setter does not notify JBTabs; the Component overload does.
-    tab.setComponent(create(page) as java.awt.Component)
+    // JBTabs owns this root. Replacing it can leave the previous component attached.
+    val root = tab.component as JPanel
+    val replacement = create(page)
+    val layout = replacement.layout as BorderLayout
+    val children = replacement.components.map { it to layout.getConstraints(it) }
+    root.removeAll()
+    root.layout = BorderLayout(layout.hgap, layout.vgap)
+    children.forEach { (child, constraint) -> root.add(child, constraint) }
+    root.revalidate()
+    root.repaint()
     return true
 }
 

@@ -126,6 +126,8 @@ generate_change_notes() {
   echo "▶ 正在让 pi 根据最近一次发布以来的 Git 变化生成 ${version} 修改日志…"
   if ! generated=$(
     PI_SKIP_VERSION_CHECK=1 pi \
+      --provider openai \
+      --model gpt-6-astra \
       --print \
       --no-session \
       --no-tools \
@@ -134,7 +136,7 @@ generate_change_notes() {
       --no-prompt-templates \
       --no-context-files \
       --no-approve \
-      --thinking off \
+      --thinking low \
       --system-prompt \
       "你是 IntelliJ 插件发布编辑。根据输入的 Git 提交和实际差异，生成面向插件用户的简体中文修改日志。合并重复变化，说明用户得到的能力或修复；忽略纯测试、计划文档、格式化和内部重构，除非它们改变用户行为。不得臆造。只输出 1 到 8 行，每行严格使用 '- ' 开头；不要标题、序号、代码块、HTML 或解释。" \
       < "$context_file"

@@ -92,6 +92,15 @@ class DevScriptTest {
     }
 
     @Test
+    fun `修改日志使用 Astra 支持的低思考级别`() {
+        val script = SourceCode("dev.sh").normalized
+        assertTrue(script.contains("--provider openai"))
+        assertTrue(script.contains("--model gpt-6-astra"))
+        assertTrue(script.contains("--thinking low"))
+        assertFalse(script.contains("--thinking off"))
+    }
+
+    @Test
     fun `修改日志注入 Gradle 并从 ZIP 复核`() {
         val script = SourceCode("dev.sh").normalized
         val build = SourceCode("build.gradle.kts").normalized

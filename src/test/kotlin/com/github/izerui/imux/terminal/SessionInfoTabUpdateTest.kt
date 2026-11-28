@@ -26,7 +26,7 @@ class SessionInfoTabUpdateTest {
             next.forEachIndexed { index, page ->
                 updateInfoTabContent(tabs[index], pages[index], page) {
                     rebuilt += it.name
-                    JPanel()
+                    JPanel(java.awt.BorderLayout())
                 }
             }
             assertEquals(listOf("runtime"), rebuilt)
@@ -39,17 +39,28 @@ class SessionInfoTabUpdateTest {
     }
 
     @Test
-    fun `更新页签内容时通知平台显示新组件`() {
+    fun `刷新保留平台持有的根容器并移除旧内容`() {
         SwingUtilities.invokeAndWait {
             val previous = InfoPage("runtime", listOf(InfoRow("tokens", "100")))
             val next = previous.copy(rows = listOf(InfoRow("tokens", "200")))
-            val tab = TabInfo(JPanel())
-            val replacement = JPanel()
-            var notifications = 0
-            tab.changeSupport.addPropertyChangeListener("component") { notifications++ }
+            val oldText = JTextArea("100")
+            val root = JPanel(java.awt.BorderLayout()).apply { add(oldText) }
+            val host = JPanel().apply { add(root) }
+            val tab = TabInfo(root)
+            val newText = JTextArea("200")
+            val search = JTextArea("search")
+            val replacement = JPanel(java.awt.BorderLayout()).apply {
+                add(search, java.awt.BorderLayout.NORTH)
+                add(newText, java.awt.BorderLayout.CENTER)
+            }
             assertTrue(updateInfoTabContent(tab, previous, next) { replacement })
-            assertSame(replacement, tab.component)
-            assertEquals(1, notifications)
+            assertSame(root, tab.component)
+            assertSame(host, root.parent)
+            assertEquals(1, host.componentCount)
+            assertNull(oldText.parent)
+            assertSame(root, newText.parent)
+            assertSame(root, search.parent)
+            assertEquals(java.awt.BorderLayout.NORTH, (root.layout as java.awt.BorderLayout).getConstraints(search))
         }
     }
 }

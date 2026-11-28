@@ -5,7 +5,6 @@ import com.github.izerui.imux.progress.ProgressSnapshot
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import javax.swing.JPanel
-import javax.swing.JProgressBar
 import javax.swing.JTextArea
 
 internal fun progressSummary(snapshot: ProgressSnapshot): String {
@@ -24,7 +23,7 @@ internal fun progressSummary(snapshot: ProgressSnapshot): String {
 internal class SessionProgressPanel : JPanel(BorderLayout(JBUI.scale(6), JBUI.scale(6))) {
     private var snapshot = ProgressSnapshot()
     private val summary = SelectableInfoText()
-    private val bar = JProgressBar(0, 100)
+    private val bar = sessionProgressBar()
     private val steps = JTextArea().apply {
         isEditable = false
         isOpaque = false

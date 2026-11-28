@@ -365,7 +365,7 @@ class AgentTerminalFileEditor(
         }, shown = { missing().isNotEmpty() })
         val infoTool = SessionInfoTool(project, virtualFile, this) { toolStrip?.component }
         val progressStore = com.github.izerui.imux.progress.TurnProgressStore.getInstance(project)
-        val progressBar = javax.swing.JProgressBar(0, 100).apply {
+        val progressBar = sessionProgressBar().apply {
             isVisible = false
             addMouseListener(object : java.awt.event.MouseAdapter() {
                 override fun mouseClicked(e: java.awt.event.MouseEvent) {
