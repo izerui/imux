@@ -8,6 +8,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.tabs.JBTabsFactory
@@ -27,6 +28,14 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.event.DocumentEvent
 
+private const val CONTENT_INSET = 20
+
+private data class SearchFocusState(
+    val page: String,
+    val selectionStart: Int,
+    val selectionEnd: Int,
+)
+
 internal data class InfoRow(
     val title: String,
     val detail: String = "",
@@ -43,25 +52,46 @@ internal data class InfoPage(
     val emptyKey: String = "session.info.noData"
 )
 
+internal fun updateInfoTabContent(
+    tab: TabInfo,
+    previous: InfoPage?,
+    page: InfoPage,
+    create: (InfoPage) -> JPanel,
+): Boolean {
+    if (previous == page) return false
+    // The JComponent setter does not notify JBTabs; the Component overload does.
+    tab.setComponent(create(page) as java.awt.Component)
+    return true
+}
+
 internal class SessionInfoPanel(
     project: Project, parent: Disposable,
     title: String, agent: String, icon: Icon, refresh: () -> Unit, close: () -> Unit,
 ) : JPanel(BorderLayout()) {
     private val progressPanel = SessionProgressPanel()
+    private val titleValue = bold(title)
+
     fun updateProgress(snapshot: com.github.izerui.imux.progress.ProgressSnapshot) {
         progressPanel.update(snapshot)
     }
 
-    private val tokenValue = JBLabel()
-    private val contextValue = JBLabel()
+    fun updateTitle(value: String) {
+        titleValue.text = value
+        titleValue.toolTipText = value
+    }
+
+    private val tokenValue = SelectableInfoText()
+    private val contextValue = SelectableInfoText()
     private val tabs = JBTabsFactory.createEditorTabs(project, parent).apply {
         presentation.setTabDraggingEnabled(false)
-        presentation.setFirstTabOffset(JBUI.scale(14))
+        presentation.setFirstTabOffset(0)
     }
     private val time = secondary("")
     private val filters = mutableMapOf<String, String>()
-    private val expanded = mutableSetOf<Pair<String, String>>()
+    private val searchFields = mutableMapOf<String, SearchTextField>()
     private val readStatus = secondary("")
+    private var displayedSections: List<InfoPage>? = null
+    private var displayRevision = 0L
 
     fun reading() {
         readStatus.text = msg("session.info.reading")
@@ -92,18 +122,21 @@ internal class SessionInfoPanel(
             add(InplaceButton(IconButton(msg("action.peer.close"), AllIcons.Actions.Close), { close() }))
         }
         header.add(JPanel(BorderLayout(JBUI.scale(9), 0)).apply {
-            border = JBUI.Borders.empty(16, 20)
+            border = JBUI.Borders.empty(16, CONTENT_INSET)
             background = UIUtil.getPanelBackground()
             commands.isOpaque = false
             add(JBLabel(icon), BorderLayout.WEST)
-            add(JPanel(VerticalLayout(1)).apply { isOpaque = false; add(bold(title)); add(secondary(agent)) })
+            add(JPanel(VerticalLayout(1)).apply { isOpaque = false; add(titleValue); add(secondary(agent)) })
             add(commands, BorderLayout.EAST)
         })
         header.add(JPanel(java.awt.GridLayout(1, 2, JBUI.scale(14), 0)).apply {
             background = UIUtil.getListBackground()
-            border =
-                JBUI.Borders.compound(JBUI.Borders.customLine(JBColor.border(), 1, 0, 1, 0), JBUI.Borders.empty(9, 20))
-            fun metric(key: String, value: JBLabel) = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.empty(0, CONTENT_INSET),
+                JBUI.Borders.customLine(JBColor.border(), 1, 0, 1, 0),
+                JBUI.Borders.empty(9, 0),
+            )
+            fun metric(key: String, value: SelectableInfoText) = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
                 isOpaque = false
                 add(secondary(msg(key)), BorderLayout.WEST)
                 value.horizontalAlignment = javax.swing.SwingConstants.RIGHT
@@ -114,40 +147,76 @@ internal class SessionInfoPanel(
             add(metric("session.info.context", contextValue))
         })
         add(header, BorderLayout.NORTH)
-        add(tabs.component)
         add(JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.compound(JBUI.Borders.customLineTop(JBColor.border()), JBUI.Borders.empty(7, 16))
+            border = JBUI.Borders.empty(0, CONTENT_INSET)
+            add(tabs.component)
+        })
+        add(JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.empty(0, CONTENT_INSET),
+                JBUI.Borders.customLineTop(JBColor.border()),
+                JBUI.Borders.empty(7, 0),
+            )
             add(readStatus, BorderLayout.CENTER)
             add(time, BorderLayout.EAST)
         }, BorderLayout.SOUTH)
     }
 
     fun display(tokens: String, context: String, sections: List<InfoPage>) {
-        val selected = tabs.selectedInfo?.`object`
-        val offsets = tabs.tabs.associate { tab ->
-            tab.`object` to (tab.component as? JPanel)?.components?.filterIsInstance<JBScrollPane>()
-                ?.firstOrNull()?.verticalScrollBar?.value
-        }
         tokenValue.text = tokens
         tokenValue.toolTipText = tokens
         contextValue.toolTipText = context
         contextValue.text = context
-        tabs.removeAllTabs()
-        sections.forEach { page ->
+        readStatus.text = ""
+        time.text = msg("session.info.updated") + " " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        if (displayedSections == sections) return
+        val previousPages = displayedSections.orEmpty().associateBy { it.name }
+        displayedSections = sections
+        val revision = ++displayRevision
+        val selected = tabs.selectedInfo?.`object`
+        val focusedSearch = focusedSearchState()
+        val offsets = tabs.tabs.associate { tab ->
+            tab.`object` to (tab.component as? JPanel)?.components?.filterIsInstance<JBScrollPane>()
+                ?.firstOrNull()?.verticalScrollBar?.value
+        }
+        val existingTabs = tabs.tabs.associateBy { it.`object` }
+        val pageNames = sections.map { it.name }.toSet()
+        existingTabs.filterKeys { it !in pageNames }.forEach { (name, tab) ->
+            tabs.removeTab(tab)
+            searchFields.remove(name)
+        }
+        val pendingOffsets = mutableListOf<Pair<JPanel, Int>>()
+        val changedPages = mutableSetOf<String>()
+        sections.forEachIndexed { index, page ->
+            val existing = existingTabs[page.name]
+            if (existing != null && previousPages[page.name] == page) return@forEachIndexed
+            changedPages += page.name
+            searchFields.remove(page.name)
             val countHint = if (page.reported) "${page.name} · ${page.rows.size}" else page.name
-            val content = pageComponent(page)
-            val tab = TabInfo(content).setText(page.name).setTooltipText(countHint).setObject(page.name)
-            tabs.addTab(tab)
+            val tab = if (existing == null) {
+                TabInfo(pageComponent(page)).setText(page.name).setObject(page.name).also {
+                    tabs.addTab(it, index)
+                }
+            } else {
+                updateInfoTabContent(existing, previousPages[page.name], page, ::pageComponent)
+                existing
+            }
+            tab.setTooltipText(countHint)
+            val content = tab.component as JPanel
             markTab(tab, tabs.selectedInfo === tab)
             if (page.name == selected) tabs.select(tab, false)
             offsets[page.name]?.let { offset ->
-                javax.swing.SwingUtilities.invokeLater {
-                    content.components.filterIsInstance<JBScrollPane>().firstOrNull()?.verticalScrollBar?.value = offset
-                }
+                pendingOffsets += content to offset
             }
         }
-        readStatus.text = ""
-        time.text = msg("session.info.updated") + " " + LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        javax.swing.SwingUtilities.invokeLater {
+            if (revision != displayRevision) return@invokeLater
+            pendingOffsets.forEach { (content, offset) ->
+                val scroll = content.components.filterIsInstance<JBScrollPane>().firstOrNull() ?: return@forEach
+                if (scroll.verticalScrollBar.value == 0) scroll.verticalScrollBar.value = offset
+            }
+            if (focusedSearch?.page in changedPages) restoreSearchState(focusedSearch)
+        }
     }
 
     private fun markTab(tab: TabInfo?, selected: Boolean) {
@@ -160,7 +229,7 @@ internal class SessionInfoPanel(
     }
 
     private fun pageComponent(page: InfoPage): JPanel {
-        val rows = JPanel(VerticalLayout(0)).apply { border = JBUI.Borders.empty(8, 20) }
+        val rows = JPanel(VerticalLayout(0)).apply { border = JBUI.Borders.empty(8, 0) }
         fun filter(query: String) {
             rows.removeAll()
             if (page.name == msg("session.info.runtime")) rows.add(progressPanel)
@@ -201,80 +270,48 @@ internal class SessionInfoPanel(
                             JBUI.Borders.customLineBottom(JBColor.border()),
                             JBUI.Borders.empty(10, 0)
                         )
-                        val nameLine = JPanel(BorderLayout()).apply { isOpaque = false; add(bold(row.title)) }
-                        add(JPanel(BorderLayout(0, JBUI.scale(3))).apply {
+                        val content = JPanel(BorderLayout(0, JBUI.scale(5))).apply {
+                            isOpaque = false
+                        }
+                        val nameLine = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+                            isOpaque = false
+                            add(bold(row.title))
+                            if (row.status.isNotEmpty()) add(JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+                                isOpaque = false
+                                add(JBLabel(if (row.failed) AllIcons.General.Warning else AllIcons.General.GearPlain), BorderLayout.WEST)
+                                add(secondary(row.status))
+                            }, BorderLayout.EAST)
+                        }
+                        val heading = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
                             isOpaque = false
                             add(nameLine, BorderLayout.NORTH)
-                            if (row.detail.isNotEmpty()) add(javax.swing.JTextArea(row.detail).apply {
+                            row.location?.takeIf { it.isNotBlank() }?.let { path ->
+                                add(JBTextArea(path).apply {
+                                    isEditable = false
+                                    lineWrap = true
+                                    wrapStyleWord = false
+                                    isOpaque = false
+                                    border = null
+                                    font = UIUtil.getLabelFont().deriveFont(UIUtil.getLabelFont().size2D * 0.9f)
+                                    foreground = UIUtil.getContextHelpForeground()
+                                    toolTipText = path
+                                }, BorderLayout.CENTER)
+                            }
+                        }
+                        content.add(heading, BorderLayout.NORTH)
+                        if (row.detail.isNotEmpty()) {
+                            content.add(JBTextArea(row.detail).apply {
                                 isEditable = false
-                                isFocusable = false
+                                isFocusable = true
                                 lineWrap = true
                                 wrapStyleWord = true
                                 isOpaque = false
                                 border = null
                                 font = UIUtil.getLabelFont()
                                 foreground = UIUtil.getContextHelpForeground()
-                            })
-                            if (row.status.isNotEmpty()) nameLine.add(secondary(row.status).apply {
-                                icon = if (row.failed) AllIcons.General.Warning else AllIcons.General.GearPlain
-                            }, BorderLayout.EAST)
-                        })
-                        row.location?.let { path ->
-                            val entry = page.name to path
-                            val detail = javax.swing.JTextArea(path).apply {
-                                isEditable = false
-                                lineWrap = true
-                                wrapStyleWord = false
-                                background = UIUtil.getPanelBackground()
-                                border = JBUI.Borders.empty(12, 20, 0, 20)
-                                font = Font(Font.MONOSPACED, Font.PLAIN, UIUtil.getLabelFont().size)
-                                isVisible = entry in expanded
-                            }
-                            add(detail, BorderLayout.SOUTH)
-                            val expand = javax.swing.JToggleButton(AllIcons.General.ArrowRight).apply {
-                                toolTipText = path
-                                accessibleContext.accessibleName = row.title
-                                border = JBUI.Borders.emptyRight(3)
-                                margin = JBUI.emptyInsets()
-                                isContentAreaFilled = false
-                                isBorderPainted = false
-                                selectedIcon = AllIcons.General.ArrowDown
-                                isSelected = detail.isVisible
-                                addActionListener {
-                                    if (isSelected) expanded.add(entry) else expanded.remove(entry)
-                                    detail.isVisible = isSelected
-                                    rows.revalidate()
-                                    rows.repaint()
-                                }
-                            }
-                            nameLine.add(expand, BorderLayout.WEST)
-                            val toggle = object : java.awt.event.MouseAdapter() {
-                                override fun mouseClicked(e: java.awt.event.MouseEvent) {
-                                    if (javax.swing.SwingUtilities.isLeftMouseButton(e) && e.clickCount == 1) expand.doClick()
-                                }
-                            }
-
-                            // Summary and arrow are one disclosure target, as in the prototype.
-                            fun bind(component: java.awt.Component) {
-                                if (component === expand || component === detail) return
-                                component.cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-                                component.addMouseListener(toggle)
-                                if (component is java.awt.Container) component.components.forEach(::bind)
-                            }
-                            bind(this)
-                            val line = this
-                            val normal = background
-                            object : com.intellij.ui.hover.HoverListener() {
-                                override fun mouseEntered(component: java.awt.Component, x: Int, y: Int) {
-                                    line.background = JBUI.CurrentTheme.ActionButton.hoverBackground()
-                                }
-
-                                override fun mouseMoved(component: java.awt.Component, x: Int, y: Int) = Unit
-                                override fun mouseExited(component: java.awt.Component) {
-                                    line.background = normal
-                                }
-                            }.addTo(line)
+                            }, BorderLayout.CENTER)
                         }
+                        add(content)
                     })
                 }
             if (rows.componentCount == 0) rows.add(secondary(msg(if (query.isEmpty()) page.emptyKey else "session.info.noMatches")).apply {
@@ -288,7 +325,7 @@ internal class SessionInfoPanel(
         filter(query)
         return JPanel(BorderLayout()).apply {
             if (page.searchable) add(SearchTextField(false).apply {
-                border = JBUI.Borders.empty(12, 20, 0, 20)
+                border = JBUI.Borders.empty(12, 0, 0, 0)
                 textEditor.emptyText.text = msg("session.info.search")
                 text = query
                 addDocumentListener(object : DocumentAdapter() {
@@ -297,13 +334,27 @@ internal class SessionInfoPanel(
                         filter(text)
                     }
                 })
+                searchFields[page.name] = this
             }, BorderLayout.NORTH)
             add(JBScrollPane(rows).apply { border = JBUI.Borders.empty() })
         }
     }
 
+    private fun focusedSearchState(): SearchFocusState? {
+        val (page, field) = searchFields.entries.firstOrNull { it.value.textEditor.isFocusOwner } ?: return null
+        return SearchFocusState(page, field.textEditor.selectionStart, field.textEditor.selectionEnd)
+    }
+
+    private fun restoreSearchState(state: SearchFocusState?) {
+        val field = state?.let { searchFields[it.page] } ?: return
+        val editor = field.textEditor
+        val length = editor.document.length
+        editor.select(state.selectionStart.coerceAtMost(length), state.selectionEnd.coerceAtMost(length))
+        editor.requestFocusInWindow()
+    }
+
     private fun plain(value: String) =
-        JBLabel().apply { putClientProperty("html.disable", true); text = value; toolTipText = value }
+        SelectableInfoText(value)
 
     private fun bold(value: String) = plain(value).apply { font = font.deriveFont(Font.BOLD) }
     private fun secondary(value: String) = plain(value).apply { foreground = UIUtil.getContextHelpForeground() }

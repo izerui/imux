@@ -4,6 +4,8 @@ import com.github.izerui.imux.model.AgentType
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.terminal.frontend.view.TerminalView
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Proxy
 
@@ -46,8 +48,63 @@ class AgentTerminalVirtualFileTest {
         org.junit.Assert.assertNull(file.piCapabilitiesFor("old"))
     }
 
+    @Test
+    fun `Pi 上下文变化时报告需要刷新，事件字段变化不刷新`() {
+        val file = AgentTerminalVirtualFile("Pi", terminalView(), "session", AgentType.PI, "tab")
+        val report = com.github.izerui.imux.session.PiSessionReport(
+            com.github.izerui.imux.session.PiReportType.SESSION_START,
+            "tab",
+            "session",
+            "/work",
+            activeTools = listOf("read"),
+            skillNames = listOf("review"),
+        )
+
+        assertTrue(file.recordPiCapabilities(report))
+        assertFalse(file.recordPiCapabilities(report))
+        val withContext = report.copy(contextPercent = 42)
+        assertTrue(file.recordPiCapabilities(withContext))
+        assertFalse(
+            file.recordPiCapabilities(
+                withContext.copy(
+                    type = com.github.izerui.imux.session.PiReportType.AGENT_SETTLED,
+                    stopReason = com.github.izerui.imux.session.PiStopReason.ERROR,
+                    messageId = "message",
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `Pi 工具技能位置和说明变化分别报告需要刷新`() {
+        val file = AgentTerminalVirtualFile("Pi", terminalView(), "session", AgentType.PI, "tab")
+        val report = com.github.izerui.imux.session.PiSessionReport(
+            com.github.izerui.imux.session.PiReportType.SESSION_START,
+            "tab",
+            "session",
+            "/work",
+            activeTools = listOf("read"),
+            skillNames = listOf("review"),
+            skillLocations = mapOf("review" to "/skills/review/SKILL.md"),
+            skillDescriptions = mapOf("review" to "Review changes"),
+        )
+        var current = report
+        assertTrue(file.recordPiCapabilities(current))
+        current = current.copy(activeTools = listOf("read", "write"))
+        assertTrue(file.recordPiCapabilities(current))
+        current = current.copy(skillNames = listOf("review", "test"))
+        assertTrue(file.recordPiCapabilities(current))
+        current = current.copy(skillLocations = mapOf("review" to "/new/SKILL.md"))
+        assertTrue(file.recordPiCapabilities(current))
+        current = current.copy(skillDescriptions = mapOf("review" to "New description"))
+        assertTrue(file.recordPiCapabilities(current))
+    }
+
     private fun terminalView(): TerminalView =
-        Proxy.newProxyInstance(TerminalView::class.java.classLoader, arrayOf(TerminalView::class.java)) { _, method, _ ->
+        Proxy.newProxyInstance(
+            TerminalView::class.java.classLoader,
+            arrayOf(TerminalView::class.java)
+        ) { _, method, _ ->
             when (method.name) {
                 "toString" -> "test TerminalView"
                 "hashCode" -> 0

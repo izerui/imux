@@ -460,7 +460,7 @@ class AgentTerminalFileEditor(
                         strip.width,
                         strip.height,
                     )
-                    val progressHeight = if (progressBar.isVisible) JBUI.scale(3) else 0
+                    val progressHeight = if (progressBar.isVisible) JBUI.scale(2) else 0
                     progressBar.setBounds(toolStrip.component.x, stripY + strip.height, strip.width, progressHeight)
                     trailOverlay.layout(width, height, rightReserve, stripY + strip.height + progressHeight)
                 }

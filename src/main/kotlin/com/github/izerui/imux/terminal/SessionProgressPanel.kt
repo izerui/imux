@@ -2,7 +2,6 @@ package com.github.izerui.imux.terminal
 
 import com.github.izerui.imux.ImuxBundle
 import com.github.izerui.imux.progress.ProgressSnapshot
-import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import javax.swing.JPanel
@@ -24,7 +23,7 @@ internal fun progressSummary(snapshot: ProgressSnapshot): String {
 /** 独立局部组件；不会因进度事件重建 MCP/技能分类。 */
 internal class SessionProgressPanel : JPanel(BorderLayout(JBUI.scale(6), JBUI.scale(6))) {
     private var snapshot = ProgressSnapshot()
-    private val summary = JBLabel().apply { putClientProperty("html.disable", true) }
+    private val summary = SelectableInfoText()
     private val bar = JProgressBar(0, 100)
     private val steps = JTextArea().apply {
         isEditable = false
@@ -59,12 +58,8 @@ internal class SessionProgressPanel : JPanel(BorderLayout(JBUI.scale(6), JBUI.sc
         bar.isIndeterminate = value.active && progress == null
         bar.value = progress?.percent ?: 0
         bar.toolTipText = ImuxBundle.message("progress.estimate")
-        steps.text = listOfNotNull(progress?.message, value.reportedAt?.let {
-            ImuxBundle.message("session.info.updated") + " " + java.time.Instant.ofEpochMilli(it)
-                .atZone(java.time.ZoneId.systemDefault())
-                .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
-        }).joinToString("\n")
-        bar.preferredSize = JBUI.size(1, 3)
+        steps.text = progress?.message.orEmpty()
+        bar.preferredSize = JBUI.size(1, 2)
         revalidate()
         repaint()
     }

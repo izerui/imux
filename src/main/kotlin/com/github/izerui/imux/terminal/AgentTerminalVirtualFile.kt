@@ -32,9 +32,18 @@ class AgentTerminalVirtualFile(
     var sessionId: String? = null,
 ) : LightVirtualFile(name, AgentTerminalFileType, "") {
     var tabTitle: String = name
+
     // 新会话的首报可能早于 sessionKey 迁移，旧报告也可能晚到；弹窗按发起查询时的 key 读取。
     private val piReports = java.util.concurrent.ConcurrentHashMap<String, PiSessionReport>()
-    internal fun recordPiCapabilities(report: PiSessionReport) { piReports[report.sessionId] = report }
+    internal fun recordPiCapabilities(report: PiSessionReport): Boolean {
+        val previous = piReports.put(report.sessionId, report) ?: return true
+        return previous.activeTools != report.activeTools ||
+                previous.contextPercent != report.contextPercent ||
+                previous.skillNames != report.skillNames ||
+                previous.skillLocations != report.skillLocations ||
+                previous.skillDescriptions != report.skillDescriptions
+    }
+
     internal fun piCapabilitiesFor(key: String): PiSessionReport? = piReports[key]
     internal fun clearPiCapabilities() = piReports.clear()
 

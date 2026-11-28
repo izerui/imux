@@ -60,6 +60,10 @@ fun interface SessionKeyMigratedListener : EventListener {
     )
 }
 
+fun interface SessionInfoChangedListener : EventListener {
+    fun sessionInfoChanged(file: AgentTerminalVirtualFile)
+}
+
 /**
  * 终端换 key 之后，列表里该选中谁。
  *
@@ -117,7 +121,12 @@ class TerminalHost(
         if (launchContributions[tabId]?.updatePiRegistrationFailures(failed) == true) SessionDecorations.changed()
     }
     internal fun recordPiCapabilities(report: com.github.izerui.imux.session.PiSessionReport) {
-        files.values.firstOrNull { it.tabId == report.tabId && it.agentType == AgentType.PI }?.recordPiCapabilities(report)
+        val file = files.values.firstOrNull {
+            it.tabId == report.tabId && it.agentType == AgentType.PI
+        } ?: return
+        if (file.recordPiCapabilities(report)) {
+            sessionInfoChangedDispatcher.multicaster.sessionInfoChanged(file)
+        }
     }
     private val preparationLock = Mutex()
 
@@ -142,6 +151,7 @@ class TerminalHost(
 
     private val sessionsChangedDispatcher = EventDispatcher.create(TerminalSessionsListener::class.java)
     private val keyMigratedDispatcher = EventDispatcher.create(SessionKeyMigratedListener::class.java)
+    private val sessionInfoChangedDispatcher = EventDispatcher.create(SessionInfoChangedListener::class.java)
 
     init {
         project.messageBus.connect(this).subscribe(
@@ -281,6 +291,13 @@ class TerminalHost(
         listener: TerminalSessionsListener,
     ) {
         sessionsChangedDispatcher.addListener(listener, parentDisposable)
+    }
+
+    fun addSessionInfoChangedListener(
+        parentDisposable: Disposable,
+        listener: SessionInfoChangedListener,
+    ) {
+        sessionInfoChangedDispatcher.addListener(listener, parentDisposable)
     }
 
     /**
@@ -482,6 +499,7 @@ class TerminalHost(
         file.terminalView.title.change { userDefinedTitle = newTitle }
         FileEditorManager.getInstance(project).updateFilePresentation(file)
         persistRestorableTabs()
+        sessionInfoChangedDispatcher.multicaster.sessionInfoChanged(file)
     }
 
     /**

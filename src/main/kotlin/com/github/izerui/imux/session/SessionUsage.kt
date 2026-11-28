@@ -19,14 +19,21 @@ internal data class SessionUsage(
     val skillDescriptions: Map<String, String> = emptyMap(),
 )
 
+internal fun claudeContextCachePath(transcript: Path): Path? {
+    val path = transcript.toAbsolutePath().normalize()
+    val projects = path.parent?.parent?.takeIf { it.fileName?.toString() == "projects" } ?: return null
+    val hash =
+        java.util.HexFormat.of().formatHex(
+            MessageDigest.getInstance("SHA-256").digest(path.toString().toByteArray(Charsets.UTF_8))
+        )
+    return projects.resolveSibling("plugins").resolve("claude-hud/context-cache").resolve("$hash.json")
+}
+
 internal fun readSessionUsage(agent: AgentType, transcript: Path, onLine: () -> Unit): SessionUsage {
     val usage = Files.newBufferedReader(transcript).useLines { sessionUsage(agent, it.onEach { onLine() }) }
     if (agent != AgentType.CLAUDE) return usage
     // Claude HUD keys its last status-line snapshot by the normalized absolute transcript path.
-    val path = transcript.toAbsolutePath().normalize()
-    val projects = path.parent?.parent?.takeIf { it.fileName?.toString() == "projects" } ?: return usage
-    val hash = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(path.toString().toByteArray(Charsets.UTF_8)))
-    val cache = projects.resolveSibling("plugins").resolve("claude-hud/context-cache").resolve("$hash.json")
+    val cache = claudeContextCachePath(transcript) ?: return usage
     val snapshot = try {
         Files.newBufferedReader(cache).use { JsonParser.parseReader(it) }.takeIf { it.isJsonObject }?.asJsonObject
     } catch (_: java.io.IOException) { null } catch (_: com.google.gson.JsonParseException) { null }
