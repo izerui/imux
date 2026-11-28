@@ -179,7 +179,12 @@ internal fun quoteEmbeddingDoubleQuotes(
                     "(Get-Command $command -ErrorAction SilentlyContinue | Select-Object -First 1).Definition -match '\\.(cmd|bat)$')"
                 // Keep one copy of the value: hook JSON and guidance can approach Windows' command-line limit.
                 // Legacy's native parser needs doubled backslashes before quotes and the closing quote.
-                val escapedQuotes = "[regex]::Replace(\$imuxNativeArgument, '(\\\\*)' + [char]34, '\$1\$1\\' + [char]34)"
+                // Windows PowerShell 5.1 counts even backslash-escaped quotes when deciding whether to
+                // wrap an argument. Use paired quotes inside the outer quotes so spaces remain protected.
+                // PowerShell 6+ ignores escaped quotes in that check and keeps the existing encoding.
+                val quoteReplacement = "\$(if (\$PSVersionTable.PSVersion.Major -lt 6) { " +
+                    "'\$1\$1' + [char]34 + [char]34 } else { '\$1\$1\\' + [char]34 })"
+                val escapedQuotes = "[regex]::Replace(\$imuxNativeArgument, '(\\\\*)' + [char]34, $quoteReplacement)"
                 val legacy = "[char]34 + [regex]::Replace($escapedQuotes, '(\\\\+)\$', '\$1\$1') + [char]34"
                 "\$(\$imuxNativeArgument = $literal; if ($legacyMode) { $legacy } else { \$imuxNativeArgument })"
             }
