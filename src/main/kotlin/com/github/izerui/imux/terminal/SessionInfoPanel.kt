@@ -237,7 +237,7 @@ internal class SessionInfoPanel(
     }
 
     private fun pageComponent(page: InfoPage): JPanel {
-        val rows = JPanel(VerticalLayout(0)).apply { border = JBUI.Borders.empty(8, 0) }
+        val rows = SessionInfoRows().apply { border = JBUI.Borders.empty(8, 0) }
         fun filter(query: String) {
             rows.removeAll()
             if (page.name == msg("session.info.runtime")) rows.add(progressPanel)
@@ -344,7 +344,10 @@ internal class SessionInfoPanel(
                 })
                 searchFields[page.name] = this
             }, BorderLayout.NORTH)
-            add(JBScrollPane(rows).apply { border = JBUI.Borders.empty() })
+            add(JBScrollPane(rows).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+            })
         }
     }
 
