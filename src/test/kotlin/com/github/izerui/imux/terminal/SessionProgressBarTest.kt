@@ -9,6 +9,28 @@ import javax.swing.SwingUtilities
 
 class SessionProgressBarTest {
     @Test
+    fun `进度线在浅色和深色主题下分别使用蓝色`() {
+        SwingUtilities.invokeAndWait {
+            val wasDark = !com.intellij.ui.JBColor.isBright()
+            val bar = sessionProgressBar()
+            bar.value = 50
+            bar.setSize(200, 32)
+            fun renderedColor(dark: Boolean): Int {
+                com.intellij.ui.JBColor.setDark(dark)
+                val image = java.awt.image.BufferedImage(200, 32, java.awt.image.BufferedImage.TYPE_INT_RGB)
+                image.createGraphics().let { g -> try { bar.paint(g) } finally { g.dispose() } }
+                return image.getRGB(20, 31) and 0xFFFFFF
+            }
+            try {
+                assertEquals("浅色主题蓝色", 0x3574F0, renderedColor(false))
+                assertEquals("深色主题蓝色", 0x548AF7, renderedColor(true))
+            } finally {
+                com.intellij.ui.JBColor.setDark(wasDark)
+            }
+        }
+    }
+
+    @Test
     fun `确定进度只在底部画细线并随宽度变化`() {
         SwingUtilities.invokeAndWait {
             val bar = sessionProgressBar()
